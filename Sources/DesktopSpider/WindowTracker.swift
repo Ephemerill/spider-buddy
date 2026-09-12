@@ -57,7 +57,10 @@ final class WindowTracker {
         timer = nil
     }
 
-    private func poll() {
+    /// A fresh look at the desktop right now.
+    func pollNow() { poll() }
+
+    private func poll()  {
         let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
         let screens = NSScreen.screens.map { $0.frame }
         let pid = selfPID

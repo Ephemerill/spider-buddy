@@ -33,6 +33,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let tracker = WindowTracker()
     private var statusItem: NSStatusItem!
     private var studio: StudioController?
+    private var habitat: HabitatController?
+    /// Living in the habitat window; the desktop overlays are put away.
+    private var inHabitat = false
+    private var habitatLastTime: CFTimeInterval = 0
 
     private var displayLink: Any?
     private var fallbackTimer: Timer?
@@ -81,6 +85,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         tracker.onUpdate = { [weak self] windows, fullScreens in
             guard let self else { return }
+            var windows = windows
+            if self.tankGate, let hc = self.habitat {
+                windows.insert(TrackedWindow(id: self.tankWindowID, frame: hc.window.frame, depth: -1, owner: "Habitat"), at: 0)
+            }
             // Entering full screen counts at once; leaving it only after a
             // few quiet polls, so a player's controls flickering over the
             // video cannot keep unsettling the spider.
@@ -104,6 +112,127 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: .spiderContextMenu, object: nil)
 
         startClock()
+        // Back into the tank if that is where it was.
+        if UserDefaults.standard.bool(forKey: "inHabitat") { enterHabitat() }
+        // SPIDER_HABITAT_TEST=1 runs the habitat through its paces on the real
+        // clock (in, out, in again, the window closed and reopened, every kind
+        // of furniture added, the window resized) and quits; a crash shows up
+        // as a crash.
+        if ProcessInfo.processInfo.environment["SPIDER_HABITAT_TEST"] == "1" {
+            func after(_ secs: Double, _ f: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + secs, execute: f) }
+            after(0.5) { [weak self] in
+                guard let self else { return }
+                self.enterHabitat()
+                after(5) {
+                    print("habitat test: in  -> inHabitat \(self.inHabitat), \(self.spider.debugState)")
+                    self.leaveHabitat()
+                    after(1.5) {
+                        print("habitat test: out -> inHabitat \(self.inHabitat), \(self.spider.debugState)")
+                        self.enterHabitat()
+                        after(5) {
+                            self.habitat?.window.performClose(nil)
+                            after(1.5) {
+                                print("habitat test: closed -> inHabitat \(self.inHabitat), \(self.spider.debugState)")
+                                self.enterHabitat()
+                                after(5) {
+                                    guard let hc = self.habitat, self.inHabitat else { print("habitat test: not in"); NSApp.terminate(nil); return }
+                                    let keep = hc.view.habitat
+                                    hc.view.onChange = nil
+                                    hc.view.building = true
+                                    for k in HabitatItemKind.allCases { hc.view.add(k) }
+                                    hc.view.updateSelected { $0.w *= 2; $0.h *= 2 }
+                                    hc.view.duplicateSelected()
+                                    hc.view.removeSelected()
+                                    hc.window.setContentSize(CGSize(width: 760, height: 480)); hc.view.layout()
+                                    after(1) {
+                                        hc.window.setContentSize(CGSize(width: 1200, height: 700)); hc.view.layout()
+                                        hc.view.building = false
+                                        for kind in PreyKind.allCases { self.spider.release(kind) }
+                                        after(8) {
+                                            print("habitat test: furniture \(hc.view.habitat.items.count), prey \(self.spider.prey.count), state \(self.spider.debugState), in scene \(hc.view.screenScene.insetBy(dx: -40, dy: -40).contains(self.spider.worldPos.point))")
+                                            hc.view.habitat = keep
+                                            keep.save()
+                                            // Dragged out of the tank by hand: it comes out, then wants back in.
+                                            let out = V2(hc.window.frame.minX - 160, hc.window.frame.midY)
+                                            self.spider.beginGrab(at: self.spider.worldPos)
+                                            var step = 0
+                                            let from = self.spider.worldPos
+                                            Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { t in
+                                                step += 1
+                                                let u = CGFloat(min(step, 60)) / 60
+                                                self.spider.moveGrab(to: V2.lerp(from, out, u))
+                                                if step >= 70 { t.invalidate(); self.spider.endGrab(throwVelocity: .zero) }
+                                            }
+                                            after(2.5) {
+                                                print("habitat test: dragged out -> inHabitat \(self.inHabitat), gate \(self.tankGate), \(self.spider.debugState) at \(Int(self.spider.worldPos.x)),\(Int(self.spider.worldPos.y))")
+                                                after(25) {
+                                                    print("habitat test: back? -> inHabitat \(self.inHabitat), \(self.spider.debugState)")
+                                                    self.leaveHabitat()
+                                                    after(1.5) {
+                                                        print("habitat test: done -> inHabitat \(self.inHabitat), \(self.spider.debugState)")
+                                                        NSApp.terminate(nil)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // SPIDER_HABITAT_LIVE=1 enters the habitat and lets the real clock run
+        // for a while, then reports whether anything moved, and quits.
+        if ProcessInfo.processInfo.environment["SPIDER_HABITAT_LIVE"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self else { return }
+                if ProcessInfo.processInfo.environment["SPIDER_HABITAT_FAR"] == "1", let f = NSScreen.main?.frame {
+                    // Start on the floor, far from where the tank will be.
+                    self.spider.teleport(to: V2(f.maxX - 120, f.maxY - 60))
+                }
+                let before = self.spider.debugState
+                self.enterHabitat()
+                for i in 1...40 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.5) {
+                        print("habitat live: t=\(Double(i) * 0.5) -> \(self.spider.debugState) at \(Int(self.spider.worldPos.x)),\(Int(self.spider.worldPos.y)) transitioning \(self.transitioning) in \(self.inHabitat) hidden \(self.hidden) paused \(self.spider.config.paused) ticks \(self.tickCount) (was \(before)) tank \(self.habitat?.window.frame ?? .zero)")
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 21.0) {
+                    let start = self.spider.worldPos
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                        let moved = self.spider.worldPos.distance(to: start)
+                        print("habitat live: in \(self.inHabitat), clock \(self.habitat?.view.clockTime ?? -1)s, moved \(Int(moved)) px, \(self.spider.debugState)")
+                        NSApp.terminate(nil)
+                    }
+                }
+            }
+        }
+        // SPIDER_HABITAT_SHOT=dir opens the habitat, writes one PNG per preset there, then quits.
+        if let dir = ProcessInfo.processInfo.environment["SPIDER_HABITAT_SHOT"] {
+            enterHabitat()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                guard let self, let hc = self.habitat else { return }
+                func shot(_ name: String) {
+                    hc.view.displayIfNeeded()
+                    if let rep = hc.view.bitmapImageRepForCachingDisplay(in: hc.view.bounds) {
+                        hc.view.cacheDisplay(in: hc.view.bounds, to: rep)
+                        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(dir)/\(name).png"))
+                    }
+                }
+                let keep = hc.view.habitat
+                hc.view.onChange = nil
+                for p in Habitat.Preset.allCases {
+                    hc.view.habitat = Habitat.preset(p)
+                    hc.view.layout()
+                    for _ in 0..<60 { hc.view.tick(dt: 1.0 / 60.0) }
+                    shot("habitat_\(p.rawValue)")
+                }
+                hc.view.habitat = keep
+                NSApp.terminate(nil)
+            }
+        }
         // SPIDER_STUDIO=1 opens the studio straight away (handy for testing).
         if ProcessInfo.processInfo.environment["SPIDER_STUDIO"] == "1" { openStudio() }
         // SPIDER_STUDIO_SHOT=dir writes one PNG per studio tab there, then quits.
@@ -117,6 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        UserDefaults.standard.set(inHabitat, forKey: "inHabitat")
         tracker.stop()
         fallbackTimer?.invalidate()
     }
@@ -200,8 +330,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startClock() {
         lastTime = CACurrentMediaTime()
-        if #available(macOS 14.0, *) {
-            let link = view.displayLink(target: self, selector: #selector(tick))
+        if #available(macOS 14.0, *), let screen = NSScreen.main {
+            // A display link on the screen, not on the overlay view: one tied
+            // to a view stops the moment that view's window is put away or
+            // another window takes over, and the clock must never stop.
+            let link = screen.displayLink(target: self, selector: #selector(tick))
             // Ask for 60 Hz outright. Gating a 120 Hz link by elapsed time
             // instead gives alternating 16 ms and 25 ms steps, which reads as
             // stutter in anything that moves smoothly.
@@ -215,7 +348,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private var tickCount = 0
     @objc private func tick() {
+        tickCount += 1
         guard !hidden else { return }
         let now = CACurrentMediaTime()
 
@@ -291,7 +426,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             view.apply(pose)
             settle(moved: moved)
         }
-        updateHammock(dt: dt)
+        if !inHabitat { updateHammock(dt: dt) }
+        if inHabitat, spider.isHeld, let hc = habitat, !hc.view.screenScene.insetBy(dx: -30, dy: -30).contains(spider.worldPos.point) {
+            fellOutOfHabitat()
+        }
         updatePrey()
         updateLaser()
 
@@ -440,6 +578,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toggle.keyEquivalentModifierMask = []
         menu.addItem(toggle)
         add(menu, "Spider Studio…", #selector(openStudio), key: ",")
+        add(menu, inHabitat ? "Leave Habitat" : "Enter Habitat…", #selector(toggleHabitat), key: "e")
         menu.addItem(.separator())
 
         add(menu, "Come Here", #selector(comeHere))
@@ -571,6 +710,208 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func buildHammock() { spider.buildHammock() }
     @objc private func clearHammock() { spider.clearHammock() }
     @objc private func sayHi() { spider.debugActivity("greet", for: 2.4) }
+
+    // MARK: The habitat
+
+    /// Into the tank, or back out onto the desktop. It is the same spider —
+    /// same looks, same appetite, same mood — moving house.
+    @objc private func toggleHabitat() {
+        if inHabitat { leaveHabitat() } else { enterHabitat() }
+    }
+
+    /// Where the menu bar icon is, on screen: the tank grows out of it and
+    /// shrinks back into it.
+    private var statusItemRect: CGRect {
+        if let w = statusItem.button?.window {
+            let r = w.frame
+            return CGRect(x: r.midX - 12, y: r.minY, width: 24, height: r.height)
+        }
+        let f = NSScreen.main?.frame ?? worldFrame()
+        return CGRect(x: f.maxX - 120, y: f.maxY - 24, width: 24, height: 22)
+    }
+    private var habitatFrame: CGRect?
+    private var transitioning = false
+
+    /// While the tank is open and it is still outside, the tank is a
+    /// window it can climb on and the area it wants to be in.
+    private var tankGate = false
+    private var tankPoll: Timer?
+    private var lineSince: CFTimeInterval = -1
+    private var userConfine: CGRect?
+    private var tankWindowID: CGWindowID { 4_000_000 }
+
+    private func enterHabitat() {
+        guard !inHabitat, !transitioning else { return }
+        if hidden { toggleHidden() }
+        if habitat == nil {
+            let hc = HabitatController(spider: spider)
+            hc.onLeave = { [weak self] in self?.leaveHabitat() }
+            habitat = hc
+        }
+        guard let hc = habitat else { return }
+        transitioning = true
+        let target = habitatFrame ?? hc.window.frame
+        habitatFrame = target
+        // 1. The tank grows out of the menu bar.
+        hc.window.setFrame(statusItemRect, display: false)
+        hc.window.alphaValue = 0
+        NSApp.activate(ignoringOtherApps: true)
+        hc.window.makeKeyAndOrderFront(nil)
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.5
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            hc.window.animator().setFrame(target, display: true)
+            hc.window.animator().alphaValue = 1
+        }, completionHandler: { [weak self] in
+            guard let self else { return }
+            hc.window.setFrame(target, display: true)
+            hc.view.layout()
+            self.openGate(hc)
+        })
+    }
+
+    /// 2. The tank becomes part of the desktop — a window it can walk on, and
+    /// the place it wants to be — and it makes its own way there, from
+    /// wherever it is, by walking, leaping or climbing as it always does.
+    /// When it reaches the tank it gets in the way a spider would: a leap
+    /// from the rim in through the glass, or, hanging beneath, a line shot up
+    /// into it and a climb. Mid-air over it (thrown, say), it drops in.
+    private func openGate(_ hc: HabitatController) {
+        tankGate = true
+        userConfine = spider.confine
+        tracker.pollNow()
+        let f = hc.window.frame
+        spider.confine = f.insetBy(dx: -(map.standoff + 14), dy: -(map.standoff + 14))
+        spider.calmUnderCover = true
+        spider.onMapSwitched = { [weak self] in self?.settleIntoHabitat() }
+        spider.nudgeDecision()
+        hc.view.map.standoff = map.standoff
+        hc.view.rebuildMap()
+        hc.noteOrigin()
+        tankPoll?.invalidate()
+        tankPoll = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            guard let self, let hc = self.habitat, self.tankGate else { return }
+            let inside = hc.view.screenScene
+            // Swinging about on a line out here is no way to get anywhere:
+            // let go and drop onto something.
+            if self.spider.isOnLine, !self.spider.isHeld, self.lineSince < 0 { self.lineSince = CACurrentMediaTime() }
+            if !self.spider.isOnLine { self.lineSince = -1 }
+            if self.spider.isOnLine, !self.spider.isHeld, CACurrentMediaTime() - self.lineSince > 2.5 {
+                self.spider.letGo()
+                self.lineSince = -1
+            }
+            // Flying in: as soon as it is over the tank, it is in.
+            if self.spider.isAirborne, inside.contains(self.spider.worldPos.point) {
+                self.spider.moveInMidAir(map: hc.view.map, habitat: true)
+                self.settleIntoHabitat()
+                return
+            }
+            // On the tank, and not already on its way in: get in. The map
+            // switches at the moment it leaves the rim, and that is when it
+            // counts as in; if the leap is called off, it tries again.
+            guard self.spider.currentLoopID == "win:\(self.tankWindowID)", !self.spider.isLeavingSurface else { return }
+            let spots = hc.view.map.sampleSpots(spacing: 40).shuffled()
+            if self.spider.standingNormal.y < -0.5 {
+                // Hanging under the tank: a line up through the floor to
+                // whatever is above, and a climb.
+                let here = self.spider.worldPos
+                let above = spots.filter { $0.point.y > here.y + 40 && abs($0.point.x - here.x) < 160 }
+                if let target = above.min(by: { $0.point.distance(to: here) < $1.point.distance(to: here) }) {
+                    self.spider.switchMapOnLeaving(hc.view.map, habitat: true)
+                    if self.spider.climbAway(to: target.point, then: {}) { return }
+                }
+            }
+            // A leap in: the nearest few spots inside it can reach.
+            for spot in spots.prefix(40) {
+                self.spider.switchMapOnLeaving(hc.view.map, habitat: true)
+                if self.spider.leapIn(to: spot.point, throughGlass: true) { return }
+            }
+        }
+    }
+
+    /// Dragged out of the tank by the pointer: it comes out — and then wants
+    /// back in, the same way it got in the first time.
+    private func fellOutOfHabitat() {
+        guard inHabitat, let hc = habitat else { return }
+        inHabitat = false
+        hc.view.stopClock()
+        spider.moveInMidAir(map: map, habitat: false)
+        if let h = spider.hammock { hammockView.hammock = h; hammockShown = false; lastHammock = nil }
+        openGate(hc)
+        hc.view.startClock()
+        refreshMenu()
+    }
+
+    /// In: the same spider, the same size, at the same spot, now living in
+    /// the tank's part of the screen. The desktop overlays keep drawing it.
+    private func settleIntoHabitat() {
+        guard let hc = habitat else { transitioning = false; return }
+        tankPoll?.invalidate()
+        tankPoll = nil
+        tankGate = false
+        spider.confine = userConfine
+        spider.calmUnderCover = false
+        spider.onMapSwitched = nil
+        inHabitat = true
+        transitioning = false
+        hammockWindow.orderOut(nil)
+        boxWindow.orderOut(nil)
+        laserWindow.orderOut(nil)
+        spider.laser = nil
+        tracker.pollNow()
+        hc.window.title = "\(spider.name.isEmpty ? "Spider" : spider.name)'s Habitat"
+        hc.view.startClock()      // only the scenery: the desktop clock runs the spider
+        refreshMenu()
+    }
+
+    private func leaveHabitat() {
+        if tankGate, let hc = habitat {
+            // Called off before it got in: the tank just goes away.
+            tankPoll?.invalidate(); tankPoll = nil
+            tankGate = false
+            spider.confine = userConfine
+            spider.calmUnderCover = false
+            spider.onMapSwitched = nil
+            transitioning = false
+            tracker.pollNow()
+            hc.window.delegate = nil
+            hc.window.orderOut(nil)
+            hc.window.delegate = hc
+            refreshMenu()
+            return
+        }
+        guard inHabitat, let hc = habitat, !transitioning else { return }
+        inHabitat = false
+        transitioning = true
+        hc.view.stopClock()
+        // 1. It drops out of the bottom of the tank onto the desktop.
+        let f = hc.window.frame
+        spider.enter(map: map, at: V2(f.midX, f.minY - 6), habitat: false)
+        spider.dropIn(at: V2(f.midX, f.minY - 6))
+        if let h = spider.hammock { hammockView.hammock = h; hammockShown = false; lastHammock = nil }
+        if spider.confine != nil { boxWindow.orderFrontRegardless() }
+        window.orderFrontRegardless()
+        calmFrames = 0
+        calm = false
+        refreshMenu()
+        // 2. The tank shrinks back into the menu bar.
+        habitatFrame = f
+        hc.window.delegate = nil
+        NSAnimationContext.runAnimationGroup({ [weak self] ctx in
+            guard let self else { return }
+            ctx.duration = 0.45
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            hc.window.animator().setFrame(self.statusItemRect, display: true)
+            hc.window.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            guard let self else { return }
+            hc.window.orderOut(nil)
+            hc.window.setFrame(self.habitatFrame ?? f, display: false)
+            hc.window.alphaValue = 1
+            hc.window.delegate = hc
+            self.transitioning = false
+        })
+    }
 
     // MARK: Laser pointer
 

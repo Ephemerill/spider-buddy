@@ -447,6 +447,70 @@ final class SurfaceMap {
         return best
     }
 
+    /// Builds a map from a scene rectangle and any loops at all: the walls
+    /// of the scene are a closed box (glass, all four sides walkable), and
+    /// the loops are whatever furniture the scene has. Used by the habitat.
+    func rebuild(scene: CGRect, loops given: [SurfaceLoop]) {
+        let off = standoff
+        var newLoops: [SurfaceLoop] = []
+        let r = scene.insetBy(dx: off, dy: off)
+        var box = SurfaceLoop(id: "screen:0", kind: .screenBorder,
+                              segs: SurfaceMap.rectEdge(r, inside: true),
+                              closed: true, depth: 1_000_000, rect: r)
+        box.edge = SurfaceMap.rectEdge(scene, inside: true)
+        newLoops.append(box)
+        newLoops += given
+        occluders = []
+        screenFrames = [scene]
+        worldBounds = scene
+        cinemaScreens = []
+        // Furniture in front hides furniture behind, as windows do.
+        var occ: [(rect: CGRect, depth: Int)] = []
+        for l in given where l.kind == .windowEdge { occ.append((l.rect, l.depth)) }
+        occluders = occ
+        applyBlocks(to: &newLoops)
+        occluders = []
+        unclipped = newLoops
+        reclip()
+    }
+
+    /// A closed loop round a box, the body stood off the edge, as for a
+    /// window: walk on top, round the sides, hang beneath.
+    static func boxLoop(id: String, rect: CGRect, standoff off: CGFloat, depth: Int) -> SurfaceLoop {
+        var loop = SurfaceLoop(id: id, kind: .windowEdge,
+                               segs: rectEdge(rect.insetBy(dx: -off, dy: -off), inside: false),
+                               closed: true, depth: depth, rect: rect)
+        loop.edge = rectEdge(rect, inside: false)
+        return loop
+    }
+
+    /// An open run along a polyline (a branch, say): one loop along the top
+    /// and one beneath, each stood off by the body's height. Facings are
+    /// by the nearest axis, which is what the rest of the map understands.
+    static func stripLoops(id: String, points: [V2], standoff off: CGFloat, depth: Int, rect: CGRect) -> [SurfaceLoop] {
+        guard points.count >= 2 else { return [] }
+        func facing(_ n: V2) -> EdgeFacing {
+            if abs(n.y) >= abs(n.x) { return n.y >= 0 ? .up : .down }
+            return n.x >= 0 ? .right : .left
+        }
+        var top: [Seg] = [], under: [Seg] = [], topEdge: [Seg] = [], underEdge: [Seg] = []
+        for i in 0..<(points.count - 1) {
+            let a = points[i], b = points[i + 1]
+            let d = (b - a).normalized
+            let n = V2(-d.y, d.x)                     // left-hand normal: "up" for a left-to-right run
+            let up = n.y >= 0 ? n : -n
+            top.append(Seg(a + up * off, b + up * off, facing(up)))
+            topEdge.append(Seg(a, b, facing(up)))
+            under.append(Seg(b - up * off, a - up * off, facing(-up)))
+            underEdge.append(Seg(b, a, facing(-up)))
+        }
+        var t = SurfaceLoop(id: id, kind: .windowEdge, segs: top, closed: false, depth: depth, rect: rect)
+        t.edge = topEdge
+        var u = SurfaceLoop(id: id + ":under", kind: .windowEdge, segs: under.reversed(), closed: false, depth: depth, rect: rect)
+        u.edge = underEdge
+        return [t, u]
+    }
+
     /// Builds a map for an arbitrary rectangle instead of the real displays,
     /// so tooling can lay the spider out on a mock desktop.
     func debugRebuild(screen: CGRect, menuBarHeight: CGFloat, windows: [TrackedWindow], cinema: Bool = false) {

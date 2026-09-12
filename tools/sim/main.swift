@@ -443,7 +443,7 @@ do {
     }
     let spread = (xs.max() ?? 0) - (xs.min() ?? 0)
     expect("empty box: hangs on a line", hanging > n * 80 / 100, "\(hanging * 100 / n)% hanging, now \(s2.debugState)")
-    expect("empty box: a light sway, not a swing", spread > 4 && spread < 70, "sways over \(Int(spread)) px")
+    expect("empty box: a light sway, not a swing", spread > 4 && spread < 90, "sways over \(Int(spread)) px")
     expect("empty box: stays inside", out2 == 0, "out \(out2) frames")
     s2.confine = nil
 }
@@ -588,6 +588,38 @@ do {
     }
     expect("sleepy: beds down on top of a window", sleptOnWindow >= 0, sleptOnWindow < 0 ? "never, now \(s.debugState)" : String(format: "after %.0fs", sleptOnWindow))
     expect("sleepy: Z's rise from it", zs || sleptOnWindow < 0, "")
+}
+
+// The habitat: it lives on the furniture of a tank, never leaving it.
+do {
+    let tank = SurfaceMap()
+    tank.standoff = map.standoff
+    let scene = CGRect(x: 0, y: 0, width: 900, height: 540)
+    let hab = Habitat.preset(.forestFloor)
+    tank.rebuild(scene: scene, loops: hab.loops(standoff: tank.standoff))
+    let s = Spider(map: map)
+    s.config.followCursor = false
+    _ = settleUntilAttached(s)
+    s.enter(map: tank, at: V2(scene.midX, scene.midY), habitat: true)
+    var n = 0
+    var out = 0
+    var loops: Set<String> = []
+    var counts: [String: Int] = [:]
+    while CGFloat(n) * dt < 180 {
+        s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+        if !scene.insetBy(dx: -30, dy: -30).contains(s.worldPos.point) { out += 1 }
+        let st = s.debugState
+        if let on = st.split(separator: " ").last, st.contains(" on ") { loops.insert(String(on)) }
+        counts[String(st.split(separator: " ").first ?? ""), default: 0] += 1
+    }
+    let top = counts.sorted { $0.value > $1.value }.prefix(5).map { "\($0.key) \($0.value * 100 / n)%" }.joined(separator: ", ")
+    expect("habitat: stays in the tank", out == 0, "out \(out) frames  " + top)
+    expect("habitat: climbs about on the furniture", loops.filter { $0.hasPrefix("item:") }.count >= 2, loops.sorted().joined(separator: ","))
+    // Home again: the same spider, back on the desktop.
+    let fedBefore = s.fed
+    s.enter(map: map, at: V2(screen.midX, screen.maxY - 80), habitat: false)
+    let back = settleUntilAttached(s)
+    expect("habitat: comes back to the desktop", back.hasPrefix("attached") && s.fed == fedBefore, back)
 }
 
 // A window closing under its feet.

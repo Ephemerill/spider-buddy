@@ -167,9 +167,15 @@ Beyond the dragline it already trails on every leap:
   and front legs folded in; descending, it pays out line through those hind
   feet. To climb it rolls head-up and hauls itself up hand over hand with
   all eight legs: the front pairs grip above the head, the hind pairs work
-  the loose silk trailing from the spinnerets, and every foot holds still on
-  the thread while the body moves past it, opening off the line only to
-  reach on again. Once it stops it lets itself back round to hang.
+  the line along the body. The legs on the line move the way the legs on a
+  ledge do, only along the thread: each has its natural spot, in its stance
+  the foot holds still in the world and slides through the body's frame as
+  the body climbs or descends past it, and in its swing it lets go, lifts
+  off the line to its own side — over the legs still holding — and reaches
+  on to its next grip a stride ahead, near legs hooking from one side and
+  far legs from the other. The line itself ends at the spinnerets, so it
+  runs exactly through the grips whichever way up it is. Once it stops it
+  lets itself back round to hang.
   Swinging, the same hind legs hold the line above the abdomen and the
   front legs hang loose toward the ground. It also bounces on the line,
   twirls, kicks itself swinging, and pays out line to come and look at a
@@ -261,6 +267,57 @@ hanging on a line (it climbs straight up out of the way) or asleep in its
 hammock (it bails out). "Covered" means either its edge is blocked by a
 window in front, or its body is: a window that only overlaps the body
 counts too.
+
+## The habitat
+
+**Enter Habitat…** (⌘E) opens a window that is a terrarium for it: a
+tank with scenery behind the glass, furniture to climb on, and the spider
+living inside. The tank grows out of the menu bar icon and then, for as
+long as the spider is outside it, it is simply part of the desktop: a
+window it can walk on top of, climb the sides of and hang beneath, and the
+place it wants to be. So it makes its own way there from wherever it is,
+exactly as it goes anywhere — walking, leaping, climbing — and when it
+reaches the tank it gets in the way a spider would: standing on the lid or
+a side, it leaps in through the glass onto the furniture; hanging beneath,
+it fires a line up through the floor and climbs in; and thrown or falling
+over the tank, it drops in. Once inside it is kept entirely within the
+glass — every leap, line and bounce stays inside — with one exception:
+you can pick it up and drag it out. Then it is out, on the desktop, and
+wants back in, and gets back in the same way, until the tank is closed.
+It is the same spider moving house — same looks, same appetite, same
+mood, same thoughts. **Leave
+Habitat** (or closing the window) drops it out of the bottom of the tank
+onto the desktop, dragline trailing, and the tank shrinks back into the
+menu bar. It is the one desktop spider throughout — the same size, drawn
+by the same overlay above the tank — simply living in the tank's part of
+the screen, so the tank can be dragged about and it comes along. The app
+remembers which side of the glass it was on across a restart. Everything
+it does on the desktop it does in there: walks and leaps between the
+furniture, hangs under logs, rappels from branches, drums, greets you,
+naps on top of a log with Z's rising, hunts anything you release with
+**Feed**, and you can pick it up, throw it, click it and scroll it on a
+line just the same. Desktop-only things — the hammock, the box, cinema
+manners, the laser — wait for it outside.
+
+**Build** (top right) opens a discreet panel to make the habitat your own:
+- **Scenery**: eight backdrops — forest, jungle, desert, meadow, cave,
+  beach, tundra and night — each with sky, distance and ground painted to
+  match, plus something in the air: leaves drifting down in the forest and
+  jungle, pollen in the meadow and on the beach, dust in the cave's light,
+  snow falling in the tundra, fireflies and twinkling stars at night.
+- **Start from** a preset layout for any of those, or **Surprise me** for
+  a shuffled one.
+- **Add** things to climb — log, branch, rock, boulder, cork bark slab,
+  hollow log, cactus, hanging vine, leafy plant, water dish — and scenery
+  to look at — fern, flowers, mushrooms, moss, leaf litter, twigs. Every
+  piece is drawn a little differently from the last.
+- In the scene: click to select, drag to move (things settle onto the floor
+  or stick to the ceiling when put near them), drag the corner handle to
+  resize, ⌫ to remove. The panel sizes, flips, duplicates and removes the
+  selection, and orders it forward or back among the rest. Things in front
+  hide what is behind them, so the spider cannot walk on a log a plant is
+  covering.
+The habitat is saved as you go.
 
 ## Keeping it in a box
 
@@ -361,6 +418,7 @@ The design is saved as JSON in the app's defaults.
 | Hide *name* / Show *name* | toggle it off and on (the icon dims while hidden) |
 | Spider Studio… | customise it (see above) |
 | Come Here | it walks or jumps to your pointer |
+| Enter Habitat… / Leave Habitat | into the tank and back (⌘E); see The habitat |
 | Behavior ▸ | everything it can be asked to do: Say Hi, Toss It, Swing!, Feed ▸, the hammock, and the box |
 | Behavior ▸ Build a Hammock / Nap in the Hammock / Clear the Hammock | see Silk |
 | Size | Tiny → Chonky |
@@ -384,6 +442,8 @@ entitlement — window *titles* and screen contents would, and are never read.
 |---|---|
 | `Math.swift` | vectors, springs, easing, smooth noise |
 | `Surfaces.swift` | turns screens/windows/Dock/menu bar into walkable loops |
+| `Habitat.swift` | the tank: its model and presets, the backdrops, the furniture art, and how the furniture becomes surfaces |
+| `HabitatWindow.swift` | the habitat window: the live scene, the mouse, and the builder panel |
 | `Prey.swift` | the creatures: their behaviour, drawing, and the click-through window they live in |
 | `WindowTracker.swift` | polls window rectangles — 30 Hz while any window is moving, 10 Hz when the desktop is still |
 | `Spider.swift` | state machine, physics, gait, decisions |

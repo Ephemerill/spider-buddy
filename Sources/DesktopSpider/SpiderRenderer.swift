@@ -1587,7 +1587,7 @@ enum SpiderRenderer {
         // The little emotes (hearts, notes, Z's, sparkles, "!" and "?") are
         // drawn half as big again as the sprite's own scale, so they read
         // from across the room; a thought bubble sizes itself.
-        let boost: CGFloat = pose.emote == .thought ? 1 : 1.55
+        let boost: CGFloat = pose.emote == .thought ? 1.45 : 1.55
         ctx.scaleBy(x: s * boost, y: s * boost)
 
         switch pose.emote {
