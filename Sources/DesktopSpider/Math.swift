@@ -1,6 +1,11 @@
 import CoreGraphics
 import Foundation
 
+extension Notification.Name {
+    /// A right-click anywhere on the spider or its creatures: show the menu.
+    static let spiderContextMenu = Notification.Name("spiderContextMenu")
+}
+
 // MARK: - 2D vector
 
 struct V2 {

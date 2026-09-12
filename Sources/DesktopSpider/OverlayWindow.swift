@@ -245,9 +245,6 @@ final class SilkView: NSView {
 
 }
 
-extension Notification.Name {
-    static let spiderContextMenu = Notification.Name("spiderContextMenu")
-}
 
 // MARK: - Window
 
@@ -316,75 +313,134 @@ final class HammockView: NSView {
             let f = CGFloat((seed * 7919) % 97) / 97
             return damage > 0.12 + f * 0.85
         }
-        let strands = 7
-        let thickness = h.rect.height * 0.22
+        // A small deterministic wobble per strand and place, so the silk
+        // never looks ruled.
+        func noise(_ i: Int, _ u: CGFloat, _ k: CGFloat = 1) -> CGFloat {
+            let sd = CGFloat((h.seed + i * 131) % 1000) / 1000
+            return sin(u * (5.5 + sd * 4) * k + sd * 6.28) * 0.6 + sin(u * (11 + sd * 5) + sd * 3) * 0.4
+        }
+        let style = h.style
+        let strands = style.strands
+        let thickness = h.rect.height * (style == .pouch ? 0.30 : 0.22)
         /// Strand `i` runs a little above the centre line: 0 is the lowest.
+        /// Each hangs a little slack in its own way.
         func strandPoint(_ i: Int, _ u: CGFloat) -> CGPoint {
-            let lift = CGFloat(i) / CGFloat(strands - 1) * thickness
-            // Strands meet at the anchors, so the lift tapers to nothing there.
-            let p = h.point(at: u, drop: drop) + V2(0, lift * sin(u * .pi))
+            let lift = CGFloat(i) / CGFloat(max(strands - 1, 1)) * thickness
+            let sd = CGFloat((h.seed + i * 17) % 100) / 100
+            let slack = (2 + sd * 6) * sin(u * .pi)               // hangs lower in the middle
+            let wob = noise(i, u) * (1.2 + sd * 1.6)
+            let p = h.point(at: u, drop: drop) + V2(0, lift * sin(u * .pi) - slack + wob)
             return p.point
         }
-        func strandPath(_ i: Int) -> CGPath {
+        func strandPath(_ i: Int, upTo: CGFloat = 1) -> CGPath {
             let p = CGMutablePath()
             p.move(to: strandPoint(i, 0))
-            for k in 1...24 { p.addLine(to: strandPoint(i, CGFloat(k) / 24)) }
+            for k in 1...28 { p.addLine(to: strandPoint(i, CGFloat(k) / 28 * upTo)) }
             return p
         }
 
         let alpha = fade * (1 - damage * 0.3)
-        // The sheet between the lowest and highest strands.
-        if progress > 0.5 {
+        // A faint sheet where the strands lie close: the bed.
+        if progress > 0.5, style != .tangle {
             let sheet = CGMutablePath()
             sheet.move(to: strandPoint(0, 0))
-            for k in 1...24 { sheet.addLine(to: strandPoint(0, CGFloat(k) / 24)) }
-            for k in stride(from: 24, through: 0, by: -1) { sheet.addLine(to: strandPoint(strands - 1, CGFloat(k) / 24)) }
+            for k in 1...28 { sheet.addLine(to: strandPoint(0, CGFloat(k) / 28)) }
+            for k in stride(from: 28, through: 0, by: -1) { sheet.addLine(to: strandPoint(strands - 1, CGFloat(k) / 28)) }
             sheet.closeSubpath()
-            let a = remap(progress, 0.5, 1, 0, 0.26) * alpha * (1 - damage * 0.6)
+            let a = remap(progress, 0.5, 1, 0, style == .pouch ? 0.16 : 0.10) * alpha * (1 - damage * 0.6)
             ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: a))
             ctx.addPath(sheet)
             ctx.fillPath()
         }
 
-        // Longitudinal strands, laid one at a time as it is built.
-        let strandsShown = Int((progress * 1.6 * CGFloat(strands)).rounded(.down))
-        ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.75 * alpha))
-        ctx.setLineWidth(1.1)
-        for i in 0..<min(strands, strandsShown) where !tornAt(i) {
-            ctx.addPath(strandPath(i))
+        // Longitudinal strands, laid one at a time as it is spun — the
+        // first at the fastening, the rest across the middle of the build.
+        let laid = progress < 0.30 ? (progress > 0.1 ? 1 : 0)
+            : 1 + Int((remap(progress, 0.36, 0.88, 0, CGFloat(strands - 1))).rounded(.down))
+        let strandsShown = min(strands, max(0, laid))
+        for i in 0..<strandsShown where !tornAt(i) {
+            let sd = CGFloat((h.seed + i * 53) % 100) / 100
+            ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: (0.45 + sd * 0.35) * alpha))
+            ctx.setLineWidth(0.7 + sd * 0.5)
+            // The first thread grows out from the wall as it is walked to
+            // the ceiling.
+            let upTo: CGFloat = i == 0 && progress < 0.30 ? clamp((progress - 0.10) / 0.20, 0.02, 1) : 1
+            ctx.addPath(strandPath(i, upTo: upTo))
             ctx.strokePath()
         }
 
-        // Cross-ties, once the strands are down.
-        if progress > 0.6 {
-            let ties = 11
-            let tiesShown = Int(remap(progress, 0.6, 1, 0, CGFloat(ties)).rounded(.down))
-            ctx.setLineWidth(0.8)
-            ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.6 * alpha))
-            for k in 0..<min(ties, tiesShown) where !tornAt(40 + k) {
-                let u = (CGFloat(k) + 0.5) / CGFloat(ties)
+        // Loose loops of silk drooping from the lower strands — the stringy
+        // look of real silk, and the cradle is mostly made of them.
+        if strandsShown > 0 {
+            let loops = style == .cradle ? 12 : (style == .pouch ? 7 : 5)
+            let shown = Int(remap(progress, 0.36, 1, 0, CGFloat(loops)).rounded(.down))
+            ctx.setLineWidth(0.7)
+            for k in 0..<min(loops, shown) where !tornAt(20 + k) {
+                let sd = CGFloat((h.seed + k * 71) % 100) / 100
+                let u = 0.12 + (CGFloat(k) + 0.5) / CGFloat(loops) * 0.76
+                let from = strandPoint(k % max(strandsShown, 1), u)
+                let depth = (6 + sd * 12) * (style == .cradle ? 1.5 : 1)
+                let to = strandPoint((k + 1) % max(strandsShown, 1), min(u + 0.06 + sd * 0.05, 1))
                 let p = CGMutablePath()
-                p.move(to: strandPoint(0, u))
-                // A gentle zigzag rather than a straight rung.
-                let mid = strandPoint(strands / 2, u)
-                p.addLine(to: CGPoint(x: mid.x + (k % 2 == 0 ? 2 : -2), y: mid.y))
-                p.addLine(to: strandPoint(strands - 1, u))
+                p.move(to: from)
+                p.addCurve(to: to,
+                           control1: CGPoint(x: from.x + 2 - sd * 4, y: from.y - depth),
+                           control2: CGPoint(x: to.x - 2 + sd * 3, y: to.y - depth * 0.8))
+                ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: (0.35 + sd * 0.3) * alpha))
+                ctx.addPath(p)
+                ctx.strokePath()
+            }
+        }
+
+        // The tangle: extra strands slung between random points of the
+        // sling, criss-crossing.
+        if style == .tangle, strandsShown > 1 {
+            let cross = 9
+            let shown = Int(remap(progress, 0.5, 1, 0, CGFloat(cross)).rounded(.down))
+            for k in 0..<min(cross, shown) where !tornAt(30 + k) {
+                let s1 = CGFloat((h.seed + k * 37) % 100) / 100, s2 = CGFloat((h.seed + k * 89) % 100) / 100
+                let a = strandPoint(k % strandsShown, 0.1 + s1 * 0.8)
+                let b = strandPoint((k * 3 + 1) % strandsShown, 0.1 + s2 * 0.8)
+                let p = CGMutablePath()
+                p.move(to: a)
+                p.addQuadCurve(to: b, control: CGPoint(x: (a.x + b.x) / 2 + (s1 - 0.5) * 8, y: (a.y + b.y) / 2 - 5 - s2 * 8))
+                ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: (0.3 + s1 * 0.3) * alpha))
+                ctx.setLineWidth(0.6 + s2 * 0.4)
+                ctx.addPath(p)
+                ctx.strokePath()
+            }
+        }
+
+        // Cross-ties, tied off at the end: slack little bridges.
+        if progress > 0.86, strandsShown > 1 {
+            let ties = style == .tangle ? 5 : 9
+            let tiesShown = Int(remap(progress, 0.86, 1, 0, CGFloat(ties)).rounded(.down))
+            ctx.setLineWidth(0.7)
+            ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.5 * alpha))
+            for k in 0..<min(ties, tiesShown) where !tornAt(40 + k) {
+                let sd = CGFloat((h.seed + k * 23) % 100) / 100
+                let u = (CGFloat(k) + 0.5) / CGFloat(ties)
+                let a = strandPoint(0, u), b = strandPoint(strandsShown - 1, min(u + (sd - 0.5) * 0.08, 1))
+                let p = CGMutablePath()
+                p.move(to: a)
+                p.addQuadCurve(to: b, control: CGPoint(x: (a.x + b.x) / 2 + (sd - 0.5) * 6, y: (a.y + b.y) / 2 - 3 - sd * 3))
                 ctx.addPath(p)
                 ctx.strokePath()
             }
         }
 
         // Clews: the strands gather to each anchor, with a tuft on the wall
-        // and the ceiling where the silk is stuck down.
-        ctx.setLineWidth(1.0)
-        ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.8 * alpha))
-        for (anchor, seed) in [(h.wallAnchor, 70), (h.ceilingAnchor, 71)] where !tornAt(seed) {
+        // and the ceiling where the silk is stuck down. Nothing is stuck
+        // down until the first thread is fastened.
+        ctx.setLineWidth(0.9)
+        ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.8 * alpha * min(progress * 12, 1)))
+        for (anchor, seed, on) in [(h.wallAnchor, 70, progress > 0.03), (h.ceilingAnchor, 71, progress > 0.30)] where !tornAt(seed) && on {
             let a = anchor.point
-            for i in 0..<3 {
-                let ang = CGFloat(i) * 2.1 + 0.4
+            for i in 0..<4 {
+                let ang = CGFloat(i) * 1.6 + 0.3 + CGFloat((h.seed + i) % 7) * 0.1
                 ctx.beginPath()
                 ctx.move(to: a)
-                ctx.addLine(to: CGPoint(x: a.x + cos(ang) * 5, y: a.y + sin(ang) * 3.5))
+                ctx.addLine(to: CGPoint(x: a.x + cos(ang) * (4 + CGFloat(i % 2) * 3), y: a.y + sin(ang) * 3.5))
                 ctx.strokePath()
             }
         }
@@ -405,5 +461,122 @@ final class HammockView: NSView {
             }
         }
         ctx.restoreGState()
+    }
+}
+
+
+// MARK: - The box
+
+/// Drag out a rectangle on the desktop. Covers every display, takes the
+/// mouse, and hands back the rect (or nil on Escape / right-click).
+final class BoxDrawView: NSView {
+    var worldOrigin = CGPoint.zero
+    var onDone: ((CGRect?) -> Void)?
+    private var start: CGPoint?
+    private var current: CGPoint?
+
+    override var isFlipped: Bool { false }
+    override var acceptsFirstResponder: Bool { true }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .crosshair)
+    }
+
+    private var rect: CGRect? {
+        guard let s = start, let c = current else { return nil }
+        return CGRect(x: min(s.x, c.x), y: min(s.y, c.y), width: abs(c.x - s.x), height: abs(c.y - s.y))
+    }
+
+    override func draw(_ dirty: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        // A dim wash over everything, cut away inside the box.
+        ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.22))
+        ctx.fill(bounds)
+        if let r = rect {
+            ctx.clear(r)
+            ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.9))
+            ctx.setLineWidth(2)
+            ctx.setLineDash(phase: 0, lengths: [8, 5])
+            ctx.stroke(r.insetBy(dx: 1, dy: 1))
+        } else {
+            // A hint, top centre of the main screen.
+            let text = "Drag out a box for the spider — Esc to cancel" as NSString
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 15, weight: .medium),
+                .foregroundColor: NSColor.white,
+            ]
+            let size = text.size(withAttributes: attrs)
+            let f = NSScreen.main?.frame ?? bounds
+            let p = CGPoint(x: f.midX - worldOrigin.x - size.width / 2, y: f.maxY - worldOrigin.y - 80)
+            let pill = CGRect(x: p.x - 14, y: p.y - 8, width: size.width + 28, height: size.height + 16)
+            ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.55))
+            ctx.addPath(CGPath(roundedRect: pill, cornerWidth: 10, cornerHeight: 10, transform: nil))
+            ctx.fillPath()
+            text.draw(at: p, withAttributes: attrs)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        start = convert(event.locationInWindow, from: nil)
+        current = start
+        needsDisplay = true
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        current = convert(event.locationInWindow, from: nil)
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        current = convert(event.locationInWindow, from: nil)
+        defer { start = nil; current = nil }
+        guard let r = rect, r.width > 120, r.height > 100 else {
+            onDone?(nil)
+            return
+        }
+        onDone?(CGRect(x: r.minX + worldOrigin.x, y: r.minY + worldOrigin.y, width: r.width, height: r.height))
+    }
+
+    override func rightMouseDown(with event: NSEvent) { onDone?(nil) }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { onDone?(nil) } else { super.keyDown(with: event) }
+    }
+}
+
+/// The window the box is drawn in: like the overlay, but it takes the keyboard
+/// so Escape can cancel.
+final class BoxDrawWindow: NSPanel {
+    init(frame: CGRect) {
+        super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.popUpMenuWindow)) + 1)
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
+        ignoresMouseEvents = false
+        isFloatingPanel = true
+        hidesOnDeactivate = false
+        isReleasedWhenClosed = false
+        animationBehavior = .none
+    }
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
+/// A faint outline of the box the spider is kept to.
+final class BoxOutlineView: NSView {
+    override var isFlipped: Bool { false }
+    override func draw(_ dirty: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let r = bounds.insetBy(dx: 1.5, dy: 1.5)
+        let path = CGPath(roundedRect: r, cornerWidth: 6, cornerHeight: 6, transform: nil)
+        ctx.setLineWidth(3)
+        ctx.setStrokeColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.18))
+        ctx.addPath(path); ctx.strokePath()
+        ctx.setLineWidth(1.2)
+        ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.55))
+        ctx.setLineDash(phase: 0, lengths: [6, 5])
+        ctx.addPath(path); ctx.strokePath()
     }
 }

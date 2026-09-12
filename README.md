@@ -157,19 +157,62 @@ Beyond the dragline it already trails on every leap:
   down from its anchor as it fades.
 - **The hammock.** Jumping spiders spin a silk retreat to sleep in. Once it
   has been about for a while it picks a top corner of the screen, walks or
-  leaps to it, and spends a few seconds going back and forth across the
-  corner laying strands: a sling strung from the wall to the underside of
-  the menu bar, sagging like a hammock, with the corner itself left open
-  behind it. Afterwards it lies in the sag and naps there now and then
-  (lazier spiders more often), seen through the silk. **Wipe your pointer
-  across it** to tear it down; a couple of good swipes clear it, and a
-  sleeping spider tumbles out startled. **Build a Hammock**, **Nap in the
-  Hammock** and **Clear the Hammock** are in the menu, and the hammock
-  survives a restart.
+  leaps to it, and spins one — in stages: it fastens the first thread to
+  the wall with a dab of its spinnerets, walks the thread out along to the
+  underside of the menu bar and fastens that end, then crosses and
+  re-crosses the sling laying a strand each way, abdomen going, hind legs
+  combing the silk out; last it turns about in the middle tying it off, and
+  tests it with a bounce. The result is loose and stringy like its other
+  silk: uneven strands that each hang a little slack, loops of silk
+  drooping beneath, slack cross-ties, tufts where it is stuck down — and
+  the corner itself left open behind it. There are four kinds — a long
+  shallow **sling**, a deep **pouch** it sinks right into, a loose
+  criss-cross **tangle**, and a wide shallow **cradle** made mostly of
+  drooping loops — and every one is a little different. To nap it climbs
+  in and curls up: the sling gives under its weight, it lies in the lowest
+  of the sag with every leg drawn in tight and the front pair folded over
+  its face, and breathes, seen through the silk. Lazier spiders nap there
+  more often. **Wipe your pointer across it** to tear it down; a couple of
+  good swipes clear it, and a sleeping spider tumbles out startled.
+  **Build a Hammock**, **Nap in the Hammock** and **Clear the Hammock** are
+  under Behavior, and the hammock (kind and all) survives a restart.
+
+## Feeding it
+
+**Feed** in the menu releases a cricket, a worm, or a fruit fly onto the
+desktop. Ground creatures drop in onto a ledge some way off — the cricket
+sits, twitching its antennae, and hops away when the spider closes in; the
+worm inches along, and a little faster when something big is near. The fly
+is let go in the air and buzzes about in a jittery random walk, perching on
+edges to clean itself and taking off again when the spider gets close.
+
+The spider drops whatever it was doing and hunts: it watches its quarry,
+walks round its own window to it or leaps to whichever ledge gets it
+nearest, walks in, stalks the last stretch low and slow, and pounces once
+it is close and the prey is sitting still — snatching whatever its fangs
+pass in the air, or catching a fly that comes within reach. A pounce is
+aimed at the prey, not the furniture: it sails past any window edge on the
+way and only grabs on once it is at its mark or has flown past it. Stalking
+works the way it does in life: a creature notices something big moving fast
+nearby at once, but something creeping up slowly not until it is very close
+— and a frightened cricket as often freezes as hops.
+
+You can pick the creatures up and move them, the same way as the spider:
+drag one somewhere else (or flick it) and it drops onto whatever is below,
+and the spider's interest is renewed. Then it settles down over the
+meal, holding it under its fangs with the front legs and chewing, and the
+catch shrinks away as it is eaten. A good meal leaves it visibly happier
+(the grin, the sparkle, the hearts, a wiggle) and well fed for a good
+while. Up to four things can be loose at once; anything that loses its
+surface (a window closing) falls to whatever is below.
 
 ## Windows coming over it
 
-If a window opens on top of the spider, or is dragged over it, it gets out
+The rim of the screen, the menu bar and the Dock are always its to walk:
+the spider draws above every window, so a window overlapping the edge of
+the display never blocks the edge, and it simply walks along the rim across
+it. A *window's* edge is different — a window in front of it hides it. If
+such a window opens on top of the spider, or is dragged over it, it gets out
 from under at once — within a poll or two — rather than sitting there as if
 perched on the glass. It either fires a line straight up and hauls itself,
 double time, to whatever is above (a window's underside, the menu bar, the
@@ -181,13 +224,46 @@ hammock (it bails out). "Covered" means either its edge is blocked by a
 window in front, or its body is: a window that only overlaps the body
 counts too.
 
-## Full-screen apps
+## Keeping it in a box
 
-When any app takes the whole display the spider gets out of the way: it
-goes to sleep in its hammock if it has one, otherwise it walks to one of
-the bottom corners and sleeps there, ignoring the pointer, until the app
-leaves full screen. (The full-screen window itself is never treated as
-furniture to climb on.)
+**Behavior ▸ Keep *name* in a Box…** dims the desktop and lets you drag out
+a rectangle (Escape cancels). That box is its patch. It is not a cage: a
+throw, a fall or a walk along an edge can take it outside — but the moment
+it finds itself out, getting back in is the first thing on its mind. It
+walks round its own window to the nearest stretch inside (whichever way
+round is open and shorter), or leaps to the nearest spot inside it can
+reach, or leaps to whatever gets it nearer and tries again; out for a very
+long while, it is fetched. Inside, it climbs whatever windows and screen
+edges fall within the box exactly as usual, turns back at the box's edge
+rather than leaping off, leaps only to spots inside, and prey is released
+inside. A box with nothing in it to stand on is different: it makes its
+way to it and hangs in from the top on a line, swaying lightly the way a
+draught would move it, shifting its height now and then, turning round, the
+odd little bounce or twirl — never a real swing.
+
+Boxed at all, it takes things easy: it decides things about half as often,
+rests and looks about far more, dashes about far less, and gives up
+swinging on lines and hammock trips altogether. The box shows as a faint
+dashed outline and survives a restart; **Redraw the Box…** and **Free
+*name* from the Box** sit alongside while it is set. Freed, it carries on
+from wherever it is and wanders off in its own time.
+
+## Full-screen video
+
+When any app takes a whole display — a film, most likely — the spider has
+cinema manners. On that display only the floor and the ceiling of the
+screen exist to walk on: no walls, no menu bar, no Dock, and no windows,
+none of which are visible under a full-screen video (so it can no longer
+end up walking on thin air where a hidden window used to be, or with only
+its legs showing at the edge). It walks to the nearest corner of the
+floor and lies down there, facing the picture with its head tipped right
+up at it (on the ceiling it hangs as usual in the corner, head turned to
+the picture), gaze drifting with whatever is happening on it; now and then
+it stretches its legs a short way, grooms, or glances your way; it does not leap,
+swing, spin silk, hunt or go to its hammock, it ignores the pointer, and
+only after a very long while might it nod off. When the video ends it
+carries on as before. (A window is counted as full screen when it covers
+the display, or all but the strip a notch takes.)
 
 ## Spider Studio
 
@@ -227,8 +303,8 @@ The design is saved as JSON in the app's defaults.
 | Hide *name* / Show *name* | toggle it off and on (the icon dims while hidden) |
 | Spider Studio… | customise it (see above) |
 | Come Here | it walks or jumps to your pointer |
-| Say Hi / Toss It / Swing! | |
-| Build a Hammock / Nap in the Hammock / Clear the Hammock | see Silk |
+| Behavior ▸ | everything it can be asked to do: Say Hi, Toss It, Swing!, Feed ▸, the hammock, and the box |
+| Behavior ▸ Build a Hammock / Nap in the Hammock / Clear the Hammock | see Silk |
 | Size | Tiny → Chonky |
 | Energy | Sleepy → Caffeinated (the same slider as the studio's) |
 | Follow the Cursor | whether it cares where your pointer is |
@@ -236,6 +312,8 @@ The design is saved as JSON in the app's defaults.
 | Click to Pick Up | turn off to make it fully click-through |
 | Pause | freeze it |
 | Launch at Login | |
+| Bring *name* to the Middle | lost it? puts it in the air in the middle of the main screen, letting go of everything (line, hammock, pointer, meal), and it falls from there onto whatever is below |
+| Reset Everything | starts over: the app relaunches itself, rebuilding every window and re-reading the desktop. The design, settings and hammock are kept — they are saved |
 
 ## Permissions
 
@@ -248,6 +326,7 @@ entitlement — window *titles* and screen contents would, and are never read.
 |---|---|
 | `Math.swift` | vectors, springs, easing, smooth noise |
 | `Surfaces.swift` | turns screens/windows/Dock/menu bar into walkable loops |
+| `Prey.swift` | the creatures: their behaviour, drawing, and the click-through window they live in |
 | `WindowTracker.swift` | polls window rectangles — 30 Hz while any window is moving, 10 Hz when the desktop is still |
 | `Spider.swift` | state machine, physics, gait, decisions |
 | `SpiderRenderer.swift` | all the drawing, in body-local coordinates, parametrised by the look |
@@ -265,12 +344,13 @@ entitlement — window *titles* and screen contents would, and are never read.
 | `./tools/film.sh` | filmstrip of the real walk cycle along each screen edge, with the edge drawn in, plus a standoff-drift readout |
 | `./tools/film.sh out.png --cycle` | one full gait cycle at 2×, for judging the walk itself |
 | `./tools/film.sh out.png --desk` | the spider at actual size on a mock desktop, on every kind of edge — the most useful single view |
+| `./tools/film.sh out.png --hunt cricket\|worm\|fly` | releases prey on a mock desktop and films the chase, with close-ups of the pounce and the meal |
 | `./tools/film.sh out.png --jump [--under]` | a real leap drawn along its own trajectory — onto a window's side, or up onto its underside |
 | `./tools/film.sh out.png --hang` | descending, hanging and climbing a dragline |
 | `./tools/film.sh out.png --swing [--floor \| --fromhang]` | a swing on a line, onion-skinned, from a window top, the floor, or worked up from a hang; prints where each pass reverses |
 | `./tools/film.sh out.png --hammock` | the hammock being spun in a corner, panel by panel, and slept in |
 | `./tools/film.sh out.png --strip corner` | walks it round a window corner, onion-skinned in world space |
-| `./tools/film.sh out.png --strip turn` / `--strip peek` / any activity name | filmstrip of that animation |
+| `./tools/film.sh out.png --strip turn` / `--strip peek` / any activity name (`watch` included) | filmstrip of that animation |
 | `./tools/sim.sh` | runs the spider headless against a synthetic desktop for four simulated minutes, then a scripted pass over grab / throw / rappel / window-closes-underneath / petting, swing / hammock build / nap / wipe-away, then every temperament preset for 150 s each |
 | `./tools/gallery.sh` | every studio option thumbnailed the way the studio shows it, plus random designs mid-walk — `build/studio.png` |
 | `SPIDER_STUDIO_SHOT=dir ./Spider.app/Contents/MacOS/DesktopSpider` | writes a PNG of each studio tab to `dir` and quits |
@@ -325,6 +405,35 @@ Two things there are less obvious than they look:
   check's delay, the crouch was restarted forever — a spider under a window
   froze in place. `escapeUntil` holds the check off while an escape is in
   progress.
+- **The top of the screen is not a surface.** The very top edge of a display
+  is under the menu bar, where the spider cannot be seen; it used to walk
+  along it and vanish, and a throw could leave it lost up there. On a display
+  with a menu bar the border is now a U — down one wall, along the floor, up
+  the other — with the walls stopping short of the menu bar, under whose lip
+  it hangs instead. (Under a full-screen video there is no menu bar, and the
+  ceiling is a surface again.)
+- **A hammock that is not being built does not exist.** Planning a hammock
+  used to stake out the corner at once, and if the trip there was called off
+  (a full-screen video, a long detour) the two anchor tufts stayed in the
+  corner for ever with nothing to build. Now nothing is drawn until the first
+  strand is laid, an unfinished hammock nobody is working on fades away on
+  its own, a half-made one goes with a single wipe of the pointer, and the
+  menu offers **Clear the Hammock** whenever there is any silk there at all.
+- **A line hung near a screen edge could pin it dead still.** The sideways
+  snag that keeps a swing on the display reversed the angular velocity on
+  every frame the body was inside the edge margin — so a line whose anchor
+  was itself inside that margin had its motion halved and reversed sixty
+  times a second and never moved again, while the spider kept trying to
+  work up a swing. It now snags only when heading further out, and a swing
+  with no motion in it is treated as a hang.
+- **A low window is a step down, not a jump.** Hanging under a window that
+  sits just above the floor, the spider's body is at almost the same height
+  as it would be standing on the floor, so no jump target ever qualified
+  (the search wanted a spot at least 70 px away) and every leap it did pick
+  would have fired straight into the window it was hanging from. Now
+  anything below counts as a drop, however short; a launch that points into
+  the surface it is on becomes a let-go-and-fall with a push away from it;
+  and from any underside it as often as not simply lets go.
 - **A lean never moves the feet.** `pitch` used to be folded into the sprite's
   heading, which tilted the whole drawing — legs, feet and all — so a peek
   over a ledge lifted the back feet off it. It is now `pose.bodyPitch`: the

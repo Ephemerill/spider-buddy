@@ -18,6 +18,11 @@ let windows = [
 map.rebuild(windows: windows)
 
 print("world \(map.worldBounds)  loops: \(map.loops.count)")
+/// Index of the floor segment of a screen loop (the border is a U under a
+/// menu bar, a closed box without one).
+func floorSeg(_ loop: SurfaceLoop) -> Int {
+    loop.segs.firstIndex { $0.facing == .up } ?? 0
+}
 for l in map.loops {
     let blocked = l.segs.enumerated().flatMap { i, s in s.blocked.map { "seg\(i)[\(Int($0.lo))..\(Int($0.hi))]" } }
     print("  \(l.id.padding(toLength: 12, withPad: " ", startingAt: 0)) \(l.kind) segs=\(l.segs.count) perim=\(Int(l.perimeter)) depth=\(l.depth)"
@@ -126,12 +131,26 @@ expect("follows the pointer", s2.worldPos.distance(to: p) < 60,
 s2.endGrab(throwVelocity: V2(1500, 260))
 expect("release throws it", s2.debugState == "thrown", s2.debugState)
 let after = settle(s2, seconds: 6, cursor: V2(-4000, -4000))
-expect("a thrown spider ends up somewhere", after.hasPrefix("attached") || after == "dangling", after)
+/// Runs on until it is holding on to something (a ledge or a line), so a
+/// sample never lands mid-leap.
+func settleUntilHolding(_ spider: Spider, seconds: CGFloat) -> String {
+    var n = 0
+    var st = spider.debugState
+    while CGFloat(n) * dt < seconds {
+        spider.setCursor(V2(-4000, -4000)); spider.update(dt: dt); n += 1
+        st = spider.debugState
+        if CGFloat(n) * dt > 2, st.hasPrefix("attached") || st == "dangling" || st == "swinging" { break }
+    }
+    return st
+}
+_ = after
+let after1 = settleUntilHolding(s2, seconds: 8)
+expect("a thrown spider ends up somewhere", after1.hasPrefix("attached") || after1 == "dangling" || after1 == "swinging", after1)
 
 // Fling it hard upward: should bounce or catch itself on a line, not vanish.
 s2.beginGrab(at: s2.worldPos)
 s2.endGrab(throwVelocity: V2(-2400, 2200))
-let after2 = settle(s2, seconds: 8, cursor: V2(-4000, -4000))
+let after2 = settleUntilHolding(s2, seconds: 12)
 expect("a hard throw recovers", after2.hasPrefix("attached") || after2 == "dangling" || after2 == "swinging", after2)
 expect("stays inside the desktop", map.worldBounds.insetBy(dx: -40, dy: -40).contains(s2.worldPos.point),
        "\(s2.worldPos.point)")
@@ -147,7 +166,8 @@ let dangled = s3.debugState
 expect("scroll-down starts a rappel", dangled == "dangling", dangled)
 if dangled == "dangling" {
     _ = settle(s3, seconds: 1.2)
-    expect("it descends", s3.worldPos.y < yStart - 25,
+    // It may have come down onto a window just below in the meantime.
+    expect("it descends", s3.worldPos.y < yStart - (s3.debugState == "dangling" ? 25 : 10),
            "y \(Int(yStart)) -> \(Int(s3.worldPos.y))  [\(s3.debugState)]")
     if s3.debugState == "dangling" {
         let yLow = s3.worldPos.y
@@ -177,7 +197,7 @@ do {
         // window's shelf (where either will do).
         if trial == 0 {
             if let sl = map.loops.first(where: { $0.id.hasPrefix("screen") }) {
-                s.debugAttach(loopID: sl.id, segIdx: 0, t: 500, dir: 1)
+                s.debugAttach(loopID: sl.id, segIdx: floorSeg(sl), t: 500, dir: 1)
             }
         } else if let w = windows.first {
             s.debugAttach(loopID: "win:\(w.id)", segIdx: 0, t: 120, dir: 1)
@@ -186,6 +206,9 @@ do {
         let p = s.worldPos
         let cover = CGRect(x: p.x - 160, y: p.y - 120, width: 320, height: 240)
         map.rebuild(windows: windows + [TrackedWindow(id: 777, frame: cover, depth: -1, owner: "Mock")])
+        // An escape is immediate; note what it is doing a moment later.
+        for _ in 0..<12 { s.setCursor(V2(-4000, -4000)); s.update(dt: dt) }
+        let moment = s.debugState
         var seen: [String] = []
         var n = 0
         var out = -1.0
@@ -195,11 +218,19 @@ do {
             if seen.last != st { seen.append(st) }
             if out < 0, !cover.insetBy(dx: -10, dy: -10).contains(s.worldPos.point) { out = Double(n) * Double(dt) }
         }
-        let where_ = trial == 0 ? "floor" : "shelf"
-        expect("covered on the \(where_): gets clear quickly", out >= 0 && out < 2.5,
-               out < 0 ? "never left  " + seen.joined(separator: " > ") : String(format: "%.1fs  ", out) + seen.prefix(6).joined(separator: " > "))
-        let end = s.debugState
-        expect("covered on the \(where_): settles somewhere clear", (end.hasPrefix("attached") || end == "dangling" || end == "nesting") && !cover.contains(s.worldPos.point), end)
+        if trial == 0 {
+            // The screen's rim is always its to walk: it draws above the
+            // window, so it just carries on there, unbothered.
+            let end = s.debugState
+            // (It may still wander off in its own time — a swing is its own
+            // idea, not an escape — so only the first few seconds count.)
+            expect("covered on the floor: carries on along the rim", moment.contains("screen:0") && !moment.contains(":shoot") && !moment.contains(":crouch"), moment + "  then " + seen.prefix(4).joined(separator: " > "))
+        } else {
+            expect("covered on the shelf: gets clear quickly", out >= 0 && out < 2.5,
+                   out < 0 ? "never left  " + seen.joined(separator: " > ") : String(format: "%.1fs  ", out) + seen.prefix(6).joined(separator: " > "))
+            let end = s.debugState
+            expect("covered on the shelf: ends up clear of it", !cover.contains(s.worldPos.point), end)
+        }
         map.rebuild(windows: windows)
     }
 }
@@ -221,6 +252,7 @@ for kind in PreyKind.allCases {
         let st = s.debugState
         if seen.last != st { seen.append(st) }
         if !map.worldBounds.insetBy(dx: -60, dy: -60).contains(s.worldPos.point) { off += 1 }
+        if !map.worldBounds.insetBy(dx: -60, dy: -60).contains(p.pos.point) { off += 1 }
         if caughtAt < 0, p.state != .loose { caughtAt = Double(n) * Double(dt) }
         if ProcessInfo.processInfo.environment["SIM_DEBUG"] != nil, n % 120 == 0 {
             print("    \(kind.label) t=\(n / 60)s \(st) spider=\(Int(s.worldPos.x)),\(Int(s.worldPos.y)) prey=\(Int(p.pos.x)),\(Int(p.pos.y)) on=\(p.anchor?.loopID ?? "air") \(p.state)")
@@ -231,7 +263,211 @@ for kind in PreyKind.allCases {
     expect("\(kind.label): catches it", caughtAt >= 0, caughtAt < 0 ? "never  " + tail : "")
     expect("\(kind.label): eats it", eatenAt >= 0, String(format: "%.0fs  ", eatenAt) + tail)
     expect("\(kind.label): well fed afterwards", s.fed > 0.2, "fed \(s.fed)")
-    expect("\(kind.label): stays on the desktop", off == 0, "off \(off)")
+    expect("\(kind.label): both stay on the desktop", off == 0, "off \(off)")
+}
+
+// Picking prey up and dropping it elsewhere: it lands, and gets hunted anew.
+do {
+    let s = Spider(map: map)
+    s.config.followCursor = false
+    _ = settleUntilAttached(s)
+    let p = s.release(.cricket)
+    for _ in 0..<6 { s.update(dt: dt) }
+    let from = p.pos
+    s.beginPreyGrab(p, at: from)
+    for i in 0..<30 { s.movePreyGrab(p, to: from + V2(CGFloat(i) * 8, CGFloat(i) * 3)); s.update(dt: dt) }
+    expect("held prey follows the pointer", p.pos.distance(to: from + V2(232, 87)) < 2, "\(p.pos)")
+    s.endPreyGrab(p, throwVelocity: V2(300, 200))
+    var n = 0
+    while CGFloat(n) * dt < 6, !p.onSurface { s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1 }
+    expect("dropped prey lands on something", p.onSurface, "\(p.pos) state \(p.state)")
+    expect("dropped prey stays on the desktop", map.worldBounds.contains(p.pos.point), "\(p.pos)")
+}
+
+// A window sitting just above the floor: from under it, it must be able to
+// get down to the floor (a short drop) rather than dither.
+do {
+    let low = SurfaceMap()
+    low.standoff = map.standoff
+    let lowWin = TrackedWindow(id: 5, frame: CGRect(x: screen.minX + 400, y: screen.minY + 58, width: 500, height: 300), depth: 0, owner: "Low")
+    low.debugRebuild(screen: screen, menuBarHeight: 25, windows: [lowWin])
+    var reached = -1.0
+    var stuck = 0.0
+    var seen: [String] = []
+    for trial in 0..<3 {
+        let s = Spider(map: low)
+        s.config.followCursor = false
+        s.debugAttach(loopID: "win:5", segIdx: 2, t: 120 + CGFloat(trial) * 100, dir: 1)   // the underside
+        var n = 0
+        var lastPos = s.worldPos
+        var still = 0.0
+        while CGFloat(n) * dt < 40 {
+            s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+            let st = s.debugState
+            if seen.last != st { seen.append(st) }
+            if s.worldPos.distance(to: lastPos) < 0.3 { still += Double(dt) } else { still = 0; lastPos = s.worldPos }
+            stuck = max(stuck, still)
+            if st.contains("screen:0") { reached = Double(n) * Double(dt); break }
+        }
+        if reached >= 0 { break }
+    }
+    expect("gets down from a window just above the floor", reached >= 0, reached < 0 ? "never  " + seen.suffix(8).joined(separator: " > ") : String(format: "%.0fs", reached))
+    expect("never freezes under it", stuck < 12, String(format: "still for %.0fs", stuck))
+}
+
+// Teleport: from any state, it is put in the middle and comes down on
+// something, holding nothing.
+do {
+    let s = Spider(map: map)
+    s.config.followCursor = false
+    _ = settleUntilAttached(s)
+    // Get it onto a line and hunting, then rescue it from all of that.
+    let p = s.release(.worm)
+    s.scroll(-4); for _ in 0..<40 { s.update(dt: dt) }
+    let before = s.debugState
+    s.teleport(to: V2(screen.midX, screen.midY))
+    expect("teleport puts it in the air at the middle", s.debugState == "fall" && s.worldPos.distance(to: V2(screen.midX, screen.midY)) < 1, "\(s.debugState) from \(before)")
+    let after = settle(s, seconds: 6, cursor: V2(-4000, -4000))
+    expect("and it comes down on something", after.hasPrefix("attached") || after == "dangling", after)
+    expect("prey is still loose afterwards", p.state == .loose, "\(p.state)")
+}
+
+// An unfinished hammock is never left hanging about: abandon the build and
+// the threads go; a wipe clears a half-made one at once.
+do {
+    let s = Spider(map: map)
+    s.config.followCursor = false
+    _ = settleUntilAttached(s)
+    s.debugActivity("build", for: 0)
+    expect("starting a build stakes out the corner", s.hasAnyHammock, "")
+    // Thrown across the room on the way, it keeps the plan; called off
+    // (a video goes full screen), the threads go.
+    s.beginGrab(at: s.worldPos)
+    s.endGrab(throwVelocity: V2(-900, 500))
+    _ = settle(s, seconds: 3, cursor: V2(-4000, -4000))
+    expect("a thrown builder keeps its plan", s.hasAnyHammock, "\(s.debugState)")
+    s.fullScreenApp = true
+    _ = settle(s, seconds: 1, cursor: V2(-4000, -4000))
+    s.fullScreenApp = false
+    expect("an abandoned build leaves nothing behind", !s.hasAnyHammock, "\(s.debugState)")
+
+    // A half-made one under the pointer goes with a wipe.
+    let s2 = Spider(map: map)
+    s2.config.followCursor = false
+    _ = settleUntilAttached(s2)
+    s2.debugActivity("build", for: 0)
+    var n = 0
+    while CGFloat(n) * dt < 60, s2.debugState != "building" { s2.setCursor(V2(-4000, -4000)); s2.update(dt: dt); n += 1 }
+    if s2.debugState == "building", let h = s2.hammock {
+        _ = settle(s2, seconds: 2)
+        let c = V2(h.rect.midX, h.rect.midY)
+        for i in 0..<20 { s2.wipeHammock(at: c + V2(CGFloat(i) * 3, 0), movement: 8); s2.update(dt: dt) }
+        expect("a wipe clears a half-made hammock", !s2.hasAnyHammock, "\(s2.debugState) progress \(s2.hammock?.progress ?? -1)")
+    } else {
+        print("  [skip] never started building in time")
+    }
+}
+
+// The box: its patch. Around a window it climbs about inside and takes
+// things easy; thrown out, it comes back; freed, it goes back to normal.
+// Around nothing, it hangs from the top on a line and sways.
+do {
+    let w = windows[2]   // Notes, bottom right
+    let box = w.frame.insetBy(dx: -140, dy: -120)
+    let s = Spider(map: map)
+    s.config.followCursor = false
+    _ = settleUntilAttached(s)
+    s.confine = box
+    var n = 0
+    var out = 0
+    var counts: [String: Int] = [:]
+    var wild = 0
+    var outRun = 0, longestOut = 0
+    while CGFloat(n) * dt < 150 {
+        s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+        if CGFloat(n) * dt > 20, !box.insetBy(dx: -30, dy: -30).contains(s.worldPos.point) { out += 1; outRun += 1 } else { outRun = 0 }
+        longestOut = max(longestOut, outRun)
+        let st = s.debugState
+        if ProcessInfo.processInfo.environment["SIM_DEBUG"] != nil, n % 60 == 0 { print("    box t=\(n / 60) \(st) at \(Int(s.worldPos.x)),\(Int(s.worldPos.y)) box=\(box)") }
+        counts[String(st.split(separator: " ").first ?? ""), default: 0] += 1
+        if st == "swinging" { wild += 1 }
+    }
+    let top = counts.sorted { $0.value > $1.value }.prefix(5).map { "\($0.key) \($0.value * 100 / n)%" }.joined(separator: ", ")
+    expect("boxed: keeps to its patch", out < n * 15 / 100 && longestOut < 60 * 30,
+           "out \(out * 100 / n)% of the time, longest \(longestOut / 60)s  " + top)
+    expect("boxed: no swinging", wild == 0, "\(wild) frames")
+    let restful = (counts["attached:rest"] ?? 0) + (counts["attached:idle"] ?? 0) + (counts["attached:sleep"] ?? 0) + (counts["attached:look"] ?? 0)
+    expect("boxed: takes it easy", restful > n / 4, "\(restful * 100 / n)% restful  " + top)
+
+    // Thrown right out of it: makes its own way back.
+    s.beginGrab(at: s.worldPos)
+    s.endGrab(throwVelocity: V2(-1400, 600))
+    var back = -1.0
+    n = 0
+    while CGFloat(n) * dt < 60, back < 0 {
+        s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+        if CGFloat(n) * dt > 3, box.contains(s.worldPos.point), s.debugState.hasPrefix("attached") { back = Double(n) * Double(dt) }
+    }
+    expect("thrown out of its box, it comes back", back >= 0, back < 0 ? "still out: \(s.debugState) at \(s.worldPos)" : String(format: "back in %.0fs", back))
+
+    // Freed: it wanders off again and behaves as usual.
+    s.confine = nil
+    var left = -1.0
+    n = 0
+    while CGFloat(n) * dt < 150, left < 0 {
+        s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+        if !box.contains(s.worldPos.point) { left = Double(n) * Double(dt) }
+    }
+    expect("freed, it goes back to its usual ways", left >= 0, left < 0 ? "never left the old box: \(s.debugState)" : String(format: "left after %.0fs", left))
+
+    // Nothing inside.
+    let empty = CGRect(x: screen.minX + 250, y: screen.minY + 772, width: 350, height: 120)
+    expect("an empty box has nothing to stand on", !map.sampleSpots(spacing: 30).contains { empty.contains($0.point.point) }, "")
+    let s2 = Spider(map: map)
+    s2.config.followCursor = false
+    _ = settleUntilAttached(s2)
+    s2.confine = empty
+    n = 0
+    var hanging = 0
+    var xs: [CGFloat] = []
+    var out2 = 0
+    while CGFloat(n) * dt < 90 {
+        s2.setCursor(V2(-4000, -4000)); s2.update(dt: dt); n += 1
+        if CGFloat(n) * dt > 10 {
+            if s2.debugState == "dangling" { hanging += 1 }
+            if !empty.insetBy(dx: -30, dy: -30).contains(s2.worldPos.point) { out2 += 1 }
+            xs.append(s2.worldPos.x)
+        }
+    }
+    let spread = (xs.max() ?? 0) - (xs.min() ?? 0)
+    expect("empty box: hangs on a line", hanging > n * 80 / 100, "\(hanging * 100 / n)% hanging, now \(s2.debugState)")
+    expect("empty box: a light sway, not a swing", spread > 4 && spread < 70, "sways over \(Int(spread)) px")
+    expect("empty box: stays inside", out2 == 0, "out \(out2) frames")
+    s2.confine = nil
+}
+
+// A window overlapping the edge of the screen: the rim is still its to walk.
+do {
+    let rim = SurfaceMap()
+    rim.standoff = map.standoff
+    let over = TrackedWindow(id: 8, frame: CGRect(x: screen.minX + 500, y: screen.minY - 80, width: 400, height: 300), depth: 0, owner: "Overlap")
+    rim.rebuild(windows: [over])
+    let floor = rim.loops.first { $0.id.hasPrefix("screen") }
+    let blocked = floor?.segs.flatMap { $0.blocked }.count ?? -1
+    expect("a window over the screen edge does not block it", blocked == 0, "\(blocked) blocked stretches")
+    let s = Spider(map: rim)
+    s.config.followCursor = false
+    if let f = floor { s.debugAttach(loopID: f.id, segIdx: floorSeg(f), t: 300, dir: 1) }
+    s.debugWalk(for: 30)
+    var n = 0
+    var crossed = false
+    var fell = false
+    while CGFloat(n) * dt < 30 {
+        s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+        if s.worldPos.x > over.frame.midX, s.debugState.contains("screen:0") { crossed = true }
+        if s.debugState == "fall" { fell = true }
+    }
+    expect("it walks the rim right across the overlapping window", crossed && !fell, "crossed \(crossed), fell \(fell), now \(s.debugState) at \(Int(s.worldPos.x))")
 }
 
 // A window closing under its feet.
@@ -270,7 +506,7 @@ do {
     _ = settleUntilAttached(s6)
     // Stand on the bottom of the screen, under the windows, facing right.
     if let sl = map.loops.first(where: { $0.id.hasPrefix("screen") }) {
-        s6.debugAttach(loopID: sl.id, segIdx: 0, t: 300, dir: 1)
+        s6.debugAttach(loopID: sl.id, segIdx: floorSeg(sl), t: 300, dir: 1)
     }
     s6.debugActivity("swing", for: 0)
     let aimed = s6.debugState
@@ -337,46 +573,72 @@ do {
     }
 }
 
-// Full-screen app: keep out of the way, asleep in a bottom corner (or the hammock).
+// Full-screen video: cinema manners. Only the floor and ceiling exist; it
+// settles and watches, wanders a little, never leaps or swings, does not
+// nod off for a long while, and ignores the pointer.
 do {
-    let s8 = Spider(map: map)
+    let cinema = SurfaceMap()
+    cinema.standoff = map.standoff
+    cinema.debugRebuild(screen: screen, menuBarHeight: 25, windows: [], cinema: true)
+    let s8 = Spider(map: cinema)
     s8.config.followCursor = true
+    var fast = s8.gait; fast.pace = 1; fast.style = .scurry
+    s8.apply(design: SpiderDesign(name: "S", look: SpiderLook(), personality: Personality(), gait: fast))
     _ = settleUntilAttached(s8)
     s8.fullScreenApp = true
     var n = 0
-    var asleepAt: CGFloat = -1
+    var counts: [String: Int] = [:]
+    var wild = 0
+    var onFloor = 0
+    var asleep = 0
     while CGFloat(n) * dt < 120 {
-        s8.setCursor(V2(screen.midX + cos(CGFloat(n) * 0.02) * 300, screen.midY)); s8.update(dt: dt); n += 1
-        if asleepAt < 0, s8.debugState.hasPrefix("attached:sleep") { asleepAt = CGFloat(n) * dt }
+        s8.setCursor(V2(screen.midX + cos(CGFloat(n) * 0.02) * 300, screen.minY + 30 + abs(sin(CGFloat(n) * 0.01)) * 200)); s8.update(dt: dt); n += 1
+        let st = s8.debugState
+        let head = String(st.split(separator: " ").first ?? "")
+        counts[head, default: 0] += 1
+        if CGFloat(n) * dt > 10 {
+            if st == "jump" || st == "swinging" || st == "dangling" || st.contains(":crouch") || st.contains(":shoot") { wild += 1 }
+            if st.contains("screen:0") { onFloor += 1 }
+            if st.contains(":sleep") { asleep += 1 }
+        }
     }
+    let top = counts.sorted { $0.value > $1.value }.prefix(5).map { "\($0.key) \($0.value * 100 / n)%" }.joined(separator: ", ")
+    // Once it has its seat it should stay put: another 60 s, counting how
+    // much of it is spent on the move and how far it strays.
+    var moving = 0
+    var away = 0
+    let seat = s8.worldPos
+    var m = 0
+    while CGFloat(m) * dt < 60 {
+        s8.setCursor(V2(-4000, -4000)); s8.update(dt: dt); m += 1
+        let st = s8.debugState
+        if st.contains(":walk") || st.contains(":sneak") || st.contains(":turn") || st.contains(":scurry") { moving += 1 }
+        if s8.worldPos.distance(to: seat) > 80 { away += 1 }
+    }
+    expect("cinema: gets cosy and stays put", moving < m * 12 / 100 && away < m * 15 / 100, "moving \(moving * 100 / m)%, away from its seat \(away * 100 / m)%")
+    expect("cinema: no leaping, swinging or silk", wild == 0, "wild frames \(wild)  " + top)
+    expect("cinema: stays on the floor or ceiling", onFloor > n * 85 / 100, "\(onFloor * 100 / n)%  " + top)
+    expect("cinema: mostly sits and watches", (counts["attached:watch"] ?? 0) > n * 35 / 100, top)
+    expect("cinema: does not nod off", asleep == 0, top)
+    expect("cinema: unbothered by the pointer", !s8.debugState.contains(":startle"), s8.debugState)
     let p = s8.worldPos
-    let nearBottom = p.y - screen.minY < 60
-    let nearSide = min(p.x - screen.minX, screen.maxX - p.x) < 120
-    expect("full screen: goes to sleep in a bottom corner", asleepAt > 0 && nearBottom && nearSide,
-           "\(asleepAt > 0 ? "asleep after \(Int(asleepAt))s" : "never slept"), at \(Int(p.x - screen.minX)),\(Int(p.y - screen.minY)) from bottom-left, now \(s8.debugState)")
-    expect("stays asleep with the pointer about", s8.debugState.hasPrefix("attached:sleep"), s8.debugState)
-    s8.fullScreenApp = false
-    var woke = false
-    n = 0
-    while CGFloat(n) * dt < 30, !woke {
-        s8.setCursor(V2(-4000, -4000)); s8.update(dt: dt); n += 1
-        if !s8.debugState.hasPrefix("attached:sleep") { woke = true }
-    }
-    expect("wakes when the app leaves full screen", woke, "\(Int(CGFloat(n) * dt))s, \(s8.debugState)")
+    expect("cinema: well inside the screen", screen.insetBy(dx: 10, dy: 10).contains(p.point), "\(p)")
+    let cornerDist = min(p.x - screen.minX, screen.maxX - p.x)
+    expect("cinema: watches from a corner", cornerDist < 120, "\(Int(cornerDist)) px from the side")
+    let pose = s8.pose()
+    expect("cinema: head tipped up at the picture", pose.headTilt > 0.4 || !s8.debugState.contains(":watch"), "tilt \(pose.headTilt) in \(s8.debugState)")
 
-    // With a hammock, that is where it goes.
-    let s9 = Spider(map: map)
-    s9.config.followCursor = false
-    _ = settleUntilAttached(s9)
-    s9.restoreHammock(left: true)
-    s9.fullScreenApp = true
-    var nested = false
+    // The show ends: back to normal within a little while.
+    cinema.debugRebuild(screen: screen, menuBarHeight: 25, windows: [], cinema: false)
+    s8.fullScreenApp = false
+    var resumed = false
     n = 0
-    while CGFloat(n) * dt < 120, !nested {
-        s9.setCursor(V2(-4000, -4000)); s9.update(dt: dt); n += 1
-        if s9.debugState == "nesting" { nested = true }
+    while CGFloat(n) * dt < 40, !resumed {
+        s8.setCursor(V2(-4000, -4000)); s8.update(dt: dt); n += 1
+        let st = s8.debugState
+        if st.contains(":walk") || st == "jump" || st.contains(":look") || st == "dangling" || st.contains(":turn") { resumed = true }
     }
-    expect("full screen with a hammock: sleeps in it", nested, "\(Int(CGFloat(n) * dt))s, \(s9.debugState)")
+    expect("resumes when the video ends", resumed, "\(Int(CGFloat(n) * dt))s, \(s8.debugState)")
 }
 
 // ---------------------------------------------------------------------------

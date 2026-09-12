@@ -79,6 +79,12 @@ final class Prey {
     private var stepBurst: CGFloat = 0
     var age: CGFloat = 0
     private var lastSpider = V2.zero
+    private var lastSpiderPos = V2.zero
+    private var frozenUntil: CGFloat = 0
+    /// On the pointer.
+    var held = false
+    /// A fly keeps to this area, if set (the spider's box).
+    var home: CGRect?
 
     init(kind: PreyKind, id: Int, at p: V2, scale: CGFloat) {
         self.kind = kind
@@ -92,7 +98,18 @@ final class Prey {
     }
 
     var onSurface: Bool { anchor != nil }
-    var airborne: Bool { anchor == nil && state == .loose }
+    var airborne: Bool { anchor == nil && state == .loose && !held }
+    /// Drawn size: the creatures are a good deal bigger than life so they
+    /// can be seen.
+    var drawScale: CGFloat { scale * 1.7 }
+
+    /// Let go of the pointer: falls (or flies off) from wherever it is.
+    func drop() {
+        anchor = nil
+        airFor = 0
+        perchTarget = nil
+        if kind.flies { nextMove = randRange(1, 3) }
+    }
 
     /// Where the spider has to get its fangs to.
     var mouthPoint: V2 { pos }
@@ -101,6 +118,8 @@ final class Prey {
     @discardableResult
     private func settle(on map: SurfaceMap, reach: CGFloat) -> Bool {
         guard let spot = map.nearestSpot(to: pos, within: reach + map.standoff) else { return false }
+        // Ground creatures only ever sit on top of things; a fly perches anywhere.
+        guard kind.flies || spot.seg.facing == .up else { return false }
         let edge = spot.point - spot.seg.normal * map.standoff
         guard pos.distance(to: edge) < reach, (edge - pos).dot(vel) >= -40 || vel.length < 40 else { return false }
         anchor = spot.anchor
@@ -120,7 +139,7 @@ final class Prey {
         let seg = loop.segs[a.segIdx]
         // The loop's line stands off the edge by the spider's body height;
         // this creature sits its own height above the edge itself.
-        let lift = map.standoff - kind.clearance * scale
+        let lift = map.standoff - kind.clearance * drawScale
         pos = seg.point(at: a.t) - seg.normal * lift
         surfaceNormal = seg.normal
         heading = seg.angle
@@ -158,11 +177,28 @@ final class Prey {
         case .loose:
             break
         }
+        if held {
+            // Dangling from the pointer: wriggling, upright.
+            heading = approach(heading, sin(phase * 8) * 0.25, 8, dt)
+            fear = min(1, fear + dt * 2)
+            return
+        }
 
-        // Fear of the spider: grows fast when it is near, fades slowly.
+        // Fear of the spider: something big moving fast nearby is alarming;
+        // something creeping up slowly is not noticed until it is very close.
+        // That is what makes stalking work.
         let dSpider = spider.distance(to: pos)
+        let spiderSpeed = dt > 0 ? (spider - lastSpiderPos).length / dt : 0
+        lastSpiderPos = spider
         let near = dSpider < 130 * scale
-        fear = near ? min(1, fear + dt * 3) : max(0, fear - dt * 0.4)
+        let veryNear = dSpider < 45 * scale
+        if near && (spiderSpeed > 70 || veryNear) {
+            fear = min(1, fear + dt * 3)
+        } else if near {
+            fear = min(1, fear + dt * 0.25)
+        } else {
+            fear = max(0, fear - dt * 0.4)
+        }
 
         // Its surface may have gone (a window closed) — then it falls.
         if let a = anchor, map.loop(a.loopID) == nil { anchor = nil; vel = .zero }
@@ -207,6 +243,9 @@ final class Prey {
         guard nextMove <= 0 else { return }
         nextMove = randRange(0.7, 3.2)
         let away: CGFloat = (pos - spider).dot(V2.angle(heading)) >= 0 ? 1 : -1
+        // A frightened cricket as often as not freezes and hopes.
+        if fear > 0.3, t < frozenUntil { return }
+        if fear > 0.3, chance(0.5) { frozenUntil = t + randRange(1.2, 2.6); nextMove = 0.3; return }
         if fear > 0.3 || chance(0.55) {
             // A hop, away from the spider if it is about.
             moveDir = fear > 0.3 ? away : (chance(0.5) ? 1 : -1)
@@ -257,10 +296,12 @@ final class Prey {
         }
         // In the air: a jittery random walk, kept on its screen, with a
         // slow drift toward wherever it is thinking of landing.
-        let f = map.screenFrame(containing: pos).insetBy(dx: 40, dy: 40)
+        let f = (home ?? map.screenFrame(containing: pos)).insetBy(dx: 40, dy: 40)
         var acc = V2(randRange(-1, 1), randRange(-1, 1)) * 900
         if pos.x < f.minX { acc.x += 600 } else if pos.x > f.maxX { acc.x -= 600 }
         if pos.y < f.minY { acc.y += 700 } else if pos.y > f.maxY { acc.y -= 600 }
+        // It likes the lower half of the room, where the food is.
+        if pos.y > f.midY { acc.y -= 260 }
         // It does not like the spider much, but it is not clever about it.
         let dS = pos - spider
         if dS.length < 90 * scale { acc += dS.normalized * 500 }
@@ -269,7 +310,7 @@ final class Prey {
             // Time to land: pick somewhere near.
             if let spot = map.nearestSpot(to: pos + vel * 0.2 + V2(0, -60), within: 260 * scale),
                spot.point.distance(to: spider) > 60 * scale {
-                let edge = spot.point - spot.seg.normal * (map.standoff - kind.clearance * scale)
+                let edge = spot.point - spot.seg.normal * (map.standoff - kind.clearance * drawScale)
                 perchTarget = (edge, spot.anchor)
             } else {
                 nextMove = randRange(1, 3)
@@ -297,7 +338,7 @@ final class Prey {
 
     /// Bounding box for redraws, in world px.
     var bounds: CGRect {
-        let r = 22 * scale
+        let r = 22 * drawScale
         return CGRect(x: pos.x - r, y: pos.y - r, width: r * 2, height: r * 2)
     }
 }
@@ -309,7 +350,7 @@ enum PreyRenderer {
     static func draw(_ p: Prey, in ctx: CGContext) {
         ctx.saveGState()
         ctx.setAllowsAntialiasing(true)
-        let s = p.scale * (1 - p.eaten * 0.85)
+        let s = p.drawScale * (1 - p.eaten * 0.85)
         ctx.rotate(by: p.heading)
         ctx.scaleBy(x: s * p.facing, y: s)
         ctx.setAlpha(p.alpha)
@@ -441,8 +482,57 @@ enum PreyRenderer {
 final class PreyView: NSView {
     var prey: [Prey] = []
     var worldOrigin = CGPoint.zero
+    /// The spider owns the creatures; picking one up goes through it.
+    weak var spider: Spider?
     private var lastRects: [CGRect] = []
+    private var grabbed: Prey?
+    private var dragSamples: [(p: V2, t: TimeInterval)] = []
     override var isFlipped: Bool { false }
+
+    private func world(_ event: NSEvent) -> V2 {
+        let p = convert(event.locationInWindow, from: nil)
+        return V2(p.x + worldOrigin.x, p.y + worldOrigin.y)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let spider else { return nil }
+        if grabbed != nil { return self }
+        let w = V2(point.x + worldOrigin.x, point.y + worldOrigin.y)
+        return spider.preyHit(w) != nil ? self : nil
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let spider else { return }
+        let w = world(event)
+        guard let p = spider.preyHit(w) else { return }
+        grabbed = p
+        dragSamples = [(w, event.timestamp)]
+        spider.beginPreyGrab(p, at: w)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let spider, let p = grabbed else { return }
+        let w = world(event)
+        spider.movePreyGrab(p, to: w)
+        dragSamples.append((w, event.timestamp))
+        if dragSamples.count > 8 { dragSamples.removeFirst(dragSamples.count - 8) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard let spider, let p = grabbed else { return }
+        let w = world(event)
+        var v = V2.zero
+        if let recent = dragSamples.last(where: { event.timestamp - $0.t > 0.04 }) {
+            v = (w - recent.p) / CGFloat(max(event.timestamp - recent.t, 0.008))
+        }
+        spider.endPreyGrab(p, throwVelocity: v)
+        grabbed = nil
+        dragSamples = []
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        NotificationCenter.default.post(name: .spiderContextMenu, object: event)
+    }
 
     /// Marks where they were and where they are now for redraw.
     func refresh() {
@@ -466,7 +556,7 @@ final class PreyView: NSView {
             // A soft contact shadow under anything sitting on an edge.
             if p.onSurface, p.state == .loose {
                 ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.12 * Double(p.alpha)))
-                ctx.fillEllipse(in: CGRect(x: -9 * p.scale, y: -p.kind.clearance * p.scale - 2, width: 18 * p.scale, height: 3.5 * p.scale))
+                ctx.fillEllipse(in: CGRect(x: -9 * p.drawScale, y: -p.kind.clearance * p.drawScale - 2, width: 18 * p.drawScale, height: 3.5 * p.drawScale))
             }
             PreyRenderer.draw(p, in: ctx)
             ctx.restoreGState()

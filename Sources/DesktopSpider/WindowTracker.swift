@@ -26,10 +26,10 @@ final class WindowTracker {
         "TextInputMenuAgent", "universalaccessd", "coreautha", "loginwindow",
     ]
 
-    /// Windows to climb on, and whether some app has taken a whole display
-    /// (a full-screen window is left out of the list: its edges are the
+    /// Windows to climb on, and the displays some app has taken whole (a
+    /// full-screen window is left out of the list: its edges are the
     /// screen's edges, and it is not furniture to play on).
-    var onUpdate: (([TrackedWindow], _ fullScreen: Bool) -> Void)?
+    var onUpdate: (([TrackedWindow], _ fullScreens: [CGRect]) -> Void)?
 
     private var lastFrames: [CGWindowID: CGRect] = [:]
     private var busyUntil: TimeInterval = 0
@@ -63,7 +63,7 @@ final class WindowTracker {
         let pid = selfPID
         queue.async { [weak self] in
             guard let self else { return }
-            let (result, fullScreen) = self.snapshot(primaryTop: primaryTop, screens: screens, selfPID: pid)
+            let (result, fullScreens) = self.snapshot(primaryTop: primaryTop, screens: screens, selfPID: pid)
             DispatchQueue.main.async {
                 var frames: [CGWindowID: CGRect] = [:]
                 var changed = false
@@ -74,7 +74,7 @@ final class WindowTracker {
                 if frames.count != self.lastFrames.count { changed = true }
                 self.lastFrames = frames
                 if changed { self.busyUntil = CACurrentMediaTime() + 0.8 }
-                self.onUpdate?(result, fullScreen)
+                self.onUpdate?(result, fullScreens)
             }
         }
     }
@@ -94,13 +94,13 @@ final class WindowTracker {
         return regular
     }
 
-    private func snapshot(primaryTop: CGFloat, screens: [CGRect], selfPID: Int32) -> ([TrackedWindow], Bool) {
+    private func snapshot(primaryTop: CGFloat, screens: [CGRect], selfPID: Int32) -> ([TrackedWindow], [CGRect]) {
         let opts: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let info = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else {
-            return ([], false)
+            return ([], [])
         }
         var out: [TrackedWindow] = []
-        var fullScreen = false
+        var fullScreens: [CGRect] = []
         var depth = 0
         for dict in info {
             guard let layer = dict[kCGWindowLayer as String] as? Int, layer == 0,
@@ -119,16 +119,24 @@ final class WindowTracker {
             // Flip into AppKit coordinates.
             let frame = CGRect(x: cg.minX, y: primaryTop - cg.maxY, width: cg.width, height: cg.height)
 
-            // A window covering a whole display is a full-screen app: not
-            // furniture, and a sign to keep out of the way.
-            if screens.contains(where: { frame.contains($0.insetBy(dx: 2, dy: 2)) }) {
-                fullScreen = true
+            // A window covering a display — or near enough: a full-screen
+            // video on a notched display stops short of the camera housing —
+            // is a full-screen app: not furniture, and a sign to sit still.
+            if let taken = screens.first(where: { sc in
+                frame.contains(sc.insetBy(dx: 2, dy: 2))
+                    || (sc.insetBy(dx: -2, dy: -2).contains(frame)
+                        && frame.width >= sc.width * 0.98 && frame.height >= sc.height * 0.9)
+            }) {
+                if !fullScreens.contains(taken) { fullScreens.append(taken) }
                 continue
             }
             out.append(TrackedWindow(id: CGWindowID(number), frame: frame, depth: depth, owner: owner))
             depth += 1
             if out.count >= 28 { break }
         }
-        return (out, fullScreen)
+        // Whatever else is listed on a taken display is on a different
+        // Space, or under the video: nothing to walk on.
+        out.removeAll { w in fullScreens.contains { $0.intersects(w.frame) } }
+        return (out, fullScreens)
     }
 }

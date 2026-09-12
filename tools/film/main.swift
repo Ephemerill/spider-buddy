@@ -6,7 +6,8 @@ import AppKit
 let W = 1400, H = 900
 let map = SurfaceMap()
 map.standoff = 22 * (CommandLine.arguments.contains("--cycle") ? 2.0 : 1.0)
-map.rebuild(windows: [])
+// A plain box of a screen (no menu bar), so all four edges exist to film.
+map.debugRebuild(screen: NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1440, height: 900), menuBarHeight: 0, windows: [])
 guard let screenLoop = map.loops.first(where: { $0.id.hasPrefix("screen") }) else { exit(1) }
 let screen = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1512, height: 982)
 
@@ -437,6 +438,9 @@ if let hi = CommandLine.arguments.firstIndex(of: "--hunt") {
         if interesting, frame % 6 == 0, closeups.count < 16 {
             closeups.append((pose, prey))
         }
+        if ProcessInfo.processInfo.environment["FILM_DEBUG"] != nil, st != lastState, st.hasPrefix("jump") || st.contains(":crouch") || st.contains(":eat") {
+            print("  f\(frame) \(st) spider=\(Int(sp.worldPos.x)),\(Int(sp.worldPos.y)) prey=\(Int(prey.pos.x)),\(Int(prey.pos.y)) on=\(prey.anchor?.loopID ?? "air") fear=\(String(format: "%.2f", prey.fear)) v=\(Int(prey.vel.length))")
+        }
         lastState = st
         if prey.state == .eaten, prey.alpha <= 0 { break }
     }
@@ -463,6 +467,7 @@ if let hi = CommandLine.arguments.firstIndex(of: "--hunt") {
         c.restoreGState()
     }
     print("hunt \(kind.label): \(frame / 60)s  " + log.suffix(8).joined(separator: " > "))
+    if ProcessInfo.processInfo.environment["FILM_DEBUG"] != nil { print(log.joined(separator: " > ")) }
     guard let img = c.makeImage() else { exit(1) }
     try NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])!
         .write(to: URL(fileURLWithPath: "build/hunt.png"))
@@ -543,17 +548,29 @@ if CommandLine.arguments.contains("--swing") || CommandLine.arguments.contains("
             }
             if st != "building" && st != "nesting" && shots >= 3 { break }
         }
-        // The final state, at full size, in place.
+        // Then a nap in it, drawn big in the middle of the picture so the
+        // curled-up pose and the silk over it can be judged.
+        if sp.debugState != "nesting" {
+            sp.napInHammock()
+            for _ in 0..<60 * 12 { sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt) }
+        }
         let pose = sp.pose()
-        let box = CGRect(x: pose.pos.x - 110, y: pose.pos.y - 110, width: 220, height: 220)
-        SpiderRenderer.draw(pose, in: j, bounds: box)
         if let h = sp.hammock {
             hv.hammock = h
+            j.saveGState()
+            // 2.5x, hammock centred in the lower middle of the frame.
+            let k: CGFloat = 2.5
+            j.translateBy(x: 450 - h.rect.midX * k, y: 330 - h.rect.midY * k)
+            j.scaleBy(x: k, y: k)
+            let box = CGRect(x: pose.pos.x - 110, y: pose.pos.y - 110, width: 220, height: 220)
+            SpiderRenderer.draw(pose, in: j, bounds: box)
             j.saveGState()
             j.translateBy(x: h.rect.minX, y: h.rect.minY)
             hv.frame = CGRect(x: 0, y: 0, width: h.rect.width, height: h.rect.height)
             hv.draw(hv.bounds)
             j.restoreGState()
+            j.restoreGState()
+            print("nap: \(sp.debugState) style \(h.style.label) load \(h.load)")
         }
         print("states: " + log.joined(separator: " > "))
     } else {

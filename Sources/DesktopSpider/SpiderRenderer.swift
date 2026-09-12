@@ -313,6 +313,9 @@ enum SpiderRenderer {
         drawLegs(pose, far: false, profile: profile, look: look, pal: pal, in: ctx)
         ctx.saveGState()
         lean(ctx)
+        let hcN = V2.lerp(frontHead.c, head.c, profile)
+        let hrN = lerp(frontHead.r, head.r, profile) * look.body.metrics.head
+        headTurn(pose, hc: hcN, hr: hrN, profile: profile, in: ctx)
         drawFace(pose, profile: profile, look: look, pal: pal, in: ctx)
         drawFaceAccessory(pose, profile: profile, look: look, pal: pal, in: ctx)
         drawHat(pose, profile: profile, look: look, pal: pal, in: ctx)
@@ -517,6 +520,13 @@ enum SpiderRenderer {
             drawNeckwear(look, hc: hc, hr: hr, ac: ac, ary: ary, profile: f, pal: pal, in: ctx)
         }
 
+        // The head (with the palps, face and hat) can tip up on its neck,
+        // separately from the body's own lean — that is the look of it
+        // gazing up at something.
+        ctx.saveGState()
+        headTurn(pose, hc: hc, hr: hr, profile: f, in: ctx)
+        defer { ctx.restoreGState() }
+
         // Pedipalps: two little paddles held out in front of the face. Side by
         // side in profile, either side of the chin from the front.
         let palps: [(V2, V2, CGFloat)] = [
@@ -545,6 +555,20 @@ enum SpiderRenderer {
         ctx.setStrokeColor(pal.outline)
         ctx.setLineWidth(2.5)
         ctx.strokePath()
+    }
+
+    /// Where the head joins the body: the head tips about this.
+    static func neck(hc: V2, hr: CGFloat, profile f: CGFloat) -> V2 {
+        V2(hc.x - hr * 0.55 * f, hc.y - hr * 0.35)
+    }
+
+    /// Rotates the context for the head's tilt, nose up for a positive tilt.
+    static func headTurn(_ pose: SpiderPose, hc: V2, hr: CGFloat, profile f: CGFloat, in ctx: CGContext) {
+        guard abs(pose.headTilt) > 0.0005 else { return }
+        let n = neck(hc: hc, hr: hr, profile: f)
+        ctx.translateBy(x: n.x, y: n.y)
+        ctx.rotate(by: pose.headTilt * max(f, 0.35))
+        ctx.translateBy(x: -n.x, y: -n.y)
     }
 
     /// Short hairs standing off an ellipse's rim.

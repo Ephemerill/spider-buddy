@@ -170,36 +170,169 @@ final class SurfaceMap {
     /// the edge itself. Set from the size setting.
     var standoff: CGFloat = 22
 
-    func rebuild(windows: [TrackedWindow]) {
+    /// A box the spider is kept to. Only the parts of surfaces inside it
+    /// exist; nothing else can be walked on, landed on or leapt to.
+    var confine: CGRect? {
+        didSet { if confine != oldValue { reclip() } }
+    }
+    /// Loops before the box was applied, so the box can change without a
+    /// fresh poll of the desktop.
+    private var unclipped: [SurfaceLoop] = []
+
+    /// Whether anything at all can be stood on inside the box.
+    var confinedHasSurfaces: Bool { !loops.isEmpty }
+
+    /// The stretch of a segment that lies inside a rect, as a t-range.
+    private static func clipRange(_ s: Seg, to r: CGRect) -> (lo: CGFloat, hi: CGFloat)? {
+        // Liang-Barsky against the four sides.
+        var lo: CGFloat = 0, hi: CGFloat = s.len
+        let p = [-s.dir.x, s.dir.x, -s.dir.y, s.dir.y]
+        let q = [s.a.x - r.minX, r.maxX - s.a.x, s.a.y - r.minY, r.maxY - s.a.y]
+        for i in 0..<4 {
+            if abs(p[i]) < 1e-9 {
+                if q[i] < 0 { return nil }
+            } else {
+                let t = q[i] / p[i]
+                if p[i] < 0 { lo = max(lo, t) } else { hi = min(hi, t) }
+            }
+        }
+        return hi - lo > 8 ? (lo, hi) : nil
+    }
+
+    /// Cuts every loop down to what lies inside the box. A loop that is cut
+    /// becomes one open run per stretch that survives.
+    private static func clip(_ loops: [SurfaceLoop], to box: CGRect, standoff: CGFloat) -> [SurfaceLoop] {
+        var out: [SurfaceLoop] = []
+        let edgeBox = box.insetBy(dx: -standoff - 2, dy: -standoff - 2)
+        for loop in loops {
+            var pieces: [Seg?] = []
+            for s in loop.segs {
+                guard let r = clipRange(s, to: box) else { pieces.append(nil); continue }
+                var ns = Seg(s.point(at: r.lo), s.point(at: r.hi), s.facing)
+                for b in s.blocked {
+                    let blo = max(b.lo - r.lo, 0), bhi = min(b.hi - r.lo, ns.len)
+                    if bhi > blo { ns.block((blo, bhi)) }
+                }
+                pieces.append(ns)
+            }
+            let whole = !pieces.contains { $0 == nil }
+            if whole, pieces.count == loop.segs.count,
+               zip(pieces, loop.segs).allSatisfy({ ($0!.a - $1.a).length < 0.5 && ($0!.b - $1.b).length < 0.5 }) {
+                out.append(loop)      // untouched
+                continue
+            }
+            // Runs of surviving, connected pieces.
+            var runs: [[Seg]] = []
+            var cur: [Seg] = []
+            for p in pieces {
+                if let p, let last = cur.last, (last.b - p.a).length < 0.5 {
+                    cur.append(p)
+                } else {
+                    if !cur.isEmpty { runs.append(cur) }
+                    cur = p.map { [$0] } ?? []
+                }
+            }
+            if !cur.isEmpty { runs.append(cur) }
+            // A closed loop's first and last runs may join up.
+            if loop.closed, runs.count > 1, let f = runs.first?.first, let l = runs.last?.last, (l.b - f.a).length < 0.5 {
+                runs[0] = runs.removeLast() + runs[0]
+            }
+            let edge = loop.edge.compactMap { e -> Seg? in
+                guard let r = clipRange(e, to: edgeBox) else { return nil }
+                return Seg(e.point(at: r.lo), e.point(at: r.hi), e.facing)
+            }
+            for (i, run) in runs.enumerated() {
+                var piece = SurfaceLoop(id: runs.count == 1 ? loop.id : "\(loop.id)~\(i)", kind: loop.kind,
+                                        segs: run, closed: false, depth: loop.depth, rect: loop.rect)
+                piece.edge = edge
+                out.append(piece)
+            }
+        }
+        return out
+    }
+
+    private func reclip() {
+        var ls = unclipped
+        if let box = confine { ls = SurfaceMap.clip(ls, to: box, standoff: standoff) }
+        loops = ls
+        byID = Dictionary(uniqueKeysWithValues: ls.map { ($0.id, $0) })
+    }
+
+    /// Displays some app has taken whole. On those only the floor and the
+    /// ceiling of the screen exist to walk on — no walls, menu bar, Dock or
+    /// windows, none of which are visible under a full-screen video.
+    private(set) var cinemaScreens: [CGRect] = []
+
+    func isCinema(_ p: V2) -> Bool {
+        cinemaScreens.contains { $0.contains(p.point) }
+    }
+
+    /// The floor and ceiling of a screen as two open loops.
+    static func cinemaLoops(id: String, frame f: CGRect, standoff off: CGFloat) -> [SurfaceLoop] {
+        let r = f.insetBy(dx: off, dy: off)
+        let inset: CGFloat = 40
+        var floor = SurfaceLoop(id: id, kind: .screenBorder,
+                                segs: [Seg(V2(r.minX + inset, r.minY), V2(r.maxX - inset, r.minY), .up)],
+                                closed: false, depth: 1_000_000, rect: r)
+        floor.edge = [Seg(V2(f.minX, f.minY), V2(f.maxX, f.minY), .up)]
+        var ceiling = SurfaceLoop(id: id + ":top", kind: .screenBorder,
+                                  segs: [Seg(V2(r.maxX - inset, r.maxY), V2(r.minX + inset, r.maxY), .down)],
+                                  closed: false, depth: 1_000_000, rect: r)
+        ceiling.edge = [Seg(V2(f.maxX, f.maxY), V2(f.minX, f.maxY), .down)]
+        return [floor, ceiling]
+    }
+
+    func rebuild(windows: [TrackedWindow], cinema: [CGRect] = []) {
         let off = standoff
         var newLoops: [SurfaceLoop] = []
         var frames: [CGRect] = []
+        cinemaScreens = cinema
 
         // --- Screens ---------------------------------------------------------
         for (i, screen) in NSScreen.screens.enumerated() {
             let f = screen.frame
             frames.append(f)
+            if cinema.contains(f) {
+                newLoops += SurfaceMap.cinemaLoops(id: "screen:\(i)", frame: f, standoff: off)
+                continue
+            }
             let r = f.insetBy(dx: off, dy: off)
             guard r.width > 60, r.height > 60 else { continue }
 
             let bl = V2(r.minX, r.minY), br = V2(r.maxX, r.minY)
             let tr = V2(r.maxX, r.maxY), tl = V2(r.minX, r.maxY)
-            // Walking the inside of the frame: along the bottom, up the right,
-            // back along the top, down the left.
-            let segs = [
-                Seg(bl, br, .up),
-                Seg(br, tr, .left),
-                Seg(tr, tl, .down),
-                Seg(tl, bl, .right),
-            ]
-            var screenLoop = SurfaceLoop(id: "screen:\(i)", kind: .screenBorder, segs: segs,
-                                         closed: true, depth: 1_000_000, rect: r)
-            screenLoop.edge = SurfaceMap.rectEdge(f, inside: true)
-            newLoops.append(screenLoop)
-
-            // --- Menu bar (hang from its lower lip) --------------------------
             let vf = screen.visibleFrame
             let menuBarHeight = f.maxY - vf.maxY
+            if menuBarHeight > 12 {
+                // The very top of the screen is under the menu bar, where it
+                // cannot be seen. So the border is a U: down the left wall,
+                // along the floor, up the right wall, the walls stopping
+                // short of the menu bar — under which it can hang instead.
+                let wallTop = vf.maxY - off - 6
+                let tlW = V2(r.minX, wallTop), trW = V2(r.maxX, wallTop)
+                var screenLoop = SurfaceLoop(id: "screen:\(i)", kind: .screenBorder,
+                                             segs: [Seg(tlW, bl, .right), Seg(bl, br, .up), Seg(br, trW, .left)],
+                                             closed: false, depth: 1_000_000, rect: r)
+                screenLoop.edge = [Seg(V2(f.minX, vf.maxY), V2(f.minX, f.minY), .right),
+                                   Seg(V2(f.minX, f.minY), V2(f.maxX, f.minY), .up),
+                                   Seg(V2(f.maxX, f.minY), V2(f.maxX, vf.maxY), .left)]
+                newLoops.append(screenLoop)
+            } else {
+                // Walking the inside of the frame: along the bottom, up the right,
+                // back along the top, down the left.
+                let segs = [
+                    Seg(bl, br, .up),
+                    Seg(br, tr, .left),
+                    Seg(tr, tl, .down),
+                    Seg(tl, bl, .right),
+                ]
+                var screenLoop = SurfaceLoop(id: "screen:\(i)", kind: .screenBorder, segs: segs,
+                                             closed: true, depth: 1_000_000, rect: r)
+                screenLoop.edge = SurfaceMap.rectEdge(f, inside: true)
+                newLoops.append(screenLoop)
+            }
+
+            // --- Menu bar (hang from its lower lip) --------------------------
             if menuBarHeight > 12 {
                 let y = vf.maxY - off
                 let inset: CGFloat = 90 // stay clear of the notch / status items edge
@@ -216,7 +349,7 @@ final class SurfaceMap {
         worldBounds = frames.reduce(CGRect.null) { $0.union($1) }
 
         // --- Dock ------------------------------------------------------------
-        for (i, dock) in dockStrips().enumerated() {
+        for (i, dock) in dockStrips().enumerated() where !cinema.contains(where: { $0.intersects(dock) }) {
             // Only the top surface is interesting: the spider walks on the dock.
             let y = dock.maxY + off
             let seg = Seg(V2(dock.minX + 6, y), V2(dock.maxX - 6, y), .up)
@@ -230,7 +363,7 @@ final class SurfaceMap {
 
         // --- Windows ---------------------------------------------------------
         var occ: [(CGRect, Int)] = []
-        for w in windows {
+        for w in windows where !cinema.contains(where: { $0.intersects(w.frame) }) {
             let r = w.frame
             occ.append((r, w.depth))
             guard r.width > 130, r.height > 90 else { continue }
@@ -257,19 +390,19 @@ final class SurfaceMap {
         occluders = occ.map { (rect: $0.0, depth: $0.1) }
 
         applyBlocks(to: &newLoops)
-
-        loops = newLoops
-        var map: [String: SurfaceLoop] = [:]
-        for l in newLoops { map[l.id] = l }
-        byID = map
+        unclipped = newLoops
+        reclip()
     }
 
-    /// Anything in front of an edge blocks it. Rects are grown by about the
-    /// body's reach so it stops short of the covering window rather than
-    /// walking up to it with its abdomen poking over the top.
+    /// Anything in front of a window's edge blocks it. Rects are grown by
+    /// about the body's reach so it stops short of the covering window
+    /// rather than walking up to it with its abdomen poking over the top.
+    /// The screen's own edges, the menu bar and the Dock are never blocked:
+    /// the spider draws above every window, so it can always walk the rim
+    /// of the display, across whatever happens to overlap it.
     private func applyBlocks(to newLoops: inout [SurfaceLoop]) {
         let grow = standoff * 1.4
-        for li in newLoops.indices {
+        for li in newLoops.indices where newLoops[li].kind == .windowEdge {
             let depth = newLoops[li].depth
             var segs = newLoops[li].segs
             for o in occluders where o.depth < depth {
@@ -316,8 +449,18 @@ final class SurfaceMap {
 
     /// Builds a map for an arbitrary rectangle instead of the real displays,
     /// so tooling can lay the spider out on a mock desktop.
-    func debugRebuild(screen: CGRect, menuBarHeight: CGFloat, windows: [TrackedWindow]) {
+    func debugRebuild(screen: CGRect, menuBarHeight: CGFloat, windows: [TrackedWindow], cinema: Bool = false) {
         let off = standoff
+        cinemaScreens = cinema ? [screen] : []
+        if cinema {
+            let cl = SurfaceMap.cinemaLoops(id: "screen:0", frame: screen, standoff: off)
+            occluders = []
+            screenFrames = [screen]
+            worldBounds = screen
+            unclipped = cl
+            reclip()
+            return
+        }
         var newLoops: [SurfaceLoop] = []
         let r = screen.insetBy(dx: off, dy: off)
         var screenLoop = SurfaceLoop(id: "screen:0", kind: .screenBorder,
@@ -344,8 +487,8 @@ final class SurfaceMap {
         screenFrames = [screen]
         worldBounds = screen
         applyBlocks(to: &newLoops)
-        loops = newLoops
-        byID = Dictionary(uniqueKeysWithValues: newLoops.map { ($0.id, $0) })
+        unclipped = newLoops
+        reclip()
     }
 
     /// Dock strips, in AppKit coords. Falls back to visibleFrame insets.
@@ -459,6 +602,11 @@ final class SurfaceMap {
         return nil
     }
 
+    /// The area it may be in: its box, or the display it is on.
+    func bounds(around p: V2) -> CGRect {
+        confine ?? screenFrame(containing: p)
+    }
+
     func isOnScreen(_ p: V2, slack: CGFloat = 0) -> Bool {
         for f in screenFrames where f.insetBy(dx: -slack, dy: -slack).contains(p.point) { return true }
         return false
@@ -523,14 +671,18 @@ final class SurfaceMap {
                 guard p.x > minX - 4, p.x < maxX + 4 else { continue }
                 let y = s.a.y
                 let dy = y - p.y
-                if dy > 12, dy < bestDy, isVisible(V2(p.x, y), depth: l.depth) {
+                if dy > 12, dy < bestDy, l.kind != .windowEdge || isVisible(V2(p.x, y), depth: l.depth) {
                     bestDy = dy
                     // Silk attaches to the edge itself, not to the body line.
                     best = V2(clamp(p.x, minX, maxX), y + standoff)
                 }
             }
         }
-        if best == nil {
+        if let box = confine {
+            // In a box, the box's top is the ceiling of last resort.
+            let y = box.maxY - 4
+            if best == nil || best!.y > y, y - p.y > 12 { return V2(clamp(p.x, box.minX + 8, box.maxX - 8), y) }
+        } else if best == nil {
             // Fall back to the top of the screen we are over.
             let f = screenFrame(containing: p)
             let y = f.maxY - 4

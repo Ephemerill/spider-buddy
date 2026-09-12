@@ -13,6 +13,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var preyWindow: OverlayWindow!
     private var preyView: PreyView!
     private var preyShown = false
+    private var cinemaScreens: [CGRect] = []
+    private var cinemaClearPolls = 0
+    private var boxDrawWindow: BoxDrawWindow?
+    private var boxWindow: OverlayWindow!
+    private var boxOutline: BoxOutlineView!
     private var hammockShown = false
     private var hammockTear: CGFloat = 0
     private var lastHammock: Hammock?
@@ -56,16 +61,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildStatusItem()
         applyWindowSize()
         let saved = UserDefaults.standard.integer(forKey: "hammock")   // 0 none, 1 left, 2 right
-        if saved == 1 || saved == 2 { spider.restoreHammock(left: saved == 1) }
+        if saved % 10 == 1 || saved % 10 == 2 {
+            spider.restoreHammock(left: saved % 10 == 1, style: HammockStyle(rawValue: (saved / 10) % 10) ?? .sling,
+                                  seed: saved / 100)
+        }
+        if let b = UserDefaults.standard.array(forKey: "confine") as? [Double], b.count == 4 {
+            applyBox(CGRect(x: b[0], y: b[1], width: b[2], height: b[3]))
+        }
         if hidden {
             window.orderOut(nil)
             statusItem.button?.appearsDisabled = true
         }
 
-        tracker.onUpdate = { [weak self] windows, fullScreen in
+        tracker.onUpdate = { [weak self] windows, fullScreens in
             guard let self else { return }
-            self.map.rebuild(windows: windows)
-            self.spider.fullScreenApp = fullScreen
+            // Entering full screen counts at once; leaving it only after a
+            // few quiet polls, so a player's controls flickering over the
+            // video cannot keep unsettling the spider.
+            if !fullScreens.isEmpty {
+                self.cinemaScreens = fullScreens
+                self.cinemaClearPolls = 0
+            } else if self.cinemaScreens.isEmpty == false {
+                self.cinemaClearPolls += 1
+                if self.cinemaClearPolls >= 4 { self.cinemaScreens = [] }
+            }
+            self.map.rebuild(windows: windows, cinema: self.cinemaScreens)
+            self.spider.fullScreenApp = !self.cinemaScreens.isEmpty
         }
         tracker.start()
 
@@ -121,6 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preyWindow = OverlayWindow(frame: frame)
         preyView = PreyView(frame: CGRect(origin: .zero, size: frame.size))
         preyView.worldOrigin = frame.origin
+        preyView.spider = spider
         preyWindow.contentView = preyView
         preyWindow.ignoresMouseEvents = true
         silkWindow = OverlayWindow(frame: frame)
@@ -128,6 +150,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         silkView.worldOrigin = frame.origin
         silkWindow.contentView = silkView
         silkWindow.ignoresMouseEvents = true
+
+        // The box outline, shown only while there is a box.
+        boxWindow = OverlayWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 150))
+        boxWindow.level = NSWindow.Level(rawValue: window.level.rawValue - 1)
+        boxOutline = BoxOutlineView(frame: CGRect(x: 0, y: 0, width: 200, height: 150))
+        boxWindow.contentView = boxOutline
+        boxWindow.ignoresMouseEvents = true
 
         // The hammock sits above the spider so it is seen through the silk.
         hammockWindow = OverlayWindow(frame: CGRect(x: 0, y: 0, width: 160, height: 120))
@@ -183,6 +212,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let wantsMouseNow = interactive && (spider.isHeld || spider.hitTest(cursorNow))
         if window.ignoresMouseEvents == wantsMouseNow {
             window.ignoresMouseEvents = !wantsMouseNow
+        }
+        // Likewise for the creatures: clicks reach their window only while
+        // the pointer is over one (or one is on the pointer).
+        let preyHeld = spider.prey.contains { $0.held }
+        let wantsPreyMouse = interactive && preyShown && (preyHeld || (!wantsMouseNow && spider.preyHit(cursorNow) != nil))
+        if preyWindow.ignoresMouseEvents == wantsPreyMouse {
+            preyWindow.ignoresMouseEvents = !wantsPreyMouse
         }
 
         // The calm throttle skips whole frames; the active rate is the link's.
@@ -308,7 +344,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     hammockShown = true
                     hammockWindow.orderFrontRegardless()
                 }
-                let code = h.progress >= 1 ? (h.left ? 1 : 2) : 0
+                // side + 10 × style + 100 × seed
+                let code = h.progress >= 1 ? (h.left ? 1 : 2) + 10 * h.style.rawValue + 100 * h.seed : 0
                 if UserDefaults.standard.integer(forKey: "hammock") != code {
                     UserDefaults.standard.set(code, forKey: "hammock")
                 }
@@ -322,8 +359,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 calm = false
             }
             let hadHammock = lastHammock.map { $0.progress >= 1 } ?? false
+            let hadAny = lastHammock != nil
             lastHammock = h
-            if hadHammock != spider.hasHammock { refreshMenu() }
+            if hadHammock != spider.hasHammock || hadAny != spider.hasAnyHammock { refreshMenu() }
         }
         if h == nil, hammockShown {
             hammockTear = max(0, hammockTear - dt * 1.4)
@@ -386,9 +424,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
 
         add(menu, "Come Here", #selector(comeHere))
-        add(menu, "Say Hi", #selector(sayHi))
-        add(menu, "Toss It", #selector(toss))
-        add(menu, "Swing!", #selector(swing))
+
+        // Everything it can be asked to do lives under Behavior.
+        let behavior = NSMenu()
+        add(behavior, "Say Hi", #selector(sayHi))
+        add(behavior, "Toss It", #selector(toss))
+        add(behavior, "Swing!", #selector(swing))
+        behavior.addItem(.separator())
         let feedMenu = NSMenu()
         for kind in PreyKind.allCases {
             let item = NSMenuItem(title: "Release a \(kind.label)", action: #selector(feed(_:)), keyEquivalent: "")
@@ -398,15 +440,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let feedItem = NSMenuItem(title: "Feed", action: nil, keyEquivalent: "")
         feedItem.submenu = feedMenu
-        menu.addItem(feedItem)
-        menu.addItem(.separator())
+        behavior.addItem(feedItem)
+        behavior.addItem(.separator())
         if spider.hasHammock {
-            add(menu, "Nap in the Hammock", #selector(nap))
-            add(menu, "Clear the Hammock", #selector(clearHammock))
+            add(behavior, "Nap in the Hammock", #selector(nap))
+            add(behavior, "Clear the Hammock", #selector(clearHammock))
         } else {
-            add(menu, "Build a Hammock", #selector(buildHammock))
+            add(behavior, "Build a Hammock", #selector(buildHammock))
+            if spider.hasAnyHammock { add(behavior, "Clear the Hammock", #selector(clearHammock)) }
         }
-        menu.addItem(.separator())
+        behavior.addItem(.separator())
+        if spider.confine != nil {
+            add(behavior, "Redraw the Box…", #selector(drawBox))
+            add(behavior, "Free \(name) from the Box", #selector(freeSpider))
+        } else {
+            add(behavior, "Keep \(name) in a Box…", #selector(drawBox))
+        }
+        let behaviorItem = NSMenuItem(title: "Behavior", action: nil, keyEquivalent: "")
+        behaviorItem.submenu = behavior
+        menu.addItem(behaviorItem)
 
         let size = NSMenu()
         let sizes: [(String, CGFloat)] = [("Tiny", 0.62), ("Small", 0.78), ("Medium", 0.95),
@@ -443,6 +495,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         add(menu, "Pause", #selector(togglePause), state: spider.config.paused)
         menu.addItem(.separator())
         add(menu, "Launch at Login", #selector(toggleLogin), state: loginEnabled)
+        menu.addItem(.separator())
+        add(menu, "Bring \(name) to the Middle", #selector(teleportToMiddle))
+        add(menu, "Reset Everything", #selector(resetEverything))
         menu.addItem(.separator())
         add(menu, "Quit Spider", #selector(quit), key: "q")
         return menu
@@ -494,6 +549,119 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func buildHammock() { spider.buildHammock() }
     @objc private func clearHammock() { spider.clearHammock() }
     @objc private func sayHi() { spider.celebrate() }
+
+    // MARK: The box
+
+    @objc private func drawBox() {
+        guard boxDrawWindow == nil else { return }
+        let frame = worldFrame()
+        let w = BoxDrawWindow(frame: frame)
+        let v = BoxDrawView(frame: CGRect(origin: .zero, size: frame.size))
+        v.worldOrigin = frame.origin
+        v.onDone = { [weak self] rect in
+            guard let self else { return }
+            self.boxDrawWindow?.orderOut(nil)
+            self.boxDrawWindow = nil
+            if let rect { self.applyBox(rect) }
+            self.refreshMenu()
+        }
+        w.contentView = v
+        boxDrawWindow = w
+        NSApp.activate(ignoringOtherApps: true)
+        w.makeKeyAndOrderFront(nil)
+        w.makeFirstResponder(v)
+    }
+
+    private func applyBox(_ rect: CGRect?) {
+        if let rect {
+            boxWindow.setFrame(rect, display: true)
+            boxOutline.frame = CGRect(origin: .zero, size: rect.size)
+            boxOutline.needsDisplay = true
+            boxWindow.orderFrontRegardless()
+            UserDefaults.standard.set([rect.minX, rect.minY, rect.width, rect.height].map { Double($0) }, forKey: "confine")
+        } else {
+            boxWindow.orderOut(nil)
+            UserDefaults.standard.removeObject(forKey: "confine")
+        }
+        spider.confine = rect
+        calmFrames = 0
+        calm = false
+    }
+
+    @objc private func freeSpider() {
+        applyBox(nil)
+        refreshMenu()
+    }
+
+    /// Lost it somewhere? This puts it in the middle of the main screen, in
+    /// the air, and it falls from there onto whatever is below.
+    @objc private func teleportToMiddle() {
+        let f = spider.confine ?? NSScreen.main?.frame ?? worldFrame()
+        if hidden { toggleHidden() }
+        spider.config.paused = false
+        spider.teleport(to: V2(f.midX, f.midY))
+        calmFrames = 0
+        calm = false
+        refreshMenu()
+    }
+
+    /// Starts the whole thing over: the app relaunches itself, which rebuilds
+    /// every window and re-reads the desktop. The design, settings and
+    /// hammock are kept — they are saved. Running as a bare binary (not from
+    /// the .app) it rebuilds in place instead.
+    @objc private func resetEverything() {
+        saveSettings()
+        let bundle = Bundle.main.bundleURL
+        if bundle.pathExtension == "app" {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/bin/sh")
+            task.arguments = ["-c", "sleep 0.5; open -n \"\(bundle.path)\""]
+            do {
+                try task.run()
+                NSApp.terminate(nil)
+                return
+            } catch {
+                // Fall through to an in-place reset.
+            }
+        }
+        resetInPlace()
+    }
+
+    private func resetInPlace() {
+        tracker.stop()
+        let design = SpiderDesign.load()
+        let config = spider.config
+        let saved = UserDefaults.standard.integer(forKey: "hammock")
+        spider = Spider(map: map)
+        spider.config = config
+        spider.config.paused = false
+        spider.apply(design: design)
+        map.standoff = AppDelegate.standoff(for: spider.config.scale)
+        map.rebuild(windows: [])
+        view.spider = spider
+        preyView.spider = spider
+        preyView.prey = []
+        preyView.refresh()
+        if saved % 10 == 1 || saved % 10 == 2 {
+            spider.restoreHammock(left: saved % 10 == 1, style: HammockStyle(rawValue: (saved / 10) % 10) ?? .sling,
+                                  seed: saved / 100)
+        }
+        lastHammock = nil
+        hammockShown = false
+        hammockWindow.orderOut(nil)
+        silkWindow.orderOut(nil)
+        silkVisible = false
+        preyWindow.orderOut(nil)
+        preyShown = false
+        if hidden { toggleHidden() }
+        let f = NSScreen.main?.frame ?? worldFrame()
+        spider.teleport(to: V2(f.midX, f.midY))
+        applyWindowSize()
+        tracker.start()
+        calmFrames = 0
+        calm = false
+        refreshMenu()
+    }
 
     @objc private func toss() {
         spider.beginGrab(at: spider.worldPos)
@@ -561,7 +729,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleInteractive() {
         interactive.toggle()
-        if !interactive { window.ignoresMouseEvents = true }
+        if !interactive { window.ignoresMouseEvents = true; preyWindow.ignoresMouseEvents = true }
         saveSettings(); refreshMenu()
     }
 
