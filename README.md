@@ -81,6 +81,30 @@ random with weights that shift with context:
   foot is placed on the *actual* edge, so the feet wrap onto the next side
 - **Wave** — big sweeps from the shoulder, leaning back; **arms up** — both
   front legs thrown high, as a greeting or a threat display
+- **Nervous hop** — whip the pointer past it (fast, within a hand's width)
+  and it gives a small startled hop on the spot, legs tucked for an instant,
+  with a little burst of "!!" — and that is all; it does not run. Only the
+  pointer whipping right across its body properly startles it
+- **Stare** — sits still, turned square on to face you, and just watches,
+  eyes following the pointer, blinking now and then
+- **Bed on a window** — sleepy, it prefers the top of a window: it walks
+  round its own window to the top, or leaps onto one it can reach, settles,
+  and drops off with Z's rising out of it, drifting and growing as they go
+- **Thoughts** — a thought bubble now and then: a heart, a juicy cricket
+  when it is hungry, a rain cloud, sunshine, the moon when it is sleepy, a
+  music note, a star, a fly, its hammock — or words, from the packs it has
+  been given (see Thoughts in the Studio)
+- **Drum** — braced low, it drums on whatever it is standing on with its
+  front two legs, the way a jumping spider signals: bursts of quick
+  alternating taps, then three slower beats with both legs together and a
+  dip of the body on each, abdomen quivering in time, music notes on the
+  beat. Playful, energetic spiders drum most; a click sometimes gets a drum
+  in reply
+- **Greet** — turns right round to face you square on, big eyes on the
+  pointer, and raises both front legs up and out beside its head in a V,
+  waving them a little. It does this when you rest the pointer near it,
+  sometimes when you click it, now and then on its own while you are about
+  (affectionate spiders most), and **Behavior ▸ Say Hi** asks for it
 - **Roll** — gathers itself with its feet planted, rocking back, then tucks
   into a ball and rolls a full turn along the ledge: the ball sits on the
   ledge and turns exactly with the ground it covers, so it never slides, and
@@ -177,6 +201,20 @@ Beyond the dragline it already trails on every leap:
   **Build a Hammock**, **Nap in the Hammock** and **Clear the Hammock** are
   under Behavior, and the hammock (kind and all) survives a restart.
 
+## Peek-a-boo
+
+The spider is drawn above every window, but not above the ones in front of
+the surface it is standing on: whatever of it falls inside such a window is
+cut out, so a spider walking the rim of the screen where a window overlaps
+it really does go behind that window, and a window's edge with another
+window over it hides it too. That is the game. When someone is about and
+there is a window edge to hide behind nearby, now and then (playful ones
+more often) it creeps up to the edge, slips behind it, waits… and bursts
+out at you, front legs thrown up, eyes on the pointer — then back behind
+and again, two to four times, finishing with a happy wiggle. **Behavior ▸
+Peek-a-boo** asks for a game: if there is no edge to hide behind where it
+is, it leaps off to find one first.
+
 ## Feeding it
 
 **Feed** in the menu releases a cricket, a worm, or a fruit fly onto the
@@ -265,6 +303,26 @@ only after a very long while might it nod off. When the video ends it
 carries on as before. (A window is counted as full screen when it covers
 the display, or all but the strip a notch takes.)
 
+## Thoughts and words
+
+The **Thoughts** tab in the Studio picks what it may say in a thought
+bubble: **Chit-chat** (hi!, boo!, tap tap…), **Encouragement** (drink some
+water, take a little break…), **Spider facts** (I have eight eyes…), and
+**Bible verses** (short verses with their references, in the King James
+wording). Tick any mix, and add your own lines underneath, one per line —
+they go into the same hat. **Think something now** tries one in the
+preview. Long lines wrap into a bigger bubble.
+
+## Laser pointer
+
+**Behavior ▸ Laser Pointer** turns the pointer into a laser: click
+anywhere and a red dot appears there; hold and drag and it moves. The
+spider drops whatever it is doing and races for it — along its own edge at
+a scurry, or with a leap to whatever is nearest the dot — and when it gets
+there it pounces and pats at it; when the dot goes out (a couple of seconds
+after you let go) it looks about for it, puzzled. Clicks on the spider or
+a creature still pick them up as usual.
+
 ## Spider Studio
 
 **Spider Studio…** in the menu (⌘,) opens a Mii-maker-style editor. The left
@@ -277,10 +335,10 @@ the right shows up there and on your desktop immediately. Nothing is
 |---|---|
 | Body | 7 shapes (Classic … Chonk, Tall), 3 fuzz levels, size |
 | Face | 8 eye styles (Huge, Beady, Sleepy, Sparkly, Cross-eyed…), 7 brows, 6 mouths (fangs, tusks, the emerald chelicerae of a bold jumper, a smile) |
+| Hats | 18 hats — top hat, party hat, crown, beanie, flower, bow, cap, halo, wizard, propeller (it spins as it walks), cowboy, chef, bucket hat, viking, tiara, pirate, mushroom |
+| Extras | 15 things to wear — glasses, monocle, shades, bow tie, necktie, scarf, bandana, bell collar, flower lei, headphones, backpack, satchel, cape, fairy wings |
 | Legs | 8 styles — slender, chunky, stubby, long, fuzzy, banded, socks — which change the rig, so the walk, turn and jump all adapt |
 | Colours | 14 coats, 9 markings on the abdomen, 10 accent colours |
-| Hats | top hat, party hat, crown, beanie, flower, bow, cap, halo, wizard, propeller (it spins as it walks) |
-| Extras | glasses, shades, monocle, bow tie, scarf, headphones, bandana, backpack |
 | Personality | a temperament preset (Friendly, Shy, Hyper, Lazy, Curious, Show-off, Chill, Grumpy) or six sliders — energy, curiosity, bravery, playfulness, affection, laziness |
 | Gait | walking style (steady, bouncy, tiptoe, lumbering, scurrying), pace, stride, bounce, stance, how keen it is to leap between windows and to drop on silk |
 
@@ -344,6 +402,7 @@ entitlement — window *titles* and screen contents would, and are never read.
 | `./tools/film.sh` | filmstrip of the real walk cycle along each screen edge, with the edge drawn in, plus a standoff-drift readout |
 | `./tools/film.sh out.png --cycle` | one full gait cycle at 2×, for judging the walk itself |
 | `./tools/film.sh out.png --desk` | the spider at actual size on a mock desktop, on every kind of edge — the most useful single view |
+| `./tools/film.sh out.png --peekaboo` | the peek-a-boo game as a strip of moments, window drawn over it |
 | `./tools/film.sh out.png --hunt cricket\|worm\|fly` | releases prey on a mock desktop and films the chase, with close-ups of the pounce and the meal |
 | `./tools/film.sh out.png --jump [--under]` | a real leap drawn along its own trajectory — onto a window's side, or up onto its underside |
 | `./tools/film.sh out.png --hang` | descending, hanging and climbing a dragline |

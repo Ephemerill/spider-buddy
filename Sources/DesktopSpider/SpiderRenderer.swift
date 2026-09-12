@@ -250,7 +250,7 @@ enum SpiderRenderer {
     /// The furthest anything is drawn from the body origin, in body units.
     /// `./build/Preview x --cliptest` measures the real figure; raise this if
     /// that ever reports it is too small.
-    static let drawRadius: CGFloat = 60
+    static let drawRadius: CGFloat = 72
 
     /// Side of the layer the spider is drawn into. Single source of truth: the
     /// app and the clip check both use it, so they cannot drift apart.
@@ -267,6 +267,19 @@ enum SpiderRenderer {
         ctx.translateBy(x: bounds.midX, y: bounds.midY)
         // Normalise to y-up regardless of how the backing context is oriented.
         if ctx.ctm.d < 0 { ctx.scaleBy(x: 1, y: -1) }
+
+        // Whatever falls inside a window in front of it is behind that
+        // window: cut it out of everything drawn from here on.
+        if !pose.hiddenBy.isEmpty {
+            let big = CGRect(x: -bounds.width, y: -bounds.height, width: bounds.width * 2, height: bounds.height * 2)
+            let p = CGMutablePath()
+            p.addRect(big)
+            for r in pose.hiddenBy {
+                p.addRect(r.offsetBy(dx: -pose.pos.x, dy: -pose.pos.y).intersection(big))
+            }
+            ctx.addPath(p)
+            ctx.clip(using: .evenOdd)
+        }
 
         // Emotes ride above the spider in screen space, so draw them before the
         // body transform is applied.
@@ -496,6 +509,11 @@ enum SpiderRenderer {
         let hr = lerp(frontHead.r, head.r, f) * bm.head
         let amp: CGFloat = [0.012, 0.030, 0.048][clamp(look.fuzz, 0, 2)]
 
+        // Wings rise from behind the body.
+        if look.accessory == .wings {
+            drawBackwear(look, pose: pose, ac: ac, arx: arx, ary: ary, hc: hc, hr: hr, profile: f, pal: pal, in: ctx)
+        }
+
         // The abdomen bobs a touch as it walks, hinged where it meets the head.
         ctx.saveGState()
         ctx.translateBy(x: ac.x + arx * 0.6 * f, y: ac.y)
@@ -513,10 +531,13 @@ enum SpiderRenderer {
         ctx.setLineWidth(2.5)
         ctx.strokePath()
         if look.accessory == .backpack { drawBackpack(ac: ac, arx: arx, ary: ary, profile: f, pal: pal, in: ctx) }
+        if look.accessory == .satchel { drawSatchel(ac: ac, arx: arx, ary: ary, profile: f, pal: pal, in: ctx) }
+        if look.accessory == .cape { drawBackwear(look, pose: pose, ac: ac, arx: arx, ary: ary, hc: hc, hr: hr, profile: f, pal: pal, in: ctx) }
         ctx.restoreGState()
 
         // Neckwear sits between the two body segments, under the head.
-        if look.accessory == .scarf || look.accessory == .bandana {
+        if look.accessory == .scarf || look.accessory == .bandana || look.accessory == .collar
+            || look.accessory == .necktie || look.accessory == .lei {
             drawNeckwear(look, hc: hc, hr: hr, ac: ac, ary: ary, profile: f, pal: pal, in: ctx)
         }
 
@@ -745,6 +766,150 @@ enum SpiderRenderer {
             ctx.setFillColor(pal.accentRGB.lighter(0.5).cg)
             let m = (p0 + p1 + p2) / 3
             ctx.fillEllipse(in: CGRect(x: m.x - 1.2, y: m.y - 1.2, width: 2.4, height: 2.4))
+        case .collar:
+            // A little bell hanging under the chin.
+            let b = V2.lerp(V2(2, -13), V2(hc.x - hr * 0.25, hc.y - hr * 1.0), f)
+            let gold = CGColor(red: 0.96, green: 0.78, blue: 0.28, alpha: 1)
+            ctx.setFillColor(gold)
+            ctx.setStrokeColor(pal.outline)
+            ctx.setLineWidth(1.4)
+            ctx.fillEllipse(in: CGRect(x: b.x - 3.2, y: b.y - 3.2, width: 6.4, height: 6.4))
+            ctx.strokeEllipse(in: CGRect(x: b.x - 3.2, y: b.y - 3.2, width: 6.4, height: 6.4))
+            ctx.setFillColor(pal.outline)
+            ctx.fillEllipse(in: CGRect(x: b.x - 0.9, y: b.y - 3.6, width: 1.8, height: 1.8))
+            ctx.beginPath(); ctx.move(to: CGPoint(x: b.x - 2.6, y: b.y - 0.8)); ctx.addLine(to: CGPoint(x: b.x + 2.6, y: b.y - 0.8)); ctx.strokePath()
+        case .necktie:
+            // Hangs down from the knot, swinging a touch.
+            let k = V2.lerp(V2(1, -12), V2(hc.x - hr * 0.35, hc.y - hr * 0.85), f)
+            let tip = k + V2(lerp(0, -3, f), -11)
+            let tie = CGMutablePath()
+            tie.move(to: CGPoint(x: k.x - 2.4, y: k.y))
+            tie.addLine(to: CGPoint(x: k.x + 2.4, y: k.y))
+            tie.addLine(to: CGPoint(x: tip.x + 3.2, y: tip.y + 3))
+            tie.addLine(to: CGPoint(x: tip.x, y: tip.y))
+            tie.addLine(to: CGPoint(x: tip.x - 3.2, y: tip.y + 3))
+            tie.closeSubpath()
+            ctx.setLineJoin(.round)
+            ctx.addPath(tie); ctx.setFillColor(pal.accentRGB.darker(0.25).cg); ctx.fillPath()
+            ctx.addPath(tie); ctx.setStrokeColor(pal.outline); ctx.setLineWidth(1.6); ctx.strokePath()
+            ctx.setFillColor(pal.accentRGB.lighter(0.3).cg)
+            ctx.fill(CGRect(x: k.x - 2.4, y: k.y - 1.5, width: 4.8, height: 3))
+        case .lei:
+            // Flowers all round the neck, alternating colours.
+            let cols = [pal.accent, CGColor(red: 1, green: 0.85, blue: 0.4, alpha: 1), pal.accentRGB.lighter(0.5).cg]
+            // Round the neck: in profile an arc under and in front of the
+            // head; face on, across the chest.
+            let centre = V2(hc.x - hr * 0.45, hc.y - hr * 0.15)
+            for k in 0..<7 {
+                let u = CGFloat(k) / 6
+                let a = lerp(3.6, 5.9, u)
+                let arc = centre + V2.angle(a) * (hr * 0.95)
+                let flat = V2.lerp(top, bot, u) + V2(-2, -6)
+                let c = V2.lerp(flat, arc, f)
+                ctx.setFillColor(cols[k % 3])
+                ctx.setStrokeColor(pal.outline)
+                ctx.setLineWidth(0.9)
+                for q in 0..<5 {
+                    let a = CGFloat(q) / 5 * 2 * .pi + u * 4
+                    let pc = c + V2.angle(a) * 2.8
+                    ctx.fillEllipse(in: CGRect(x: pc.x - 2, y: pc.y - 2, width: 4, height: 4))
+                }
+                ctx.setFillColor(CGColor(red: 1, green: 0.95, blue: 0.7, alpha: 1))
+                ctx.fillEllipse(in: CGRect(x: c.x - 1.4, y: c.y - 1.4, width: 2.8, height: 2.8))
+            }
+        default:
+            break
+        }
+    }
+
+    /// A satchel slung low on the side of the abdomen, on a strap.
+    private static func drawSatchel(ac: V2, arx: CGFloat, ary: CGFloat, profile f: CGFloat,
+                                    pal: Palette, in ctx: CGContext) {
+        let c = V2(ac.x - 3 * f, ac.y - ary * 0.2)
+        let w: CGFloat = 15, h: CGFloat = 11
+        // The strap goes up over the top of the abdomen.
+        ctx.setStrokeColor(pal.outline)
+        ctx.setLineCap(.round)
+        ctx.setLineWidth(3.2)
+        ctx.beginPath()
+        ctx.move(to: CGPoint(x: c.x - w * 0.3, y: c.y + h * 0.4))
+        ctx.addQuadCurve(to: CGPoint(x: c.x + w * 0.35, y: c.y + h * 0.4), control: CGPoint(x: c.x + 3, y: c.y + ary * 1.3))
+        ctx.strokePath()
+        ctx.setStrokeColor(CGColor(red: 0.45, green: 0.28, blue: 0.15, alpha: 1))
+        ctx.setLineWidth(1.6)
+        ctx.beginPath()
+        ctx.move(to: CGPoint(x: c.x - w * 0.3, y: c.y + h * 0.4))
+        ctx.addQuadCurve(to: CGPoint(x: c.x + w * 0.35, y: c.y + h * 0.4), control: CGPoint(x: c.x + 3, y: c.y + ary * 1.3))
+        ctx.strokePath()
+        ctx.setStrokeColor(pal.outline)
+        let brown = CGColor(red: 0.62, green: 0.42, blue: 0.24, alpha: 1)
+        let body = CGPath(roundedRect: CGRect(x: c.x - w / 2, y: c.y - h / 2, width: w, height: h), cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
+        ctx.setLineWidth(2)
+        ctx.addPath(body); ctx.setFillColor(brown); ctx.fillPath()
+        ctx.addPath(body); ctx.strokePath()
+        let flap = CGPath(roundedRect: CGRect(x: c.x - w / 2, y: c.y - 0.5, width: w, height: h / 2 + 0.5), cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
+        ctx.addPath(flap); ctx.setFillColor(CGColor(red: 0.45, green: 0.28, blue: 0.15, alpha: 1)); ctx.fillPath()
+        ctx.addPath(flap); ctx.strokePath()
+        ctx.setFillColor(CGColor(red: 0.96, green: 0.78, blue: 0.28, alpha: 1))
+        ctx.fillEllipse(in: CGRect(x: c.x - 1.2, y: c.y - 2, width: 2.4, height: 2.4))
+    }
+
+    /// A cape flowing back from the shoulders, or a pair of fairy wings —
+    /// both drawn behind the body.
+    private static func drawBackwear(_ look: SpiderLook, pose: SpiderPose, ac: V2, arx: CGFloat, ary: CGFloat,
+                                     hc: V2, hr: CGFloat, profile f: CGFloat, pal: Palette, in ctx: CGContext) {
+        switch look.accessory {
+        case .cape:
+            // Pinned at the neck, draped over the top of the abdomen and
+            // streaming back past it, lifting with the abdomen's sway.
+            let lift = pose.abdomenSway * 30
+            let neck = V2.lerp(V2(0, 9), V2(ac.x + arx * 0.75, ac.y + ary * 0.55), f)
+            let crest = V2.lerp(V2(-6, 12), V2(ac.x - arx * 0.2, ac.y + ary * 1.05), f)
+            let tail = V2.lerp(V2(-13, -12), V2(ac.x - arx * 1.7, ac.y - ary * 0.35 + lift), f)
+            let hem = V2.lerp(V2(-10, -14), V2(ac.x - arx * 1.0, ac.y - ary * 0.95), f)
+            let p = CGMutablePath()
+            p.move(to: neck.point)
+            p.addQuadCurve(to: tail.point, control: crest.point)
+            p.addQuadCurve(to: hem.point, control: CGPoint(x: (tail.x + hem.x) / 2 - 2, y: (tail.y + hem.y) / 2 - 3))
+            p.addQuadCurve(to: neck.point, control: CGPoint(x: lerp(-2, ac.x - arx * 0.1, f), y: lerp(-2, ac.y - ary * 0.1, f)))
+            p.closeSubpath()
+            ctx.setLineJoin(.round)
+            ctx.addPath(p); ctx.setFillColor(pal.accentRGB.darker(0.1).cg); ctx.fillPath()
+            ctx.addPath(p); ctx.setStrokeColor(pal.outline); ctx.setLineWidth(2.2); ctx.strokePath()
+            // A fold line, and the clasp.
+            ctx.setStrokeColor(pal.accentRGB.darker(0.4).cg)
+            ctx.setLineWidth(1.2)
+            ctx.beginPath(); ctx.move(to: CGPoint(x: neck.x - 3, y: neck.y - 2))
+            ctx.addQuadCurve(to: CGPoint(x: tail.x + 4, y: tail.y + 3), control: CGPoint(x: crest.x, y: crest.y - 6)); ctx.strokePath()
+            ctx.setFillColor(CGColor(red: 0.96, green: 0.78, blue: 0.28, alpha: 1))
+            ctx.fillEllipse(in: CGRect(x: neck.x - 2, y: neck.y - 2, width: 4, height: 4))
+            ctx.setStrokeColor(pal.outline); ctx.setLineWidth(1)
+            ctx.strokeEllipse(in: CGRect(x: neck.x - 2, y: neck.y - 2, width: 4, height: 4))
+        case .wings:
+            // Two translucent wings rising from the back, fluttering gently.
+            let base = V2.lerp(V2(0, 6), V2(ac.x + arx * 0.3, ac.y + ary * 0.5), f)
+            let flutter = sin(pose.odometer * 0.9 + pose.abdomenSway * 4) * 0.08
+            let tint = CGColor(red: 0.78, green: 0.93, blue: 1, alpha: 0.7)
+            let rim = CGColor(red: 0.45, green: 0.68, blue: 0.95, alpha: 0.95)
+            for side in [CGFloat(-1), 1] {
+                let sw = lerp(side, 1, f)          // in profile both trail the same way
+                let dir = V2.lerp(V2(sw * 22, 24), V2(-20 * (side > 0 ? 1 : 0.75), 22 + (side > 0 ? 6 : 0)), f)
+                ctx.saveGState()
+                ctx.translateBy(x: base.x, y: base.y)
+                ctx.rotate(by: flutter * (side > 0 ? 1 : -1))
+                let w = CGMutablePath()
+                w.move(to: .zero)
+                w.addQuadCurve(to: CGPoint(x: dir.x, y: dir.y), control: CGPoint(x: dir.x * 0.2, y: dir.y * 1.1))
+                w.addQuadCurve(to: CGPoint(x: dir.x * 0.85, y: dir.y * 0.25), control: CGPoint(x: dir.x * 1.25, y: dir.y * 0.7))
+                w.addQuadCurve(to: .zero, control: CGPoint(x: dir.x * 0.5, y: -1))
+                w.closeSubpath()
+                ctx.addPath(w); ctx.setFillColor(tint); ctx.fillPath()
+                ctx.addPath(w); ctx.setStrokeColor(rim); ctx.setLineWidth(1.2); ctx.strokePath()
+                ctx.setStrokeColor(CGColor(red: 0.55, green: 0.75, blue: 0.95, alpha: 0.45))
+                ctx.setLineWidth(0.8)
+                ctx.beginPath(); ctx.move(to: .zero); ctx.addLine(to: CGPoint(x: dir.x * 0.7, y: dir.y * 0.7)); ctx.strokePath()
+                ctx.restoreGState()
+            }
         default:
             break
         }
@@ -1229,6 +1394,141 @@ enum SpiderRenderer {
             let blade = CGPath(roundedRect: CGRect(x: -abs(bladeW), y: w * 1.2 - 1.6, width: abs(bladeW) * 2, height: 3.2),
                                cornerWidth: 1.6, cornerHeight: 1.6, transform: nil)
             outlined(blade, fill: bladeW >= 0 ? gold : pal.accentRGB.lighter(0.4).cg)
+        case .cowboy:
+            // A wide brim curled up at the sides, a dented crown, a band.
+            let tan = CGColor(red: 0.72, green: 0.52, blue: 0.3, alpha: 1)
+            let brim = CGMutablePath()
+            brim.move(to: CGPoint(x: -w * 1.45, y: 2.5))
+            brim.addQuadCurve(to: CGPoint(x: -w * 0.5, y: -1.5), control: CGPoint(x: -w * 1.1, y: -2.5))
+            brim.addLine(to: CGPoint(x: w * 0.5, y: -1.5))
+            brim.addQuadCurve(to: CGPoint(x: w * 1.45, y: 2.5), control: CGPoint(x: w * 1.1, y: -2.5))
+            brim.addQuadCurve(to: CGPoint(x: -w * 1.45, y: 2.5), control: CGPoint(x: 0, y: 1))
+            brim.closeSubpath()
+            let crown = CGMutablePath()
+            crown.move(to: CGPoint(x: -w * 0.72, y: 0))
+            crown.addLine(to: CGPoint(x: -w * 0.62, y: w * 1.15))
+            crown.addQuadCurve(to: CGPoint(x: 0, y: w * 0.95), control: CGPoint(x: -w * 0.3, y: w * 1.25))
+            crown.addQuadCurve(to: CGPoint(x: w * 0.62, y: w * 1.15), control: CGPoint(x: w * 0.3, y: w * 1.25))
+            crown.addLine(to: CGPoint(x: w * 0.72, y: 0))
+            crown.closeSubpath()
+            outlined(crown, fill: tan)
+            ctx.setFillColor(pal.accentRGB.darker(0.2).cg)
+            ctx.fill(CGRect(x: -w * 0.7, y: 1.5, width: w * 1.4, height: 3.2))
+            outlined(brim, fill: tan)
+        case .chef:
+            // A tall white toque, puffed at the top.
+            let white = CGColor(red: 0.98, green: 0.98, blue: 0.96, alpha: 1)
+            let band = CGPath(roundedRect: CGRect(x: -w * 0.85, y: -1, width: w * 1.7, height: w * 0.55), cornerWidth: 2, cornerHeight: 2, transform: nil)
+            let puff = CGMutablePath()
+            puff.move(to: CGPoint(x: -w * 0.8, y: w * 0.45))
+            puff.addQuadCurve(to: CGPoint(x: -w * 0.3, y: w * 1.9), control: CGPoint(x: -w * 1.35, y: w * 1.5))
+            puff.addQuadCurve(to: CGPoint(x: w * 0.3, y: w * 1.9), control: CGPoint(x: 0, y: w * 2.35))
+            puff.addQuadCurve(to: CGPoint(x: w * 0.8, y: w * 0.45), control: CGPoint(x: w * 1.35, y: w * 1.5))
+            puff.closeSubpath()
+            outlined(puff, fill: white)
+            outlined(band, fill: white)
+        case .bucket:
+            // A soft bucket hat, brim sloping down all round.
+            let cloth = pal.accentRGB.darker(0.1).cg
+            let brim = CGMutablePath()
+            brim.move(to: CGPoint(x: -w * 1.3, y: -4))
+            brim.addLine(to: CGPoint(x: -w * 0.85, y: 1))
+            brim.addLine(to: CGPoint(x: w * 0.85, y: 1))
+            brim.addLine(to: CGPoint(x: w * 1.3, y: -4))
+            brim.addQuadCurve(to: CGPoint(x: -w * 1.3, y: -4), control: CGPoint(x: 0, y: -6))
+            brim.closeSubpath()
+            let crown = CGMutablePath()
+            crown.move(to: CGPoint(x: -w * 0.85, y: 0))
+            crown.addLine(to: CGPoint(x: -w * 0.7, y: w * 1.05))
+            crown.addQuadCurve(to: CGPoint(x: w * 0.7, y: w * 1.05), control: CGPoint(x: 0, y: w * 1.35))
+            crown.addLine(to: CGPoint(x: w * 0.85, y: 0))
+            crown.closeSubpath()
+            outlined(crown, fill: cloth)
+            outlined(brim, fill: cloth)
+            ctx.setStrokeColor(pal.accentRGB.darker(0.4).cg)
+            ctx.setLineWidth(1)
+            ctx.beginPath(); ctx.move(to: CGPoint(x: -w * 0.75, y: w * 0.35)); ctx.addLine(to: CGPoint(x: w * 0.75, y: w * 0.35)); ctx.strokePath()
+        case .viking:
+            // A rounded helmet with a rim and two horns.
+            let iron = CGColor(red: 0.6, green: 0.62, blue: 0.66, alpha: 1)
+            let bone = CGColor(red: 0.96, green: 0.93, blue: 0.85, alpha: 1)
+            for side in [CGFloat(-1), 1] {
+                let horn = CGMutablePath()
+                horn.move(to: CGPoint(x: side * w * 0.55, y: w * 0.35))
+                horn.addQuadCurve(to: CGPoint(x: side * w * 1.35, y: w * 1.35), control: CGPoint(x: side * w * 1.35, y: w * 0.35))
+                horn.addQuadCurve(to: CGPoint(x: side * w * 0.75, y: w * 0.75), control: CGPoint(x: side * w * 1.05, y: w * 0.65))
+                horn.closeSubpath()
+                outlined(horn, fill: bone)
+            }
+            let dome = CGMutablePath()
+            dome.move(to: CGPoint(x: -w * 0.95, y: 0))
+            dome.addQuadCurve(to: CGPoint(x: w * 0.95, y: 0), control: CGPoint(x: 0, y: w * 1.9))
+            dome.closeSubpath()
+            outlined(dome, fill: iron)
+            outlined(CGPath(roundedRect: CGRect(x: -w * 1.0, y: -1.5, width: w * 2.0, height: 3.5), cornerWidth: 1.5, cornerHeight: 1.5, transform: nil), fill: gold)
+            ctx.setStrokeColor(pal.outline)
+            ctx.setLineWidth(1.2)
+            ctx.beginPath(); ctx.move(to: CGPoint(x: 0, y: 2)); ctx.addLine(to: CGPoint(x: 0, y: w * 0.95)); ctx.strokePath()
+        case .tiara:
+            // A slim band with three points, jewelled.
+            let p = CGMutablePath()
+            p.move(to: CGPoint(x: -w * 0.75, y: 0))
+            p.addLine(to: CGPoint(x: w * 0.75, y: 0))
+            p.addLine(to: CGPoint(x: w * 0.6, y: w * 0.35))
+            p.addLine(to: CGPoint(x: w * 0.32, y: w * 0.2))
+            p.addLine(to: CGPoint(x: 0, y: w * 0.75))
+            p.addLine(to: CGPoint(x: -w * 0.32, y: w * 0.2))
+            p.addLine(to: CGPoint(x: -w * 0.6, y: w * 0.35))
+            p.closeSubpath()
+            ctx.setLineWidth(1.6)
+            outlined(p, fill: CGColor(red: 0.85, green: 0.88, blue: 0.95, alpha: 1))
+            ctx.setFillColor(accent)
+            ctx.fillEllipse(in: CGRect(x: -1.8, y: w * 0.42 - 1.8, width: 3.6, height: 3.6))
+            for x in [-w * 0.32, w * 0.32] {
+                ctx.fillEllipse(in: CGRect(x: x - 1.1, y: w * 0.12 - 1.1, width: 2.2, height: 2.2))
+            }
+        case .pirate:
+            // A tricorn, brim turned up at the sides, skull and crossbones.
+            let black = CGColor(red: 0.13, green: 0.12, blue: 0.14, alpha: 1)
+            let p = CGMutablePath()
+            p.move(to: CGPoint(x: -w * 1.4, y: w * 0.9))
+            p.addQuadCurve(to: CGPoint(x: 0, y: w * 0.3), control: CGPoint(x: -w * 0.6, y: -w * 0.2))
+            p.addQuadCurve(to: CGPoint(x: w * 1.4, y: w * 0.9), control: CGPoint(x: w * 0.6, y: -w * 0.2))
+            p.addQuadCurve(to: CGPoint(x: 0, y: w * 1.35), control: CGPoint(x: w * 0.75, y: w * 1.15))
+            p.addQuadCurve(to: CGPoint(x: -w * 1.4, y: w * 0.9), control: CGPoint(x: -w * 0.75, y: w * 1.15))
+            p.closeSubpath()
+            outlined(p, fill: black)
+            ctx.setStrokeColor(gold)
+            ctx.setLineWidth(1.2)
+            ctx.beginPath()
+            ctx.move(to: CGPoint(x: -w * 1.3, y: w * 0.85))
+            ctx.addQuadCurve(to: CGPoint(x: 0, y: w * 1.2), control: CGPoint(x: -w * 0.7, y: w * 1.05))
+            ctx.addQuadCurve(to: CGPoint(x: w * 1.3, y: w * 0.85), control: CGPoint(x: w * 0.7, y: w * 1.05))
+            ctx.strokePath()
+            let white = CGColor(red: 0.98, green: 0.98, blue: 0.96, alpha: 1)
+            ctx.setFillColor(white)
+            ctx.fillEllipse(in: CGRect(x: -2.6, y: w * 0.55, width: 5.2, height: 5))
+            ctx.setStrokeColor(white)
+            ctx.setLineWidth(1.1)
+            for sgn in [CGFloat(-1), 1] {
+                ctx.beginPath(); ctx.move(to: CGPoint(x: sgn * -3.5, y: w * 0.4)); ctx.addLine(to: CGPoint(x: sgn * 3.5, y: w * 0.5 + 5.5)); ctx.strokePath()
+            }
+            ctx.setFillColor(black)
+            ctx.fillEllipse(in: CGRect(x: -1.8, y: w * 0.55 + 2.2, width: 1.4, height: 1.6))
+            ctx.fillEllipse(in: CGRect(x: 0.4, y: w * 0.55 + 2.2, width: 1.4, height: 1.6))
+        case .mushroom:
+            // A red toadstool cap with white spots.
+            let red = CGColor(red: 0.85, green: 0.2, blue: 0.16, alpha: 1)
+            let cap = CGMutablePath()
+            cap.move(to: CGPoint(x: -w * 1.3, y: 0))
+            cap.addQuadCurve(to: CGPoint(x: w * 1.3, y: 0), control: CGPoint(x: 0, y: w * 2.3))
+            cap.addQuadCurve(to: CGPoint(x: -w * 1.3, y: 0), control: CGPoint(x: 0, y: -w * 0.25))
+            cap.closeSubpath()
+            outlined(cap, fill: red)
+            ctx.setFillColor(CGColor(red: 0.98, green: 0.96, blue: 0.9, alpha: 1))
+            for (x, y, r) in [(-w * 0.6, w * 0.45, 2.4), (w * 0.15, w * 0.85, 3.0), (w * 0.75, w * 0.35, 2.0), (-w * 0.1, w * 0.25, 1.5)] {
+                ctx.fillEllipse(in: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
+            }
         }
         ctx.restoreGState()
     }
@@ -1284,7 +1584,11 @@ enum SpiderRenderer {
 
         ctx.saveGState()
         ctx.translateBy(x: 0, y: 30 * s)
-        ctx.scaleBy(x: s, y: s)
+        // The little emotes (hearts, notes, Z's, sparkles, "!" and "?") are
+        // drawn half as big again as the sprite's own scale, so they read
+        // from across the room; a thought bubble sizes itself.
+        let boost: CGFloat = pose.emote == .thought ? 1 : 1.55
+        ctx.scaleBy(x: s * boost, y: s * boost)
 
         switch pose.emote {
         case .hearts:
@@ -1297,11 +1601,14 @@ enum SpiderRenderer {
                 drawHeart(at: CGPoint(x: x, y: y), size: 4.2 * (0.7 + 0.5 * (1 - lt)), alpha: a, in: ctx)
             }
         case .zzz:
+            // Z's that rise out of it one after another, drifting to the
+            // side, each growing as it goes and fading at the top.
             for i in 0..<3 {
                 let ph = CGFloat(i) * 0.33
                 let lt = (t * 0.9 + ph).truncatingRemainder(dividingBy: 1)
-                let a = alpha * (1 - lt) * 0.8
-                drawZ(at: CGPoint(x: 2 + lt * 9, y: lt * 15), size: 3.4 + lt * 2.2, alpha: a, in: ctx)
+                let a = alpha * (1 - lt * lt) * 0.85
+                let x = 3 + lt * 13 + sin(lt * 7 + ph * 5) * 2.5
+                drawZ(at: CGPoint(x: x, y: 2 + lt * 24), size: 3.2 + lt * 4.5, alpha: a, in: ctx)
             }
         case .surprise:
             let pop = easeOutBack(min(t * 4, 1))
@@ -1347,6 +1654,29 @@ enum SpiderRenderer {
             ctx.addArc(center: CGPoint(x: 0, y: 7), radius: 4.7, startAngle: .pi, endAngle: -0.5, clockwise: true)
             ctx.strokePath()
             ctx.restoreGState()
+        case .exclaim:
+            // Three little "!" that pop out at angles and drift up and away.
+            let pop = easeOutBack(min(t * 4, 1))
+            ctx.setFillColor(CGColor(red: 1, green: 0.88, blue: 0.3, alpha: Double(alpha)))
+            ctx.setStrokeColor(CGColor(red: 0.357, green: 0.227, blue: 0.114, alpha: Double(alpha)))
+            ctx.setLineWidth(1.0)
+            for i in 0..<3 {
+                let ang = CGFloat(i - 1) * 0.55
+                let dist = (6 + t * 10) * pop
+                ctx.saveGState()
+                ctx.translateBy(x: sin(ang) * dist, y: 2 + cos(ang) * dist)
+                ctx.rotate(by: -ang * 0.8)
+                let sc = (0.7 + 0.3 * CGFloat(i % 2)) * pop
+                ctx.scaleBy(x: sc, y: sc)
+                let bar = CGRect(x: -1.4, y: 3, width: 2.8, height: 7.5)
+                let p = CGPath(roundedRect: bar, cornerWidth: 1.4, cornerHeight: 1.4, transform: nil)
+                ctx.addPath(p); ctx.fillPath(); ctx.addPath(p); ctx.strokePath()
+                ctx.fillEllipse(in: CGRect(x: -1.5, y: -0.6, width: 3, height: 3))
+                ctx.strokeEllipse(in: CGRect(x: -1.5, y: -0.6, width: 3, height: 3))
+                ctx.restoreGState()
+            }
+        case .thought:
+            drawThought(pose, alpha: alpha, in: ctx)
         case .note:
             // A couple of music notes bobbing upward.
             for i in 0..<2 {
@@ -1395,6 +1725,200 @@ enum SpiderRenderer {
         ctx.addPath(p)
         ctx.setFillColor(colour)
         ctx.fillPath()
+    }
+
+    /// A thought bubble: a cloud above and a little behind the head, two
+    /// small puffs leading up to it, with a picture or some words inside.
+    /// Drawn in the emote frame (already scaled by the sprite's scale, origin
+    /// 30 units above the body), so it grows with the spider.
+    private static func drawThought(_ pose: SpiderPose, alpha: CGFloat, in ctx: CGContext) {
+        let t = pose.emoteT
+        let pop = easeOutBack(min(t * 3, 1))
+        // Size the cloud to what is in it.
+        var textLines: [CTLine] = []
+        var textW: CGFloat = 0, textH: CGFloat = 0
+        let ink = NSColor(calibratedRed: 0.22, green: 0.14, blue: 0.08, alpha: 1)
+        if case .text(let str) = pose.thought {
+            let font = CTFontCreateWithName("HelveticaNeue-Medium" as CFString, 8.5, nil)
+            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ink]
+            let maxW: CGFloat = 96
+            // Word-wrap by hand: greedy lines up to maxW, at most four.
+            var lines: [String] = []
+            var cur = ""
+            for word in str.split(separator: " ").map(String.init) {
+                let trial = cur.isEmpty ? word : cur + " " + word
+                let w = CTLineGetTypographicBounds(CTLineCreateWithAttributedString(NSAttributedString(string: trial, attributes: attrs)), nil, nil, nil)
+                if w > Double(maxW), !cur.isEmpty { lines.append(cur); cur = word } else { cur = trial }
+            }
+            if !cur.isEmpty { lines.append(cur) }
+            if lines.count > 4 { lines = Array(lines.prefix(3)) + [lines[3] + "…"] }
+            for l in lines {
+                let line = CTLineCreateWithAttributedString(NSAttributedString(string: l, attributes: attrs))
+                textLines.append(line)
+                textW = max(textW, CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)))
+            }
+            textH = CGFloat(lines.count) * 10.5
+        }
+        let innerW = max(18, textW + 4), innerH = max(16, textH + 2)
+        let cw = innerW + 14, ch = innerH + 10
+        // The cloud sits up and back over the head.
+        let cx: CGFloat = -6, cy: CGFloat = 18 + ch / 2
+        ctx.saveGState()
+        ctx.translateBy(x: cx, y: cy)
+        ctx.scaleBy(x: pop, y: pop)
+        ctx.translateBy(x: -cx, y: -cy)
+        let fill = CGColor(red: 1, green: 0.98, blue: 0.94, alpha: Double(alpha * 0.96))
+        let rim = CGColor(red: 0.30, green: 0.18, blue: 0.09, alpha: Double(alpha * 0.85))
+        ctx.setFillColor(fill)
+        ctx.setStrokeColor(rim)
+        ctx.setLineWidth(1.1)
+        // Trail puffs from the head to the cloud.
+        for (i, r) in [(0, CGFloat(1.6)), (1, CGFloat(2.6))] {
+            let p = CGPoint(x: 2 - CGFloat(i) * 4, y: 4 + CGFloat(i) * 6)
+            ctx.fillEllipse(in: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2))
+            ctx.strokeEllipse(in: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2))
+        }
+        // The cloud: a rounded body with bumps round the rim.
+        let body = CGRect(x: cx - cw / 2, y: cy - ch / 2, width: cw, height: ch)
+        let cloud = CGMutablePath()
+        cloud.addRoundedRect(in: body, cornerWidth: min(9, ch / 2 - 1), cornerHeight: min(9, ch / 2 - 1))
+        let bumps = max(6, Int(cw / 9))
+        for k in 0..<bumps {
+            let u = (CGFloat(k) + 0.5) / CGFloat(bumps)
+            let r = 4.0 + CGFloat(k % 2) * 1.5
+            cloud.addEllipse(in: CGRect(x: body.minX + u * cw - r, y: body.maxY - r * 0.7, width: r * 2, height: r * 2))
+            cloud.addEllipse(in: CGRect(x: body.minX + u * cw - r, y: body.minY - r * 1.3, width: r * 2, height: r * 2))
+        }
+        for k in 0..<2 {
+            let r: CGFloat = 4.5
+            let y = body.minY + (CGFloat(k) + 0.5) / 2 * ch
+            cloud.addEllipse(in: CGRect(x: body.minX - r * 1.2, y: y - r, width: r * 2, height: r * 2))
+            cloud.addEllipse(in: CGRect(x: body.maxX - r * 0.8, y: y - r, width: r * 2, height: r * 2))
+        }
+        ctx.addPath(cloud); ctx.fillPath()
+        // Outline only the outside: stroke, then paint the interior over it.
+        ctx.addPath(cloud); ctx.strokePath()
+        ctx.addPath(cloud); ctx.setFillColor(fill); ctx.fillPath()
+        ctx.setFillColor(CGColor(red: 1, green: 0.98, blue: 0.94, alpha: Double(alpha * 0.96)))
+        ctx.fill(body.insetBy(dx: 1.5, dy: 1.5))
+
+        // What it is thinking.
+        ctx.saveGState()
+        ctx.translateBy(x: cx, y: cy)
+        switch pose.thought {
+        case .text:
+            let total = CGFloat(textLines.count) * 10.5
+            for (i, line) in textLines.enumerated() {
+                let w = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
+                ctx.textPosition = CGPoint(x: -w / 2, y: total / 2 - 8.5 - CGFloat(i) * 10.5)
+                ctx.setAlpha(alpha)
+                CTLineDraw(line, ctx)
+            }
+        case .heart:
+            drawHeart(at: CGPoint(x: 0, y: 0), size: 5.5 + sin(t * 12) * 0.5, alpha: alpha, in: ctx)
+        case .star:
+            drawStar(at: CGPoint(x: 0, y: 0), size: 5, colour: CGColor(red: 1, green: 0.85, blue: 0.3, alpha: Double(alpha)), in: ctx)
+        case .music:
+            drawNote(at: CGPoint(x: -2, y: -3), size: 5, alpha: alpha, in: ctx)
+        case .sun:
+            ctx.setFillColor(CGColor(red: 1, green: 0.8, blue: 0.2, alpha: Double(alpha)))
+            ctx.setStrokeColor(CGColor(red: 0.85, green: 0.55, blue: 0.1, alpha: Double(alpha)))
+            ctx.setLineWidth(1.2)
+            for k in 0..<8 {
+                let a = CGFloat(k) / 8 * 2 * .pi + t * 0.8
+                ctx.beginPath()
+                ctx.move(to: CGPoint(x: cos(a) * 5.5, y: sin(a) * 5.5))
+                ctx.addLine(to: CGPoint(x: cos(a) * 8, y: sin(a) * 8))
+                ctx.strokePath()
+            }
+            ctx.fillEllipse(in: CGRect(x: -4.5, y: -4.5, width: 9, height: 9))
+            ctx.strokeEllipse(in: CGRect(x: -4.5, y: -4.5, width: 9, height: 9))
+        case .rain:
+            // A grey cloud with drops falling from it.
+            ctx.setFillColor(CGColor(red: 0.62, green: 0.66, blue: 0.74, alpha: Double(alpha)))
+            ctx.setStrokeColor(CGColor(red: 0.35, green: 0.38, blue: 0.48, alpha: Double(alpha)))
+            ctx.setLineWidth(1)
+            let cl = CGMutablePath()
+            cl.addEllipse(in: CGRect(x: -7, y: 0, width: 8, height: 7))
+            cl.addEllipse(in: CGRect(x: -3, y: 2, width: 9, height: 8))
+            cl.addEllipse(in: CGRect(x: 1, y: 0, width: 7, height: 6.5))
+            cl.addRect(CGRect(x: -6, y: 0, width: 13, height: 3.5))
+            ctx.addPath(cl); ctx.fillPath()
+            ctx.setStrokeColor(CGColor(red: 0.35, green: 0.55, blue: 0.9, alpha: Double(alpha)))
+            ctx.setLineWidth(1.4)
+            ctx.setLineCap(.round)
+            for k in 0..<3 {
+                let fall = (t * 2.5 + CGFloat(k) * 0.33).truncatingRemainder(dividingBy: 1)
+                let x = CGFloat(k - 1) * 4.5
+                let y = -1 - fall * 7
+                ctx.beginPath(); ctx.move(to: CGPoint(x: x, y: y)); ctx.addLine(to: CGPoint(x: x - 0.8, y: y - 2.5)); ctx.strokePath()
+            }
+        case .moon:
+            ctx.setFillColor(CGColor(red: 1, green: 0.92, blue: 0.55, alpha: Double(alpha)))
+            ctx.setStrokeColor(CGColor(red: 0.6, green: 0.5, blue: 0.2, alpha: Double(alpha)))
+            ctx.setLineWidth(1)
+            // A crescent: a disc with a bite taken out of it by the bubble.
+            ctx.fillEllipse(in: CGRect(x: -6.5, y: -6.5, width: 13, height: 13))
+            ctx.strokeEllipse(in: CGRect(x: -6.5, y: -6.5, width: 13, height: 13))
+            ctx.setFillColor(CGColor(red: 1, green: 0.98, blue: 0.94, alpha: Double(alpha)))
+            ctx.fillEllipse(in: CGRect(x: -1.5, y: -5, width: 11, height: 11))
+            drawStar(at: CGPoint(x: 6, y: 5), size: 1.6, colour: CGColor(red: 1, green: 0.92, blue: 0.55, alpha: Double(alpha)), in: ctx)
+        case .hungry:
+            // A juicy cricket: what it would like.
+            ctx.setFillColor(CGColor(red: 0.55, green: 0.47, blue: 0.24, alpha: Double(alpha)))
+            ctx.setStrokeColor(CGColor(red: 0.16, green: 0.12, blue: 0.06, alpha: Double(alpha)))
+            ctx.setLineWidth(1)
+            ctx.fillEllipse(in: CGRect(x: -7, y: -3, width: 11, height: 5.5)); ctx.strokeEllipse(in: CGRect(x: -7, y: -3, width: 11, height: 5.5))
+            ctx.fillEllipse(in: CGRect(x: 2.5, y: -2.5, width: 5, height: 5)); ctx.strokeEllipse(in: CGRect(x: 2.5, y: -2.5, width: 5, height: 5))
+            ctx.setLineWidth(1.4)
+            ctx.beginPath(); ctx.move(to: CGPoint(x: -3, y: -2)); ctx.addLine(to: CGPoint(x: -7, y: 3)); ctx.addLine(to: CGPoint(x: -5, y: -4)); ctx.strokePath()
+            ctx.setLineWidth(0.8)
+            for a in [CGFloat(0.5), 1.1] {
+                ctx.beginPath(); ctx.move(to: CGPoint(x: 6, y: 1)); ctx.addLine(to: CGPoint(x: 6 + cos(a) * 6, y: 1 + sin(a) * 6)); ctx.strokePath()
+            }
+            // and a little drool.
+            ctx.setFillColor(CGColor(red: 0.6, green: 0.8, blue: 1, alpha: Double(alpha * 0.9)))
+            ctx.fillEllipse(in: CGRect(x: 8, y: -7 + sin(t * 6) * 0.5, width: 2.2, height: 3))
+        case .bug:
+            // A fly buzzing about.
+            let a = t * 9
+            let c = CGPoint(x: cos(a) * 3, y: sin(a * 1.3) * 2)
+            ctx.setFillColor(CGColor(red: 0.85, green: 0.9, blue: 1, alpha: Double(alpha * 0.7)))
+            ctx.fillEllipse(in: CGRect(x: c.x - 7, y: c.y + 1, width: 7, height: 3.6))
+            ctx.fillEllipse(in: CGRect(x: c.x, y: c.y + 1, width: 7, height: 3.6))
+            ctx.setFillColor(CGColor(red: 0.28, green: 0.2, blue: 0.14, alpha: Double(alpha)))
+            ctx.fillEllipse(in: CGRect(x: c.x - 5, y: c.y - 2.5, width: 10, height: 5))
+            ctx.fillEllipse(in: CGRect(x: c.x + 3.5, y: c.y - 2, width: 4, height: 4))
+            ctx.setFillColor(CGColor(red: 0.85, green: 0.15, blue: 0.1, alpha: Double(alpha)))
+            ctx.fillEllipse(in: CGRect(x: c.x + 5.2, y: c.y - 0.6, width: 1.8, height: 1.8))
+        case .home:
+            // Its hammock: a sagging sling with a sleeping shape in it.
+            ctx.setStrokeColor(CGColor(red: 0.5, green: 0.5, blue: 0.6, alpha: Double(alpha)))
+            ctx.setLineWidth(1)
+            for k in 0..<3 {
+                ctx.beginPath()
+                ctx.move(to: CGPoint(x: -9, y: 5))
+                ctx.addQuadCurve(to: CGPoint(x: 9, y: 5), control: CGPoint(x: 0, y: -8 - CGFloat(k) * 2))
+                ctx.strokePath()
+            }
+            ctx.setFillColor(CGColor(red: 0.85, green: 0.6, blue: 0.35, alpha: Double(alpha)))
+            ctx.fillEllipse(in: CGRect(x: -4, y: -3.5, width: 8, height: 5))
+        }
+        ctx.restoreGState()
+        ctx.restoreGState()
+    }
+
+    private static func drawNote(at c: CGPoint, size: CGFloat, alpha: CGFloat, in ctx: CGContext) {
+        let col = CGColor(red: 0.98, green: 0.8, blue: 0.35, alpha: Double(alpha))
+        ctx.setFillColor(col); ctx.setStrokeColor(col)
+        ctx.fillEllipse(in: CGRect(x: c.x - size * 0.55, y: c.y - size * 0.35, width: size * 1.1, height: size * 0.75))
+        ctx.setLineWidth(size * 0.3)
+        ctx.setLineCap(.round)
+        ctx.beginPath()
+        ctx.move(to: CGPoint(x: c.x + size * 0.45, y: c.y))
+        ctx.addLine(to: CGPoint(x: c.x + size * 0.45, y: c.y + size * 1.9))
+        ctx.addQuadCurve(to: CGPoint(x: c.x + size * 1.35, y: c.y + size * 1.3), control: CGPoint(x: c.x + size * 1.15, y: c.y + size * 2))
+        ctx.strokePath()
     }
 
     private static func drawZ(at c: CGPoint, size: CGFloat, alpha: CGFloat, in ctx: CGContext) {

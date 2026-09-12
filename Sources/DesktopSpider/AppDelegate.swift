@@ -16,6 +16,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cinemaScreens: [CGRect] = []
     private var cinemaClearPolls = 0
     private var boxDrawWindow: BoxDrawWindow?
+    private var laserOn = false
+    private var laserWindow: OverlayWindow!
+    private var laserView: LaserView!
+    private var laserMonitors: [Any] = []
+    private var laserOffAt: CFTimeInterval = 0
+    private var laserHeld = false
     private var boxWindow: OverlayWindow!
     private var boxOutline: BoxOutlineView!
     private var hammockShown = false
@@ -104,7 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let dir = ProcessInfo.processInfo.environment["SPIDER_STUDIO_SHOT"] {
             openStudio()
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-                for i in 0..<8 { self?.studio?.snapshot(to: "\(dir)/studio_tab\(i).png", tab: i) }
+                for i in 0..<9 { self?.studio?.snapshot(to: "\(dir)/studio_tab\(i).png", tab: i) }
                 NSApp.terminate(nil)
             }
         }
@@ -150,6 +156,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         silkView.worldOrigin = frame.origin
         silkWindow.contentView = silkView
         silkWindow.ignoresMouseEvents = true
+
+        // The laser dot.
+        laserWindow = OverlayWindow(frame: CGRect(x: 0, y: 0, width: 36, height: 36))
+        laserWindow.level = NSWindow.Level(rawValue: window.level.rawValue + 2)
+        laserView = LaserView(frame: CGRect(x: 0, y: 0, width: 36, height: 36))
+        laserWindow.contentView = laserView
+        laserWindow.ignoresMouseEvents = true
 
         // The box outline, shown only while there is a box.
         boxWindow = OverlayWindow(frame: CGRect(x: 0, y: 0, width: 200, height: 150))
@@ -269,12 +282,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             spider.update(dt: dt)
             let pose = spider.pose()
+            let wantsRoom = pose.emote == .thought
+            if wantsRoom != thoughtRoom {
+                thoughtRoom = wantsRoom
+                applyWindowSize()
+            }
             let moved = place(pose)
             view.apply(pose)
             settle(moved: moved)
         }
         updateHammock(dt: dt)
         updatePrey()
+        updateLaser()
 
         // Only swallow clicks when the pointer is actually on the spider.
         let wantsMouse = interactive && (spider.isHeld || spider.hitTest(cursor))
@@ -430,6 +449,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         add(behavior, "Say Hi", #selector(sayHi))
         add(behavior, "Toss It", #selector(toss))
         add(behavior, "Swing!", #selector(swing))
+        add(behavior, "Peek-a-boo", #selector(peekaboo))
+        add(behavior, "Laser Pointer", #selector(toggleLaser), state: laserOn)
         behavior.addItem(.separator())
         let feedMenu = NSMenu()
         for kind in PreyKind.allCases {
@@ -545,10 +566,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func comeHere() { spider.summon(to: V2(NSEvent.mouseLocation)) }
     @objc private func swing() { spider.debugActivity("swing", for: 0) }
+    @objc private func peekaboo() { spider.playPeekaboo() }
     @objc private func nap() { spider.napInHammock() }
     @objc private func buildHammock() { spider.buildHammock() }
     @objc private func clearHammock() { spider.clearHammock() }
-    @objc private func sayHi() { spider.celebrate() }
+    @objc private func sayHi() { spider.debugActivity("greet", for: 2.4) }
+
+    // MARK: Laser pointer
+
+    /// With the laser on, any click anywhere puts the dot down and the
+    /// spider goes for it; dragging moves it; letting go leaves it a moment.
+    @objc private func toggleLaser() {
+        laserOn.toggle()
+        if laserOn {
+            let down: (NSEvent) -> Void = { [weak self] e in self?.laserDown(at: NSEvent.mouseLocation) }
+            let drag: (NSEvent) -> Void = { [weak self] e in self?.laserMove(to: NSEvent.mouseLocation) }
+            let up: (NSEvent) -> Void = { [weak self] _ in self?.laserUp() }
+            if let m = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown, handler: down) { laserMonitors.append(m) }
+            if let m = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged, handler: drag) { laserMonitors.append(m) }
+            if let m = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp, handler: up) { laserMonitors.append(m) }
+            // Clicks on our own windows come through the local monitor instead.
+            if let m = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp], handler: { [weak self] e in
+                guard let self else { return e }
+                // Not when picking the spider or a creature up.
+                if e.window === self.window || e.window === self.preyWindow { return e }
+                switch e.type {
+                case .leftMouseDown: self.laserDown(at: NSEvent.mouseLocation)
+                case .leftMouseDragged: self.laserMove(to: NSEvent.mouseLocation)
+                default: self.laserUp()
+                }
+                return e
+            }) { laserMonitors.append(m) }
+        } else {
+            for m in laserMonitors { NSEvent.removeMonitor(m) }
+            laserMonitors = []
+            laserHeld = false
+            laserOffAt = 0
+            spider.laser = nil
+            laserWindow.orderOut(nil)
+        }
+        refreshMenu()
+    }
+
+    private func laserDown(at p: CGPoint) {
+        laserHeld = true
+        laserMove(to: p)
+        laserWindow.orderFrontRegardless()
+    }
+
+    private func laserMove(to p: CGPoint) {
+        guard laserOn else { return }
+        laserWindow.setFrameOrigin(CGPoint(x: p.x - 18, y: p.y - 18))
+        spider.laser = V2(p)
+        calmFrames = 0
+        calm = false
+    }
+
+    private func laserUp() {
+        guard laserHeld else { return }
+        laserHeld = false
+        // The dot lingers a little after you let go.
+        laserOffAt = CACurrentMediaTime() + 2.5
+    }
+
+    private func updateLaser() {
+        guard laserOn else { return }
+        if spider.laser != nil {
+            laserView.phase += 0.016
+            if !laserHeld, CACurrentMediaTime() > laserOffAt {
+                spider.laser = nil
+                laserWindow.orderOut(nil)
+            }
+        }
+    }
 
     // MARK: The box
 
@@ -676,9 +766,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshMenu()
     }
 
+    /// A thought bubble needs far more room over its head than anything
+    /// else it draws, so the sprite and its window grow while one is up.
+    private var thoughtRoom = false
+
     private func applyWindowSize() {
         map.standoff = AppDelegate.standoff(for: spider.config.scale)
-        spriteSide = SpiderRenderer.spriteSide(for: spider.config.scale)
+        spriteSide = SpiderRenderer.spriteSide(for: spider.config.scale) + (thoughtRoom ? (240 * spider.config.scale).rounded() : 0)
         side = spriteSide + AppDelegate.windowSlack
         view.resize(sprite: spriteSide, window: side)
         window.setContentSize(CGSize(width: side, height: side))

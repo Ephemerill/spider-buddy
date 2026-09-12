@@ -140,6 +140,7 @@ enum Pattern: String, Codable, CaseIterable {
 
 enum Hat: String, Codable, CaseIterable {
     case none, topHat, partyHat, crown, beanie, flower, bow, cap, halo, wizard, propeller
+    case cowboy, chef, bucket, viking, tiara, pirate, mushroom
     var label: String {
         switch self {
         case .none: return "None"
@@ -153,12 +154,20 @@ enum Hat: String, Codable, CaseIterable {
         case .halo: return "Halo"
         case .wizard: return "Wizard"
         case .propeller: return "Propeller"
+        case .cowboy: return "Cowboy"
+        case .chef: return "Chef"
+        case .bucket: return "Bucket Hat"
+        case .viking: return "Viking"
+        case .tiara: return "Tiara"
+        case .pirate: return "Pirate"
+        case .mushroom: return "Mushroom"
         }
     }
 }
 
 enum Accessory: String, Codable, CaseIterable {
     case none, glasses, monocle, bowTie, scarf, headphones, bandana, backpack, sunglasses
+    case cape, satchel, collar, necktie, wings, lei
     var label: String {
         switch self {
         case .none: return "None"
@@ -170,6 +179,12 @@ enum Accessory: String, Codable, CaseIterable {
         case .bandana: return "Bandana"
         case .backpack: return "Backpack"
         case .sunglasses: return "Shades"
+        case .cape: return "Cape"
+        case .satchel: return "Satchel"
+        case .collar: return "Bell Collar"
+        case .necktie: return "Necktie"
+        case .wings: return "Fairy Wings"
+        case .lei: return "Flower Lei"
         }
     }
 }
@@ -420,11 +435,94 @@ struct Gait: Codable, Equatable {
 
 // MARK: - The whole design
 
+/// Sets of things it can think in a thought bubble.
+enum ThoughtPack: String, Codable, CaseIterable {
+    case chitchat, encouragement, spiderFacts, bibleVerses
+
+    var label: String {
+        switch self {
+        case .chitchat: return "Chit-chat"
+        case .encouragement: return "Encouragement"
+        case .spiderFacts: return "Spider facts"
+        case .bibleVerses: return "Bible verses"
+        }
+    }
+
+    var phrases: [String] {
+        switch self {
+        case .chitchat:
+            return ["hi!", "hello there", "boo!", "hmm…", "ooh", "what's that?", "nice window", "la la la",
+                    "I like it here", "hey you", "psst", "yum?", "brb", "tap tap", "cosy", "wheee",
+                    "up we go", "ta-da!", "just chilling", "you again!", "*wiggles*", "snack o'clock?"]
+        case .encouragement:
+            return ["you've got this", "drink some water", "take a little break", "nice work", "keep going",
+                    "stretch your legs", "one thing at a time", "you're doing great", "breathe", "almost there",
+                    "proud of you", "look out the window", "be kind to yourself", "good job today", "sit up straight",
+                    "you can do hard things", "have a snack", "rest your eyes a moment"]
+        case .spiderFacts:
+            return ["jumping spiders can see in colour", "I have eight eyes", "I don't spin webs to catch things",
+                    "I can jump 50 times my length", "my silk is a safety line", "I hunt by sight",
+                    "I do a little dance to say hi", "spiders aren't insects", "I sleep in a silk hammock",
+                    "I can see the moon", "my fangs fold away", "I molt as I grow", "I breathe through book lungs",
+                    "I drum to talk", "there are 6,000 kinds of me"]
+        case .bibleVerses:
+            return ["\u{201C}The LORD is my shepherd; I shall not want.\u{201D} \u{2014} Psalm 23:1",
+                    "\u{201C}Be still, and know that I am God.\u{201D} \u{2014} Psalm 46:10",
+                    "\u{201C}I can do all things through Christ which strengtheneth me.\u{201D} \u{2014} Philippians 4:13",
+                    "\u{201C}Love is patient, love is kind.\u{201D} \u{2014} 1 Corinthians 13:4",
+                    "\u{201C}Rejoice evermore.\u{201D} \u{2014} 1 Thessalonians 5:16",
+                    "\u{201C}Be careful for nothing; but in every thing by prayer\u{2026} let your requests be made known unto God.\u{201D} \u{2014} Philippians 4:6",
+                    "\u{201C}Fear thou not; for I am with thee.\u{201D} \u{2014} Isaiah 41:10",
+                    "\u{201C}The joy of the LORD is your strength.\u{201D} \u{2014} Nehemiah 8:10",
+                    "\u{201C}Trust in the LORD with all thine heart.\u{201D} \u{2014} Proverbs 3:5",
+                    "\u{201C}This is the day which the LORD hath made; we will rejoice and be glad in it.\u{201D} \u{2014} Psalm 118:24",
+                    "\u{201C}In every thing give thanks.\u{201D} \u{2014} 1 Thessalonians 5:18",
+                    "\u{201C}Let all your things be done with charity.\u{201D} \u{2014} 1 Corinthians 16:14",
+                    "\u{201C}Be strong and of a good courage.\u{201D} \u{2014} Joshua 1:9",
+                    "\u{201C}Casting all your care upon him; for he careth for you.\u{201D} \u{2014} 1 Peter 5:7",
+                    "\u{201C}All things work together for good to them that love God.\u{201D} \u{2014} Romans 8:28",
+                    "\u{201C}Thy word is a lamp unto my feet, and a light unto my path.\u{201D} \u{2014} Psalm 119:105",
+                    "\u{201C}Come unto me, all ye that labour and are heavy laden, and I will give you rest.\u{201D} \u{2014} Matthew 11:28",
+                    "\u{201C}The LORD bless thee, and keep thee.\u{201D} \u{2014} Numbers 6:24"]
+        }
+    }
+}
+
 struct SpiderDesign: Codable, Equatable {
     var name: String = "Spider"
     var look = SpiderLook()
     var personality = Personality()
     var gait = Gait()
+    /// Which packs of things it thinks, and any of your own.
+    var packs: [ThoughtPack] = [.chitchat]
+    var customPhrases: [String] = []
+
+    init(name: String = "Spider", look: SpiderLook = SpiderLook(), personality: Personality = Personality(),
+         gait: Gait = Gait(), packs: [ThoughtPack] = [.chitchat], customPhrases: [String] = []) {
+        self.name = name
+        self.look = look
+        self.personality = personality
+        self.gait = gait
+        self.packs = packs
+        self.customPhrases = customPhrases
+    }
+
+    // Older saved designs have no thought fields.
+    private enum CodingKeys: String, CodingKey { case name, look, personality, gait, packs, customPhrases }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Spider"
+        look = try c.decodeIfPresent(SpiderLook.self, forKey: .look) ?? SpiderLook()
+        personality = try c.decodeIfPresent(Personality.self, forKey: .personality) ?? Personality()
+        gait = try c.decodeIfPresent(Gait.self, forKey: .gait) ?? Gait()
+        packs = try c.decodeIfPresent([ThoughtPack].self, forKey: .packs) ?? [.chitchat]
+        customPhrases = try c.decodeIfPresent([String].self, forKey: .customPhrases) ?? []
+    }
+
+    /// Everything it might say, from the packs it has and your own lines.
+    var allPhrases: [String] {
+        packs.flatMap { $0.phrases } + customPhrases.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
 
     static let key = "design"
 

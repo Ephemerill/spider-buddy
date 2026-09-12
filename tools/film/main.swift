@@ -475,6 +475,113 @@ if let hi = CommandLine.arguments.firstIndex(of: "--hunt") {
     exit(0)
 }
 
+// --- peek-a-boo ---------------------------------------------------------------
+// `--peekaboo` films the game: a window overlapping the floor, the pointer
+// near by, and the spider hiding behind the window's edge and popping out.
+if CommandLine.arguments.contains("--peekaboo") {
+    let dt: CGFloat = 1.0 / 60.0
+    let dw = 900, dh = 500
+    let deskRect = CGRect(x: 0, y: 0, width: CGFloat(dw), height: CGFloat(dh))
+    let pm = SurfaceMap()
+    pm.standoff = 22 * 1.0
+    let win = CGRect(x: 420, y: -60, width: 380, height: 260)
+    pm.debugRebuild(screen: deskRect, menuBarHeight: 24,
+                    windows: [TrackedWindow(id: 9, frame: win, depth: 0, owner: "Mock")])
+    guard let c = CGContext(data: nil, width: dw * 2, height: dh * 2, bitsPerComponent: 8,
+                            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { exit(1) }
+    c.scaleBy(x: 2, y: 2)
+    let sp = Spider(map: pm)
+    sp.config.scale = 1.0
+    sp.config.followCursor = true
+    sp.debugAttach(loopID: "screen:0", segIdx: 0, t: 200, dir: 1)
+    for _ in 0..<20 { sp.setCursor(V2(300, 120)); sp.update(dt: dt) }
+    sp.debugActivity("peekaboo", for: 0)
+    // A strip of moments: every 0.4 s, each cell the scene around the edge.
+    let cols = 10, rows = 3
+    let cellW = CGFloat(dw) / CGFloat(cols), cellH = CGFloat(dh) / CGFloat(rows)
+    var shots = 0
+    var frame = 0
+    var log: [String] = []
+    var stageLog: [String] = []
+    while shots < cols * rows, frame < 60 * 40 {
+        sp.setCursor(V2(300, 120)); sp.update(dt: dt); frame += 1
+        let st = sp.debugState
+        if log.last != st { log.append(st) }
+        if frame % 24 == 0 {
+            let pose = sp.pose()
+            let col = shots % cols, row = shots / cols
+            let ox = CGFloat(col) * cellW, oy = CGFloat(rows - 1 - row) * cellH
+            c.saveGState()
+            c.clip(to: CGRect(x: ox, y: oy, width: cellW, height: cellH))
+            c.setFillColor(NSColor(calibratedRed: 0.20, green: 0.24, blue: 0.33, alpha: 1).cgColor)
+            c.fill(CGRect(x: ox, y: oy, width: cellW, height: cellH))
+            // World -> cell: centred on the edge, 1x.
+            c.translateBy(x: ox + cellW / 2 - win.minX, y: oy + cellH / 2 - 40)
+            let box = CGRect(x: pose.pos.x - 110, y: pose.pos.y - 110, width: 220, height: 220)
+            SpiderRenderer.draw(pose, in: c, bounds: box)
+            // The window on top, as it would be.
+            c.setFillColor(NSColor(calibratedWhite: 0.13, alpha: 1).cgColor)
+            c.fill(win)
+            c.setStrokeColor(NSColor(calibratedWhite: 0.5, alpha: 1).cgColor)
+            c.setLineWidth(1)
+            c.stroke(win)
+            c.restoreGState()
+            stageLog.append("\(Int(pose.pos.x))")
+            shots += 1
+        }
+        if !st.contains("peekaboo") && frame > 120 && shots > 4 { break }
+    }
+    print("peekaboo: " + log.suffix(6).joined(separator: " > "))
+    print("x per cell: " + stageLog.joined(separator: " "))
+    guard let img = c.makeImage() else { exit(1) }
+    try NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])!
+        .write(to: URL(fileURLWithPath: "build/peekaboo.png"))
+    print("wrote build/peekaboo.png")
+    exit(0)
+}
+
+// --- thoughts -----------------------------------------------------------------
+// `--thoughts` draws every kind of thought bubble, plus the "!!" burst.
+if CommandLine.arguments.contains("--thoughts") {
+    let dt: CGFloat = 1.0 / 60.0
+    let cellW = 230, cellH = 170, cols = 4
+    let thoughts: [Thought] = [.heart, .hungry, .rain, .sun, .moon, .music, .star, .bug, .home,
+                               .text("hi!"), .text("you've got this"),
+                               .text("\u{201C}The LORD is my shepherd; I shall not want.\u{201D} \u{2014} Psalm 23:1")]
+    let rows = (thoughts.count + 1 + cols - 1) / cols
+    guard let c = CGContext(data: nil, width: cellW * cols * 2, height: cellH * rows * 2, bitsPerComponent: 8,
+                            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { exit(1) }
+    c.scaleBy(x: 2, y: 2)
+    c.setFillColor(NSColor(calibratedRed: 0.20, green: 0.24, blue: 0.33, alpha: 1).cgColor)
+    c.fill(CGRect(x: 0, y: 0, width: cellW * cols, height: cellH * rows))
+    let hm = SurfaceMap()
+    hm.standoff = 22 * 1.4
+    hm.debugRebuild(screen: CGRect(x: 0, y: 0, width: 900, height: 600), menuBarHeight: 0, windows: [])
+    for (i, th) in (thoughts.map { Optional($0) } + [nil]).enumerated() {
+        let sp = Spider(map: hm)
+        sp.config.scale = 1.4
+        sp.config.followCursor = false
+        sp.debugAttach(loopID: "screen:0", segIdx: 0, t: 300, dir: 1)
+        for _ in 0..<20 { sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt) }
+        if let th { sp.think(th, for: 4) } else { sp.debugActivity("hop", for: 0.42); sp.debugEmote("exclaim") }
+        for _ in 0..<(th == nil ? 8 : 60) { sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt) }
+        let pose = sp.pose()
+        let col = i % cols, row = i / cols
+        let ox = CGFloat(col * cellW) + CGFloat(cellW) / 2, oy = CGFloat((rows - 1 - row) * cellH) + 40
+        c.saveGState()
+        c.translateBy(x: ox - pose.pos.x, y: oy - pose.pos.y)
+        SpiderRenderer.draw(pose, in: c, bounds: CGRect(x: pose.pos.x - 140, y: pose.pos.y - 140, width: 280, height: 280))
+        c.restoreGState()
+    }
+    guard let img = c.makeImage() else { exit(1) }
+    try NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])!
+        .write(to: URL(fileURLWithPath: "build/thoughts.png"))
+    print("wrote build/thoughts.png")
+    exit(0)
+}
+
 // --- swing / hammock --------------------------------------------------------
 // `--swing` onion-skins a swing on a line from the floor up past a window;
 // `--hammock` films the hammock being spun in a corner and slept in.

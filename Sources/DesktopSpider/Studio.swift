@@ -281,7 +281,14 @@ final class FlippedView: NSView {
 
 /// The Spider Studio: pick parts, colours, character and gait, and name it.
 /// Every change goes straight to the spider on the desktop.
-final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate {
+final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, NSTextViewDelegate {
+    func textDidChange(_ notification: Notification) {
+        guard let tv = notification.object as? NSTextView, tv === phrasesView else { return }
+        design.customPhrases = tv.string.split(separator: "\n").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        preview.spider.apply(design: design)
+        onChange?(design)
+    }
+
     private(set) var design: SpiderDesign
     var onChange: ((SpiderDesign) -> Void)?
 
@@ -437,6 +444,7 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate {
         tabs.addTabViewItem(tab("Extras", buildExtrasTab()))
         tabs.addTabViewItem(tab("Personality", buildPersonalityTab()))
         tabs.addTabViewItem(tab("Gait", buildGaitTab()))
+        tabs.addTabViewItem(tab("Thoughts", buildThoughtsTab()))
         root.addArrangedSubview(tabs)
 
         window.contentView = root
@@ -701,6 +709,69 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate {
         return col
     }
 
+    private var packBoxes: [ThoughtPack: NSButton] = [:]
+    private var phrasesView: NSTextView!
+
+    private func buildThoughtsTab() -> NSView {
+        let col = column()
+        col.addArrangedSubview(header("What it thinks about"))
+        let note = NSTextField(wrappingLabelWithString: "Now and then a thought bubble appears over its head with a picture or a few words. Tick the packs of words it may use, and add lines of your own below, one per line.")
+        note.font = .systemFont(ofSize: 11)
+        note.textColor = .secondaryLabelColor
+        note.translatesAutoresizingMaskIntoConstraints = false
+        note.widthAnchor.constraint(equalToConstant: 470).isActive = true
+        col.addArrangedSubview(note)
+        for pack in ThoughtPack.allCases {
+            let box = NSButton(checkboxWithTitle: pack.label, target: self, action: #selector(packToggled(_:)))
+            box.state = design.packs.contains(pack) ? .on : .off
+            box.tag = ThoughtPack.allCases.firstIndex(of: pack) ?? 0
+            packBoxes[pack] = box
+            col.addArrangedSubview(box)
+            let sample = NSTextField(labelWithString: "e.g. " + (pack.phrases.first ?? ""))
+            sample.font = .systemFont(ofSize: 10)
+            sample.textColor = .tertiaryLabelColor
+            sample.lineBreakMode = .byTruncatingTail
+            sample.translatesAutoresizingMaskIntoConstraints = false
+            sample.widthAnchor.constraint(equalToConstant: 460).isActive = true
+            col.addArrangedSubview(sample)
+        }
+        col.addArrangedSubview(header("Your own lines"))
+        let scroll = NSScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.widthAnchor.constraint(equalToConstant: 470).isActive = true
+        scroll.heightAnchor.constraint(equalToConstant: 150).isActive = true
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let tv = NSTextView(frame: CGRect(x: 0, y: 0, width: 470, height: 150))
+        tv.isRichText = false
+        tv.font = .systemFont(ofSize: 12)
+        tv.isAutomaticQuoteSubstitutionEnabled = false
+        tv.isAutomaticDashSubstitutionEnabled = false
+        tv.string = design.customPhrases.joined(separator: "\n")
+        tv.delegate = self
+        tv.minSize = CGSize(width: 0, height: 150)
+        tv.maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        tv.isVerticallyResizable = true
+        tv.isHorizontallyResizable = false
+        tv.textContainer?.widthTracksTextView = true
+        tv.textContainer?.containerSize = CGSize(width: 470, height: CGFloat.greatestFiniteMagnitude)
+        scroll.documentView = tv
+        phrasesView = tv
+        col.addArrangedSubview(scroll)
+        let tryButton = NSButton(title: "Think something now", target: self, action: #selector(thinkNow))
+        col.addArrangedSubview(tryButton)
+        return col
+    }
+
+    @objc private func packToggled(_ box: NSButton) {
+        design.packs = ThoughtPack.allCases.filter { packBoxes[$0]?.state == .on }
+        changed()
+    }
+
+    @objc private func thinkNow() {
+        preview.spider.thinkSomething()
+    }
+
     private func buildGaitTab() -> NSView {
         let col = column()
         let row = NSStackView()
@@ -741,6 +812,12 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate {
         presetPopup.selectItem(at: presetIdx.map { $0 + 1 } ?? 0)
         stylePopup.selectItem(at: GaitPreference.allCases.firstIndex(of: design.gait.style) ?? 0)
         sizeSlider.doubleValue = Double(scale)
+        for (pack, box) in packBoxes { box.state = design.packs.contains(pack) ? .on : .off }
+        if let tv = phrasesView, tv.string != design.customPhrases.joined(separator: "\n"), !tv.isFieldEditor {
+            if design.customPhrases.joined(separator: "\n") != tv.string.split(separator: "\n").map({ String($0).trimmingCharacters(in: .whitespaces) }).filter({ !$0.isEmpty }).joined(separator: "\n") {
+                tv.string = design.customPhrases.joined(separator: "\n")
+            }
+        }
         refreshGrids()
     }
 

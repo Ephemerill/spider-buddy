@@ -16,6 +16,14 @@ struct SpiderConfig {
 
 enum Emote {
     case none, hearts, zzz, surprise, sparkle, question, note
+    case exclaim        // a little burst of "!" — a nervous start
+    case thought        // a thought bubble; what is in it is `SpiderPose.thought`
+}
+
+/// What is in a thought bubble.
+enum Thought: Equatable {
+    case heart, hungry, rain, sun, moon, music, star, bug, home
+    case text(String)
 }
 
 struct LegPose {
@@ -49,6 +57,7 @@ struct SpiderPose {
     var abdomenSway: CGFloat = 0
     var emote: Emote = .none
     var emoteT: CGFloat = 0
+    var thought: Thought = .heart
     var web: (anchor: V2, alpha: CGFloat, slack: CGFloat)?
     /// The line as a chain of world points, anchor first, when it is live.
     var webPoints: [V2] = []
@@ -75,6 +84,9 @@ struct SpiderPose {
     var chew: CGFloat = 0
     /// The head tipped up on its neck (+) or down (-), in radians.
     var headTilt: CGFloat = 0
+    /// Windows in front of the surface it is on, in world px: whatever of
+    /// the sprite falls inside them is behind them, and is not drawn.
+    var hiddenBy: [CGRect] = []
 }
 
 // MARK: - Legs
@@ -238,6 +250,11 @@ private enum Activity {
     case shoot      // firing a line at something above, before a swing
     case eat        // a meal: the catch held to the mouth, fangs working
     case watch      // settled down, eyes on the screen: a full-screen video is on
+    case peekaboo   // hiding behind a window's edge and popping out at you
+    case greet      // turns to face you square on and raises both front legs
+    case drum       // drums on the surface with both front legs
+    case stare      // sits still, turned to face you, watching
+    case hop        // a small nervous hop on the spot
 }
 
 /// How it carries itself on a given walk.
@@ -387,6 +404,14 @@ final class Spider {
     private var legFramePos = V2.zero
     private var legFrameHeading: CGFloat = 0
     private var emote: Emote = .none
+    private var thought: Thought = .heart
+    private var lastHop: CGFloat = -9
+    private var lastThought: CGFloat = -30
+    /// Heading for a window top to sleep on: sleep soon after landing.
+    private var bedBoundUntil: CGFloat = -1
+    /// The thoughts it may have in words (from the design).
+    var packs: [ThoughtPack] = [.chitchat]
+    var customPhrases: [String] = []
     private var emoteTime: CGFloat = 0
     private var emoteDur: CGFloat = 0
     /// Set when a walk runs out of ledge, so the spider can react to it.
@@ -478,6 +503,25 @@ final class Spider {
         }
     }
     private var cinemaSince: CGFloat = 0
+
+    /// Peek-a-boo: the edge it hides behind (t along its segment), which way
+    /// along the segment is "behind", the stage of the game and how many
+    /// pops it has done.
+    private struct Peek {
+        var edgeT: CGFloat
+        var into: CGFloat
+        var stage = 0           // 0 up to the edge, 1 hide, 2 wait, 3 pop out, 4 wait
+        var stageTime: CGFloat = 0
+        var pops = 0
+        var wanted = 3
+        var target: CGFloat = 0
+    }
+    private var peek: Peek?
+    /// How fast it is moving itself along the edge during the game, px/s.
+    private var peekPace: CGFloat = 0
+    /// A peek-a-boo was asked for (the menu) but there was no edge here:
+    /// keep trying for a while after it moves.
+    private var wantsPeekabooUntil: CGFloat = -1
 
     /// Its patch: a box it always comes back to. It is not a cage — a
     /// throw or a fall can take it outside — but whenever it finds itself
@@ -670,6 +714,8 @@ final class Spider {
         let options: [(CGFloat, () -> Void)] = [
             (3 * love, { self.beginActivity(.wave, dur: 1.5); self.happy.velocity = 7; self.setEmote(.sparkle, 0.8) }),
             (2 * love, { self.beginActivity(.armsUp, dur: 1.2); self.happy.velocity = 6; self.setEmote(.hearts, 1.0) }),
+            (3 * love, { self.beginActivity(.greet, dur: randRange(1.8, 2.6)); self.happy.velocity = 7; self.setEmote(.hearts, 1.2) }),
+            (1.5 * lerp(0.3, 1.8, self.personality.playfulness), { self.beginActivity(.drum, dur: randRange(2.9, 4.4)); self.setEmote(.note, 1.4) }),
             (2 * jumpy, { self.beginActivity(.startle, dur: 0.55); self.startled.velocity = 12; self.setEmote(.surprise, 0.6) }),
             (1.5 * lerp(0.5, 1.6, self.personality.curiosity), { self.beginActivity(.curious, dur: 1.4); self.setEmote(.question, 1.1) }),
             (1.5, { self.beginActivity(.glance, dur: 1.2) }),
@@ -740,6 +786,8 @@ final class Spider {
         name = d.name
         personality = d.personality
         gait = d.gait
+        packs = d.packs
+        customPhrases = d.customPhrases
         config.walkSpeed = 62 * gait.speedMul
         if legsChanged {
             for i in 0..<legs.count {
@@ -751,7 +799,7 @@ final class Spider {
     }
 
     var design: SpiderDesign {
-        SpiderDesign(name: name, look: look, personality: personality, gait: gait)
+        SpiderDesign(name: name, look: look, personality: personality, gait: gait, packs: packs, customPhrases: customPhrases)
     }
 
     // MARK: - Frame update
@@ -820,6 +868,302 @@ final class Spider {
         heading += headingVel * dt
 
         updateRope(dt: dt)
+    }
+
+    // MARK: The laser dot
+
+    /// A red dot to chase. Set while the pointer is down in laser mode.
+    var laser: V2? {
+        didSet {
+            if laser != nil, oldValue == nil {
+                wake()
+                lastUserActivity = t
+                if mode == .attached { queued = nil; decisionIn = min(decisionIn, 0.15) }
+            }
+            if laser == nil, oldValue != nil, mode == .attached {
+                // Gone: where did it go?
+                beginActivity(.look, dur: randRange(1.0, 1.8))
+                setEmote(.question, 1.2)
+                queued = nil
+            }
+        }
+    }
+    private var lastLaserPounce: CGFloat = -9
+
+    /// Races after the dot: along its own edge if the dot is near it, else
+    /// a leap to the nearest spot to it; on it, it pounces and pats at it.
+    private func chaseLaser(_ dot: V2) {
+        guard mode == .attached, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return }
+        decisionIn = randRange(0.2, 0.5)
+        let seg = loop.segs[anchor.segIdx]
+        let d = dot - pos
+        let along = d.dot(seg.dir)
+        let off = abs(d.dot(seg.normal))
+        let sc = config.scale
+        if d.length < 22 * sc {
+            // Got it! Pats at it, then pounces on the spot.
+            if t - lastLaserPounce > 1.2 {
+                lastLaserPounce = t
+                beginActivity(chance(0.5) ? .hop : .peer, dur: chance(0.5) ? 0.42 : 0.8)
+                if chance(0.4) { setEmote(.sparkle, 0.7) }
+            } else {
+                beginActivity(.curious, dur: randRange(0.4, 0.8))
+            }
+            return
+        }
+        if off < 40 * sc || (abs(along) > off * 2 && abs(along) < 260 * sc) {
+            // Near this edge: run for it.
+            let dir: CGFloat = along >= 0 ? 1 : -1
+            if dir != walkDir { walkDir = dir; facing = dir }
+            beginActivity(.scurry, dur: clamp(abs(along) / max(config.walkSpeed * 2.6, 1), 0.3, 2.0))
+            return
+        }
+        // Off its edge: leap to whatever is nearest the dot.
+        var best: (d: CGFloat, point: V2)?
+        for spot in map.sampleSpots(spacing: 40) {
+            let dd = spot.point.distance(to: dot)
+            guard dd < d.length - 20, spot.point.distance(to: pos) > 40 else { continue }
+            guard let launch = ballistic(from: pos, to: spot.point), launch.normalized.dot(surfaceNormal) > -0.15 else { continue }
+            if best == nil || dd < best!.d { best = (dd, spot.point) }
+        }
+        if let b = best {
+            startJump(to: b.point)
+        } else {
+            let dir: CGFloat = along >= 0 ? 1 : -1
+            if dir != walkDir { walkDir = dir; facing = dir }
+            beginActivity(.scurry, dur: randRange(0.5, 1.2))
+        }
+    }
+
+    // MARK: Beds
+
+    /// Standing on the top edge of a window.
+    private var onWindowTop: Bool {
+        guard mode == .attached, let loop = map.loop(anchor.loopID), loop.kind == .windowEdge,
+              anchor.segIdx < loop.segs.count else { return false }
+        return loop.segs[anchor.segIdx].facing == .up
+    }
+
+    /// A bed it can get to: the top of the window it is already on (round
+    /// the corner), or the top of a window it can leap onto from here.
+    private func nearestWindowTop() -> (point: V2, anchor: Anchor, sameLoop: Bool)? {
+        guard mode == .attached else { return nil }
+        var best: (d: CGFloat, p: V2, a: Anchor, same: Bool)?
+        for spot in map.sampleSpots(spacing: 40) where spot.loop.kind == .windowEdge && spot.seg.facing == .up {
+            guard spot.seg.isOpen(at: spot.anchor.t) else { continue }
+            let d = spot.point.distance(to: pos)
+            if spot.loop.id == anchor.loopID {
+                guard d > 30 else { continue }
+                if best == nil || d * 0.5 < best!.d { best = (d * 0.5, spot.point, spot.anchor, true) }
+            } else {
+                guard d > 60, let launch = ballistic(from: pos, to: spot.point),
+                      launch.normalized.dot(surfaceNormal) > -0.15 else { continue }
+                if best == nil || d < best!.d { best = (d, spot.point, spot.anchor, false) }
+            }
+        }
+        return best.map { ($0.p, $0.a, $0.same) }
+    }
+
+    /// One step toward the bed: round its own window to the top, or a leap
+    /// onto the top of another.
+    private func goToBed() {
+        guard mode == .attached, let bed = nearestWindowTop(), let loop = map.loop(anchor.loopID) else { bedBoundUntil = -1; return }
+        decisionIn = randRange(0.4, 1.0)
+        if bed.sameLoop {
+            var way: (d: CGFloat, dir: CGFloat)?
+            for dir in [CGFloat(1), -1] {
+                if let d = loopDistance(loop, to: bed.anchor, dir: dir), way == nil || d < way!.d { way = (d, dir) }
+            }
+            if let w = way {
+                turnTo(w.dir, then: .walk, for: clamp(w.d / max(config.walkSpeed, 1), 0.8, 4.0))
+            } else {
+                bedBoundUntil = -1
+            }
+            return
+        }
+        startJump(to: bed.point)
+    }
+
+    // MARK: Thoughts
+
+    /// Puts a thought in a bubble over its head for a while.
+    func think(_ th: Thought, for dur: CGFloat = 3.2) {
+        thought = th
+        setEmote(.thought, dur)
+        lastThought = t
+    }
+
+    /// Something to think about, in words: one of its phrases, if it has any.
+    func thinkSomething() {
+        let lines = design.allPhrases
+        guard let line = lines.randomElement() else { return }
+        // Longer lines get longer to read.
+        think(.text(line), for: clamp(2.2 + CGFloat(line.count) * 0.06, 2.8, 7))
+    }
+
+    /// A thought that fits the moment, or a random one.
+    private func museIfSoMoved() {
+        guard mode == .attached, emote == .none, t - lastThought > 14 else { return }
+        let P = personality
+        let roll = CGFloat.random(in: 0...1)
+        if fed < 0.15, prey.isEmpty, roll < 0.35 {
+            think(.hungry)
+        } else if roll < 0.55 {
+            thinkSomething()
+        } else if roll < 0.7, t - lastUserActivity < 20 {
+            think(P.affection > 0.5 ? .heart : .star)
+        } else if roll < 0.8 {
+            think([.rain, .sun, .moon, .music, .bug, .home].randomElement()!)
+        }
+    }
+
+    // MARK: Drumming
+
+    /// 1 during a burst of drumming, 0 in the pauses between: bursts of
+    /// about a second with short rests, over the activity.
+    private func drumBeat() -> CGFloat {
+        let cycle: CGFloat = 1.45
+        let u = activityTime.truncatingRemainder(dividingBy: cycle) / cycle
+        return u < 0.72 ? 1 : 0
+    }
+
+    /// Where a front foot is in its tap, 0..1: alternating in the quick
+    /// bursts (about eight taps a second), together for the slower beats
+    /// that finish each burst.
+    private func drumPhase(near: Bool) -> CGFloat {
+        let cycle: CGFloat = 1.45
+        let u = activityTime.truncatingRemainder(dividingBy: cycle) / cycle
+        if u < 0.5 {
+            // Quick alternating taps.
+            let taps = activityTime * 6 + (near ? 0 : 0.5)
+            return taps.truncatingRemainder(dividingBy: 1)
+        } else if u < 0.72 {
+            // Three slower beats together.
+            let beats = (u - 0.5) / 0.22 * 3
+            return beats.truncatingRemainder(dividingBy: 1)
+        }
+        return 0
+    }
+
+    // MARK: Peek-a-boo
+
+    /// Edges to hide behind on the segment it is on: where a window in
+    /// front of its surface crosses the segment. `into` is the direction
+    /// along the segment that leads behind the window.
+    private func hidingEdges() -> [(t: CGFloat, into: CGFloat)] {
+        guard mode == .attached, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return [] }
+        let seg = loop.segs[anchor.segIdx]
+        var out: [(CGFloat, CGFloat)] = []
+        for o in map.occluders where o.depth < loop.depth {
+            guard let span = seg.span(inside: o.rect) else { continue }
+            // A window must cover a decent stretch, and leave room in front.
+            guard span.1 - span.0 > 50 * config.scale else { continue }
+            if span.0 > 70 * config.scale { out.append((span.0, 1)) }
+            if span.1 < seg.len - 70 * config.scale { out.append((span.1, -1)) }
+        }
+        return out
+    }
+
+    /// Starts a game if there is an edge within `reach` along this segment.
+    @discardableResult
+    private func startPeekaboo(reach: CGFloat) -> Bool {
+        guard mode == .attached, !inCinema, caught == nil else { return false }
+        let edges = hidingEdges().filter { abs($0.t - anchor.t) < reach }
+        guard let e = edges.min(by: { abs($0.t - anchor.t) < abs($1.t - anchor.t) }) else { return false }
+        peek = Peek(edgeT: e.t, into: e.into, wanted: Int.random(in: 2...4))
+        beginActivity(.peekaboo, dur: 60)
+        queued = nil
+        return true
+    }
+
+    /// Asked to play (the menu): here if it can, else off to find an edge.
+    func playPeekaboo() {
+        wake()
+        if startPeekaboo(reach: 900) { return }
+        wantsPeekabooUntil = t + 40
+        goHideSomewhere()
+    }
+
+    /// Nowhere to hide on this edge: leap to a surface that has a window
+    /// crossing it, or wander and look again.
+    private func goHideSomewhere() {
+        guard mode == .attached else { return }
+        var best: (d: CGFloat, point: V2)?
+        for spot in map.sampleSpots(spacing: 40) where spot.loop.id != anchor.loopID {
+            let crossed = map.occluders.contains { $0.depth < spot.loop.depth && spot.seg.span(inside: $0.rect) != nil }
+            guard crossed, spot.point.distance(to: pos) > 60 else { continue }
+            guard let launch = ballistic(from: pos, to: spot.point), launch.normalized.dot(surfaceNormal) > -0.15 else { continue }
+            let d = spot.point.distance(to: pos)
+            if best == nil || d < best!.d { best = (d, spot.point) }
+        }
+        if let b = best { startJump(to: b.point) } else { turnTo(chance(0.5) ? 1 : -1, then: .walk, for: randRange(1.5, 3)) }
+    }
+
+    private func progressPeekaboo(dt: CGFloat) {
+        guard var pk = peek, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else {
+            peek = nil
+            activity = .idle
+            return
+        }
+        let seg = loop.segs[anchor.segIdx]
+        let sc = config.scale
+        pk.stageTime += dt
+        // Where each stage wants it along the edge.
+        let hideT = pk.edgeT + pk.into * 38 * sc          // right behind the window
+        let popT = pk.edgeT - pk.into * 24 * sc           // out, most of it clear of the edge
+        let brinkT = pk.edgeT - pk.into * 22 * sc         // nose at the edge
+        var goal: CGFloat
+        var pace: CGFloat
+        switch pk.stage {
+        case 0: goal = brinkT; pace = config.walkSpeed * 0.6
+        case 1: goal = hideT; pace = config.walkSpeed * 0.9
+        case 3: goal = popT; pace = config.walkSpeed * 2.6
+        default: goal = anchor.t; pace = 0
+        }
+        goal = clamp(goal, 4, seg.len - 4)
+        let diff = goal - anchor.t
+        if pace > 0, abs(diff) > 3 {
+            // The ordinary walk carries it there; it just steers and paces.
+            walkDir = diff >= 0 ? 1 : -1
+            facing = walkDir
+            peekPace = min(pace, abs(diff) * 6)
+        } else {
+            peekPace = 0
+            speed = 0
+            // At the mark: on to the next stage.
+            switch pk.stage {
+            case 0:
+                pk.stage = 1; pk.stageTime = 0
+            case 1:
+                pk.stage = 2; pk.stageTime = 0
+            case 2:
+                if pk.stageTime > randRange(0.9, 2.2) {
+                    pk.stage = 3; pk.stageTime = 0
+                    // Boo!
+                    setEmote(chance(0.5) ? .surprise : .sparkle, 0.9)
+                    happy.velocity = 6
+                    startled.velocity = 3
+                    stretch.velocity = 4
+                }
+            case 3:
+                pk.stage = 4; pk.stageTime = 0
+                pk.pops += 1
+                // Face you while it is out.
+                facing = cursor.x >= pos.x ? 1 : -1
+                walkDir = facing
+            default:
+                if pk.stageTime > randRange(0.8, 1.8) {
+                    if pk.pops >= pk.wanted {
+                        peek = nil
+                        beginActivity(.wiggle, dur: randRange(0.8, 1.4))
+                        happy.velocity = 8
+                        return
+                    }
+                    pk.stage = 1; pk.stageTime = 0
+                }
+            }
+        }
+        peek = pk
     }
 
     // MARK: The box
@@ -1334,6 +1678,9 @@ final class Spider {
             facing = yaw >= 0 ? 1 : -1
         } else if mode == .nesting {
             yaw = approach(yaw, facing, 6, dt)
+        } else if mode == .attached && (activity == .greet || activity == .stare) {
+            // Square on to you, the whole way round to the front view.
+            yaw = approach(yaw, facing * 0.02, 7, dt)
         } else {
             // A glance turns it part-way toward you without changing which
             // way it faces along the ledge.
@@ -1462,6 +1809,9 @@ final class Spider {
         progressActivity(dt: dt)
         // On a hunt nothing else is allowed to run long: a walk toward the
         // prey is re-aimed every second or so, and idle habits are dropped.
+        if laser != nil, !inCinema, [.walk, .sneak, .rest, .sleep, .watch, .stare, .groom, .look, .glance, .drum, .eat].contains(activity) {
+            if activityTime > 0.4 { queued = nil; finishActivity() }
+        }
         if caught == nil, huntTarget != nil, prey.contains(where: { $0.id == huntTarget && $0.state == .loose }) {
             let hunting: Set<Activity> = [.walk, .sneak, .scurry, .look, .turn, .crouch, .idle, .startle, .shake]
             if !hunting.contains(activity) { queued = nil; finishActivity() }
@@ -1474,7 +1824,7 @@ final class Spider {
         // pushed off the screen: get out of the way.
         // Only a window's edge can be covered; the screen's rim, the menu
         // bar and the Dock are always its to walk, whatever overlaps them.
-        let onWindow = loop.kind == .windowEdge
+        let onWindow = loop.kind == .windowEdge && activity != .peekaboo
         let covered = onWindow && (map.seg(anchor).map { !$0.isOpen(at: anchor.t) } ?? true)
         let bodyCovered = onWindow && !map.isVisible(pos, depth: loop.depth)
         if covered || bodyCovered || !map.isOnScreen(here.pos, slack: 20) {
@@ -1721,6 +2071,40 @@ final class Spider {
             p.lift = -2.5
             p.crouch = 0.15
             p.legsFree = true
+        case .stare:
+            // Sat still, face on, watching you.
+            p.lift = -1
+            p.crouch = 0.12
+        case .hop:
+            // A small nervous hop straight up and down, legs tucked at the top.
+            let h = sin(clamp(u, 0, 1) * .pi)
+            p.lift = h * 7
+            p.legsFree = h > 0.35
+        case .drum:
+            // Braced low on the back three pairs, abdomen quivering in time,
+            // while the front pair beat on the surface.
+            p.crouch = 0.18
+            // Dips with each of the slower beats.
+            let u = activityTime.truncatingRemainder(dividingBy: 1.45) / 1.45
+            let together = u >= 0.5 && u < 0.72 ? max(0, sin(((u - 0.5) / 0.22 * 3).truncatingRemainder(dividingBy: 1) * .pi)) : 0
+            p.lift = -1 - together * 1.5
+            p.pitch = -0.06
+            p.wag = drumBeat() > 0.5 ? 1.2 : 0.4
+            p.legsFree = true
+        case .greet:
+            // Up on its toes, facing you, both front legs raised in greeting.
+            // (No lean: face on, a lean would read as a sideways tilt.)
+            p.lift = 3
+            p.legsFree = true
+        case .peekaboo:
+            // Creeping to the edge low; popping out tall with the front legs
+            // up — "boo!"
+            let out = (peek?.stage ?? 0) >= 3
+            p.speed = peekPace / max(config.walkSpeed, 1)
+            p.crouch = out ? 0 : 0.3
+            p.lift = out ? 3 : -2
+            p.pitch = out ? 0.2 : -0.1
+            p.legsFree = out
         case .watch:
             // On the floor: lying down flat, head tipped right up at the
             // picture. On the ceiling: hanging as usual, head turned to it.
@@ -1763,6 +2147,11 @@ final class Spider {
             if activityTime > activityDur {
                 if shotPurpose == .climb { climbOutOnLine() } else { launchSwing() }
             }
+        case .drum:
+            // A note now and then, on the beat.
+            if emote == .none, drumBeat() > 0.5, chance(dt * 1.2) { setEmote(.note, 1.0) }
+        case .peekaboo:
+            progressPeekaboo(dt: dt)
         case .eat:
             let u = clamp(activityTime / max(activityDur, 0.1), 0, 1)
             caught?.eaten = easeInOutSine(u) * 0.9
@@ -1832,6 +2221,7 @@ final class Spider {
     }
 
     private func beginActivity(_ a: Activity, dur: CGFloat) {
+        if a != .peekaboo { peek = nil; peekPace = 0 }
         activity = a
         activityTime = 0
         activityDur = dur
@@ -1948,8 +2338,9 @@ final class Spider {
             guardCount += 1
             let seg = loop.segs[anchor.segIdx]
             // Furthest it can go on this edge before something in front of the
-            // edge — or the end of it — stops it.
-            let lim = seg.limit(from: anchor.t, dir: walkDir)
+            // edge — or the end of it — stops it. Playing peek-a-boo it goes
+            // behind the window on purpose.
+            let lim = activity == .peekaboo ? (walkDir > 0 ? seg.len : 0) : seg.limit(from: anchor.t, dir: walkDir)
             let room = walkDir > 0 ? lim - anchor.t : anchor.t - lim
             if remaining <= room {
                 anchor.t += walkDir * remaining
@@ -1992,11 +2383,23 @@ final class Spider {
         let d = cursor.distance(to: pos)
         let busy = [.startle, .crouch, .turn, .sleep, .curious, .stretch, .shake, .roll, .spin, .armsUp, .shoot].contains(activity)
 
-        // Startled by a fast swipe nearby. A brave spider takes more
-        // startling, and stands its ground when it is.
+        // A quick swipe not far off: a small nervous hop, "!!" — nothing
+        // more; it does not run.
+        if !busy && d < 150 * config.scale && cursorVel.length > 520 && t - lastHop > 1.8
+            && (activity == .idle || activity == .look || activity == .walk || activity == .rest || activity == .stare || activity == .groom) {
+            lastHop = t
+            beginActivity(.hop, dur: 0.42)
+            queued = nil
+            setEmote(.exclaim, 0.7)
+            startled.velocity = 4
+            return
+        }
+
+        // The pointer whipped right across it: properly startled. A brave
+        // spider takes more startling, and stands its ground when it is.
         let brave = personality.bravery
-        let startleSpeed = lerp(450, 1700, brave)
-        let startleRange = lerp(90, 45, brave) * config.scale
+        let startleSpeed = lerp(900, 2200, brave)
+        let startleRange = lerp(34, 22, brave) * config.scale
         if !busy && startled.value < 0.2 && d < startleRange && cursorVel.length > startleSpeed {
             beginActivity(.startle, dur: 0.5)
             queued = nil
@@ -2011,7 +2414,12 @@ final class Spider {
         if !busy && d < 110 * config.scale && d > 36 * config.scale && cursorVel.length < 60
             && t - lastCurious > curiousGap && (activity == .idle || activity == .look || activity == .walk) {
             lastCurious = t
-            if chance(0.25 + personality.playfulness * 0.2) {
+            if chance(lerp(0.2, 0.5, personality.affection)) {
+                // Turns to face you and puts both front legs up: hello.
+                beginActivity(.greet, dur: randRange(1.8, 2.6))
+                happy.velocity = 5
+                if chance(0.5) { setEmote(.hearts, 1.0) }
+            } else if chance(0.25 + personality.playfulness * 0.2) {
                 beginActivity(.armsUp, dur: randRange(0.9, 1.4))
             } else if chance(lerp(0.4, 1.0, personality.curiosity)) {
                 beginActivity(.curious, dur: randRange(1.2, 2.2))
@@ -2081,6 +2489,12 @@ final class Spider {
             if t - homingSince > 120 { homing = nil } else { pursueHome(); return }
         }
 
+        // A red dot! Nothing else matters.
+        if let dot = laser, !inCinema {
+            chaseLaser(dot)
+            return
+        }
+
         // Strayed out of its patch: back in first.
         if confined, !inBox {
             returnToBox()
@@ -2109,7 +2523,26 @@ final class Spider {
                 goHome(.sleep)
                 return
             }
+            // The top of a window makes a good bed: if it is not on one,
+            // it sets off for the nearest, and sleeps once it gets there.
+            if !onWindowTop, t > bedBoundUntil, chance(0.6), nearestWindowTop() != nil {
+                bedBoundUntil = t + 45
+                think(.moon, for: 2.5)
+                goToBed()
+                return
+            }
             beginActivity(.rest, dur: randRange(8, 20) * (0.7 + P.laziness))
+            return
+        }
+        // On the way to bed, or just arrived: keep going, or settle down.
+        if t < bedBoundUntil {
+            if onWindowTop {
+                bedBoundUntil = -1
+                beginActivity(.rest, dur: randRange(4, 8))
+                queue(.sleep, randRange(40, 120) * (0.7 + P.laziness))
+            } else {
+                goToBed()
+            }
             return
         }
 
@@ -2121,6 +2554,14 @@ final class Spider {
                 beginActivity(.look, dur: randRange(0.8, 2.0))
             }
             return
+        }
+
+        // Someone is about and there is a window edge to hide behind nearby:
+        // peek-a-boo, now and then (or as soon as it can if it was asked to).
+        let asked = t < wantsPeekabooUntil
+        if asked || (config.followCursor && dCursor < 520 && t - lastUserActivity < 20 && chance(lerp(0.03, 0.14, P.playfulness))) {
+            if startPeekaboo(reach: asked ? 600 : 260) { wantsPeekabooUntil = -1; return }
+            if asked { goHideSomewhere() ; return }
         }
 
         // Everything else is a weighted draw. Each weight is the plain
@@ -2154,6 +2595,27 @@ final class Spider {
         }))
         options.append((2 * play, { self.beginActivity(.wiggle, dur: 0.8) }))
         options.append((3 * love, { self.beginActivity(.glance, dur: randRange(0.8, 1.6)) }))
+        if config.followCursor, dCursor < 520, t - lastUserActivity < 30 {
+            options.append((3 * love, {
+                self.beginActivity(.greet, dur: randRange(1.8, 2.6))
+                if chance(0.5) { self.setEmote(.hearts, 1.0) }
+            }))
+        }
+        // Sitting still, turned to face you, just watching.
+        if config.followCursor, dCursor < 560, t - lastUserActivity < 40 {
+            options.append((3 * love * lerp(0.6, 1.4, P.curiosity), {
+                self.beginActivity(.stare, dur: randRange(3, 7))
+            }))
+        }
+        // A thought, now and then.
+        options.append((4 * lerp(0.5, 1.5, P.curiosity), { self.museIfSoMoved(); if self.emote == .none { self.beginActivity(.look, dur: randRange(0.6, 1.2)) } }))
+
+        // Drumming on whatever it is standing on, the way a jumping spider
+        // signals: a few bursts of quick taps with its front legs.
+        options.append((2.5 * play * lerp(0.6, 1.4, P.energy), {
+            self.beginActivity(.drum, dur: randRange(2.9, 5.8))
+            self.setEmote(.note, 1.4)
+        }))
         options.append((3 * lerp(0.4, 1.8, P.curiosity), { self.beginActivity(.peer, dur: randRange(1.2, 2.0)) }))
         options.append((2.5 * lerp(0.5, 1.5, (P.affection + P.bravery) / 2), {
             self.beginActivity(.armsUp, dur: randRange(0.9, 1.5))
@@ -3471,8 +3933,12 @@ final class Spider {
         var target = V2.zero
         let dCursor = cursor.distance(to: pos)
         let watching = (config.followCursor && dCursor < 460 && t - lastUserActivity < 12)
-            || isHeld || pettingScore > 0.4 || activity == .curious
-        if activity == .watch, mode == .attached {
+            || isHeld || pettingScore > 0.4 || activity == .curious || activity == .greet || activity == .stare
+        if let dot = laser {
+            target = (dot - pos).normalized
+        } else if activity == .peekaboo, mode == .attached, config.followCursor {
+            target = (cursor - pos).normalized * ((peek?.stage ?? 0) >= 3 ? 1 : 0.6)
+        } else if activity == .watch, mode == .attached {
             // Eyes on the picture: up at the middle of the screen, with the
             // odd drift as things happen on it.
             let f = map.screenFrame(containing: pos)
@@ -3530,6 +3996,9 @@ final class Spider {
     }
 
     private func setEmote(_ e: Emote, _ dur: CGFloat) {
+        // A thought it is in the middle of is not wiped by a passing note or
+        // sparkle; only a start (or another thought) replaces it.
+        if emote == .thought, emoteTime < emoteDur, e != .thought, e != .surprise, e != .exclaim, e != .none { return }
         emote = e
         emoteTime = 0
         emoteDur = dur
@@ -3744,6 +4213,46 @@ final class Spider {
                 return V2(-16 + jitter, 6 + sin(t * 13) * 1.5)
             }
             return rest
+        case (.attached, .peekaboo) where (peek?.stage ?? 0) >= 3:
+            // Boo: both front legs thrown up.
+            if k == 0 {
+                let a = t * 5 + (near ? 0 : 0.9)
+                return V2(15 + sin(a) * 3, 24 + cos(a * 1.3) * 2)
+            }
+            if k == 1 { return V2(leg.hip.x + 12, 8 + (near ? 0 : -2)) }
+            return rest
+        case (.attached, .hop):
+            // Tucked up under it for the instant it is in the air.
+            let h = sin(clamp(u, 0, 1) * .pi)
+            return V2.lerp(rest, leg.hip + reach * 0.55 + V2(0, 3), h)
+        case (.attached, .drum):
+            // The front pair drum: a burst of quick alternating taps, then
+            // a pause, then a few beats with both together — the foot lifts
+            // and comes down a little ahead of where it stood.
+            if k == 0 {
+                let beat = drumBeat()
+                let phase = drumPhase(near: near)
+                let lift = max(0, sin(phase * .pi)) * (beat > 0.5 ? 10 : 0)
+                let ahead: CGFloat = 7 + (near ? 0 : 3)
+                return V2(rest.x + ahead + lift * 0.3, rest.y + lift)
+            }
+            if k == 1 { return rest + V2(2, 0) }
+            return rest
+        case (.attached, .greet):
+            // Seen face on, the outermost pair are its front legs: both go
+            // straight up beside the head and wave a little; the next pair
+            // come up half way. Symmetric, so nothing jumps as it turns.
+            let outer = k == 0 || k == 3
+            let side: CGFloat = (k == 0) == near ? 1 : -1   // which side of the face
+            let a = t * 4 + (side > 0 ? 0 : 0.8)
+            if outer {
+                // Up and out, clear of the face, knees bent outward.
+                let up = clamp(activityTime / 0.35, 0, 1)
+                legBend[i] = V2(side, 0.2)
+                return V2(side * (30 + sin(a) * 2), lerp(rest.y, 27 + cos(a * 1.3) * 2, easeOutBack(up)))
+            }
+            if k == 1 || k == 2 { return V2(rest.x * 1.05, rest.y + 3) }
+            return rest
         case (.attached, .armsUp):
             // Both front legs straight up, swaying; second pair half raised.
             if k == 0 {
@@ -3847,8 +4356,10 @@ final class Spider {
         guard legMode == .planted, facing == m, profile > 0.45 else {
             for i in legs.indices {
                 let target = poseTarget(i)
-                // Soft, well-damped spring, so every pose change eases.
-                let a = (target - legs[i].foot) * 200 - legs[i].footVel * 26
+                // Soft, well-damped spring, so every pose change eases — but
+                // a drumming front leg has to keep up with the beat.
+                let quick = activity == .drum && mode == .attached && i % 4 == 0
+                let a = (target - legs[i].foot) * (quick ? 1800 : 200) - legs[i].footVel * (quick ? 60 : 26)
                 legs[i].footVel += a * dt
                 legs[i].foot += legs[i].footVel * dt
                 legs[i].lift = approach(legs[i].lift, 0, 6, dt)
@@ -3913,6 +4424,16 @@ final class Spider {
     /// Tools only: no decisions of its own while on the line, so a film can
     /// hold it there.
     var debugCalm = false
+
+    /// Tools only: shows an emote by name.
+    func debugEmote(_ name: String) {
+        switch name {
+        case "exclaim": setEmote(.exclaim, 0.7)
+        case "hearts": setEmote(.hearts, 1.2)
+        case "zzz": setEmote(.zzz, 3)
+        default: break
+        }
+    }
 
     /// Tools only: the line's length and where it is heading.
     var debugLine: (len: CGFloat, target: CGFloat, style: String, pumping: Bool) {
@@ -3985,6 +4506,7 @@ final class Spider {
             "bounce": .bounce, "curious": .curious, "fidget": .fidget, "scratch": .scratch,
             "armsUp": .armsUp, "roll": .roll, "dance": .dance, "glance": .glance, "peer": .peer,
             "pushup": .pushup, "legStretch": .legStretch, "spin": .spin, "eat": .eat, "watch": .watch,
+            "peekaboo": .peekaboo, "greet": .greet, "drum": .drum, "stare": .stare, "hop": .hop,
         ]
         if name == "turn" {
             turnTo(-walkDir, then: .look, for: 1)
@@ -3994,6 +4516,8 @@ final class Spider {
             if mode == .dangling { workUpSwing() } else { _ = startSwing() }
             return
         }
+        if name == "peekaboo" { playPeekaboo(); return }
+        if name == "bed" { bedBoundUntil = t + 60; goToBed(); return }
         if name == "build" { buildHammock(); return }
         if name == "nap" { napInHammock(); return }
         guard let a = table[name] else { return }
@@ -4025,6 +4549,13 @@ final class Spider {
         p.happy = clamp(happy.value + pettingScore * 0.5 + fed * 0.3, 0, 1)
         if activity == .eat, mode == .attached { p.chew = 0.5 + 0.5 * sin(t * 11) }
         p.headTilt = headTilt.value
+        // Standing on something with windows in front of it, the parts of it
+        // inside those windows are behind them.
+        if mode == .attached, let loop = map.loop(anchor.loopID) {
+            let r = 62 * config.scale
+            let sprite = CGRect(x: pos.x - r, y: pos.y - r, width: r * 2, height: r * 2)
+            p.hiddenBy = map.occluders.filter { $0.depth < loop.depth && $0.rect.intersects(sprite) }.map { $0.rect }
+        }
         p.startled = clamp(startled.value, 0, 1)
         p.sleep = clamp(sleepiness.value, 0, 1)
         p.abdomenSway = swayWobble.value(t * 1.4) * 0.14
@@ -4032,6 +4563,7 @@ final class Spider {
             + sin(wagPhase) * wag.value * 0.55
         p.emote = emote
         p.emoteT = emoteDur > 0 ? clamp(emoteTime / emoteDur, 0, 1) : 0
+        p.thought = thought
         p.grabbed = grabbed.value
         p.outfit = look
         p.name = name

@@ -92,6 +92,9 @@ final class SpiderView: NSView {
     /// units a person could actually see.
     private static func shapeDelta(_ a: SpiderPose, _ b: SpiderPose) -> CGFloat {
         if a.emote != b.emote || a.legs.count != b.legs.count { return .infinity }
+        // Partly behind a window: the cut-out moves with it, so every move
+        // is a new picture.
+        if a.hiddenBy != b.hiddenBy || (!b.hiddenBy.isEmpty && (a.pos - b.pos).length > 0.3) { return .infinity }
         var d = abs(angleDelta(a.heading, b.heading)) * 45
         d += (abs(a.stretch - b.stretch) + abs(a.fatten - b.fatten)) * 40
         d += (a.look - b.look).length * 7
@@ -578,5 +581,28 @@ final class BoxOutlineView: NSView {
         ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.55))
         ctx.setLineDash(phase: 0, lengths: [6, 5])
         ctx.addPath(path); ctx.strokePath()
+    }
+}
+
+
+// MARK: - Laser dot
+
+/// The red dot of a laser pointer: a bright core with a soft glow, shimmering.
+final class LaserView: NSView {
+    var phase: CGFloat = 0 { didSet { needsDisplay = true } }
+    override var isFlipped: Bool { false }
+    override func draw(_ dirty: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let c = CGPoint(x: bounds.midX, y: bounds.midY)
+        let jitter = CGPoint(x: sin(phase * 37) * 0.6, y: cos(phase * 29) * 0.6)
+        let p = CGPoint(x: c.x + jitter.x, y: c.y + jitter.y)
+        for (r, a) in [(CGFloat(14), 0.10), (10, 0.22), (7, 0.45)] {
+            ctx.setFillColor(CGColor(red: 1, green: 0.1, blue: 0.05, alpha: a))
+            ctx.fillEllipse(in: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2))
+        }
+        ctx.setFillColor(CGColor(red: 1, green: 0.25, blue: 0.15, alpha: 1))
+        ctx.fillEllipse(in: CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8))
+        ctx.setFillColor(CGColor(red: 1, green: 0.85, blue: 0.8, alpha: 0.9))
+        ctx.fillEllipse(in: CGRect(x: p.x - 1.6, y: p.y - 1.2, width: 3.2, height: 3.2))
     }
 }
