@@ -83,6 +83,13 @@ struct V2 {
     return value + (target - value) * t
 }
 
+/// An ease that also never covers more than `maxSpeed` a second: the same
+/// settle near the target, without the lurch when the target is far away.
+@inline(__always) func approach(_ value: V2, _ target: V2, _ rate: CGFloat, maxSpeed: CGFloat, _ dt: CGFloat) -> V2 {
+    let want = (target - value) * (1 - exp(-rate * dt))
+    return value + want.clampedLength(maxSpeed * dt)
+}
+
 /// Shortest signed difference between two angles, in (-pi, pi].
 @inline(__always) func angleDelta(_ from: CGFloat, _ to: CGFloat) -> CGFloat {
     var d = (to - from).truncatingRemainder(dividingBy: 2 * .pi)

@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var spider: Spider!
     private let tracker = WindowTracker()
     private var statusItem: NSStatusItem!
+    private let updater = Updater()
     private var studio: StudioController?
     private var habitat: HabitatController?
     /// Living in the habitat window; the desktop overlays are put away.
@@ -472,7 +473,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             moved = true
         }
 
-        let wantSilk = pose.web != nil || pose.dragline != nil
+        let wantSilk = pose.web != nil
         if wantSilk {
             silkView.apply(pose)
             if !silkVisible {
@@ -565,6 +566,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = SpiderRenderer.statusItemImage(size: 17)
         statusItem.button?.toolTip = spider.name
         statusItem.menu = buildMenu()
+        updater.onChange = { [weak self] in self?.refreshMenu() }
     }
 
     private func buildMenu() -> NSMenu {
@@ -655,6 +657,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         add(menu, "Pause", #selector(togglePause), state: spider.config.paused)
         menu.addItem(.separator())
         add(menu, "Launch at Login", #selector(toggleLogin), state: loginEnabled)
+        let update = NSMenuItem(title: updater.busy ? "Checking for Updates…" : "Check for Updates…",
+                                action: #selector(checkForUpdates), keyEquivalent: "")
+        update.target = self
+        update.isEnabled = !updater.busy
+        menu.addItem(update)
         menu.addItem(.separator())
         add(menu, "Bring \(name) to the Middle", #selector(teleportToMiddle))
         add(menu, "Reset Everything", #selector(resetEverything))
@@ -1173,6 +1180,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quit() { NSApp.terminate(nil) }
+
+    @objc private func checkForUpdates() {
+        saveSettings()
+        updater.checkAndInstall()
+    }
 
     // MARK: Launch at login
 

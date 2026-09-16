@@ -183,7 +183,6 @@ final class SpiderView: NSView {
 /// draw — which is most of the time.
 final class SilkView: NSView {
     private let silkLayer = CAShapeLayer()
-    private let draglineLayer = CAShapeLayer()
 
     var worldOrigin = CGPoint.zero
     override var isFlipped: Bool { false }
@@ -193,7 +192,7 @@ final class SilkView: NSView {
         wantsLayer = true
         layer?.isOpaque = false
         let scale = NSScreen.main?.backingScaleFactor ?? 2
-        for l in [silkLayer, draglineLayer] {
+        for l in [silkLayer] {
             l.fillColor = nil
             l.lineCap = .round
             l.contentsScale = scale
@@ -206,8 +205,6 @@ final class SilkView: NSView {
         silkLayer.shadowOffset = CGSize(width: 0.5, height: -0.5)
         silkLayer.shadowRadius = 1.2
         silkLayer.shadowOpacity = 1
-        draglineLayer.strokeColor = CGColor(red: 1, green: 1, blue: 1, alpha: 0.34)
-        draglineLayer.lineWidth = 0.9
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -215,7 +212,6 @@ final class SilkView: NSView {
     /// Returns true if anything is visible, so the window can be hidden when not.
     @discardableResult
     func apply(_ pose: SpiderPose) -> Bool {
-        let body = CGPoint(x: pose.silkAttach.x - worldOrigin.x, y: pose.silkAttach.y - worldOrigin.y)
         var anything = false
 
         if let web = pose.web {
@@ -228,21 +224,6 @@ final class SilkView: NSView {
             silkLayer.path = nil
         }
 
-        if let dl = pose.dragline {
-            let a = CGPoint(x: dl.from.x - worldOrigin.x, y: dl.from.y - worldOrigin.y)
-            let p = CGMutablePath()
-            p.move(to: a)
-            // Trailing silk droops behind the spider.
-            p.addQuadCurve(to: body, control: CGPoint(x: (a.x + body.x) / 2,
-                                                      y: (a.y + body.y) / 2 - 14))
-            draglineLayer.path = p
-            draglineLayer.opacity = Float(dl.alpha * 0.8)
-            draglineLayer.isHidden = false
-            anything = true
-        } else if !draglineLayer.isHidden {
-            draglineLayer.isHidden = true
-            draglineLayer.path = nil
-        }
         return anything
     }
 
@@ -260,11 +241,13 @@ final class OverlayWindow: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
-        // Above the dock (20) and the menu bar (24), below open menus.
-        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)) + 1)
         collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         ignoresMouseEvents = true
         isFloatingPanel = true
+        // Above every app window, below the Dock (20) and the menu bar (24),
+        // so it never sits on top of either. (Set after `isFloatingPanel`,
+        // which resets the level to floating itself.)
+        level = .floating
         becomesKeyOnlyIfNeeded = true
         hidesOnDeactivate = false
         isMovableByWindowBackground = false
@@ -332,8 +315,14 @@ final class HammockView: NSView {
             let sd = CGFloat((h.seed + i * 17) % 100) / 100
             let slack = (2 + sd * 6) * sin(u * .pi)               // hangs lower in the middle
             let wob = noise(i, u) * (1.2 + sd * 1.6)
-            let p = h.point(at: u, drop: drop) + V2(0, lift * sin(u * .pi) - slack + wob)
-            return p.point
+            let full = h.point(at: u, drop: drop) + V2(0, lift * sin(u * .pi) - slack + wob)
+            // A strand just stuck down is the taut line it was walked out
+            // as; it sinks into its sag from there.
+            let d = i < h.drape.count ? h.drape[i] : 1
+            if d >= 1 { return full.point }
+            let chord = V2.lerp(h.wallAnchor, h.ceilingAnchor, u)
+            let k = 1 - (1 - d) * (1 - d)                        // quick to start, settling slowly
+            return V2.lerp(chord, full, k).point
         }
         func strandPath(_ i: Int, upTo: CGFloat = 1) -> CGPath {
             let p = CGMutablePath()
@@ -358,9 +347,7 @@ final class HammockView: NSView {
 
         // Longitudinal strands, laid one at a time as it is spun — the
         // first at the fastening, the rest across the middle of the build.
-        let laid = progress < 0.30 ? (progress > 0.1 ? 1 : 0)
-            : 1 + Int((remap(progress, 0.36, 0.88, 0, CGFloat(strands - 1))).rounded(.down))
-        let strandsShown = min(strands, max(0, laid))
+        let strandsShown = Hammock.strandsLaid(progress: progress, of: strands)
         for i in 0..<strandsShown where !tornAt(i) {
             let sd = CGFloat((h.seed + i * 53) % 100) / 100
             ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: (0.45 + sd * 0.35) * alpha))

@@ -6,6 +6,7 @@ cd "$(dirname "$0")"
 APP="Spider.app"
 BIN="DesktopSpider"
 CONF="${1:-release}"
+VERSION="$(tr -d '[:space:]' < VERSION)"
 
 if [ "$CONF" = "debug" ]; then
   FLAGS="-Onone -g"
@@ -20,7 +21,7 @@ if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Develope
   export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 fi
 
-echo "==> Compiling ($CONF)  [$(xcrun swiftc --version | head -1)]"
+echo "==> Compiling $VERSION ($CONF)  [$(xcrun swiftc --version | head -1)]"
 mkdir -p build
 # shellcheck disable=SC2086
 xcrun swiftc $FLAGS -swift-version 5 -target "$(uname -m)-apple-macos13.0" \
@@ -32,7 +33,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "build/$BIN" "$APP/Contents/MacOS/$BIN"
 
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -42,8 +43,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIdentifier</key><string>com.gabriel.desktopspider</string>
   <key>CFBundleExecutable</key><string>DesktopSpider</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>

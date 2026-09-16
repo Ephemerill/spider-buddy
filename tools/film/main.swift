@@ -102,6 +102,76 @@ for (row, shot) in shots.enumerated() {
                  shot.title as NSString, Double(lo), Double(hi), Double(hi - lo)))
 }
 
+// --- sequences: one activity into the next -----------------------------------
+// `--seq walk,look,greet:2,turn` runs the activities back to back (each 1.4 s
+// unless given `:seconds`) and lays out every 4th frame in a grid, so the
+// hand-off from one to the next can be looked at frame by frame.
+if let idx = CommandLine.arguments.firstIndex(of: "--seq"), idx + 1 < CommandLine.arguments.count {
+    let items = CommandLine.arguments[idx + 1].split(separator: ",").map { item -> (String, CGFloat) in
+        let parts = item.split(separator: ":")
+        return (String(parts[0]), parts.count > 1 ? CGFloat(Double(parts[1]) ?? 1.4) : 1.4)
+    }
+    let dt: CGFloat = 1.0 / 60.0
+    let sm = SurfaceMap()
+    sm.standoff = 22 * 1.0
+    let win = CGRect(x: 250, y: 200, width: 380, height: 240)
+    sm.debugRebuild(screen: CGRect(x: 0, y: 0, width: 900, height: 620), menuBarHeight: 0,
+                    windows: [TrackedWindow(id: 9, frame: win, depth: 0, owner: "Mock")])
+    let sp = Spider(map: sm)
+    sp.config.scale = 1.0
+    sp.config.followCursor = false
+    sp.debugAttach(loopID: "win:9", segIdx: 0, t: 150, dir: 1)
+    for _ in 0..<30 { sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt) }
+    let cols = 12
+    let cell: CGFloat = 150
+    let every = Int(ProcessInfo.processInfo.environment["SEQ_EVERY"] ?? "4") ?? 4
+    let total = items.reduce(0) { $0 + Int($1.1 / dt) }
+    let rows = (total / every + cols - 1) / cols
+    let W = Int(cell * CGFloat(cols)), H = Int(cell) * rows
+    guard let c = CGContext(data: nil, width: W * 2, height: H * 2, bitsPerComponent: 8,
+                            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { exit(1) }
+    c.scaleBy(x: 2, y: 2)
+    c.setFillColor(gray: 0.22, alpha: 1)
+    c.fill(CGRect(x: 0, y: 0, width: W, height: H))
+    var f = 0
+    var n = 0
+    var states: [String] = []
+    for (name, dur) in items {
+        sp.debugActivity(name, for: dur)
+        for _ in 0..<Int(dur / dt) {
+            sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt)
+            let st = sp.debugState
+            if states.last != st { states.append(st) }
+            if ProcessInfo.processInfo.environment["SEQ_TRACE"] != nil {
+                let pz = sp.pose()
+                print(String(format: "%3d %@ yaw %.2f pitch %.2f L0 %.1f,%.1f L4 %.1f,%.1f lift %.2f", f, st as NSString, pz.facing, pz.bodyPitch, pz.legs[0].foot.x, pz.legs[0].foot.y, pz.legs[4].foot.x, pz.legs[4].foot.y, pz.legs[0].lift))
+            }
+            if f % every == 0, n < cols * rows {
+                let pose = sp.pose()
+                let box = CGRect(x: CGFloat(n % cols) * cell, y: CGFloat(rows - 1 - n / cols) * cell, width: cell, height: cell)
+                c.saveGState(); c.addRect(box); c.clip()
+                c.setStrokeColor(NSColor(calibratedRed: 0.35, green: 0.55, blue: 0.9, alpha: 1).cgColor)
+                c.setLineWidth(2)
+                let ly = box.midY + (win.maxY - pose.pos.y)
+                c.beginPath(); c.move(to: CGPoint(x: box.minX, y: ly)); c.addLine(to: CGPoint(x: box.maxX, y: ly)); c.strokePath()
+                SpiderRenderer.draw(pose, in: c, bounds: box)
+                c.restoreGState()
+                c.setStrokeColor(gray: 0.4, alpha: 1); c.setLineWidth(1)
+                c.stroke(box.insetBy(dx: 0.5, dy: 0.5))
+                n += 1
+            }
+            f += 1
+        }
+    }
+    print("states: " + states.joined(separator: " > "))
+    guard let img = c.makeImage() else { exit(1) }
+    try NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])!
+        .write(to: URL(fileURLWithPath: "build/seq.png"))
+    print("wrote build/seq.png")
+    exit(0)
+}
+
 // --- strips: corner walk, turn, and every activity --------------------------
 // `--strip corner` walks it round a window corner; `--strip turn` films a
 // turn-around; `--strip <activity>` films that activity. Frames are laid out in
@@ -476,17 +546,20 @@ if let hi = CommandLine.arguments.firstIndex(of: "--hunt") {
 }
 
 // --- peek-a-boo ---------------------------------------------------------------
-// `--peekaboo` films the game: a window overlapping the floor, the pointer
-// near by, and the spider hiding behind the window's edge and popping out.
+// `--peekaboo` films the game: a window over part of another window's top
+// edge, the pointer near by, and the spider on the back window's shelf
+// hiding behind the front window's edge and popping out.
 if CommandLine.arguments.contains("--peekaboo") {
     let dt: CGFloat = 1.0 / 60.0
     let dw = 900, dh = 500
     let deskRect = CGRect(x: 0, y: 0, width: CGFloat(dw), height: CGFloat(dh))
     let pm = SurfaceMap()
     pm.standoff = 22 * 1.0
-    let win = CGRect(x: 420, y: -60, width: 380, height: 260)
+    let back = CGRect(x: 80, y: 60, width: 700, height: 160)
+    let win = CGRect(x: 420, y: 40, width: 380, height: 260)
     pm.debugRebuild(screen: deskRect, menuBarHeight: 24,
-                    windows: [TrackedWindow(id: 9, frame: win, depth: 0, owner: "Mock")])
+                    windows: [TrackedWindow(id: 9, frame: win, depth: 0, owner: "Mock"),
+                              TrackedWindow(id: 8, frame: back, depth: 1, owner: "Back")])
     guard let c = CGContext(data: nil, width: dw * 2, height: dh * 2, bitsPerComponent: 8,
                             bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { exit(1) }
@@ -494,7 +567,7 @@ if CommandLine.arguments.contains("--peekaboo") {
     let sp = Spider(map: pm)
     sp.config.scale = 1.0
     sp.config.followCursor = true
-    sp.debugAttach(loopID: "screen:0", segIdx: 0, t: 200, dir: 1)
+    sp.debugAttach(loopID: "win:8", segIdx: 0, t: 200, dir: 1)
     for _ in 0..<20 { sp.setCursor(V2(300, 120)); sp.update(dt: dt) }
     sp.debugActivity("peekaboo", for: 0)
     // A strip of moments: every 0.4 s, each cell the scene around the edge.
@@ -517,7 +590,10 @@ if CommandLine.arguments.contains("--peekaboo") {
             c.setFillColor(NSColor(calibratedRed: 0.20, green: 0.24, blue: 0.33, alpha: 1).cgColor)
             c.fill(CGRect(x: ox, y: oy, width: cellW, height: cellH))
             // World -> cell: centred on the edge, 1x.
-            c.translateBy(x: ox + cellW / 2 - win.minX, y: oy + cellH / 2 - 40)
+            c.translateBy(x: ox + cellW / 2 - win.minX, y: oy + cellH / 2 - back.maxY)
+            // The window it stands on, behind it.
+            c.setFillColor(NSColor(calibratedWhite: 0.22, alpha: 1).cgColor)
+            c.fill(back)
             let box = CGRect(x: pose.pos.x - 110, y: pose.pos.y - 110, width: 220, height: 220)
             SpiderRenderer.draw(pose, in: c, bounds: box)
             // The window on top, as it would be.
@@ -615,59 +691,139 @@ if CommandLine.arguments.contains("--swing") || CommandLine.arguments.contains("
     let hv = HammockView(frame: CGRect(x: 0, y: 0, width: 190, height: 130))
 
     if hammockMode {
-        sp.debugAttach(loopID: "screen:0", segIdx: 3, t: 200, dir: 1)   // left wall, walking down
+        // Start on the left wall, part-way up, and set it building. Eight
+        // panels of the corner as it spins — the walls drawn in, the live
+        // thread from its spinnerets — then the tie-off and a nap, big.
+        if let sl = jm.loops.first(where: { $0.id == "screen:0" }), let wall = sl.segs.firstIndex(where: { $0.facing == .right }) {
+            let seg = sl.segs[wall]
+            sp.debugAttach(loopID: "screen:0", segIdx: wall, t: seg.len * 0.5, dir: 1)
+        }
         for _ in 0..<20 { sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt) }
         sp.debugActivity("build", for: 0)
         var frame = 0
         var shots = 0
         var lastShot = -100
         var log: [String] = []
-        while frame < 60 * 80 {
+        let panelW: CGFloat = 220, panelH: CGFloat = 170
+        // The corner of the world each panel shows: the hammock's rect plus
+        // room below and beside it.
+        func drawPanel(_ idx: Int, _ pose: SpiderPose, _ h: Hammock) {
+            let col = idx % 4, row = idx / 4
+            let panel = CGRect(x: 8 + CGFloat(col) * (panelW + 6), y: CGFloat(dh) - 34 - CGFloat(row + 1) * (panelH + 6), width: panelW, height: panelH)
+            _ = row
+            let world = CGRect(x: h.rect.minX - 10, y: h.rect.maxY - panelH + 30, width: panelW, height: panelH)
+            j.saveGState()
+            j.setFillColor(NSColor(calibratedRed: 0.20, green: 0.24, blue: 0.33, alpha: 1).cgColor)
+            j.fill(panel)
+            j.clip(to: panel)
+            j.translateBy(x: panel.minX - world.minX, y: panel.minY - world.minY)
+            // The menu bar and the wall.
+            j.setFillColor(NSColor(calibratedWhite: 0.85, alpha: 1).cgColor)
+            j.fill(CGRect(x: world.minX, y: CGFloat(dh) - 24, width: world.width, height: 24))
+            j.setFillColor(NSColor(calibratedWhite: 0.3, alpha: 1).cgColor)
+            j.fill(CGRect(x: world.minX, y: world.minY, width: 10, height: world.height))
+            hv.hammock = h
+            j.saveGState()
+            j.translateBy(x: h.rect.minX, y: h.rect.minY)
+            hv.frame = CGRect(x: 0, y: 0, width: h.rect.width, height: h.rect.height)
+            hv.draw(hv.bounds)
+            j.restoreGState()
+            if let silk = SpiderRenderer.silkPath(pose) {
+                j.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.8))
+                j.setLineWidth(0.9)
+                j.addPath(silk)
+                j.strokePath()
+            }
+            let box = CGRect(x: pose.pos.x - 70, y: pose.pos.y - 70, width: 140, height: 140)
+            SpiderRenderer.draw(pose, in: j, bounds: box)
+            j.restoreGState()
+            j.setStrokeColor(CGColor(gray: 0.5, alpha: 1)); j.setLineWidth(1)
+            j.stroke(panel.insetBy(dx: 0.5, dy: 0.5))
+        }
+        var everySpinning = 0
+        var drapeShots = 0
+        // A close-up strip of it on the silk: the tie-off (top row) and
+        // walking in to bed (bottom row), every 6th frame at 2x.
+        let sc: CGFloat = 1.3
+        let cellW: CGFloat = 200, cellH: CGFloat = 170
+        let stripCols = 12
+        guard let sctx = CGContext(data: nil, width: Int(cellW) * stripCols * 2, height: Int(cellH) * 2 * 2, bitsPerComponent: 8,
+                                   bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { exit(1) }
+        sctx.scaleBy(x: 2, y: 2)
+        sctx.setFillColor(NSColor(calibratedRed: 0.20, green: 0.24, blue: 0.33, alpha: 1).cgColor)
+        sctx.fill(CGRect(x: 0, y: 0, width: cellW * CGFloat(stripCols), height: cellH * 2))
+        var stripCount = [0, 0]
+        var stripLast = [-100, -100]
+        func stripShot(_ row: Int, _ pose: SpiderPose, _ h: Hammock) {
+            let n = stripCount[row]
+            guard n < stripCols else { return }
+            stripCount[row] += 1
+            let cell = CGRect(x: CGFloat(n) * cellW, y: CGFloat(1 - row) * cellH, width: cellW, height: cellH)
+            sctx.saveGState()
+            sctx.clip(to: cell)
+            sctx.translateBy(x: cell.midX - pose.pos.x * sc, y: cell.midY - pose.pos.y * sc)
+            sctx.scaleBy(x: sc, y: sc)
+            hv.hammock = h
+            sctx.saveGState()
+            sctx.translateBy(x: h.rect.minX, y: h.rect.minY)
+            hv.frame = CGRect(x: 0, y: 0, width: h.rect.width, height: h.rect.height)
+            let keep = NSGraphicsContext.current
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: sctx, flipped: false)
+            hv.draw(hv.bounds)
+            NSGraphicsContext.current = keep
+            sctx.restoreGState()
+            let box = CGRect(x: pose.pos.x - 60, y: pose.pos.y - 60, width: 120, height: 120)
+            SpiderRenderer.draw(pose, in: sctx, bounds: box)
+            sctx.restoreGState()
+            sctx.setStrokeColor(CGColor(gray: 0.45, alpha: 1)); sctx.setLineWidth(1)
+            sctx.stroke(cell.insetBy(dx: 0.5, dy: 0.5))
+        }
+        while frame < 60 * 120 {
             sp.setCursor(V2(-9e4, -9e4))
             sp.update(dt: dt)
             frame += 1
             let st = sp.debugState
             if log.last != st { log.append(st) }
-            let want = (st == "building" && frame - lastShot > 75) || (st == "nesting" && frame - lastShot > 300)
-            if want, shots < 4 {
+            let spinning = st.contains("[spinning]") || st == "jump" && (log.last(where: { $0 != "jump" })?.contains("[spinning]") ?? false)
+            if spinning { everySpinning += 1 }
+            // The first strand draping is the moment to watch closely.
+            let draping = (sp.hammock?.drape.first).map { $0 < 1 } ?? false
+            let want = (draping && drapeShots < 4 && frame - lastShot > 30)
+                || (spinning && frame - lastShot > 240) || (st == "building" && frame - lastShot > 90)
+            if want, draping, drapeShots < 4 { drapeShots += 1 }
+            if want, shots < 8, let h = sp.hammock {
                 lastShot = frame
                 shots += 1
-                let pose = sp.pose()
-                // Each shot in its own panel along the bottom, hammock included.
-                let panel = CGRect(x: 10 + CGFloat(shots - 1) * 200, y: 10, width: 195, height: 150)
-                j.saveGState()
-                j.setFillColor(NSColor(calibratedWhite: 0.10, alpha: 1).cgColor)
-                j.fill(panel)
-                j.clip(to: panel)
-                if let h = sp.hammock {
-                    // world -> panel: the hammock rect maps onto the panel's top-left
-                    j.translateBy(x: panel.minX - h.rect.minX + 4 * 0, y: panel.maxY - h.rect.maxY)
-                    let box = CGRect(x: pose.pos.x - 60, y: pose.pos.y - 60, width: 120, height: 120)
-                    SpiderRenderer.draw(pose, in: j, bounds: box)
-                    hv.hammock = h
-                    j.saveGState()
-                    j.translateBy(x: h.rect.minX, y: h.rect.minY)
-                    hv.frame = CGRect(x: 0, y: 0, width: h.rect.width, height: h.rect.height)
-                    hv.draw(hv.bounds)
-                    j.restoreGState()
-                }
-                j.restoreGState()
+                drawPanel(shots - 1, sp.pose(), h)
             }
-            if st != "building" && st != "nesting" && shots >= 3 { break }
+            if st == "building", frame - stripLast[0] >= 12, let h = sp.hammock { stripLast[0] = frame; stripShot(0, sp.pose(), h) }
+            if !spinning && st != "building" && st != "jump" && everySpinning > 60 && sp.hammock?.progress ?? 0 >= 1 { break }
+            if sp.hammock == nil && everySpinning > 60 { break }
         }
+        print("build took \(frame / 60)s, \(shots) panels")
         // Then a nap in it, drawn big in the middle of the picture so the
         // curled-up pose and the silk over it can be judged.
-        if sp.debugState != "nesting" {
-            sp.napInHammock()
-            for _ in 0..<60 * 12 { sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt) }
+        if sp.debugState != "nesting" { sp.napInHammock() }
+        for _ in 0..<60 * 25 {
+            sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt)
+            if sp.debugState == "nesting", frame - stripLast[1] >= 10, let h = sp.hammock { stripLast[1] = frame; stripShot(1, sp.pose(), h) }
+            frame += 1
+            if sp.debugState == "nesting" && sp.hammock?.load ?? 0 > 0.95 { break }
         }
+        if let img = sctx.makeImage() {
+            try? NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])!
+                .write(to: URL(fileURLWithPath: "build/hammock_strip.png"))
+            print("wrote build/hammock_strip.png (top: tying off, bottom: in to bed)")
+        }
+        for _ in 0..<60 * 3 { sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt) }
         let pose = sp.pose()
         if let h = sp.hammock {
             hv.hammock = h
             j.saveGState()
             // 2.5x, hammock centred in the lower middle of the frame.
-            let k: CGFloat = 2.5
-            j.translateBy(x: 450 - h.rect.midX * k, y: 330 - h.rect.midY * k)
+            let k: CGFloat = 1.8
+            j.translateBy(x: 450 - h.rect.midX * k, y: 150 - h.rect.midY * k)
             j.scaleBy(x: k, y: k)
             let box = CGRect(x: pose.pos.x - 110, y: pose.pos.y - 110, width: 220, height: 220)
             SpiderRenderer.draw(pose, in: j, bounds: box)

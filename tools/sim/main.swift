@@ -101,6 +101,21 @@ func expect(_ label: String, _ ok: Bool, _ detail: String = "") {
 
 print("\n--- interaction tests ---")
 /// Runs until the spider is attached again, so tests never sample it mid-hop.
+/// Runs on until it is holding something — a surface or a line — so a
+/// check never lands on the instant it happens to be mid-jump.
+func settleUntilHoldingSomething(_ spider: Spider, seconds: CGFloat, cursor: V2 = V2(-4000, -4000)) -> String {
+    var elapsed: CGFloat = 0
+    var last = spider.debugState
+    while elapsed < seconds + 6 {
+        spider.setCursor(cursor)
+        spider.update(dt: dt)
+        elapsed += dt
+        last = spider.debugState
+        if elapsed >= seconds, last.hasPrefix("attached") || last == "dangling" || last == "swinging" { return last }
+    }
+    return last
+}
+
 func settleUntilAttached(_ spider: Spider, limit: CGFloat = 20) -> String {
     var elapsed: CGFloat = 0
     while elapsed < limit {
@@ -159,6 +174,19 @@ expect("stays inside the desktop", map.worldBounds.insetBy(dx: -40, dy: -40).con
 let s3 = Spider(map: map)
 s3.config.webs = true
 _ = settleUntilAttached(s3)
+// Under the browser window, on the stretch with nothing but floor below it
+// (its left part is over the editor window, which is in front).
+if let l2 = map.loop("win:2"), let under = l2.segs.firstIndex(where: { $0.facing == .down }) {
+    let seg = l2.segs[under]
+    let want = V2(screen.minX + 1150, seg.a.y)
+    // It may decide to leap or swing off in the moment it is given to
+    // settle: put it back until it stays.
+    for _ in 0..<5 {
+        s3.debugAttach(loopID: "win:2", segIdx: under, t: (want - seg.a).dot(seg.dir), dir: 1)
+        _ = settle(s3, seconds: 0.3, cursor: V2(-4000, -4000))
+        if s3.debugState.hasPrefix("attached") { break }
+    }
+}
 let yStart = s3.worldPos.y
 s3.scroll(-4)
 for _ in 0..<8 { s3.update(dt: dt) }
@@ -184,6 +212,48 @@ if dangled == "dangling" {
         expect("scroll-up reels it in", s3.worldPos.y > yLow + 15,
                "y \(Int(yLow)) -> \(Int(s3.worldPos.y))  [\(s3.debugState)]")
     }
+}
+
+// On a line it means something: down, a while hanging, then home, the
+// floor, a swing or a jump — never turning right round to the other side,
+// and never hanging about forever.
+do {
+    var flips = 0
+    var longest: CGFloat = 0
+    var endings: Set<String> = []
+    for trial in 0..<4 {
+        let s = Spider(map: map)
+        s.config.webs = true
+        s.config.followCursor = false
+        _ = settleUntilAttached(s)
+        if let l2 = map.loop("win:2"), let under = l2.segs.firstIndex(where: { $0.facing == .down }) {
+            let seg = l2.segs[under]
+            let want = V2(screen.minX + 1100 + CGFloat(trial) * 60, seg.a.y)
+            s.debugAttach(loopID: "win:2", segIdx: under, t: (want - seg.a).dot(seg.dir), dir: 1)
+            _ = settle(s, seconds: 0.5, cursor: V2(-4000, -4000))
+        }
+        s.scroll(-4)
+        var n = 0
+        var onLine: CGFloat = 0
+        var lastFacing = s.pose().facing
+        while CGFloat(n) * dt < 40 {
+            s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+            let st = s.debugState
+            if st == "dangling" {
+                onLine += dt
+                let f = s.pose().facing
+                if (f >= 0) != (lastFacing >= 0) { flips += 1 }
+                lastFacing = f
+            } else if onLine > 0.5 {
+                endings.insert(st.hasPrefix("attached") ? "landed" : String(st.split(separator: " ").first ?? ""))
+                longest = max(longest, onLine)
+                break
+            }
+        }
+        if s.debugState == "dangling" { longest = max(longest, onLine) }
+    }
+    expect("on a line: never turns right round", flips == 0, "\(flips) side changes")
+    expect("on a line: gets on with it", longest < 40, String(format: "longest hang %.0fs, ended by %@", longest, endings.sorted().joined(separator: ",")))
 }
 
 // A window opening over it: it must get out from under at once — up a
@@ -329,8 +399,8 @@ do {
     let before = s.debugState
     s.teleport(to: V2(screen.midX, screen.midY))
     expect("teleport puts it in the air at the middle", s.debugState == "fall" && s.worldPos.distance(to: V2(screen.midX, screen.midY)) < 1, "\(s.debugState) from \(before)")
-    let after = settle(s, seconds: 6, cursor: V2(-4000, -4000))
-    expect("and it comes down on something", after.hasPrefix("attached") || after == "dangling", after)
+    let after = settleUntilHoldingSomething(s, seconds: 6)
+    expect("and it comes down on something", after.hasPrefix("attached") || after == "dangling" || after == "swinging", after)
     expect("prey is still loose afterwards", p.state == .loose, "\(p.state)")
 }
 
@@ -472,16 +542,20 @@ do {
     expect("it walks the rim right across the overlapping window", crossed && !fell, "crossed \(crossed), fell \(fell), now \(s.debugState) at \(Int(s.worldPos.x))")
 }
 
-// Peek-a-boo: with a window overlapping the floor and someone about, it
-// hides behind the window's edge and pops out, more than once.
+// Peek-a-boo: standing on a window with another window over part of its
+// top edge and someone about, it hides behind that window's edge and pops
+// out, more than once. (On the screen's own rim it is never behind
+// anything — the desktop edge is in front of every window — so the game
+// is a window-on-window one.)
 do {
     let pm = SurfaceMap()
     pm.standoff = map.standoff
-    let over = TrackedWindow(id: 8, frame: CGRect(x: screen.minX + 500, y: screen.minY - 80, width: 400, height: 300), depth: 0, owner: "Overlap")
-    pm.rebuild(windows: [over])
+    let back = TrackedWindow(id: 7, frame: CGRect(x: screen.minX + 200, y: screen.minY + 200, width: 900, height: 300), depth: 1, owner: "Back")
+    let over = TrackedWindow(id: 8, frame: CGRect(x: screen.minX + 700, y: screen.minY + 150, width: 400, height: 500), depth: 0, owner: "Overlap")
+    pm.rebuild(windows: [back, over])
     let s = Spider(map: pm)
     s.config.followCursor = true
-    if let f = pm.loops.first(where: { $0.id.hasPrefix("screen") }) { s.debugAttach(loopID: f.id, segIdx: floorSeg(f), t: 300, dir: 1) }
+    s.debugAttach(loopID: "win:7", segIdx: 0, t: 300, dir: 1)   // the back window's top shelf
     for _ in 0..<20 { s.setCursor(V2(screen.minX + 350, screen.minY + 100)); s.update(dt: dt) }
     s.playPeekaboo()
     var n = 0
@@ -622,6 +696,41 @@ do {
     expect("habitat: comes back to the desktop", back.hasPrefix("attached") && s.fed == fedBefore, back)
 }
 
+// A line hung at the very edge of the screen must not jitter at the bottom
+// of the swing: the pendulum reverses a few times a second, not every frame.
+do {
+    // A gentle swing: fast enough to be a swing, too slow to grab the wall
+    // as it passes.
+    for (name, anchorX) in [("at the edge", screen.minX + 20), ("well inside", screen.midX)] {
+        let s = Spider(map: map)
+        s.config.followCursor = false
+        _ = settleUntilAttached(s)
+        s.debugHang(at: V2(anchorX, screen.maxY - 60), length: 260, swing: true, kick: 0.4)
+        var n = 0
+        var flips = 0
+        var lastSign: CGFloat = 0
+        var lastX = s.worldPos.x
+        var onLine = 0
+        while CGFloat(n) * dt < 6 {
+            s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+            let dx = s.worldPos.x - lastX
+            lastX = s.worldPos.x
+            // Only the time spent hanging counts; once it lets go and walks
+            // off, direction changes are just it wandering.
+            if ProcessInfo.processInfo.environment["SIM_TRACE"] != nil, n % 3 == 0 {
+                print(String(format: "%5.2f x=%7.1f ang=%6.3f vel=%6.3f %@", CGFloat(n) * dt, s.worldPos.x, s.debugSwing.angle, s.debugSwing.angVel, s.debugState))
+            }
+            guard s.isOnLine else { lastSign = 0; continue }
+            onLine += 1
+            let sign: CGFloat = dx > 0.05 ? 1 : (dx < -0.05 ? -1 : 0)
+            if sign != 0, lastSign != 0, sign != lastSign { flips += 1 }
+            if sign != 0 { lastSign = sign }
+        }
+        let perSec = CGFloat(flips) / max(0.5, CGFloat(onLine) * dt)
+        expect("swinging \(name): reverses only at the ends of the arc", perSec < 2.5, "\(flips) direction changes in \(Int(CGFloat(onLine) * dt))s on the line, now \(s.debugState)")
+    }
+}
+
 // A window closing under its feet.
 let s4 = Spider(map: map)
 _ = settleUntilAttached(s4)
@@ -631,7 +740,7 @@ if s4.debugState.contains("win:") {
     map.rebuild(windows: [])
     let dropped = settle(s4, seconds: 0.3)
     expect("falls when its window closes", dropped == "fall" || dropped == "dangling", dropped)
-    let recovered = settle(s4, seconds: 8, cursor: V2(-4000, -4000))
+    let recovered = settleUntilHoldingSomething(s4, seconds: 8)
     expect("recovers afterwards", recovered.hasPrefix("attached") || recovered == "dangling" || recovered == "swinging", recovered)
     map.rebuild(windows: windows)
 } else {
@@ -684,9 +793,14 @@ do {
     s7.buildHammock()
     var built = false, seenBuilding = false
     var n = 0
+    var lastB = ""
     while CGFloat(n) * dt < 150, !built {
         s7.setCursor(V2(-4000, -4000)); s7.update(dt: dt); n += 1
-        if s7.debugState == "building" { seenBuilding = true }
+        if ProcessInfo.processInfo.environment["SIM_TRACE"] != nil, lastB != s7.debugState + " \(s7.hammock?.progress ?? -1)" {
+            lastB = s7.debugState + " \(s7.hammock?.progress ?? -1)"
+            print(String(format: "  %6.2f %@  pos %.0f,%.0f", CGFloat(n) * dt, lastB, s7.worldPos.x, s7.worldPos.y))
+        }
+        if s7.debugState.contains("building") || s7.debugState.contains("spinning") { seenBuilding = true }
         if let h = s7.hammock, h.progress >= 1 { built = true }
     }
     expect("goes to a corner and spins a hammock", seenBuilding && built,

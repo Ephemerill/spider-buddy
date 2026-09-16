@@ -6,6 +6,18 @@ from the menu bar on a silk thread, and can be picked up and thrown around.
 
 Native AppKit + Core Graphics. No dependencies, no Xcode project, ~2 MB binary.
 
+## Install
+
+Grab the `.dmg` from the [latest release](https://github.com/Ephemerill/spider-buddy/releases/latest),
+open it and drag Spider to Applications. The app is ad-hoc signed, so the
+first launch needs the usual step for an unsigned app: right-click Spider →
+Open, or allow it under System Settings → Privacy & Security.
+
+That is the only time. **Check for Updates…** in the spider's menu asks GitHub
+for the newest release and, if there is one, downloads the `.dmg`, swaps the
+new app in over the running one and relaunches — without a quarantine flag,
+so Gatekeeper does not ask again. Settings and the design are kept.
+
 ## Build & run
 
 ```bash
@@ -43,9 +55,10 @@ covers a window's contents. Turning round is a mirror image animated through
 zero width, not a rotation; rounding a corner is a rotation. On a window's side
 it clings with its feet on the window; under the menu bar it hangs upside down.
 
-- Crouches, aims and leaps head-first with a visible push-off, trailing a silk
-  dragline like the real animal, pitching into the arc but never rolling past
-  fifty degrees. Over the last stretch of a leap it turns to meet the surface
+- Crouches, aims and leaps head-first with a visible push-off, pitching into
+  the arc but never rolling past fifty degrees. (A real jumping spider
+  trails a safety line on every leap; this one does not — it looked odd
+  here, so it is gone.) Over the last stretch of a leap it turns to meet the surface
   it is going to land on — feet first, flipping right over to land upside
   down under a window — and reaches its legs out for it, so touchdown is the
   end of a movement rather than a snap; a fall or a throw looks ahead for
@@ -53,8 +66,8 @@ it clings with its feet on the window; under the menu bar it hangs upside down.
   takes a beat to get its feet under it, then carries on
 - Falls, bounces off screen edges, and fires a rescue line if it drops too far
 - Rappels head-down on a dragline from its spinnerets, hangs almost still,
-  twisting slowly on the line and showing its face as it comes round; climbs
-  back up hand over hand, facing up the thread
+  turning part-way round on the line to show its face and drifting back;
+  climbs back up hand over hand, facing up the thread
 - Walks a proper alternating-tetrapod gait, driven by distance travelled rather
   than a timer: four legs swing while four stay planted, and planted feet hold
   still on the ledge while the body moves over them, so it never skates. The
@@ -64,8 +77,22 @@ it clings with its feet on the window; under the menu bar it hangs upside down.
 
 Everything it does is a *posture* — height off the ledge, nose pitch, crouch,
 abdomen wag, eyelids — and springs carry the body between postures, so nothing
-ever snaps from one stance to the next. The repertoire, all picked from at
-random with weights that shift with context:
+ever snaps from one stance to the next. The feet are looked after the same
+way across every hand-off: a foot left in the air by whatever came before (a
+wave, a greeting, a grip on a line) *steps* down onto the ledge, folding at
+the knee as it comes rather than sweeping down as a bar; a foot left mid-
+stride when a walk stops takes one small step to its place instead of
+sliding there, one leg at a time; a step that would begin with the gait
+clock already part-way through its window waits for the next one; and a
+turn begun face-on (after a greeting, say) sets off from the front view
+rather than snapping to profile first. Landing, the body gathers itself
+onto the edge and swings square to it over a few frames. It gets going over
+a few steps and stops short, leaning into a start and rocking forward on a
+stop. And it walks the way a jumping spider walks — in bursts: a few steps,
+a stop to look about, a few more — and a walk is usually *for* something,
+so at the end of it it has a look round, checks on you, or peers over the
+edge. The repertoire, all picked from at random with weights that shift
+with context:
 
 - **Walk**, with a speed, stride and bob picked fresh for every bout and one
   of four gaits — plain, bouncy, on tiptoe, or a lumbering trudge — plus a
@@ -146,7 +173,7 @@ actually on the spider.
 
 ## Silk
 
-Beyond the dragline it already trails on every leap:
+Its silk:
 
 - **Swinging.** From a ledge it picks something up ahead — a window corner,
   the menu bar, the screen top — rears up, fires a line at it (one leg
@@ -177,9 +204,21 @@ Beyond the dragline it already trails on every leap:
   runs exactly through the grips whichever way up it is. Once it stops it
   lets itself back round to hang.
   Swinging, the same hind legs hold the line above the abdomen and the
-  front legs hang loose toward the ground. It also bounces on the line,
-  twirls, kicks itself swinging, and pays out line to come and look at a
-  pointer waiting underneath.
+  front legs hang loose toward the ground.
+- **A line means something.** Dropping onto a thread it decides then and
+  there what the thread is for, and works through it: down to a chosen
+  height, a while hanging there (a bounce on arrival if it is that sort, the
+  odd shift of weight that sets it swaying, a note or a sparkle, a look
+  about — and it pays out line to come and see a pointer waiting
+  underneath), sometimes a second look further down or back up, and then
+  one way off it — hauling back up to whatever it hung from, all the way
+  down to the floor, working up a swing, or springing off to something
+  near. It does not change its mind every few seconds, and it does not turn
+  right round on the line: turning to the other side on a thread is a roll
+  of the whole body, and it only does that on purpose — to face up the line
+  for a real climb, or in a twirl when it is pleased. A window sliding in
+  front of it, a meal or the red dot turning up, or being reeled about by
+  hand all cut the plan short, and it picks up a fresh one after.
 - **The line is a string, not a rod.** Every thread is a short chain of
   points under gravity, tied to the anchor at one end and the spinnerets at
   the other: it sags when it goes slack, lags and whips when it is fired or
@@ -187,12 +226,27 @@ Beyond the dragline it already trails on every leap:
   down from its anchor as it fades.
 - **The hammock.** Jumping spiders spin a silk retreat to sleep in. Once it
   has been about for a while it picks a top corner of the screen, walks or
-  leaps to it, and spins one — in stages: it fastens the first thread to
-  the wall with a dab of its spinnerets, walks the thread out along to the
-  underside of the menu bar and fastens that end, then crosses and
-  re-crosses the sling laying a strand each way, abdomen going, hind legs
-  combing the silk out; last it turns about in the middle tying it off, and
-  tests it with a bounce. The result is loose and stringy like its other
+  leaps to it, and spins one — on the real walls, with real silk. It backs
+  its abdomen onto the side wall and sticks the first thread down with a
+  few dabs of its spinnerets; then it climbs the wall, hops across the
+  corner onto the underside of the menu bar, and walks out along it with
+  the silk paying out behind it from the wall to its spinnerets, taut,
+  until it reaches the far anchor and sticks that end down — and the strand,
+  stuck at both ends, sinks from that taut line into its sag over a couple
+  of seconds, the way slack silk drapes. Back it goes
+  the other way — along the underside, a hop down to the wall, down to the
+  first anchor — laying the next strand, and so on, crossing and re-crossing
+  the corner until a sling of strands hangs there. Then it steps onto the
+  silk itself — the sling is ground to its feet like any ledge, so it
+  walks it, feet planting on the strand and stepping — in along the sling
+  to the middle, a few steps back and forth over the bed tying the
+  cross-ties off, and tests it with a bounce. Going to bed later is the
+  same walk in along the silk before it curls up, and getting up is a walk
+  out to the wall end before it steps off. It is all ordinary
+  walking, jumping and one fastening pose on the surfaces it always uses;
+  nothing glides. If something interrupts it (a window over the corner, a
+  fall, being picked up) what is spun stays, and it comes back to finish
+  it. The result is loose and stringy like its other
   silk: uneven strands that each hang a little slack, loops of silk
   drooping beneath, slack cross-ties, tufts where it is stuck down — and
   the corner itself left open behind it. There are four kinds — a long
@@ -210,10 +264,12 @@ Beyond the dragline it already trails on every leap:
 ## Peek-a-boo
 
 The spider is drawn above every window, but not above the ones in front of
-the surface it is standing on: whatever of it falls inside such a window is
-cut out, so a spider walking the rim of the screen where a window overlaps
-it really does go behind that window, and a window's edge with another
-window over it hides it too. That is the game. When someone is about and
+the *window* it is standing on: whatever of it falls inside such a window
+is cut out, so a spider on a window's shelf with another window over part
+of it really does go behind that window. That is the game. (The screen's
+own rim, the menu bar and the Dock are the glass in front of everything:
+there it is never covered, however far a window reaches toward the edge —
+a Preview window taller than the screen used to hide it on the floor.) When someone is about and
 there is a window edge to hide behind nearby, now and then (playful ones
 more often) it creeps up to the edge, slips behind it, waits… and bursts
 out at you, front legs thrown up, eyes on the pointer — then back behind
@@ -287,7 +343,7 @@ wants back in, and gets back in the same way, until the tank is closed.
 It is the same spider moving house — same looks, same appetite, same
 mood, same thoughts. **Leave
 Habitat** (or closing the window) drops it out of the bottom of the tank
-onto the desktop, dragline trailing, and the tank shrinks back into the
+onto the desktop, and the tank shrinks back into the
 menu bar. It is the one desktop spider throughout — the same size, drawn
 by the same overlay above the tank — simply living in the tank's part of
 the screen, so the tank can be dragged about and it comes along. The app
@@ -333,8 +389,8 @@ edges fall within the box exactly as usual, turns back at the box's edge
 rather than leaping off, leaps only to spots inside, and prey is released
 inside. A box with nothing in it to stand on is different: it makes its
 way to it and hangs in from the top on a line, swaying lightly the way a
-draught would move it, shifting its height now and then, turning round, the
-odd little bounce or twirl — never a real swing.
+draught would move it, shifting its height now and then, the odd little
+bounce — never a real swing.
 
 Boxed at all, it takes things easy: it decides things about half as often,
 rests and looks about far more, dashes about far less, and gives up
@@ -428,6 +484,7 @@ The design is saved as JSON in the app's defaults.
 | Click to Pick Up | turn off to make it fully click-through |
 | Pause | freeze it |
 | Launch at Login | |
+| Check for Updates… | asks GitHub for a newer release; installs it over this copy and relaunches (see Install) |
 | Bring *name* to the Middle | lost it? puts it in the air in the middle of the main screen, letting go of everything (line, hammock, pointer, meal), and it falls from there onto whatever is below |
 | Reset Everything | starts over: the app relaunches itself, rebuilding every window and re-reading the desktop. The design, settings and hammock are kept — they are saved |
 
@@ -452,6 +509,19 @@ entitlement — window *titles* and screen contents would, and are never read.
 | `Studio.swift` | the studio window, option grids, thumbnails and the terrarium preview |
 | `OverlayWindow.swift` | transparent always-on-top panel, silk layers, input |
 | `AppDelegate.swift` | menu bar item, display link, settings |
+| `Updater.swift` | Check for Updates: GitHub Releases lookup, `.dmg` download, swap-in, relaunch |
+
+### Releasing
+
+```bash
+echo 1.1.0 > VERSION          # bump; the tag will be v1.1.0
+tools/release.sh --publish    # build, package build/DesktopSpider-1.1.0.dmg, create the GitHub release
+```
+
+`build.sh` stamps `VERSION` into the app's `Info.plist`; the updater compares
+that against the newest release's tag, so the tag must be `v` + `VERSION`.
+Publishing needs the `gh` CLI (`brew install gh`), logged in or with
+`GH_TOKEN` set.
 
 ### Tools
 
@@ -470,6 +540,8 @@ entitlement — window *titles* and screen contents would, and are never read.
 | `./tools/film.sh out.png --hammock` | the hammock being spun in a corner, panel by panel, and slept in |
 | `./tools/film.sh out.png --strip corner` | walks it round a window corner, onion-skinned in world space |
 | `./tools/film.sh out.png --strip turn` / `--strip peek` / any activity name (`watch` included) | filmstrip of that animation |
+| `./tools/film.sh x --seq walk:2,look,greet:1.6,turn` | runs activities back to back (`:seconds` optional) and lays out every 4th frame in a grid — `build/seq.png` — for looking at one hand-off frame by frame. `SEQ_EVERY=1` for every frame, `SEQ_TRACE=1` to print foot positions |
+| `./tools/jerk.sh [seconds] [runs]` | the jerk detector: runs the spider headless and flags every frame where the body, the heading or a foot (relative to the body) moves further than a frame's worth should, grouped by what it was doing on either side. Anything over about two flags a minute is worth a look; `JERK_VERBOSE=1` prints each one with the frames leading up to it |
 | `./tools/sim.sh` | runs the spider headless against a synthetic desktop for four simulated minutes, then a scripted pass over grab / throw / rappel / window-closes-underneath / petting, swing / hammock build / nap / wipe-away, then every temperament preset for 150 s each |
 | `./tools/gallery.sh` | every studio option thumbnailed the way the studio shows it, plus random designs mid-walk — `build/studio.png` |
 | `SPIDER_STUDIO_SHOT=dir ./Spider.app/Contents/MacOS/DesktopSpider` | writes a PNG of each studio tab to `dir` and quits |
@@ -538,13 +610,28 @@ Two things there are less obvious than they look:
   strand is laid, an unfinished hammock nobody is working on fades away on
   its own, a half-made one goes with a single wipe of the pointer, and the
   menu offers **Clear the Hammock** whenever there is any silk there at all.
-- **A line hung near a screen edge could pin it dead still.** The sideways
-  snag that keeps a swing on the display reversed the angular velocity on
-  every frame the body was inside the edge margin — so a line whose anchor
-  was itself inside that margin had its motion halved and reversed sixty
-  times a second and never moved again, while the spider kept trying to
-  work up a swing. It now snags only when heading further out, and a swing
-  with no motion in it is treated as a hang.
+- **A line hung near a screen edge could pin it dead still — or jitter.**
+  The sideways snag that keeps a swing on the display reversed the angular
+  velocity whenever the body was inside the edge margin. A line whose
+  anchor was itself in that margin has the bottom of its swing "outside"
+  already, so the snag fired at the bottom of every pass — at first pinning
+  it dead still, and after the first fix (snag only when heading further
+  out) shaking it back and forth at the bottom of the line every frame. The
+  snag now applies only to lines hung from well inside the screen; one at
+  the very edge is simply left to hang a little off it. The widest-swing
+  limit is likewise a gentle push back rather than a bounce.
+- **It no longer tumbles at the ends of a swing.** It used to turn to face
+  the way it was going on every pass, and on a line that turn is a
+  half-roll of the whole body — so each end of the arc was a somersault.
+  Now it keeps the same side to you for the whole swing and simply hangs
+  along the thread, the body trailing the line a little as it goes.
+- **Turning round on a hang no longer jumps it sideways.** When it twists
+  to show its other side, the spinnerets swap sides in sprite space at
+  the instant it passes the front view, while the body takes a moment to
+  come round. Taken literally that moved the body the width of its abdomen
+  in one frame and wobbled it back. The body's offset from the point it
+  holds on the line now eases over, and the thread, pinned to the real
+  spinnerets, bends a touch until it has.
 - **A low window is a step down, not a jump.** Hanging under a window that
   sits just above the floor, the spider's body is at almost the same height
   as it would be standing on the floor, so no jump target ever qualified
