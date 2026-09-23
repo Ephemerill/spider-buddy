@@ -610,6 +610,10 @@ final class Spider {
     /// How long after a landing the planted feet hold their place in the
     /// world while the body moves over them.
     private static let landHold: CGFloat = 0.5
+    /// Still taking a landing: the one time every foot goes for the ledge
+    /// at once, and fast — however it came in, it has all eight down by the
+    /// time the body has stopped.
+    private var absorbingLanding: Bool { mode == .attached && t - landedAt < Spider.landHold }
     /// How much of the impact speed the body keeps once the legs have it.
     private static let landAbsorb: CGFloat = 0.35
     /// The lowest the body can sink toward the ledge, in points: its
@@ -4435,7 +4439,7 @@ final class Spider {
             let into = min(vel.dot(here.normal), -150 * config.scale)
             landDrop = above > 0
             lift.velocity = landDrop ? into : into * Spider.landAbsorb
-            landStep = clamp(above / -into, 0.04, 0.12)
+            landStep = clamp(above / -into, 0.04, 0.08)
             skid.value = 0
             skid.velocity = clamp(vel.dot(here.tangent), -900, 900) * Spider.landAbsorb
         } else {
@@ -6470,7 +6474,10 @@ final class Spider {
         if leg.settle < 0 {
             let far = leg.foot.distance(to: target)
             let high = leg.foot.y > max(target.y, leg.hip.y) + 5
-            guard far > 5 && (high || far > 14) else { return false }
+            // (Landing, any foot well off its spot steps there, none left
+            // to slide into place after the body has stopped; one only a
+            // little off closes up quickly instead of taking a step.)
+            guard absorbingLanding ? far > 6 || high : far > 5 && (high || far > 14) else { return false }
             // A target nowhere near where this foot ever rests is the edge
             // snapper picking the wrong edge (a body still swinging down
             // onto a corner): not something to step to.
@@ -6480,6 +6487,10 @@ final class Spider {
             leg.settleTo = target
         }
         let quick = t - landedAt < Spider.landHold
+        // Landing, the body is still lurching and sinking under the step:
+        // it aims at where its spot is now, so it lands there in one step
+        // rather than landing short and having to take another.
+        if absorbingLanding { leg.settleTo = target }
         leg.settle += dt / (quick ? landStep : 0.24)
         let u = clamp(leg.settle, 0, 1)
         leg.lift = sin(u * .pi) * (quick ? 0.3 : 0.7)
@@ -6496,26 +6507,41 @@ final class Spider {
     /// teleported there in a frame.
     private var handoffFrom: [V2] = []
     private var handoffT: CGFloat = 1
+    private var modeBeforeLegs: Mode = .attached
     private static let handoffTime: CGFloat = 0.26
+    /// Tools only: the hand-offs and the jolt limits, off, to compare.
+    static var debugRawLegs = false
 
     private func updateLegs(dt: CGFloat) {
         let before = legs.map(\.foot)
         let was = legController
         updateLegControllers(dt: dt)
         defer { limitFootJolts(dt: dt) }
+        let onSurface = mode == .attached || mode == .nesting
         if legController != was {
             // A step in flight belongs to the clock that started it; the
             // next controller begins its own.
             for i in legs.indices { legs[i].swinging = false }
-            handoffFrom = before
-            handoffT = 0
+            // Eased only from one way of standing to another, or onto a
+            // line. Picked up, launched, falling, the feet go with the body
+            // at once; landing, the landing has them (see `absorbingLanding`).
+            let eased = (onSurface && modeBeforeLegs == mode && !absorbingLanding) || mode == .dangling
+            if eased, !Spider.debugRawLegs {
+                handoffFrom = before
+                handoffT = 0
+            } else {
+                handoffT = 1
+            }
         }
+        modeBeforeLegs = mode
+        if mode == .held || mode == .airborne || absorbingLanding { handoffT = 1 }
         guard handoffT < 1, handoffFrom.count == legs.count else { return }
         handoffT = min(1, handoffT + dt / Spider.handoffTime)
         let e = smoothstep(handoffT)
         for i in legs.indices {
-            // The start point stays on the ground while the body moves.
-            handoffFrom[i] = handoffFrom[i].rotated(by: -legDTheta) - legOverFeet
+            // On a surface the start point stays on the ground while the
+            // body moves; on a line it goes with the body.
+            if onSurface { handoffFrom[i] = handoffFrom[i].rotated(by: -legDTheta) - legOverFeet }
             legs[i].foot = V2.lerp(handoffFrom[i], legs[i].foot, e)
         }
     }
@@ -6541,15 +6567,16 @@ final class Spider {
         let onSurface = (mode == .attached || mode == .nesting) && activity != .roll
         let bodyJump = pos.distance(to: footLimitPos) > 30 * config.scale
         footLimitPos = pos
-        guard onSurface, !bodyJump, dt > 0, footWorld.count == legs.count, footWorldVel.count == legs.count else {
+        guard onSurface, !bodyJump, !Spider.debugRawLegs, dt > 0, footWorld.count == legs.count, footWorldVel.count == legs.count else {
             footWorldVel = footWorld.count == world.count ? zip(world, footWorld).map { ($0 - $1) / max(dt, 0.001) }
                 : Array(repeating: .zero, count: world.count)
             footWorld = world
             return
         }
+        let cap = Spider.footJolt * config.scale * (absorbingLanding ? 3 : 1)
         for i in legs.indices {
             var w = world[i]
-            if Spider.limitJolt(&w, last: &footWorld[i], vel: &footWorldVel[i], cap: Spider.footJolt * config.scale, dt: dt) {
+            if Spider.limitJolt(&w, last: &footWorld[i], vel: &footWorldVel[i], cap: cap, dt: dt) {
                 legs[i].foot = toLocal(w)
             }
         }
@@ -6677,8 +6704,12 @@ final class Spider {
                 // at the end, are quicker than a gesture.
                 let quick = activity == .drum && mode == .attached && i % 4 == 0
                 let rolling = activity == .roll && mode == .attached
+                // Landing (swinging round to face the other way, say), a
+                // foot meant for the ledge gets there with the body.
+                let planting = absorbingLanding && posed.y <= legs[i].rest.y + 1.5
                 let (k, c): (CGFloat, CGFloat) = quick ? (1800, 60)
-                    : rolling ? (rollPhase().phase == 2 ? (750, 42) : (420, 34)) : (200, 26)
+                    : rolling ? (rollPhase().phase == 2 ? (750, 42) : (420, 34))
+                    : planting ? (900, 60) : (200, 26)
                 let a = (target - legs[i].foot) * k - legs[i].footVel * c
                 legs[i].footVel += a * dt
                 legs[i].foot += legs[i].footVel * dt
@@ -6775,9 +6806,9 @@ final class Spider {
                         if reach.length > maxReach { leg.foot = groundFoot(leg.hip + reach.normalized * maxReach) }
                     }
                     // One leg at a time unless a foot is well out of place.
-                    let othersBusy = legs.contains(where: { $0.settle >= 0 }) && leg.settle < 0
+                    let othersBusy = !absorbingLanding && legs.contains(where: { $0.settle >= 0 }) && leg.settle < 0
                     if othersBusy && leg.foot.distance(to: target) <= 14 || !settleFoot(&leg, i, to: target, dt: dt) {
-                        leg.foot = approach(leg.foot, target, 9, dt)
+                        leg.foot = approach(leg.foot, target, absorbingLanding ? 30 : 9, dt)
                     }
                 }
             }
@@ -6929,6 +6960,24 @@ final class Spider {
     /// Tools only: is the pointer where a hanging spider would go to look at it?
     var debugCursorNear: Bool {
         config.followCursor && cursor.y < webAnchor.y - 60 && abs(cursor.x - webAnchor.x) < 120 * config.scale && t - lastUserActivity < 6
+    }
+
+    /// Tools only: per leg, why it is not down (settling, lifted, off the edge).
+    var debugFeetWhy: String {
+        legs.enumerated().map { i, leg in
+            let off = leg.foot.distance(to: groundFoot(leg.foot))
+            return String(format: "%d:%@%@%@", i, leg.settle >= 0 ? String(format: "s%.2f", leg.settle) : "", leg.lift >= 0.05 ? String(format: "L%.2f", leg.lift) : "",
+                          off >= 1.5 ? String(format: "o%.0f", off) : "")
+        }.joined(separator: " ") + " " + debugActivity
+    }
+
+    /// Tools only: every foot is down on the surface it is standing on —
+    /// planted, not mid-step, and on the edge itself.
+    var debugFeetDown: Bool {
+        guard mode == .attached else { return false }
+        return legs.allSatisfy { leg in
+            leg.settle < 0 && leg.lift < 0.05 && !leg.swinging && leg.foot.distance(to: groundFoot(leg.foot)) < 1.5
+        }
     }
 
     /// Tools only: how taken it is with the pointer right now.
@@ -7119,7 +7168,7 @@ final class Spider {
         // On a surface the knees come under the same limit as the feet: a
         // knee riding a hip-to-foot line that swings round fast (a foot
         // passing close under the hip) is held to a movement too.
-        let limit = (mode == .attached || mode == .nesting) && activity != .roll && !fresh
+        let limit = (mode == .attached || mode == .nesting) && activity != .roll && !fresh && !Spider.debugRawLegs
             && kneeWorld.count == legs.count && kneeWorldVel.count == legs.count && dt > 0
             && pos.distance(to: kneeLimitPos) < 30 * config.scale
         kneeLimitPos = pos
@@ -7132,7 +7181,7 @@ final class Spider {
             let local = Spider.knee(from: kneeShape[i], hip: j.hip, foot: j.foot)
             var w = kneeWorldPoint(local)
             if limit {
-                if Spider.limitJolt(&w, last: &kneeWorld[i], vel: &kneeWorldVel[i], cap: Spider.footJolt * config.scale, dt: dt) {
+                if Spider.limitJolt(&w, last: &kneeWorld[i], vel: &kneeWorldVel[i], cap: Spider.footJolt * config.scale * (absorbingLanding ? 3 : 1), dt: dt) {
                     return kneeLocalPoint(w)
                 }
             } else {

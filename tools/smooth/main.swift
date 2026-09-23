@@ -107,6 +107,7 @@ func activityName(_ s: Spider) -> String { String(s.debugActivity.split(separato
 let mode = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "all"
 let far = V2(-9e4, -9e4)
 let bigLog = ProcessInfo.processInfo.environment["BIG"] != nil
+if ProcessInfo.processInfo.environment["RAW"] != nil { Spider.debugRawLegs = true }
 
 // MARK: - pairs
 
@@ -320,7 +321,152 @@ func runTrace(_ spec: String) {
     }
 }
 
+// MARK: - landings
+
+/// Throws, leaps and falls onto the window: for each landing, how long
+/// after the body has come to rest the last foot is down on the ledge
+/// (it should be down by then), and how rough the feet were on the way.
+func runLand() {
+    struct Landing { var kind: String; var bodyRest: CGFloat; var feetDown: CGFloat; var worst: CGFloat }
+    var out: [Landing] = []
+    func watch(_ s: Spider, _ kind: String, seconds: CGFloat = 4) {
+        let m = Meter()
+        var t: CGFloat = 0
+        var landedAt: CGFloat = -1
+        var restAt: CGFloat = -1
+        var downAt: CGFloat = -1
+        var still = 0
+        var prevPos = s.pose().pos
+        var wasAttached = s.debugState.hasPrefix("attached")
+        var worst: CGFloat = 0
+        while t < seconds {
+            t += dt
+            s.setCursor(far)
+            s.update(dt: dt)
+            let p = s.pose()
+            let attached = s.debugState.hasPrefix("attached")
+            m.sample(p, measuring: landedAt >= 0)
+            if attached && !wasAttached && landedAt < 0 { landedAt = t }
+            wasAttached = attached
+            if landedAt >= 0 {
+                worst = max(worst, m.tally.worstA)
+                let v = p.pos.distance(to: prevPos) / dt
+                still = v < 20 ? still + 1 : 0
+                if restAt < 0, still >= 4 { restAt = t - 3 * dt - landedAt }
+                if downAt < 0, s.debugFeetDown { downAt = t - landedAt }
+                if ProcessInfo.processInfo.environment["LANDTRACE"] == kind, downAt < 0 {
+                    print(String(format: "  %.3f v %4.0f  %@", t - landedAt, p.pos.distance(to: prevPos) / dt, s.debugFeetWhy as NSString))
+                }
+                if restAt >= 0, downAt >= 0 { break }
+            }
+            prevPos = p.pos
+        }
+        if landedAt >= 0 { out.append(Landing(kind: kind, bodyRest: restAt, feetDown: downAt, worst: worst)) }
+    }
+    guard let loop = sm.loop("win:9") else { return }
+    let top = loop.segs[0]
+    // Thrown: picked up off the ledge, dragged, flung at the window top.
+    for (k, v) in [V2(0, 300), V2(250, 150), V2(-300, 0), V2(500, 400), V2(-150, 700), V2(0, -200), V2(800, 100), V2(120, 1100)].enumerated() {
+        let s = freshSpider(followCursor: false, at: 120 + CGFloat(k) * 30)
+        for _ in 0..<20 { s.setCursor(far); s.update(dt: dt) }
+        var grab = s.worldPos
+        s.beginGrab(at: grab)
+        for _ in 0..<12 { grab = grab + V2(0, 6); s.moveGrab(to: grab); s.update(dt: dt) }
+        for _ in 0..<6 { grab = grab + v * dt; s.moveGrab(to: grab); s.update(dt: dt) }
+        s.endGrab(throwVelocity: v)
+        watch(s, "throw \(Int(v.x)),\(Int(v.y))")
+    }
+    // Leaps: from the floor up onto the window top, and along it.
+    let floor = sm.loops.first { $0.id.hasPrefix("screen") }!
+    for k in 0..<6 {
+        let s = freshSpider(followCursor: false, loop: floor.id, seg: 0, at: 360 + CGFloat(k) * 40)
+        for _ in 0..<20 { s.setCursor(far); s.update(dt: dt) }
+        s.debugJump(to: top.point(at: 60 + CGFloat(k) * 70))
+        watch(s, "leap up \(k)")
+    }
+    for k in 0..<4 {
+        let s = freshSpider(followCursor: false, at: 80)
+        for _ in 0..<20 { s.setCursor(far); s.update(dt: dt) }
+        s.debugJump(to: top.point(at: 200 + CGFloat(k) * 60))
+        watch(s, "leap along \(k)")
+    }
+    // Falls: the ledge goes from under it.
+    for k in 0..<4 {
+        let s = freshSpider(followCursor: false, at: 100 + CGFloat(k) * 90)
+        for _ in 0..<20 { s.setCursor(far); s.update(dt: dt) }
+        s.debugFall()
+        watch(s, "fall \(k)", seconds: 6)
+    }
+    print("\nlandings: feet down vs body at rest (seconds after touchdown; lag > 0 = legs still coming down after the body stopped)")
+    var lags: [CGFloat] = []
+    for l in out {
+        let lag = l.feetDown - l.bodyRest
+        if l.feetDown >= 0, l.bodyRest >= 0 { lags.append(lag) }
+        print(String(format: "  %-16@ body rest %5.2f  feet down %5.2f  lag %+5.2f  worst jolt %5.1f", l.kind as NSString, l.bodyRest, l.feetDown, lag, l.worst))
+    }
+    lags.sort()
+    if !lags.isEmpty {
+        print(String(format: "  lag median %+.2f  worst %+.2f  (%d landings, %d never got all feet down)", lags[lags.count / 2], lags.last!, out.count, out.filter { $0.feetDown < 0 }.count))
+    }
+}
+
+/// `filmland vx,vy [out.png]` — a throw, from the grab to settled, drawn
+/// every other frame round the moment it lands.
+func filmLand(_ spec: String, out: String) {
+    let parts = spec.split(separator: ",").compactMap { Double($0) }
+    let v = V2(CGFloat(parts.first ?? 300), CGFloat(parts.count > 1 ? parts[1] : 300))
+    let s = freshSpider(followCursor: false, at: 200)
+    for _ in 0..<20 { s.setCursor(far); s.update(dt: dt) }
+    var grab = s.worldPos
+    s.beginGrab(at: grab)
+    var frames: [(SpiderPose, String)] = []
+    for _ in 0..<12 { grab = grab + V2(0, 6); s.moveGrab(to: grab); s.update(dt: dt); frames.append((s.pose(), "held")) }
+    for _ in 0..<6 { grab = grab + v * dt; s.moveGrab(to: grab); s.update(dt: dt); frames.append((s.pose(), "held")) }
+    s.endGrab(throwVelocity: v)
+    var landedIdx = -1
+    for f in 0..<240 {
+        s.setCursor(far); s.update(dt: dt)
+        let st = s.debugState
+        frames.append((s.pose(), String(st.split(separator: " ").first ?? "")))
+        if landedIdx < 0, st.hasPrefix("attached") { landedIdx = frames.count - 1 }
+        if landedIdx >= 0, frames.count - landedIdx > 30 { break }
+        _ = f
+    }
+    // Round the landing: 20 frames before, 30 after, every other frame.
+    let from = max(0, (landedIdx < 0 ? frames.count - 50 : landedIdx - 20))
+    let picks = stride(from: from, to: frames.count, by: 2).map { $0 }
+    let cols = 9, cell: CGFloat = 170
+    let rows = (picks.count + cols - 1) / cols
+    let W = Int(cell) * cols, H = Int(cell) * rows
+    guard let c = CGContext(data: nil, width: W * 2, height: H * 2, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+    c.scaleBy(x: 2, y: 2)
+    c.setFillColor(gray: 0.22, alpha: 1); c.fill(CGRect(x: 0, y: 0, width: W, height: H))
+    let font = CTFontCreateWithName("Menlo" as CFString, 9, nil)
+    for (n, idx) in picks.enumerated() {
+        let (pose, st) = frames[idx]
+        let box = CGRect(x: CGFloat(n % cols) * cell, y: CGFloat(rows - 1 - n / cols) * cell, width: cell, height: cell)
+        c.saveGState(); c.addRect(box); c.clip()
+        // The window's top edge, where it is relative to the spider.
+        c.setStrokeColor(NSColor(calibratedRed: 0.35, green: 0.55, blue: 0.9, alpha: 1).cgColor); c.setLineWidth(2)
+        let ly = box.midY + (win.maxY - pose.pos.y)
+        c.beginPath(); c.move(to: CGPoint(x: box.minX, y: ly)); c.addLine(to: CGPoint(x: box.maxX, y: ly)); c.strokePath()
+        SpiderRenderer.draw(pose, in: c, bounds: box)
+        c.restoreGState()
+        let tag = idx == landedIdx ? "LAND" : "\(idx - max(landedIdx, 0))"
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: "\(tag) \(st)", attributes: [.font: font, .foregroundColor: NSColor.white]))
+        c.textPosition = CGPoint(x: box.minX + 4, y: box.minY + 4); CTLineDraw(line, c)
+        c.setStrokeColor(gray: 0.4, alpha: 1); c.setLineWidth(1); c.stroke(box.insetBy(dx: 0.5, dy: 0.5))
+    }
+    guard let img = c.makeImage() else { return }
+    try? NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out))
+    print("wrote \(out)")
+}
+
 switch mode {
+case "filmland": filmLand(CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "300,300",
+                          out: CommandLine.arguments.count > 3 ? CommandLine.arguments[3] : "build/land.png")
+case "land": runLand()
 case "trace": runTrace(CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "greet,walk")
 case "pairs": runPairs()
 case "sweep": runSweep()
