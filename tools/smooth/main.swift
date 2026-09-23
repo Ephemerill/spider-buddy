@@ -24,8 +24,10 @@ let sm = SurfaceMap()
 sm.standoff = 22
 let screenRect = CGRect(x: 0, y: 0, width: 1200, height: 800)
 let win = CGRect(x: 300, y: 200, width: 500, height: 300)
+// AIR_NOROUND=1: the feet placed as if the window's corners were square.
 sm.debugRebuild(screen: screenRect, menuBarHeight: 0,
-                windows: [TrackedWindow(id: 9, frame: win, depth: 0, owner: "Mock")])
+                windows: [TrackedWindow(id: 9, frame: win, depth: 0, owner: "Mock",
+                                        cornerRadius: ProcessInfo.processInfo.environment["AIR_NOROUND"] != nil ? 0 : SurfaceMap.windowCornerRadius)])
 
 /// Every joint that is drawn, in screen space: 8 feet then 8 knees, plus
 /// the body origin. Slots are re-paired across a mirror flip (leg i is
@@ -463,7 +465,267 @@ func filmLand(_ spec: String, out: String) {
     print("wrote \(out)")
 }
 
+/// `filmjump [out.png]` — a leap along the window top: the crouch, the
+/// push-off and the first of the flight, close up, every other frame.
+func filmJump(out: String) {
+    guard let loop = sm.loop("win:9") else { return }
+    let s = freshSpider(followCursor: false, at: 120)
+    for _ in 0..<20 { s.setCursor(far); s.update(dt: dt) }
+    s.debugJump(to: loop.segs[0].point(at: 380))
+    var frames: [(SpiderPose, String)] = []
+    for _ in 0..<70 {
+        s.setCursor(far); s.update(dt: dt)
+        frames.append((s.pose(), String(s.debugState.split(separator: " ").first ?? "")))
+    }
+    let picks = stride(from: 0, to: frames.count, by: 2).map { $0 }
+    let cols = 9, cell: CGFloat = 170
+    let rows = (picks.count + cols - 1) / cols
+    let W = Int(cell) * cols, H = Int(cell) * rows
+    guard let c = CGContext(data: nil, width: W * 2, height: H * 2, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+    c.scaleBy(x: 2, y: 2)
+    c.setFillColor(gray: 0.22, alpha: 1); c.fill(CGRect(x: 0, y: 0, width: W, height: H))
+    let font = CTFontCreateWithName("Menlo" as CFString, 9, nil)
+    for (n, idx) in picks.enumerated() {
+        let (pose, st) = frames[idx]
+        let box = CGRect(x: CGFloat(n % cols) * cell, y: CGFloat(rows - 1 - n / cols) * cell, width: cell, height: cell)
+        c.saveGState(); c.addRect(box); c.clip()
+        c.setStrokeColor(NSColor(calibratedRed: 0.35, green: 0.55, blue: 0.9, alpha: 1).cgColor); c.setLineWidth(2)
+        let ly = box.midY + (win.maxY - pose.pos.y)
+        c.beginPath(); c.move(to: CGPoint(x: box.minX, y: ly)); c.addLine(to: CGPoint(x: box.maxX, y: ly)); c.strokePath()
+        SpiderRenderer.draw(pose, in: c, bounds: box)
+        c.restoreGState()
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: "\(idx) \(st)", attributes: [.font: font, .foregroundColor: NSColor.white]))
+        c.textPosition = CGPoint(x: box.minX + 4, y: box.minY + 4); CTLineDraw(line, c)
+        c.setStrokeColor(gray: 0.4, alpha: 1); c.setLineWidth(1); c.stroke(box.insetBy(dx: 0.5, dy: 0.5))
+    }
+    guard let img = c.makeImage() else { return }
+    try? NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out))
+    print("wrote \(out)")
+}
+
+/// Every habit's ▶ in a copy of the Studio's preview box: what it goes
+/// on to do in the next few seconds.
+func runDemos() {
+    let pm = SurfaceMap()
+    let scale: CGFloat = 1.55
+    pm.standoff = -SpiderRenderer.ground * scale
+    let b = CGRect(x: 0, y: 0, width: 330, height: 320).insetBy(dx: 4, dy: 4)
+    let ledge = CGRect(x: b.midX - 80, y: b.minY + 70, width: 160, height: 70)
+    pm.debugRebuild(screen: b, menuBarHeight: 0, windows: [TrackedWindow(id: 1, frame: ledge, depth: 0, owner: "Studio")])
+    for (group, dials) in Habits.groups {
+        print("\n\(group)")
+        for (title, key) in dials {
+            let sp = Spider(map: pm)
+            sp.config.scale = scale
+            sp.config.webs = true
+            sp.config.followCursor = true
+            sp.debugAttach(loopID: "win:1", segIdx: 0, t: 40, dir: 1)
+            for _ in 0..<30 { sp.setCursor(far); sp.update(dt: dt) }
+            sp.demo(key)
+            var seen: [String] = []
+            let secs: CGFloat = ProcessInfo.processInfo.environment["DEMO_SECS"].flatMap { Double($0) }.map { CGFloat($0) } ?? 8
+            let only = ProcessInfo.processInfo.environment["DEMO_ONLY"]
+            if let only, !title.contains(only) { continue }
+            for _ in 0..<Int(secs / dt) {
+                sp.setCursor(far); sp.update(dt: dt)
+                let st = sp.debugState.replacingOccurrences(of: " on win:1", with: "").replacingOccurrences(of: " on screen:0", with: "")
+                if seen.last != st { seen.append(st) }
+            }
+            print(String(format: "  %-28@ %@", title as NSString, seen.prefix(only == nil ? 7 : 40).joined(separator: " > ") as NSString))
+        }
+    }
+}
+
+/// Two windows, one in front of the other and overlapping its top edge —
+/// the dark one behind, the white one in front — and the spider walking
+/// into where they meet, drawn in screen space so every foot can be seen
+/// against the real edges.
+let twoA = CGRect(x: 100, y: 100, width: 520, height: 300)     // behind (dark)
+let twoB = CGRect(x: 380, y: 360, width: 480, height: 220)     // in front (white)
+let twoMap: SurfaceMap = {
+    let m = SurfaceMap()
+    m.standoff = 22
+    m.debugRebuild(screen: CGRect(x: 0, y: 0, width: 1000, height: 700), menuBarHeight: 0,
+                   windows: [TrackedWindow(id: 2, frame: twoB, depth: 0, owner: "White"),
+                             TrackedWindow(id: 1, frame: twoA, depth: 1, owner: "Dark")])
+    return m
+}()
+
+func filmTwo(_ out: String) {
+    for l in twoMap.loops {
+        print(l.id, l.segs.enumerated().map { i, s in "\(i):\(s.facing) \(Int(s.a.x)),\(Int(s.a.y))->\(Int(s.b.x)),\(Int(s.b.y)) blocked \(s.blocked.map { "\(Int($0.lo))..\(Int($0.hi))" })" }.joined(separator: " | "))
+    }
+    // Shots: (loop, seg, t, dir, walk seconds before the picture, title)
+    let shots: [(String, Int, CGFloat, CGFloat, Int, String)] = ProcessInfo.processInfo.environment["TWO_SHOTS"].map { spec in
+        spec.split(separator: ";").map { part in
+            let f = part.split(separator: ",").map(String.init)
+            return (f[0], Int(f[1])!, CGFloat(Double(f[2])!), CGFloat(Double(f[3])!), Int(f[4])!, f.count > 5 ? f[5] : "")
+        }
+    } ?? []
+    let cols = 3, cell: CGFloat = 300
+    let rows = max(1, (shots.count + cols - 1) / cols)
+    let W = Int(cell) * cols, H = Int(cell) * rows
+    guard let c = CGContext(data: nil, width: W * 2, height: H * 2, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+    c.scaleBy(x: 2, y: 2)
+    let font = CTFontCreateWithName("Menlo" as CFString, 9, nil)
+    for (n, shot) in shots.enumerated() {
+        let s = Spider(map: twoMap)
+        s.config.scale = 1.4
+        s.config.followCursor = false
+        s.debugAttach(loopID: shot.0, segIdx: shot.1, t: shot.2, dir: shot.3)
+        if shot.4 > 0 { s.debugWalk(for: 30) }
+        for f in 0..<max(shot.4, 40) {
+            s.setCursor(far); s.update(dt: dt)
+            if f == shot.4 && shot.4 > 0 { s.debugActivity("look", for: 30) }
+        }
+        let p = s.pose()
+        if ProcessInfo.processInfo.environment["TWO_FEET"] == "\(n)" {
+            print("shot \(n) body \(Int(p.pos.x)),\(Int(p.pos.y)) heading \(String(format: "%.2f", p.heading)) facing \(String(format: "%.2f", p.facing))")
+            for (i, f) in s.debugFeet.enumerated() {
+                print(String(format: "  leg %d foot %5.0f,%5.0f -> %5.0f,%5.0f   rest %5.0f,%5.0f -> %5.0f,%5.0f", i, f.foot.x, f.foot.y, f.placed.x, f.placed.y, f.rest.x, f.rest.y, f.restPlaced.x, f.restPlaced.y))
+            }
+        }
+        let box = CGRect(x: CGFloat(n % cols) * cell, y: CGFloat(rows - 1 - n / cols) * cell, width: cell, height: cell)
+        c.saveGState(); c.addRect(box); c.clip()
+        // World -> this cell, centred on the spider.
+        c.translateBy(x: box.midX - p.pos.x, y: box.midY - p.pos.y)
+        c.setFillColor(gray: 0.35, alpha: 1); c.fill(CGRect(x: p.pos.x - 400, y: p.pos.y - 400, width: 800, height: 800))
+        c.setFillColor(red: 0.12, green: 0.13, blue: 0.16, alpha: 1); c.fill(twoA)
+        c.setFillColor(gray: 0.97, alpha: 1); c.fill(twoB)
+        c.setStrokeColor(gray: 0.6, alpha: 1); c.setLineWidth(1); c.stroke(twoB)
+        let pb = CGRect(x: p.pos.x - 150, y: p.pos.y - 150, width: 300, height: 300)
+        SpiderRenderer.draw(p, in: c, bounds: pb)
+        // Feet, as dots.
+        let mirror: CGFloat = p.facing >= 0 ? 1 : -1
+        for leg in p.legs {
+            let g = SpiderRenderer.ground
+            let q = V2(leg.foot.x * p.stretch, g + (leg.foot.y - g) * p.fatten)
+            let w = p.pos + V2(q.x * mirror, q.y).rotated(by: p.heading) * p.scale
+            c.setFillColor(red: 1, green: 0.2, blue: 0.3, alpha: 1)
+            c.fillEllipse(in: CGRect(x: w.x - 2.5, y: w.y - 2.5, width: 5, height: 5))
+        }
+        c.restoreGState()
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: "\(n) \(shot.5) \(s.debugState)", attributes: [.font: font, .foregroundColor: NSColor.white]))
+        c.textPosition = CGPoint(x: box.minX + 4, y: box.minY + 4); CTLineDraw(line, c)
+        c.setStrokeColor(gray: 0.5, alpha: 1); c.stroke(box.insetBy(dx: 0.5, dy: 0.5))
+    }
+    guard let img = c.makeImage() else { return }
+    try? NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out))
+    print("wrote \(out)")
+}
+
+/// `filmhat topHat out.png` — walking side on in a hat, close up.
+func filmHat(_ name: String, out: String) {
+    let s = freshSpider(followCursor: false, at: 60)
+    var d = SpiderDesign()
+    d.look.hat = Hat(rawValue: name) ?? .topHat
+    s.apply(design: d)
+    s.debugWalk(for: 30)
+    var frames: [SpiderPose] = []
+    for f in 0..<96 { s.setCursor(far); s.update(dt: dt); if f >= 30, f % 3 == 0 { frames.append(s.pose()) } }
+    let cols = 11, cell: CGFloat = 150
+    let W = Int(cell) * cols, H = Int(cell) * ((frames.count + cols - 1) / cols)
+    guard let c = CGContext(data: nil, width: W * 2, height: H * 2, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+    c.scaleBy(x: 2, y: 2)
+    c.setFillColor(gray: 0.85, alpha: 1); c.fill(CGRect(x: 0, y: 0, width: W, height: H))
+    let rows = H / Int(cell)
+    for (n, p) in frames.enumerated() {
+        let box = CGRect(x: CGFloat(n % cols) * cell, y: CGFloat(rows - 1 - n / cols) * cell, width: cell, height: cell)
+        c.saveGState(); c.addRect(box); c.clip()
+        SpiderRenderer.draw(p, in: c, bounds: box.offsetBy(dx: 0, dy: -20))
+        c.restoreGState()
+    }
+    guard let img = c.makeImage() else { return }
+    try? NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out))
+    print("wrote \(out)")
+}
+
+/// Round every corner of a window, both ways, at several paces: every
+/// frame, how far each foot that is meant to be standing is from any edge
+/// it could be standing on. Anything over a couple of points is a foot on
+/// thin air.
+func runCornerAir() {
+    guard let loop = sm.loop("win:9") else { return }
+    // Against the real outline: a window's corners are rounded
+    // (AIR_SQUARE=1 measures against the square corners instead).
+    let square = ProcessInfo.processInfo.environment["AIR_SQUARE"] != nil
+    func offEdge(_ p: V2) -> CGFloat {
+        var best = CGFloat.greatestFiniteMagnitude
+        for l in sm.loops {
+            let R = square ? 0 : (l.kind == .windowEdge ? SurfaceMap.windowCornerRadius : 0)
+            for e in l.edge {
+                let (t, _) = projectOnSegment(p, e.a, e.b)
+                var q = e.point(at: t)
+                if R > 0 {
+                    let r = l.rect
+                    let cx: CGFloat? = q.x < r.minX + R ? r.minX + R : (q.x > r.maxX - R ? r.maxX - R : nil)
+                    let cy: CGFloat? = q.y < r.minY + R ? r.minY + R : (q.y > r.maxY - R ? r.maxY - R : nil)
+                    if let cx, let cy {
+                        let c = V2(cx, cy)
+                        best = min(best, abs(p.distance(to: c) - R))
+                        continue
+                    }
+                }
+                best = min(best, p.distance(to: q))
+                _ = q; q = .zero
+            }
+        }
+        return best
+    }
+    var worstAll: CGFloat = 0
+    var badFrames = 0, frames = 0
+    var cases: [(String, Int, CGFloat)] = []
+    let verbose = ProcessInfo.processInfo.environment["AIR_VERBOSE"] != nil
+    for (si, seg) in loop.segs.enumerated() {
+        for dir: CGFloat in [1, -1] {
+            for (gi, pace) in [CGFloat(0.6), 1.0, 1.5].enumerated() {
+                let s = Spider(map: sm)
+                s.config.scale = 1.0
+                s.config.followCursor = false
+                s.config.walkSpeed = 62 * pace
+                // Start well back from the corner it is heading for.
+                let start = dir > 0 ? max(seg.len - 110, 10) : min(110, seg.len - 10)
+                s.debugAttach(loopID: "win:9", segIdx: si, t: start, dir: dir)
+                s.debugWalk(for: 30)
+                var bad = 0
+                var worst: CGFloat = 0
+                for f in 0..<Int(3.2 / dt) {
+                    s.setCursor(far); s.update(dt: dt)
+                    guard f > 20, s.debugState.hasPrefix("attached") else { continue }
+                    frames += 1
+                    var frameWorst: CGFloat = 0
+                    var which = -1
+                    for (i, leg) in s.debugPlanted.enumerated() where leg.planted {
+                        let d = offEdge(leg.world)
+                        if d > frameWorst { frameWorst = d; which = i }
+                    }
+                    if frameWorst > 2 {
+                        bad += 1
+                        if verbose { print(String(format: "  seg %d dir %+.0f pace %.1f f %3d  foot %d off by %.1f  at %.0f,%.0f  body %.0f,%.0f", si, dir, pace, f, which, frameWorst, s.debugPlanted[which].world.x, s.debugPlanted[which].world.y, s.worldPos.x, s.worldPos.y)) }
+                    }
+                    worst = max(worst, frameWorst)
+                }
+                badFrames += bad
+                worstAll = max(worstAll, worst)
+                cases.append(("seg \(si) (\(seg.facing)) dir \(Int(dir)) pace \(pace)", bad, worst))
+                _ = gi
+            }
+        }
+    }
+    print(String(format: "corners: %d of %d frames with a standing foot off the edge by > 2pt (worst %.1f)", badFrames, frames, worstAll))
+    for c in cases where c.1 > 0 { print(String(format: "  %-36@ %3d frames, worst %5.1f", c.0 as NSString, c.1, c.2)) }
+}
+
 switch mode {
+case "cornerair": runCornerAir()
+case "filmhat": filmHat(CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "topHat",
+                        out: CommandLine.arguments.count > 3 ? CommandLine.arguments[3] : "build/hat.png")
+case "two": filmTwo(CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "build/two.png")
+case "demos": runDemos()
+case "filmjump": filmJump(out: CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "build/jumpclose.png")
 case "filmland": filmLand(CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "300,300",
                           out: CommandLine.arguments.count > 3 ? CommandLine.arguments[3] : "build/land.png")
 case "land": runLand()

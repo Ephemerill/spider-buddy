@@ -227,7 +227,9 @@ struct Palette {
     /// The leg colour at a point, for whichever way the coat is painted.
     func legColour(at p: V2, segment: Int) -> RGB {
         if let tones = legTones, !tones.isEmpty {
-            return tones[abs(Int(p.x.rounded()) / 7 + segment) % tones.count]
+            // By segment, never by where the segment happens to be: a tone
+            // picked by position flickers as the leg swings through a step.
+            return tones[segment % tones.count]
         }
         if let paint { return paint.colour(at: p).darker(0.12) }
         let c = legFill.components ?? [0.5, 0.5, 0.5, 1]
@@ -307,10 +309,13 @@ extension LivingCoat {
             // spider up close and melts away from across the room.
             let base = surroundings
             let dark = base.luma < 0.3
-            let tones = [base.darker(dark ? 0 : 0.16).lighter(dark ? 0.12 : 0), base.lighter(dark ? 0.22 : 0.14), base.darker(dark ? 0 : 0.28).lighter(dark ? 0.06 : 0)]
+            // (Blotches kept faint: it reads as one colour, the colour of
+            // what is behind it, with just enough pattern to be a spider.)
+            let tones = [base.darker(dark ? 0 : 0.09).lighter(dark ? 0.07 : 0), base.lighter(dark ? 0.12 : 0.08), base.darker(dark ? 0 : 0.15).lighter(dark ? 0.04 : 0)]
             var p = Paint(stops: [base, base.mix(tones[0], 0.4), base], direction: .down)
             p.texture = .blotches(tones, drift: t)
-            var pal = Palette.painted(p, accent: accent, legTones: [base, tones[0], tones[1]], sheen: 0.35)
+            // The legs are the one colour, all of them, all the time.
+            var pal = Palette.painted(p, accent: accent, legTones: [base.mix(tones[0], 0.5)], sheen: 0.35)
             let rim = dark ? base.lighter(0.30) : base.darker(0.42)
             pal.outline = rim.cg
             pal.outlineFar = rim.darker(0.12).cg

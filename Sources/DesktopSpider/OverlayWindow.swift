@@ -272,6 +272,11 @@ final class OverlayWindow: NSPanel {
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+
+    /// Where it is put is where it goes. AppKit otherwise nudges a window
+    /// down out of the menu bar's strip, and the spider — drawn at its true
+    /// place inside it — has whatever of it is up there cut off.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
 
 // MARK: - Hammock

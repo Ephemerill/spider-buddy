@@ -321,6 +321,9 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
     private var sizeSlider: NSSlider!
     var scale: CGFloat = 0.95
     var onScale: ((CGFloat) -> Void)?
+    /// A habit that needs the real desktop to be shown (a hammock wants a
+    /// top corner of the screen): the spider out there does it instead.
+    var onDemoOnDesktop: ((WritableKeyPath<Habits, CGFloat>) -> Void)?
 
     init(design: SpiderDesign) {
         self.design = design
@@ -328,11 +331,13 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         build()
     }
 
-    func show() {
+    /// `frame`: open exactly there (taking over from the welcome window)
+    /// rather than in the middle of the screen.
+    func show(in frame: NSRect? = nil) {
         preview.spider.apply(design: design)
         syncControls()
         NSApp.activate(ignoringOtherApps: true)
-        window.center()
+        if let frame { window.setFrame(frame, display: false) } else { window.center() }
         window.makeKeyAndOrderFront(nil)
         preview.start()
         onVisibility?(CGWindowID(window.windowNumber), true)
@@ -354,6 +359,10 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         preview.spider.apply(design: design)
         syncControls()
     }
+
+    /// Tools only: as if Done were pressed.
+    func debugDone() { close() }
+    var debugFrame: NSRect { window.frame }
 
     func snapshot(to path: String, tab: Int) {
         showTab(tab)
@@ -683,8 +692,10 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         changed()
     }
 
+    /// `play`: a ▶ at the end of the row, with its tooltip and what it does.
     private func slider(_ title: String, low: String, high: String,
-                        get: @escaping () -> CGFloat, set: @escaping (CGFloat) -> Void) -> NSView {
+                        get: @escaping () -> CGFloat, set: @escaping (CGFloat) -> Void,
+                        play: (tip: String, action: () -> Void)? = nil) -> NSView {
         let col = NSStackView()
         col.orientation = .vertical
         col.alignment = .leading
@@ -711,12 +722,24 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         row.addArrangedSubview(l)
         row.addArrangedSubview(s)
         row.addArrangedSubview(h)
+        if let play, let icon = NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Show me") {
+            let b = NSButton(image: icon, target: self, action: #selector(playTapped(_:)))
+            b.bezelStyle = .inline
+            b.imageScaling = .scaleProportionallyDown
+            b.toolTip = play.tip
+            b.translatesAutoresizingMaskIntoConstraints = false
+            b.widthAnchor.constraint(equalToConstant: 26).isActive = true
+            playActions[ObjectIdentifier(b)] = play.action
+            row.addArrangedSubview(b)
+        }
         col.addArrangedSubview(row)
         sliderSetters[ObjectIdentifier(s)] = set
         sliders.append((s, get))
         return col
     }
     private var sliderSetters: [ObjectIdentifier: (CGFloat) -> Void] = [:]
+    private var playActions: [ObjectIdentifier: () -> Void] = [:]
+    @objc private func playTapped(_ b: NSButton) { playActions[ObjectIdentifier(b)]?() }
 
     /// A slider over a real range, for a measurement rather than a weight.
     private func tuneSlider(_ title: String, low: String, high: String, range: ClosedRange<CGFloat>,
@@ -1165,9 +1188,19 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         for (group, dials) in Habits.groups {
             col.addArrangedSubview(header(group))
             for (title, key) in dials {
+                // A hammock needs a real top corner of the screen, which
+                // the little box has not got: that one the desktop spider
+                // shows. Everything else the preview does, there and then.
+                let onDesktop = key == \.hammock || key == \.nap
                 col.addArrangedSubview(slider(title, low: "Never", high: "All the time",
                                               get: { self.design.habits[keyPath: key] },
-                                              set: { self.design.habits[keyPath: key] = $0 }))
+                                              set: { self.design.habits[keyPath: key] = $0 },
+                                              play: (onDesktop ? "Show me — the spider on your desktop does this one, since a hammock needs a real corner of the screen"
+                                                               : "Show me in the preview",
+                                                     { [weak self] in
+                                                         guard let self else { return }
+                                                         if onDesktop { self.onDemoOnDesktop?(key) } else { self.preview.spider.demo(key) }
+                                                     })))
             }
         }
         return col

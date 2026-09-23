@@ -34,6 +34,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let updater = Updater()
     private var studio: StudioController?
+    private var welcome: OnboardingController?
+    /// The welcome tour is on: the spider is put away until the end of it,
+    /// and then comes out of its menu bar icon.
+    private var awaitingEntrance = false
+    private var pausedBeforeWelcome = false
     private var habitat: HabitatController?
     /// Living in the habitat window; the desktop overlays are put away.
     private var inHabitat = false
@@ -88,7 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         tracker.onUpdate = { [weak self] windows, fullScreens in
             guard let self else { return }
-            var windows = windows
+            var windows = self.withCornerRadii(windows)
             if self.tankGate, let hc = self.habitat {
                 windows.insert(TrackedWindow(id: self.tankWindowID, frame: hc.window.frame, depth: -1, owner: "Habitat"), at: 0)
             }
@@ -114,6 +119,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.spider.fullScreenApp = !self.cinemaScreens.isEmpty
         }
         tracker.start()
+        // The first time it is opened: the welcome tour, before it comes out.
+        // (SPIDER_WELCOME=1 shows it again.)
+        if !UserDefaults.standard.bool(forKey: "welcomed") || ProcessInfo.processInfo.environment["SPIDER_WELCOME"] == "1" {
+            DispatchQueue.main.async { [weak self] in self?.startWelcome() }
+        }
+        // SPIDER_WELCOME_SHOT=dir writes the welcome's first two pages there, then quits.
+        if let dir = ProcessInfo.processInfo.environment["SPIDER_WELCOME_SHOT"] {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if self.welcome == nil { self.startWelcome() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    self.welcome?.debugSnapshot(to: "\(dir)/welcome1.png")
+                    self.welcome?.debugNextPage()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                        self.welcome?.debugSnapshot(to: "\(dir)/welcome2.png")
+                        guard ProcessInfo.processInfo.environment["SPIDER_WELCOME_FLOW"] == "1" else { NSApp.terminate(nil); return }
+                        // On through the Studio and out: where each window
+                        // is, and what the spider does as it arrives.
+                        let tourFrame = self.welcome?.window.frame ?? .zero
+                        self.welcome?.debugAdvance()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            print("welcome flow: tour \(tourFrame) studio \(self.studio?.debugFrame ?? .zero) same \(tourFrame == self.studio?.debugFrame) awaiting \(self.awaitingEntrance) spider window \(self.window.isVisible)")
+                            self.studio?.debugDone()
+                            for i in 1...12 {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.5) {
+                                    print("welcome flow: +\(Double(i) * 0.5)s \(self.spider.debugState) at \(Int(self.spider.worldPos.x)),\(Int(self.spider.worldPos.y)) visible \(self.window.isVisible) welcomed \(UserDefaults.standard.bool(forKey: "welcomed"))")
+                                    if i == 12 { NSApp.terminate(nil) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(screensChanged),
@@ -470,6 +509,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// The spider lives below the menu bar and the Dock — but the menu bar
+    /// is drawn over everything under it, clear as it looks, so any of the
+    /// spider up in its strip (legs reaching up as it hangs there, a leap or
+    /// a throw going up through it) would vanish behind it. While any of it
+    /// is up there it is lifted over the bar; the rest of the time it goes
+    /// back under. A menu opened over it still covers it. (Not in its
+    /// hammock, which hangs below the bar and is drawn over it on purpose,
+    /// so it is seen through the silk.)
+    private func raiseOverMenuBarIfNeeded(_ pose: SpiderPose) {
+        guard !spider.inHammock else {
+            if window.level != .floating { window.level = .floating }
+            return
+        }
+        let r = spriteSide / 2
+        let sprite = CGRect(x: pose.pos.x - r, y: pose.pos.y - r, width: r * 2, height: r * 2)
+        let inStrip = !inHabitat && NSScreen.screens.contains { s in
+            let bar = s.frame.maxY - s.visibleFrame.maxY
+            guard bar > 12 else { return false }
+            return sprite.intersects(CGRect(x: s.frame.minX, y: s.frame.maxY - bar, width: s.frame.width, height: bar))
+        }
+        let want: NSWindow.Level = inStrip ? .statusBar : .floating
+        if window.level != want { window.level = want }
+    }
+
     @discardableResult
     private func place(_ pose: SpiderPose) -> Bool {
         var moved = false
@@ -486,6 +549,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             view.worldOrigin = window.frame.origin
             moved = true
         }
+        raiseOverMenuBarIfNeeded(pose)
 
         let wantSilk = pose.web != nil
         if wantSilk {
@@ -545,6 +609,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: - Window corners
+
+    /// How round each window's corners are, measured once per window.
+    private var cornerRadii: [CGWindowID: CGFloat] = [:]
+
+    /// Fills in each window's corner radius — the spider's feet go on the
+    /// curve of a window's corner, not out on the square corner where
+    /// there is no window. Allowed to see the screen, it measures each
+    /// window once (a couple of new ones a poll, so a crowded desktop is
+    /// not all done at once); otherwise every window gets the default.
+    private func withCornerRadii(_ windows: [TrackedWindow]) -> [TrackedWindow] {
+        let canSee = CGPreflightScreenCaptureAccess()
+        var budget = 2
+        let live = Set(windows.map(\.id))
+        cornerRadii = cornerRadii.filter { live.contains($0.key) }
+        return windows.map { w in
+            var w = w
+            if let r = cornerRadii[w.id] {
+                w.cornerRadius = r
+            } else if canSee, budget > 0 {
+                budget -= 1
+                let r = AppDelegate.measureCornerRadius(of: w) ?? SurfaceMap.windowCornerRadius
+                cornerRadii[w.id] = r
+                w.cornerRadius = r
+            }
+            return w
+        }
+    }
+
+    /// Looks at a window's top-left corner on its own: how far along its
+    /// top row from the corner the window is still see-through is the
+    /// radius of its rounding.
+    private static func measureCornerRadius(of w: TrackedWindow) -> CGFloat? {
+        guard let primary = NSScreen.screens.first else { return nil }
+        let side: CGFloat = 48
+        let rect = CGRect(x: w.frame.minX, y: primary.frame.maxY - w.frame.maxY, width: side, height: side)
+        guard let img = CGWindowListCreateImage(rect, .optionIncludingWindow, w.id, [.boundsIgnoreFraming, .nominalResolution]),
+              img.width > 4, img.height > 4 else { return nil }
+        let n = img.width
+        guard let ctx = CGContext(data: nil, width: n, height: img.height, bitsPerComponent: 8, bytesPerRow: n * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: n, height: img.height))
+        guard let data = ctx.data else { return nil }
+        let px = data.bindMemory(to: UInt8.self, capacity: n * img.height * 4)
+        // Row 0 in memory is the top of the image.
+        var run = 0
+        while run < n, px[run * 4 + 3] < 128 { run += 1 }
+        guard run > 0, run < n - 2 else { return nil }
+        let r = CGFloat(run) * side / CGFloat(n)
+        return clamp(r + 1, 4, 40)
+    }
+
     // MARK: - Camouflage
     //
     // A camouflaged coat wants to know what is behind it — behind its
@@ -559,10 +676,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The wallpaper of each screen, shrunk to a thumbnail to sample from.
     private var wallpaperCache: [String: CGImage] = [:]
 
+    /// A colour seen once that is well away from the one it is wearing:
+    /// taken on only if the next look sees it too, so walking past a
+    /// busy patch of the picture does not have it flicking between colours.
+    private var surroundingsCandidate: RGB?
+
     private func updateSurroundings(now: CFTimeInterval) {
         guard spider.look.isCamouflaged, now - lastSurroundingsSample > 0.4 else { return }
         lastSurroundingsSample = now
-        spider.surroundings = sampleBehindSpider() ?? guessSurroundings()
+        let seen = sampleBehindSpider() ?? guessSurroundings()
+        let current = spider.surroundings
+        if seen.distance(to: current) < 0.09 {
+            // Much the same: settle onto it.
+            spider.surroundings = seen
+            surroundingsCandidate = nil
+        } else if let c = surroundingsCandidate, seen.distance(to: c) < 0.12 {
+            // Seen twice running: it has really moved onto something else.
+            spider.surroundings = c.mix(seen, 0.5)
+            surroundingsCandidate = nil
+        } else {
+            surroundingsCandidate = seen
+        }
     }
 
     /// The middle of its body, pushed a little off whatever it stands on so
@@ -576,13 +710,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func sampleBehindSpider() -> RGB? {
         guard !inHabitat, CGPreflightScreenCaptureAccess() else { return nil }
         let pos = bodyPoint
-        let r = 18 * spider.config.scale
+        // About the size of the spider: the colour it is seen against.
+        let r = 34 * spider.config.scale
         // Window-list space has its origin at the top left of the primary
         // display.
         guard let primary = NSScreen.screens.first else { return nil }
         let rect = CGRect(x: pos.x - r, y: primary.frame.maxY - (pos.y + r), width: r * 2, height: r * 2)
         guard let img = CGWindowListCreateImage(rect, [.optionOnScreenBelowWindow], CGWindowID(window.windowNumber), [.nominalResolution]) else { return nil }
-        return AppDelegate.average(of: img)
+        return AppDelegate.dominant(of: img)
     }
 
     private func guessSurroundings() -> RGB {
@@ -641,7 +776,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let patch = CGRect(x: px - r, y: py - r, width: r * 2, height: r * 2)
             .intersection(CGRect(x: 0, y: 0, width: iw, height: ih))
         guard !patch.isNull, patch.width >= 1, patch.height >= 1, let crop = img.cropping(to: patch) else { return fill }
-        return AppDelegate.average(of: crop)
+        return AppDelegate.dominant(of: crop)
     }
 
     /// A small copy of an image, to sample from cheaply.
@@ -655,8 +790,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return ctx.makeImage()
     }
 
+    /// The colour most of an image is: its pixels sorted into coarse
+    /// colour bins, and the average of the fullest bin. Blue sky with a few
+    /// dark branches across it is blue, not the muddy mix an average gives;
+    /// and a boundary between two colours is whichever has more of the
+    /// patch, not a blend of both that matches neither.
+    static func dominant(of img: CGImage) -> RGB {
+        let n = 16
+        guard let ctx = CGContext(data: nil, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return average(of: img) }
+        ctx.interpolationQuality = .medium
+        ctx.setFillColor(CGColor(gray: 0.5, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: n, height: n))
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: n, height: n))
+        guard let data = ctx.data else { return average(of: img) }
+        let px = data.bindMemory(to: UInt8.self, capacity: n * n * 4)
+        // 6 levels a channel: coarse enough that a gradient or a texture
+        // falls into a few bins, fine enough to tell blue from teal.
+        var bins: [Int: (count: Int, r: Int, g: Int, b: Int)] = [:]
+        for i in 0..<(n * n) {
+            let r = Int(px[i * 4]), g = Int(px[i * 4 + 1]), b = Int(px[i * 4 + 2])
+            let key = (r * 6 / 256) * 36 + (g * 6 / 256) * 6 + (b * 6 / 256)
+            var e = bins[key] ?? (0, 0, 0, 0)
+            e.count += 1; e.r += r; e.g += g; e.b += b
+            bins[key] = e
+        }
+        guard let topKey = bins.max(by: { $0.value.count < $1.value.count })?.key else { return average(of: img) }
+        // The fullest bin and its neighbours: on a gradient the fullest bin
+        // hands over to the next as it moves along, and taking the pixels
+        // either side of the boundary too keeps the colour moving smoothly
+        // rather than stepping a bin at a time.
+        let (tr, tg, tb) = (topKey / 36, (topKey / 6) % 6, topKey % 6)
+        var sum = (count: 0, r: 0, g: 0, b: 0)
+        for (key, e) in bins where abs(key / 36 - tr) <= 1 && abs((key / 6) % 6 - tg) <= 1 && abs(key % 6 - tb) <= 1 {
+            sum.count += e.count; sum.r += e.r; sum.g += e.g; sum.b += e.b
+        }
+        let k = CGFloat(max(sum.count, 1) * 255)
+        return RGB(CGFloat(sum.r) / k, CGFloat(sum.g) / k, CGFloat(sum.b) / k)
+    }
+
     /// Averages an image by drawing it down to a few pixels.
-    private static func average(of img: CGImage) -> RGB {
+    static func average(of img: CGImage) -> RGB {
         let n = 4
         guard let ctx = CGContext(data: nil, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n * 4,
                                   space: CGColorSpaceCreateDeviceRGB(),
@@ -1301,6 +1476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.refreshMenu()
                 self.statusItem.button?.toolTip = d.name
             }
+            st.onDemoOnDesktop = { [weak self] habit in self?.spider.demo(habit) }
             st.onScale = { [weak self] s in
                 guard let self else { return }
                 self.spider.config.scale = s
@@ -1313,11 +1489,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 if shown { self.tracker.ownFurniture.insert(number) } else { self.tracker.ownFurniture.remove(number) }
                 self.tracker.pollNow()
+                // The last page of the welcome: done designing, out it comes.
+                if !shown, self.awaitingEntrance { self.finishWelcome() }
             }
             studio = st
         }
         studio?.scale = spider.config.scale
         studio?.show()
+    }
+
+    // MARK: - Welcome
+
+    /// The welcome tour: a hello, where its menu lives, and the Studio —
+    /// and then the spider lets itself down into the desktop from its menu
+    /// bar icon. Shown once, the first time the app is opened.
+    @objc private func startWelcome() {
+        guard welcome == nil, !awaitingEntrance else { welcome?.show(); return }
+        if inHabitat { leaveHabitat() }
+        // The menu as it will be once the spider is out — shown, not
+        // paused — for the picture of it; built before the tour puts the
+        // spider away.
+        let wasHidden = hidden
+        hidden = false
+        let pictured = buildMenu()
+        hidden = wasHidden
+        awaitingEntrance = true
+        pausedBeforeWelcome = spider.config.paused
+        spider.config.paused = true
+        window.orderOut(nil)
+        silkWindow.orderOut(nil)
+        silkVisible = false
+        hammockWindow.orderOut(nil)
+        let w = OnboardingController(design: spider.design, menu: pictured)
+        w.onOpenMenu = { [weak self] in self?.statusItem.button?.performClick(nil) }
+        w.onStudio = { [weak self] frame in
+            guard let self else { return }
+            self.openStudio()
+            self.studio?.show(in: frame)
+        }
+        w.onSkip = { [weak self] in self?.finishWelcome() }
+        welcome = w
+        w.show()
+    }
+
+    private func finishWelcome() {
+        guard awaitingEntrance else { return }
+        awaitingEntrance = false
+        welcome = nil
+        UserDefaults.standard.set(true, forKey: "welcomed")
+        spider.config.paused = pausedBeforeWelcome
+        if hidden {
+            hidden = false
+            statusItem.button?.appearsDisabled = false
+            saveSettings()
+        }
+        window.orderFrontRegardless()
+        if hammockShown { hammockWindow.orderFrontRegardless() }
+        lastTime = CACurrentMediaTime()
+        // Down on a line from just under its icon in the menu bar.
+        var from = V2(NSScreen.main.map { $0.frame.midX } ?? 600, NSScreen.main.map { $0.visibleFrame.maxY } ?? 800)
+        if let icon = statusItem.button?.window?.frame {
+            from = V2(icon.midX, icon.minY)
+        }
+        spider.enterOnThread(from: from)
+        refreshMenu()
     }
 
     @objc private func toggleFollow() {

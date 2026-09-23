@@ -177,6 +177,21 @@ enum SpiderRenderer {
         let swing = angleDelta(restVec.angle, curVec.angle)
         let reach = clamp(curVec.length / restLen, 0.5, 1.3)
         var off = (r.knee - r.hip).rotated(by: swing) * reach
+        if reach < 1 {
+            // Closer in than it stands: the leg folds — thigh and shin keep
+            // their lengths and the knee rises — rather than the whole leg
+            // shrinking. (At its standing reach this is the rest shape
+            // exactly, so there is no seam.)
+            let a = max((r.knee - r.hip).length, 1)
+            let b = max((r.foot - r.knee).length, 1)
+            let dist = max(curVec.length, 0.01)
+            let dir = curVec / dist
+            let d = clamp(dist, abs(a - b) + 0.5, a + b - 0.5)
+            let x = (a * a - b * b + d * d) / (2 * d)
+            let h = max(a * a - x * x, 0).squareRoot()
+            let side: CGFloat = restVec.cross(r.knee - r.hip) >= 0 ? 1 : -1
+            off = dir * x + dir.perp * (h * side)
+        }
         if lift > 0.001 {
             let bulge: CGFloat = restVec.cross(r.knee - r.hip) >= 0 ? 1 : -1
             off = off.rotated(by: bulge * lift * 0.18)
@@ -361,15 +376,39 @@ enum SpiderRenderer {
         drawThread(pose, in: ctx)
         drawBody(pose, profile: profile, look: look, pal: pal, in: ctx)
         ctx.restoreGState()
-        if !look.faceOverLegs { face(ctx) }
-        drawLegs(pose, far: false, profile: profile, look: look, pal: pal, in: ctx)
-        if look.faceOverLegs { face(ctx) }
-        ctx.saveGState()
-        lean(ctx)
-        headTurn(pose, hc: hcN, hr: hrN, profile: profile, in: ctx)
-        foldHead(pose, profile: profile, in: ctx)
-        drawHat(pose, profile: profile, look: look, pal: pal, in: ctx)
-        ctx.restoreGState()
+        func hat(_ ctx: CGContext) {
+            ctx.saveGState()
+            lean(ctx)
+            headTurn(pose, hc: hcN, hr: hrN, profile: profile, in: ctx)
+            foldHead(pose, profile: profile, in: ctx)
+            drawHat(pose, profile: profile, look: look, pal: pal, in: ctx)
+            ctx.restoreGState()
+        }
+        // The near legs are in front of the hat — a front leg reaching up
+        // past the head as it walks crosses in front of it, not behind —
+        // and the far legs behind it, with the rest of the body. Where the
+        // face goes over the near legs, a near leg is split at the head's
+        // outline: the part over the head is drawn under the face, the
+        // rest over the hat, each part once.
+        if look.faceOverLegs {
+            let head = headOutline(pose, hc: hcN, hr: hrN, profile: profile, lean: lean, in: ctx)
+            ctx.saveGState()
+            ctx.addPath(head); ctx.clip()
+            drawLegs(pose, far: false, profile: profile, look: look, pal: pal, in: ctx)
+            ctx.restoreGState()
+            face(ctx)
+            hat(ctx)
+            ctx.saveGState()
+            ctx.addRect(CGRect(x: -400, y: -400, width: 800, height: 800))
+            ctx.addPath(head)
+            ctx.clip(using: .evenOdd)
+            drawLegs(pose, far: false, profile: profile, look: look, pal: pal, in: ctx)
+            ctx.restoreGState()
+        } else {
+            face(ctx)
+            hat(ctx)
+            drawLegs(pose, far: false, profile: profile, look: look, pal: pal, in: ctx)
+        }
 
         ctx.restoreGState()
         ctx.restoreGState()
@@ -700,6 +739,22 @@ enum SpiderRenderer {
         ctx.setStrokeColor(pal.outline)
         ctx.setLineWidth(2.5)
         ctx.strokePath()
+    }
+
+    /// The head's outline where the face is drawn — leaned, tipped and
+    /// folded as the face is — in the current frame, for splitting the near
+    /// legs round it. (A touch generous, for the fuzz of its rim.)
+    static func headOutline(_ pose: SpiderPose, hc: V2, hr: CGFloat, profile f: CGFloat,
+                            lean: (CGContext) -> Void, in ctx: CGContext) -> CGPath {
+        ctx.saveGState()
+        let base = ctx.ctm
+        lean(ctx)
+        headTurn(pose, hc: hc, hr: hr, profile: f, in: ctx)
+        foldHead(pose, profile: f, in: ctx)
+        var rel = ctx.ctm.concatenating(base.inverted())
+        ctx.restoreGState()
+        let r = hr * 1.08
+        return CGPath(ellipseIn: CGRect(x: hc.x - r, y: hc.y - r, width: r * 2, height: r * 2), transform: &rel)
     }
 
     /// Where the head joins the body: the head tips about this.

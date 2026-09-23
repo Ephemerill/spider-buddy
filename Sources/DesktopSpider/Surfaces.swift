@@ -141,8 +141,29 @@ struct SurfaceLoop {
     let depth: Int
     /// Source rect, for window loops (used to detect movement).
     let rect: CGRect
+    /// A window's corners are rounded: this far from a corner there is no
+    /// window on the square outline, only on the curve inside it. 0 for
+    /// anything square.
+    var cornerRadius: CGFloat = 0
 
     var perimeter: CGFloat { segs.reduce(0) { $0 + $1.len } }
+
+    /// A point on the square outline moved onto the rounded corner, if it
+    /// is within a corner's radius — with the outward direction there. Nil
+    /// where the outline is straight (or nothing here is rounded).
+    func onRoundedCorner(_ p: V2) -> (point: V2, normal: V2)? {
+        let R = cornerRadius
+        guard R > 0.5 else { return nil }
+        let r = rect
+        let cx: CGFloat, cy: CGFloat
+        if p.x < r.minX + R { cx = r.minX + R } else if p.x > r.maxX - R { cx = r.maxX - R } else { return nil }
+        if p.y < r.minY + R { cy = r.minY + R } else if p.y > r.maxY - R { cy = r.maxY - R } else { return nil }
+        let c = V2(cx, cy)
+        let d = p - c
+        guard d.length > 0.001 else { return nil }
+        let n = d / d.length
+        return (c + n * R, n)
+    }
 }
 
 /// A resolved spot on a surface.
@@ -158,6 +179,11 @@ struct Anchor {
 
 final class SurfaceMap {
     private(set) var loops: [SurfaceLoop] = []
+    /// A window's corner radius when it has not been measured: toward the
+    /// larger end of what macOS draws, since a foot put on a curve a little
+    /// inside the real one is still on the window, and one a little outside
+    /// it is on thin air.
+    static let windowCornerRadius: CGFloat = 26
     private(set) var byID: [String: SurfaceLoop] = [:]
     /// Front-to-back window rects for occlusion tests.
     private(set) var occluders: [(rect: CGRect, depth: Int)] = []
@@ -245,6 +271,7 @@ final class SurfaceMap {
                 var piece = SurfaceLoop(id: runs.count == 1 ? loop.id : "\(loop.id)~\(i)", kind: loop.kind,
                                         segs: run, closed: false, depth: loop.depth, rect: loop.rect)
                 piece.edge = edge
+                piece.cornerRadius = loop.cornerRadius
                 out.append(piece)
             }
         }
@@ -387,6 +414,7 @@ final class SurfaceMap {
             var loop = SurfaceLoop(id: "win:\(w.id)", kind: .windowEdge, segs: segs,
                                    closed: true, depth: w.depth, rect: r)
             loop.edge = SurfaceMap.rectEdge(r, inside: false)
+            loop.cornerRadius = min(w.cornerRadius, r.width / 2, r.height / 2)
             newLoops.append(loop)
         }
         occluders = occ.map { (rect: $0.0, depth: $0.1) }
@@ -417,6 +445,7 @@ final class SurfaceMap {
                                       closed: newLoops[li].closed, depth: depth,
                                       rect: newLoops[li].rect)
             rebuilt.edge = newLoops[li].edge
+            rebuilt.cornerRadius = newLoops[li].cornerRadius
             newLoops[li] = rebuilt
         }
     }
@@ -547,6 +576,7 @@ final class SurfaceMap {
                                    segs: SurfaceMap.rectEdge(w.frame.insetBy(dx: -off, dy: -off), inside: false),
                                    closed: true, depth: w.depth, rect: w.frame)
             loop.edge = SurfaceMap.rectEdge(w.frame, inside: false)
+            loop.cornerRadius = min(w.cornerRadius, w.frame.width / 2, w.frame.height / 2)
             newLoops.append(loop)
         }
         occluders = windows.map { (rect: $0.frame, depth: $0.depth) }

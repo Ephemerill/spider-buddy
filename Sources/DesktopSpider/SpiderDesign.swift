@@ -491,6 +491,12 @@ struct RGB: Equatable, Hashable, Codable {
     func lighter(_ t: CGFloat) -> RGB { mix(RGB(1, 1, 1), t) }
     func darker(_ t: CGFloat) -> RGB { mix(RGB(0.08, 0.04, 0.02), t) }
     var luma: CGFloat { 0.3 * r + 0.59 * g + 0.11 * b }
+    /// How far apart two colours look, roughly: channel distance weighted
+    /// the way the eye weights them.
+    func distance(to o: RGB) -> CGFloat {
+        let dr = r - o.r, dg = g - o.g, db = b - o.b
+        return (0.3 * dr * dr + 0.59 * dg * dg + 0.11 * db * db).squareRoot()
+    }
 
     /// A colour from a hue (0..1 round the wheel), for rainbows and the like.
     static func hue(_ h: CGFloat, sat: CGFloat = 1, val: CGFloat = 1) -> RGB {

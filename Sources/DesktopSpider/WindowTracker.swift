@@ -9,6 +9,10 @@ struct TrackedWindow {
     /// Front-to-back order, 0 == frontmost.
     let depth: Int
     let owner: String
+    /// How round its corners are, in points. macOS windows are anything
+    /// from about 16 to over 30; measured where the spider can see the
+    /// screen, else a size that suits most (see `SurfaceMap.windowCornerRadius`).
+    var cornerRadius: CGFloat = SurfaceMap.windowCornerRadius
 }
 
 /// Polls the window server for on-screen window rectangles so the spider knows
