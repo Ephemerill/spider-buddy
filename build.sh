@@ -1,9 +1,13 @@
 #!/bin/bash
-# Builds Spider.app — a self-contained menu-bar app, no Xcode required.
+# Builds the app — a self-contained menu-bar app, no Xcode required.
+#
+# The name is APP_NAME: "spiders" for the testing build (the default, what
+# ./run.sh makes), "Spider Buddy" for a release (tools/release.sh sets it).
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP="Spider.app"
+APP_NAME="${APP_NAME:-spiders}"
+APP="$APP_NAME.app"
 BIN="DesktopSpider"
 CONF="${1:-release}"
 VERSION="$(tr -d '[:space:]' < VERSION)"
@@ -38,8 +42,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Spider</string>
-  <key>CFBundleDisplayName</key><string>Desktop Spider</string>
+  <key>CFBundleName</key><string>$APP_NAME</string>
+  <key>CFBundleDisplayName</key><string>$APP_NAME</string>
   <key>CFBundleIdentifier</key><string>com.gabriel.desktopspider</string>
   <key>CFBundleExecutable</key><string>DesktopSpider</string>
   <key>CFBundlePackageType</key><string>APPL</string>

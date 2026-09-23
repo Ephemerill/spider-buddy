@@ -179,6 +179,9 @@ struct Anchor {
 
 final class SurfaceMap {
     private(set) var loops: [SurfaceLoop] = []
+    /// Where the Dock is (when it is showing): solid, and in front of the
+    /// windows — the spider is drawn over it while it touches it.
+    private(set) var dockRects: [CGRect] = []
     /// A window's corner radius when it has not been measured: toward the
     /// larger end of what macOS draws, since a foot put on a curve a little
     /// inside the real one is still on the window, and one a little outside
@@ -318,6 +321,17 @@ final class SurfaceMap {
         cinemaScreens = cinema
 
         // --- Screens ---------------------------------------------------------
+        let docks = dockStrips().filter { d in !cinema.contains(where: { $0.intersects(d) }) }
+        dockRects = docks
+        var bottomDocks: [CGRect] = []
+        /// A Dock along the bottom of this screen, not reaching right
+        /// across it: the floor goes up and over it.
+        func bottomDock(_ f: CGRect) -> CGRect? {
+            guard let d = docks.first(where: { abs($0.minY - f.minY) < 4 && $0.minX > f.minX + 40 && $0.maxX < f.maxX - 40
+                                               && $0.height < f.height / 3 }) else { return nil }
+            bottomDocks.append(d)
+            return d
+        }
         for (i, screen) in NSScreen.screens.enumerated() {
             let f = screen.frame
             frames.append(f)
@@ -339,25 +353,25 @@ final class SurfaceMap {
                 // short of the menu bar — under which it can hang instead.
                 let wallTop = vf.maxY - off - 6
                 let tlW = V2(r.minX, wallTop), trW = V2(r.maxX, wallTop)
+                let floor = SurfaceMap.floor(of: f, standoff: off, dock: bottomDock(f))
                 var screenLoop = SurfaceLoop(id: "screen:\(i)", kind: .screenBorder,
-                                             segs: [Seg(tlW, bl, .right), Seg(bl, br, .up), Seg(br, trW, .left)],
+                                             segs: [Seg(tlW, bl, .right)] + floor.segs + [Seg(br, trW, .left)],
                                              closed: false, depth: 1_000_000, rect: r)
-                screenLoop.edge = [Seg(V2(f.minX, vf.maxY), V2(f.minX, f.minY), .right),
-                                   Seg(V2(f.minX, f.minY), V2(f.maxX, f.minY), .up),
-                                   Seg(V2(f.maxX, f.minY), V2(f.maxX, vf.maxY), .left)]
+                screenLoop.edge = [Seg(V2(f.minX, vf.maxY), V2(f.minX, f.minY), .right)] + floor.edge
+                    + [Seg(V2(f.maxX, f.minY), V2(f.maxX, vf.maxY), .left)]
                 newLoops.append(screenLoop)
             } else {
                 // Walking the inside of the frame: along the bottom, up the right,
                 // back along the top, down the left.
-                let segs = [
-                    Seg(bl, br, .up),
+                let floor = SurfaceMap.floor(of: f, standoff: off, dock: bottomDock(f))
+                let segs = floor.segs + [
                     Seg(br, tr, .left),
                     Seg(tr, tl, .down),
                     Seg(tl, bl, .right),
                 ]
                 var screenLoop = SurfaceLoop(id: "screen:\(i)", kind: .screenBorder, segs: segs,
                                              closed: true, depth: 1_000_000, rect: r)
-                screenLoop.edge = SurfaceMap.rectEdge(f, inside: true)
+                screenLoop.edge = floor.edge + Array(SurfaceMap.rectEdge(f, inside: true).dropFirst())
                 newLoops.append(screenLoop)
             }
 
@@ -378,7 +392,7 @@ final class SurfaceMap {
         worldBounds = frames.reduce(CGRect.null) { $0.union($1) }
 
         // --- Dock ------------------------------------------------------------
-        for (i, dock) in dockStrips().enumerated() where !cinema.contains(where: { $0.intersects(dock) }) {
+        for (i, dock) in docks.enumerated() where !bottomDocks.contains(dock) {
             // Only the top surface is interesting: the spider walks on the dock.
             let y = dock.maxY + off
             let seg = Seg(V2(dock.minX + 6, y), V2(dock.maxX - 6, y), .up)
@@ -544,7 +558,8 @@ final class SurfaceMap {
 
     /// Builds a map for an arbitrary rectangle instead of the real displays,
     /// so tooling can lay the spider out on a mock desktop.
-    func debugRebuild(screen: CGRect, menuBarHeight: CGFloat, windows: [TrackedWindow], cinema: Bool = false) {
+    func debugRebuild(screen: CGRect, menuBarHeight: CGFloat, windows: [TrackedWindow], cinema: Bool = false, dock: CGRect? = nil) {
+        dockRects = dock.map { [$0] } ?? []
         let off = standoff
         cinemaScreens = cinema ? [screen] : []
         if cinema {
@@ -558,10 +573,11 @@ final class SurfaceMap {
         }
         var newLoops: [SurfaceLoop] = []
         let r = screen.insetBy(dx: off, dy: off)
+        let floor = SurfaceMap.floor(of: screen, standoff: off, dock: dock)
         var screenLoop = SurfaceLoop(id: "screen:0", kind: .screenBorder,
-                                     segs: SurfaceMap.rectEdge(r, inside: true),
+                                     segs: floor.segs + Array(SurfaceMap.rectEdge(r, inside: true).dropFirst()),
                                      closed: true, depth: 1_000_000, rect: r)
-        screenLoop.edge = SurfaceMap.rectEdge(screen, inside: true)
+        screenLoop.edge = floor.edge + Array(SurfaceMap.rectEdge(screen, inside: true).dropFirst())
         newLoops.append(screenLoop)
         if menuBarHeight > 12 {
             let y = screen.maxY - menuBarHeight - off
@@ -585,6 +601,34 @@ final class SurfaceMap {
         applyBlocks(to: &newLoops)
         unclipped = newLoops
         reclip()
+    }
+
+    /// The screen's floor as the spider walks it: straight across — or, with
+    /// the Dock sitting on it, up the Dock's near side, over its top and
+    /// down the far side, so the Dock is solid ground in its way and not
+    /// something it can walk (or fall) behind.
+    static func floor(of f: CGRect, standoff off: CGFloat, dock: CGRect?) -> (segs: [Seg], edge: [Seg]) {
+        let y = f.minY + off
+        let x0 = f.minX + off, x1 = f.maxX - off
+        guard let d = dock else {
+            return ([Seg(V2(x0, y), V2(x1, y), .up)], [Seg(V2(f.minX, f.minY), V2(f.maxX, f.minY), .up)])
+        }
+        let lx = d.minX - off, rx = d.maxX + off, top = d.maxY + off
+        let segs = [
+            Seg(V2(x0, y), V2(lx, y), .up),
+            Seg(V2(lx, y), V2(lx, top), .left),
+            Seg(V2(lx, top), V2(rx, top), .up),
+            Seg(V2(rx, top), V2(rx, y), .right),
+            Seg(V2(rx, y), V2(x1, y), .up),
+        ]
+        let edge = [
+            Seg(V2(f.minX, f.minY), V2(d.minX, f.minY), .up),
+            Seg(V2(d.minX, f.minY), V2(d.minX, d.maxY), .left),
+            Seg(V2(d.minX, d.maxY), V2(d.maxX, d.maxY), .up),
+            Seg(V2(d.maxX, d.maxY), V2(d.maxX, f.minY), .right),
+            Seg(V2(d.maxX, f.minY), V2(f.maxX, f.minY), .up),
+        ]
+        return (segs, edge)
     }
 
     /// Dock strips, in AppKit coords. Falls back to visibleFrame insets.

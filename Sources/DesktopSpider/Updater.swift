@@ -73,7 +73,7 @@ final class Updater {
                 guard Updater.isNewer(release.version, than: Updater.currentVersion) else {
                     self.finish()
                     self.alert("You're up to date",
-                               "Desktop Spider \(Updater.currentVersion) is the latest version.")
+                               "\(AppInfo.name) \(Updater.currentVersion) is the latest version.")
                     return
                 }
                 if self.offer(release) {
@@ -150,7 +150,7 @@ final class Updater {
 
     private func offer(_ release: Release) -> Bool {
         let alert = NSAlert()
-        alert.messageText = "Desktop Spider \(release.version) is available"
+        alert.messageText = "\(AppInfo.name) \(release.version) is available"
         var text = "You have \(Updater.currentVersion). The update downloads, installs over this copy and relaunches the spider. Its settings and design stay put."
         if !release.notes.isEmpty {
             text += "\n\n" + String(release.notes.prefix(600))
@@ -179,7 +179,7 @@ final class Updater {
     // MARK: Installing
 
     private func install(_ release: Release) {
-        let panel = ProgressPanel(title: "Downloading Desktop Spider \(release.version)…")
+        let panel = ProgressPanel(title: "Downloading \(AppInfo.name) \(release.version)…")
         progress = panel
         panel.show()
 
@@ -242,8 +242,12 @@ final class Updater {
             throw Failure.badArchive
         }
 
-        let target = try installTarget()
-        let dir = target.deletingLastPathComponent()
+        // Installed under the new app's own name (a rename between releases
+        // carries through), and the old bundle taken away if it was
+        // called something else.
+        let old = try installTarget()
+        let dir = old.deletingLastPathComponent()
+        let target = dir.appendingPathComponent(fresh.lastPathComponent)
         let staging = dir.appendingPathComponent(".\(target.lastPathComponent).update")
         let retired = dir.appendingPathComponent(".\(target.lastPathComponent).old")
         try? fm.removeItem(at: staging)
@@ -268,6 +272,7 @@ final class Updater {
             throw error
         }
         try? fm.removeItem(at: retired)
+        if old != target, fm.fileExists(atPath: old.path) { try? fm.removeItem(at: old) }
         return target
     }
 
@@ -328,7 +333,7 @@ final class ProgressPanel {
         window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 84),
                          styleMask: [.titled, .utilityWindow, .nonactivatingPanel],
                          backing: .buffered, defer: false)
-        window.title = "Desktop Spider"
+        window.title = AppInfo.name
         window.level = .floating
         window.isReleasedWhenClosed = false
         window.hidesOnDeactivate = false
@@ -372,5 +377,28 @@ final class ProgressPanel {
     func close() {
         observation = nil
         window.close()
+    }
+}
+
+/// The app's own name: "Spider Buddy" for a release, "spiders" for the
+/// testing build (see build.sh).
+enum AppInfo {
+    static var name: String {
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+            ?? (Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String) ?? "Spider Buddy"
+    }
+
+    /// An update from 1.1.0 lands as "Spider.app" (that version's updater
+    /// kept the old bundle's name). A release that finds itself so named
+    /// takes its own name, once, where it can.
+    static func takeOwnNameIfNeeded() {
+        let fm = FileManager.default
+        let here = Bundle.main.bundleURL
+        guard here.lastPathComponent == "Spider.app", name == "Spider Buddy",
+              !here.path.hasPrefix("/Volumes/") else { return }
+        let dir = here.deletingLastPathComponent()
+        let there = dir.appendingPathComponent("Spider Buddy.app")
+        guard fm.isWritableFile(atPath: dir.path), !fm.fileExists(atPath: there.path) else { return }
+        try? fm.moveItem(at: here, to: there)
     }
 }

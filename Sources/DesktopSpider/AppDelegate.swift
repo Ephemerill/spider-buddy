@@ -69,6 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppInfo.takeOwnNameIfNeeded()
         spider = Spider(map: map)
         spider.apply(design: SpiderDesign.load())
         loadSettings()
@@ -524,11 +525,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let r = spriteSide / 2
         let sprite = CGRect(x: pose.pos.x - r, y: pose.pos.y - r, width: r * 2, height: r * 2)
-        let inStrip = !inHabitat && NSScreen.screens.contains { s in
+        let inStrip = !inHabitat && (NSScreen.screens.contains { s in
             let bar = s.frame.maxY - s.visibleFrame.maxY
             guard bar > 12 else { return false }
             return sprite.intersects(CGRect(x: s.frame.minX, y: s.frame.maxY - bar, width: s.frame.width, height: bar))
-        }
+        } || map.dockRects.contains { sprite.intersects($0) })   // the Dock too: it climbs on it
         let want: NSWindow.Level = inStrip ? .statusBar : .floating
         if window.level != want { window.level = want }
     }
@@ -994,7 +995,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         add(menu, "Bring \(name) to the Middle", #selector(teleportToMiddle))
         add(menu, "Reset Everything", #selector(resetEverything))
         menu.addItem(.separator())
-        add(menu, "Quit Spider", #selector(quit), key: "q")
+        add(menu, "Quit \(AppInfo.name)", #selector(quit), key: "q")
         return menu
     }
 

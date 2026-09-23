@@ -1,7 +1,7 @@
 #!/bin/bash
-# Builds Spider.app, wraps it in a .dmg, and publishes a GitHub release.
+# Builds Spider Buddy.app, wraps it in a .dmg, and publishes a GitHub release.
 #
-#   tools/release.sh            # package build/DesktopSpider-<VERSION>.dmg
+#   tools/release.sh            # package build/SpiderBuddy-<VERSION>.dmg
 #   tools/release.sh --publish  # ...and create the GitHub release (needs gh)
 #
 # The version comes from the VERSION file at the repo root; bump it first.
@@ -12,13 +12,14 @@ cd "$(dirname "$0")/.."
 
 VERSION="$(tr -d '[:space:]' < VERSION)"
 TAG="v$VERSION"
-APP="Spider.app"
-DMG="build/DesktopSpider-$VERSION.dmg"
-VOL="Desktop Spider $VERSION"
+NAME="Spider Buddy"
+APP="$NAME.app"
+DMG="build/SpiderBuddy-$VERSION.dmg"
+VOL="$NAME $VERSION"
 STAGE="build/dmg-stage"
 REPO="Ephemerill/spider-buddy"
 
-./build.sh release
+APP_NAME="$NAME" ./build.sh release
 
 echo "==> Packaging $DMG"
 rm -rf "$STAGE" "$DMG"
@@ -42,9 +43,9 @@ if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
 else
   echo "==> Creating release $TAG"
   gh release create "$TAG" "$DMG" -R "$REPO" \
-    --title "Desktop Spider $VERSION" \
-    --notes "Download the .dmg, open it, and drag Spider to Applications.
+    --title "$NAME $VERSION" \
+    --notes "Download the .dmg, open it, and drag Spider Buddy to Applications.
 
-The first launch needs the usual step for an unsigned app: right-click Spider → Open, or allow it under System Settings → Privacy & Security. After that, **Check for Updates…** in the spider's menu installs newer releases by itself."
+The first launch needs the usual step for an unsigned app: right-click Spider Buddy → Open, or allow it under System Settings → Privacy & Security. After that, **Check for Updates…** in the spider's menu installs newer releases by itself."
 fi
 echo "==> https://github.com/$REPO/releases/tag/$TAG"

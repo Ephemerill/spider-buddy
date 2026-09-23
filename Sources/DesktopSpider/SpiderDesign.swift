@@ -829,6 +829,29 @@ struct Gait: Codable, Equatable {
     var bounce: CGFloat = 0.5      // how much the body bobs
     var stance: CGFloat = 0.5      // 0 low and flat .. 1 up on its toes
     var style: GaitPreference = .mixed
+    /// Thrown or dropped hard against anything: 0 it always lands where it
+    /// hits; up the dial it bounces off, tumbling, from gentler hits and
+    /// with more spring.
+    var bounciness: CGFloat = 0.5
+
+    init(pace: CGFloat = 0.5, stride: CGFloat = 0.5, bounce: CGFloat = 0.5, stance: CGFloat = 0.5,
+         style: GaitPreference = .mixed, bounciness: CGFloat = 0.5) {
+        self.pace = pace; self.stride = stride; self.bounce = bounce; self.stance = stance
+        self.style = style; self.bounciness = bounciness
+    }
+
+    // Written out so a design saved before a dial existed still loads,
+    // taking that dial at its middle.
+    private enum CodingKeys: String, CodingKey { case pace, stride, bounce, stance, style, bounciness }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        pace = (try? c.decodeIfPresent(CGFloat.self, forKey: .pace)) ?? 0.5
+        stride = (try? c.decodeIfPresent(CGFloat.self, forKey: .stride)) ?? 0.5
+        bounce = (try? c.decodeIfPresent(CGFloat.self, forKey: .bounce)) ?? 0.5
+        stance = (try? c.decodeIfPresent(CGFloat.self, forKey: .stance)) ?? 0.5
+        style = (try? c.decodeIfPresent(GaitPreference.self, forKey: .style)) ?? .mixed
+        bounciness = (try? c.decodeIfPresent(CGFloat.self, forKey: .bounciness)) ?? 0.5
+    }
 
     var speedMul: CGFloat { lerp(0.55, 1.7, pace) }
     var strideMul: CGFloat { lerp(0.72, 1.3, stride) }
@@ -838,7 +861,8 @@ struct Gait: Codable, Equatable {
 
     static func random() -> Gait {
         Gait(pace: randRange(0.1, 1), stride: randRange(0.1, 1), bounce: randRange(0.1, 1),
-             stance: randRange(0.1, 1), style: GaitPreference.allCases.randomElement()!)
+             stance: randRange(0.1, 1), style: GaitPreference.allCases.randomElement()!,
+             bounciness: randRange(0.2, 0.9))
     }
 }
 

@@ -461,6 +461,14 @@ final class Spider {
     // State
     private var mode: Mode = .airborne
     private var air: AirKind = .fall
+    /// Tools only: no bouncing at all, to compare with how it was.
+    static var debugNoBounce = ProcessInfo.processInfo.environment["SPIDER_NO_BOUNCE"] != nil
+    /// Tools only: bounces so far, and how fast it is tumbling.
+    private(set) var debugBounces = 0
+    var debugTumble: CGFloat { tumbleVel }
+    /// End over end after a hard bounce, in radians a second; dies away,
+    /// and gives way to turning feet first once a landing is near.
+    private var tumbleVel: CGFloat = 0
     private var activity: Activity = .idle
     private var queued: (Activity, CGFloat)?
     private var anchor = Anchor(loopID: "", segIdx: 0, t: 0)
@@ -589,12 +597,50 @@ final class Spider {
         return V2(f.x + (f.x >= legs[i].hip.x ? 3 : -3), f.y)
     }
 
+    /// Face on, the other two near-side legs (0 and 3) start under the face
+    /// too: left on the ledge they would cross in front of it on the way
+    /// down and look like a front leg still standing. With the front legs
+    /// up they come up and out to the sides as well — it stands on its
+    /// four far legs, behind it on both sides. Nil for any other leg.
+    private func faceOnOuter(_ i: Int) -> V2? {
+        guard i == 0 || i == 3 else { return nil }
+        let side: CGFloat = i == 0 ? 1 : -1
+        let a = t * 3 + (side > 0 ? 0.4 : 1.1)
+        legBend[i] = V2(side, 0.7)
+        legBones[i] = 0
+        return legs[i].hip + V2(side * (31 + sin(a) * 1.2), 10 + cos(a) * 1.5)
+    }
+
+    /// `t` of the way from `a` to `b`, swung round `h` (angle and reach
+    /// blended) rather than along the straight line between them.
+    static func swing(_ a: V2, _ b: V2, about h: V2, _ t: CGFloat) -> V2 {
+        let va = a - h, vb = b - h
+        guard va.length > 1, vb.length > 1 else { return V2.lerp(a, b, t) }
+        let ang = va.angle + angleDelta(va.angle, vb.angle) * t
+        return h + V2.angle(ang) * lerp(va.length, vb.length, t)
+    }
+
+    /// A front leg raised face on: the foot `out` to its side of the face
+    /// and `up`, from its own hip, knee bent outward — and drawn with the
+    /// same proportions on both sides (leg 0's), since the face-on layout
+    /// gives the two front legs different lengths, and a raised pair should
+    /// match.
+    private func faceOnRaise(_ i: Int, side: CGFloat, out: CGFloat, up: CGFloat) -> V2 {
+        legBend[i] = V2(side, 0.2)
+        legBones[i] = 0
+        return legs[i].hip + V2(side * out, up)
+    }
+
     /// For a gesture that raises two legs: nil for a leg that stays down,
     /// else which way that leg's foot goes — +1 out ahead (side on), or
     /// the side of the face it is on (face on).
     private func raisedSide(_ i: Int) -> CGFloat? {
         if liftsOuterPair {
-            guard i == 0 || i == 7 else { return nil }
+            // Face on, its front legs are the inner near pair, 1 and 2 — the
+            // ones whose knees come forward in front of the face, one either
+            // side of it. (The outer feet, 0 and 3, read as side legs; 4–7
+            // are the far side, behind the body.)
+            guard i == 1 || i == 2 else { return nil }
             return SpiderRenderer.frontLegs[i].foot.x >= 0 ? 1 : -1
         }
         return i % 4 == 0 ? 1 : nil
@@ -759,6 +805,9 @@ final class Spider {
     /// Which way each leg's knee should bend when it is holding the line,
     /// in sprite units; nil means the ordinary walking knee.
     private var legBend: [V2?] = Array(repeating: nil, count: SpiderRenderer.legCount)
+    /// Whose proportions a leg is drawn with this frame, if not its own
+    /// (see `faceOnRaise`).
+    private var legBones: [Int?] = Array(repeating: nil, count: SpiderRenderer.legCount)
     /// Each knee's shape, eased (see `updateKnees`), and where that puts
     /// the knee, as drawn.
     private var kneeShape: [V2] = []
@@ -1021,6 +1070,7 @@ final class Spider {
     }
 
     func beginGrab(at p: V2) {
+        tumbleVel = 0
         pendingMap = nil
         climbArrival = nil
         abandonBuild()
@@ -4579,6 +4629,19 @@ final class Spider {
         } else if let fh = flightHeading {
             headingTarget = fh
         }
+        // Tumbling after a hard bounce: round and round, slowing — until a
+        // landing is close, when it rights itself to meet it feet first.
+        if abs(tumbleVel) > 0.5 {
+            if landingReach > 0.25 {
+                tumbleVel *= exp(-9 * dt)
+            } else {
+                // Leading the heading's spring so it turns at about this rate.
+                headingTarget = heading + tumbleVel * 0.11
+            }
+            tumbleVel *= exp(-1.1 * dt)
+        } else {
+            tumbleVel = 0
+        }
         legMode = .free
         crouch.step(to: 0, dt: dt)
         lift.step(to: 0, dt: dt)
@@ -4619,6 +4682,7 @@ final class Spider {
                 // or by a leap that was aimed there.
                 let fromAbove = spot.seg.facing == .down && vel.y < -80 && landing == nil
                 if !fromAbove, vel.length < 260 || toward > -0.25 {
+                    if bounce(off: spot.seg.normal, at: spot.point) { return }
                     land(on: spot.anchor, seg: spot.seg)
                     return
                 }
@@ -4679,33 +4743,62 @@ final class Spider {
         }
     }
 
+    /// The screen's own rim, as a backstop: anything that gets this far
+    /// past the edge (a frame's travel at full speed can) meets it the way
+    /// it meets any surface — a bounce if it came in hard enough, a landing
+    /// on the nearest spot if not.
     private func bounceOffScreens() {
         let f = map.screenFrame(containing: pos)
         let pad = 14 * config.scale
-        var bounced = false
-        if pos.x < f.minX + pad, vel.x < 0 {
-            pos.x = f.minX + pad; vel.x = -vel.x * 0.52; vel.y *= 0.88; bounced = true
-        }
-        if pos.x > f.maxX - pad, vel.x > 0 {
-            pos.x = f.maxX - pad; vel.x = -vel.x * 0.52; vel.y *= 0.88; bounced = true
-        }
-        if pos.y > f.maxY - pad, vel.y > 0 {
-            pos.y = f.maxY - pad; vel.y = -vel.y * 0.45; vel.x *= 0.9; bounced = true
-        }
-        if pos.y < f.minY + pad, vel.y < 0 {
-            pos.y = f.minY + pad; vel.y = -vel.y * 0.5; vel.x *= 0.86; bounced = true
-        }
-        if bounced {
-            stretch.velocity = 6
-            if abs(vel.x) + abs(vel.y) < 120 {
-                if let spot = map.nearestSpot(to: pos, within: 90) {
-                    land(on: spot.anchor, seg: spot.seg)
-                }
-            }
+        var hit: (normal: V2, at: V2)?
+        if pos.x < f.minX + pad, vel.x < 0 { hit = (V2(1, 0), V2(f.minX + pad, pos.y)) }
+        if pos.x > f.maxX - pad, vel.x > 0 { hit = (V2(-1, 0), V2(f.maxX - pad, pos.y)) }
+        if pos.y > f.maxY - pad, vel.y > 0 { hit = (V2(0, -1), V2(pos.x, f.maxY - pad)) }
+        if pos.y < f.minY + pad, vel.y < 0 { hit = (V2(0, 1), V2(pos.x, f.minY + pad)) }
+        guard let h = hit else { return }
+        if bounce(off: h.normal, at: h.at, force: true) { return }
+        if let spot = map.nearestSpot(to: pos, within: 90) {
+            land(on: spot.anchor, seg: spot.seg)
+        } else {
+            // Nowhere to stand here: stopped at the rim, it drops.
+            if h.normal.dot(vel) < 0 { vel -= h.normal * h.normal.dot(vel) }
+            pos = h.at
         }
     }
 
+    /// Hitting something in the air — any surface, the same way: going into
+    /// it hard enough (how hard is the bounciness dial) and it bounces off,
+    /// keeping more of its speed the bouncier it is and sliding on along
+    /// the surface a little, and goes tumbling end over end — spun by how
+    /// glancing the hit was; gentler than that, and it lands. A leap or a
+    /// pounce lands where it was aimed, however it arrives. `force`: the
+    /// screen's rim, which it may not pass, so a bounce it gets regardless.
+    private func bounce(off normal: V2, at point: V2, force: Bool = false) -> Bool {
+        guard !Spider.debugNoBounce, air != .jump, !huntPounce, cursorHunt != .pouncing else { return false }
+        let b = clamp(gait.bounciness, 0, 1)
+        let into = -vel.dot(normal)                   // speed into the surface
+        guard into > 0 else { return false }
+        let threshold = b < 0.02 ? CGFloat.greatestFiniteMagnitude : lerp(1250, 400, b) * max(config.scale, 0.5)
+        guard into > threshold || (force && into > 60 && b >= 0.02 && into > threshold * 0.5) else { return false }
+        let restitution = lerp(0.28, 0.72, b)
+        let along = V2(normal.y, -normal.x)          // the surface's direction
+        let slide = vel.dot(along) * lerp(0.78, 0.92, b)
+        vel = along * slide + normal * (into * restitution)
+        pos = point + normal * (2 * config.scale)
+        // Spun by the surface catching it as it slides, plus a kick from
+        // the knock itself; the harder the hit, the faster the tumble.
+        let knock = clamp(into / 900, 0, 1)
+        tumbleVel = clamp(-slide / (24 * config.scale) + (chance(0.5) ? 1 : -1) * knock * randRange(6, 12), -20, 20)
+        debugBounces += 1
+        air = .thrown
+        noAttachFor = 0.1
+        stretch.velocity = 5 + knock * 6
+        if knock > 0.45 { setEmote(.surprise, 0.5); startled.velocity = 6 }
+        return true
+    }
+
     private func land(on a: Anchor, seg: Seg) {
+        tumbleVel = 0
         let impact = min(vel.length, 1400)
         hurrying = false
         mode = .attached
@@ -5515,6 +5608,7 @@ final class Spider {
     }
 
     private func attachWeb(at p: V2) {
+        tumbleVel = 0
         draglineCatchY = nil
         airShot = nil
         webAnchor = p
@@ -6600,8 +6694,10 @@ final class Spider {
             // Two legs come up and feel the air (see `raisedSide`).
             if let side = raisedSide(i) {
                 let a = t * 4 + (side > 0 && near ? 0 : 1.2)
+                if liftsOuterPair { return faceOnRaise(i, side: side, out: 26 + sin(a) * 2.5, up: 16 + cos(a) * 3) }
                 return V2(side * (26 + sin(a) * 2.5), 6 + cos(a) * 3)
             }
+            if liftsOuterPair, let out = faceOnOuter(i) { return out }
             return standingFoot(i, braced: false)
         case (.attached, .fidget):
             // The near front foot taps twice.
@@ -6623,9 +6719,10 @@ final class Spider {
                 let a = t * 5 + (side > 0 && near ? 0 : 0.9)
                 // Face on, up and out either side of the head, knees bent
                 // outward, as in a greeting — not in across the face.
-                if liftsOuterPair { legBend[i] = V2(side, 0.2); return V2(side * (29 + sin(a) * 2), 26 + cos(a * 1.3) * 2) }
+                if liftsOuterPair { return faceOnRaise(i, side: side, out: 21 + sin(a) * 2, up: 34 + cos(a * 1.3) * 2) }
                 return V2(side * (15 + sin(a) * 3), 24 + cos(a * 1.3) * 2)
             }
+            if liftsOuterPair, let out = faceOnOuter(i) { return out }
             return standingFoot(i, braced: k == 1)
         case (.attached, .hop):
             // Tucked up under it for the instant it is in the air.
@@ -6650,23 +6747,17 @@ final class Spider {
             // come up half way. Symmetric, so nothing jumps as it turns.
             // Each leg stays on the side of the face its foot stands on —
             // none sweeps across in front of it to get to the other side.
-            let side: CGFloat = SpiderRenderer.frontLegs[i].foot.x >= 0 ? 1 : -1
-            let a = t * 4 + (side > 0 ? 0 : 0.8)
-            let up = smoothstep(clamp(activityTime / 0.45, 0, 1))
-            if i == 0 || i == 7 {
-                // Up and out, clear of the face, knees bent outward.
-                legBend[i] = V2(side, 0.2)
-                return V2(side * (30 + sin(a) * 2), lerp(rest.y, 27 + cos(a * 1.3) * 2, up))
+            // Its two front legs (see `raisedSide`) go up beside the head,
+            // one either side, and wave a little; the other six stand.
+            if i == 1 || i == 2 {
+                let side: CGFloat = i == 1 ? 1 : -1
+                let a = t * 4 + (side > 0 ? 0 : 0.8)
+                let up = smoothstep(clamp(activityTime / 0.45, 0, 1))
+                let raised = faceOnRaise(i, side: side, out: 21 + sin(a) * 2, up: 34 + cos(a * 1.3) * 2)
+                return Spider.swing(rest, raised, about: leg.hip, up)
             }
-            if i == 3 || i == 4 {
-                // Half way, out to the side, keeping time with the front pair.
-                legBend[i] = V2(side, 0.4)
-                return V2(side * (34 + sin(a) * 1.2), lerp(rest.y, 6 + cos(a * 1.3) * 1.5, up))
-            }
-            // The rest stay planted: the body is up on its toes, so the
-            // legs stretch under it rather than the feet coming up with it.
-            if k == 1 || k == 2 { return V2(rest.x * 1.05, rest.y) }
-            return rest
+            if let out = faceOnOuter(i) { return Spider.swing(rest, out, about: leg.hip, smoothstep(clamp(activityTime / 0.45, 0, 1))) }
+            return standingFoot(i, braced: false)
         case (.attached, .armsUp):
             // Two legs straight up, swaying (see `raisedSide`). The rest
             // stay planted — the next pair braced a touch wider to take its
@@ -6675,9 +6766,10 @@ final class Spider {
                 let a = t * 3.5 + (side > 0 && near ? 0 : 0.9)
                 // Face on, up and out either side of the head, knees bent
                 // outward, as in a greeting — not in across the face.
-                if liftsOuterPair { legBend[i] = V2(side, 0.2); return V2(side * (29 + sin(a) * 2), 26 + cos(a * 1.3) * 2) }
+                if liftsOuterPair { return faceOnRaise(i, side: side, out: 21 + sin(a) * 2, up: 34 + cos(a * 1.3) * 2) }
                 return V2(side * (14 + sin(a) * 3), 24 + cos(a * 1.3) * 2)
             }
+            if liftsOuterPair, let out = faceOnOuter(i) { return out }
             return standingFoot(i, braced: k == 1)
         case (.attached, .roll):
             // Curled up tight: every leg folds at the knee, foot drawn in
@@ -6906,7 +6998,7 @@ final class Spider {
 
     private func updateLegControllers(dt: CGFloat) {
         let scale = max(config.scale, 0.05)
-        for i in legBend.indices { legBend[i] = nil }
+        for i in legBend.indices { legBend[i] = nil; legBones[i] = nil }
         // Sprite space is rotated by `heading` and mirrored by the sign of the
         // yaw, so undoing the body's motion means rotating back and then
         // un-mirroring.
@@ -6995,10 +7087,13 @@ final class Spider {
             for i in legs.indices {
                 let posed = poseTarget(i)
                 var target = groundPose(i, posed)
-                if rise < 1 { target = V2.lerp(legs[i].poseFrom, target, rise) }
+                // Into and out of the pose the foot swings round the hip, as
+                // a leg does — never along a straight line that could take
+                // it right past the hip, where the knee has no way to bend.
+                if rise < 1 { target = Spider.swing(legs[i].poseFrom, target, about: legs[i].hip, rise) }
                 if fall < 1 {
                     let stand = groundPose(i, SpiderRenderer.rig(i, profile: profile, look: look).foot)
-                    target = V2.lerp(stand, target, fall)
+                    target = Spider.swing(stand, target, about: legs[i].hip, fall)
                 }
                 // A foot on the ledge stays where it is in the world while
                 // the body moves over it — coming down out of a landing,
@@ -7461,7 +7556,16 @@ final class Spider {
         let drawnFoot = onSurface ? foot : V2(foot.x * sq.stretch, g + (foot.y - g) * sq.fatten)
         let drawnKnee: V2
         if let bend = legBend[i] {
-            drawnKnee = SpiderRenderer.kneeIK(leg: i, hip: drawnHip, foot: drawnFoot, away: bend, profile: profile, look: look)
+            let own = SpiderRenderer.kneeIK(leg: i, hip: drawnHip, foot: drawnFoot, away: bend, profile: profile, look: look)
+            if let other = legBones[i] {
+                // Borrowed proportions come in as the foot rises off the
+                // ledge, not all at once at the start of the gesture.
+                let w = smoothstep(clamp((leg.foot.y - leg.rest.y) / 22, 0, 1))
+                let borrowed = SpiderRenderer.kneeIK(leg: other, hip: drawnHip, foot: drawnFoot, away: bend, profile: profile, look: look)
+                drawnKnee = V2.lerp(own, borrowed, w)
+            } else {
+                drawnKnee = own
+            }
         } else {
             drawnKnee = SpiderRenderer.knee(leg: i, hip: drawnHip, foot: drawnFoot, lift: leg.lift, profile: profile, look: look)
         }

@@ -1,4 +1,4 @@
-# Desktop Spider
+# Spider Buddy
 
 A friendly jumping spider that lives on your Mac's screen. It crawls the edges
 of your display, leaps between your open windows, walks along the Dock, rappels
@@ -21,8 +21,9 @@ so Gatekeeper does not ask again. Settings and the design are kept.
 ## Build & run
 
 ```bash
-./build.sh          # produces Spider.app
-open Spider.app     # or: ./run.sh  (rebuild + restart)
+./build.sh          # produces spiders.app — the testing build
+open spiders.app    # or: ./run.sh  (rebuild + restart)
+tools/release.sh    # the release build, "Spider Buddy.app", in a .dmg
 ```
 
 `build.sh` compiles with Xcode's toolchain when it is installed. It has to:
@@ -573,9 +574,9 @@ Publishing needs the `gh` CLI (`brew install gh`), logged in or with
 | `./tools/jerk.sh [seconds] [runs]` | the jerk detector: runs the spider headless and flags every frame where the body, the heading or a foot (relative to the body) moves further than a frame's worth should, grouped by what it was doing on either side. Anything over about two flags a minute is worth a look; `JERK_VERBOSE=1` prints each one with the frames leading up to it |
 | `./tools/sim.sh` | runs the spider headless against a synthetic desktop for four simulated minutes, then a scripted pass over grab / throw / rappel / window-closes-underneath / petting, swing / hammock build / nap / wipe-away, then every temperament preset for 150 s each |
 | `./tools/gallery.sh` | every studio option thumbnailed the way the studio shows it, plus random designs mid-walk — `build/studio.png` |
-| `SPIDER_STUDIO_SHOT=dir ./Spider.app/Contents/MacOS/DesktopSpider` | writes a PNG of each studio tab to `dir` and quits |
+| `SPIDER_STUDIO_SHOT=dir ./spiders.app/Contents/MacOS/DesktopSpider` | writes a PNG of each studio tab to `dir` and quits |
 | `./tools/bench.sh` | times one rendered frame |
-| `SPIDER_STATS=1 ./Spider.app/Contents/MacOS/DesktopSpider` | prints fps and a per-frame budget once a second |
+| `SPIDER_STATS=1 ./spiders.app/Contents/MacOS/DesktopSpider` | prints fps and a per-frame budget once a second |
 
 ## Performance
 

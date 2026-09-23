@@ -719,7 +719,151 @@ func runCornerAir() {
     for c in cases where c.1 > 0 { print(String(format: "  %-36@ %3d frames, worst %5.1f", c.0 as NSString, c.1, c.2)) }
 }
 
+/// Thrown hard at every kind of surface, at three bounciness settings:
+/// how many bounces, how fast it tumbled, and where it ended up.
+func runBounce() {
+    let throwsList: [(String, V2, V2)] = [
+        ("down onto window top", V2(550, 700), V2(120, -950)),
+        ("up into window underside", V2(560, 110), V2(80, 950)),
+        ("sideways into window side", V2(150, 360), V2(1000, 60)),
+        ("down onto floor", V2(1000, 420), V2(150, -950)),
+        ("up into ceiling", V2(1000, 420), V2(40, 1200)),
+        ("gentle onto window top", V2(560, 600), V2(40, -150)),
+    ]
+    for b: CGFloat in [0, 0.5, 1] {
+        print(String(format: "\nbounciness %.1f", b))
+        for (name, from, v) in throwsList {
+            let s = freshSpider(followCursor: false, at: 200)
+            var d = SpiderDesign(); d.gait.bounciness = b
+            s.apply(design: d)
+            for _ in 0..<10 { s.setCursor(far); s.update(dt: dt) }
+            s.beginGrab(at: s.worldPos)
+            var g = s.worldPos
+            for i in 1...30 { g = V2.lerp(s.worldPos, from, CGFloat(i) / 30); s.moveGrab(to: g); s.update(dt: dt) }
+            for _ in 0..<20 { s.moveGrab(to: from); s.update(dt: dt) }
+            s.endGrab(throwVelocity: v)
+            var tumble: CGFloat = 0
+            var firstState = ""
+            for f in 0..<Int(5 / dt) {
+                s.setCursor(far); s.update(dt: dt)
+                tumble = max(tumble, abs(s.debugTumble))
+                if firstState.isEmpty, !s.debugState.hasPrefix("thrown"), !s.debugState.hasPrefix("fall"), f > 2 { firstState = s.debugState }
+            }
+            print(String(format: "  %-28@ bounces %d  tumble %4.1f rad/s  first stop: %@", name as NSString, s.debugBounces, tumble,
+                         firstState as NSString))
+        }
+    }
+}
+
+/// A Dock on the floor: walked into from the floor, does it go up and
+/// over (and never through or behind)? Drawn in screen space.
+func runDock(_ out: String) {
+    let dm = SurfaceMap()
+    dm.standoff = 22
+    let screen = CGRect(x: 0, y: 0, width: 1200, height: 700)
+    let dock = CGRect(x: 360, y: 0, width: 480, height: 72)
+    dm.debugRebuild(screen: screen, menuBarHeight: 0, windows: [], dock: dock)
+    let s = Spider(map: dm)
+    s.config.scale = 1
+    s.config.followCursor = false
+    s.debugAttach(loopID: "screen:0", segIdx: 0, t: 120, dir: 1)
+    s.debugWalk(for: 60)
+    let W = 1200, H = 260
+    guard let c = CGContext(data: nil, width: W * 2, height: H * 2, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+    c.scaleBy(x: 2, y: 2)
+    c.setFillColor(red: 0.2, green: 0.24, blue: 0.33, alpha: 1); c.fill(CGRect(x: 0, y: 0, width: W, height: H))
+    c.setFillColor(gray: 0.85, alpha: 0.9)
+    c.addPath(CGPath(roundedRect: dock, cornerWidth: 14, cornerHeight: 14, transform: nil)); c.fillPath()
+    var inside = 0, maxY: CGFloat = 0
+    var trail: [CGPoint] = []
+    for f in 0..<Int(22 / dt) {
+        s.setCursor(far); s.update(dt: dt)
+        if f % 60 == 0, s.debugState.hasPrefix("attached"), !s.debugActivity.hasPrefix("walk") { s.debugWalk(for: 60) }
+        let p = s.worldPos
+        trail.append(p.point)
+        if dock.insetBy(dx: 2, dy: 2).contains(p.point) { inside += 1 }
+        maxY = max(maxY, p.y)
+        if f % 25 == 0 { SpiderRenderer.draw(s.pose(), in: c, bounds: CGRect(x: p.x - 60, y: p.y - 60, width: 120, height: 120)) }
+    }
+    c.setStrokeColor(NSColor(calibratedWhite: 1, alpha: 0.5).cgColor); c.setLineWidth(1)
+    c.beginPath(); c.addLines(between: trail); c.strokePath()
+    guard let img = c.makeImage() else { return }
+    try? NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out))
+    print("dock: body inside the Dock on \(inside) frames; highest \(Int(maxY)) (Dock top at \(Int(dock.maxY))); ended \(s.debugState) at \(Int(s.worldPos.x)),\(Int(s.worldPos.y))")
+    print("wrote \(out)")
+}
+
+/// `legmap activity secs out.png` — a big frame of an activity with each
+/// leg drawn over in its own colour and numbered, to tell which is which.
+func legMap(_ act: String, secs: CGFloat, out: String) {
+    let s = freshSpider(followCursor: false, at: 250)
+    var d = SpiderDesign(); d.look.hat = .topHat; d.look.legs = .striped
+    s.apply(design: d)
+    for _ in 0..<20 { s.setCursor(far); s.update(dt: dt) }
+    // `stare+armsUp`: turned face on first, then the gesture.
+    for part in act.split(separator: "+").dropLast() { s.debugActivity(String(part), for: 1.2); for _ in 0..<72 { s.setCursor(far); s.update(dt: dt) } }
+    let act = String(act.split(separator: "+").last ?? "greet")
+    s.debugActivity(act, for: max(secs + 1, 2))
+    for _ in 0..<Int(secs / dt) { s.setCursor(far); s.update(dt: dt) }
+    let p = s.pose()
+    let side = 700
+    guard let c = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+    c.setFillColor(gray: 0.2, alpha: 1); c.fill(CGRect(x: 0, y: 0, width: side, height: side))
+    var big = p
+    big.scale = 5
+    big.pos = V2(CGFloat(side) / 2, CGFloat(side) / 2 - 40)
+    let box = CGRect(x: 0, y: 0, width: side, height: side)
+    SpiderRenderer.draw(big, in: c, bounds: box)
+    // Each leg on its own, the others folded away into the body: a strip
+    // of eight, numbered.
+    if ProcessInfo.processInfo.environment["LEG_EACH"] != nil {
+        let cellW = 260
+        guard let e = CGContext(data: nil, width: cellW * 8, height: cellW, bitsPerComponent: 8, bytesPerRow: 0,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+        e.setFillColor(gray: 0.2, alpha: 1); e.fill(CGRect(x: 0, y: 0, width: cellW * 8, height: cellW))
+        let lf = CTFontCreateWithName("Menlo-Bold" as CFString, 22, nil)
+        for i in 0..<8 {
+            var one = p
+            one.scale = 2.6
+            one.pos = V2(CGFloat(i * cellW + cellW / 2), CGFloat(cellW) / 2 - 20)
+            one.legs = p.legs.enumerated().map { j, l in j == i ? l : LegPose(hip: l.hip, knee: l.hip, foot: l.hip, lift: 0) }
+            SpiderRenderer.draw(one, in: e, bounds: CGRect(x: i * cellW, y: 0, width: cellW, height: cellW))
+            let t = CTLineCreateWithAttributedString(NSAttributedString(string: "\(i)", attributes: [.font: lf, .foregroundColor: NSColor.white]))
+            e.textPosition = CGPoint(x: i * cellW + 10, y: 10); CTLineDraw(t, e)
+        }
+        if let img = e.makeImage() {
+            try? NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out.replacingOccurrences(of: ".png", with: "_each.png")))
+        }
+    }
+    let colours: [NSColor] = [.systemRed, .systemOrange, .systemYellow, .systemGreen, .systemTeal, .systemBlue, .systemPurple, .systemPink]
+    let mirror: CGFloat = big.facing >= 0 ? 1 : -1
+    let g = SpiderRenderer.ground
+    func scr(_ v: V2) -> CGPoint {
+        let q = V2(v.x * big.stretch, g + (v.y - g) * big.fatten)
+        return (big.pos + V2(q.x * mirror, q.y).rotated(by: big.heading) * big.scale).point
+    }
+    let font = CTFontCreateWithName("Menlo-Bold" as CFString, 18, nil)
+    for (i, l) in big.legs.enumerated() {
+        c.setStrokeColor(colours[i].withAlphaComponent(0.85).cgColor); c.setLineWidth(5); c.setLineCap(.round)
+        c.beginPath(); c.move(to: scr(l.hip)); c.addLine(to: scr(l.knee)); c.addLine(to: scr(l.foot)); c.strokePath()
+        let f = scr(l.foot)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: "\(i)", attributes: [.font: font, .foregroundColor: colours[i]]))
+        c.textPosition = CGPoint(x: f.x + 6, y: f.y + 4); CTLineDraw(line, c)
+    }
+    print("yaw \(big.facing)  heading \(big.heading)")
+    guard let img = c.makeImage() else { return }
+    try? NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out))
+    print("wrote \(out)")
+}
+
 switch mode {
+case "legmap": legMap(CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "greet",
+                      secs: CommandLine.arguments.count > 3 ? CGFloat(Double(CommandLine.arguments[3]) ?? 1) : 1,
+                      out: CommandLine.arguments.count > 4 ? CommandLine.arguments[4] : "build/legmap.png")
+case "dock": runDock(CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "build/dock.png")
+case "bounce": runBounce()
 case "cornerair": runCornerAir()
 case "filmhat": filmHat(CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "topHat",
                         out: CommandLine.arguments.count > 3 ? CommandLine.arguments[3] : "build/hat.png")

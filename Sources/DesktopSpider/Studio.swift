@@ -1174,6 +1174,9 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
                                       get: { self.design.gait.bounce }, set: { self.design.gait.bounce = $0 }))
         col.addArrangedSubview(slider("Stance", low: "Low & flat", high: "On tiptoe",
                                       get: { self.design.gait.stance }, set: { self.design.gait.stance = $0 }))
+        col.addArrangedSubview(header("Thrown about"))
+        col.addArrangedSubview(slider("Bounciness", low: "Sticks the landing", high: "Rubber ball",
+                                      get: { self.design.gait.bounciness }, set: { self.design.gait.bounciness = $0 }))
         return col
     }
 
