@@ -81,8 +81,13 @@ if CommandLine.arguments.contains("--cliptest") {
     // Measure in the plainest outfit and in the one that sticks out furthest.
     var tall = SpiderLook()
     tall.hat = .wizard; tall.legs = .long; tall.body = .chonk; tall.fuzz = 2; tall.accessory = .backpack
+    var balloon = SpiderLook()
+    balloon.hat = .bunnyEars; balloon.legs = .spindly; balloon.body = .chonk; balloon.accessory = .balloon
+    var wide = SpiderLook()
+    wide.hat = .sombrero; wide.legs = .spindly; wide.body = .bean; wide.accessory = .batWings
     for (name, base) in poses {
-        for (outfitName, outfit) in [("classic", SpiderLook()), ("wizard/long/chonk", tall)] {
+        for (outfitName, outfit) in [("classic", SpiderLook()), ("wizard/long/chonk", tall),
+                                     ("bunny/spindly/balloon", balloon), ("sombrero/spindly/batwings", wide)] {
         for heading in stride(from: 0.0, to: 6.28, by: 0.26) {
             var p = base
             p.scale = scale

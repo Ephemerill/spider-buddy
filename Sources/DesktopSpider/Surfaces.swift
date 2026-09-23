@@ -258,28 +258,30 @@ final class SurfaceMap {
         byID = Dictionary(uniqueKeysWithValues: ls.map { ($0.id, $0) })
     }
 
-    /// Displays some app has taken whole. On those only the floor and the
-    /// ceiling of the screen exist to walk on — no walls, menu bar, Dock or
-    /// windows, none of which are visible under a full-screen video.
+    /// Displays some app has taken whole. On those only the rim of the
+    /// screen exists to walk on — no menu bar, Dock or windows, none of
+    /// which are visible under a full-screen video.
     private(set) var cinemaScreens: [CGRect] = []
 
     func isCinema(_ p: V2) -> Bool {
         cinemaScreens.contains { $0.contains(p.point) }
     }
 
-    /// The floor and ceiling of a screen as two open loops.
+    /// The rim of a taken screen: all four sides as one closed loop, with
+    /// the walls and floor laid out exactly as on an ordinary screen (down
+    /// the left wall, along the floor, up the right wall) so a spider on a
+    /// wall when the picture starts is standing on the very same line
+    /// afterwards, and the ceiling closing the loop across the top, where
+    /// the menu bar was.
     static func cinemaLoops(id: String, frame f: CGRect, standoff off: CGFloat) -> [SurfaceLoop] {
         let r = f.insetBy(dx: off, dy: off)
-        let inset: CGFloat = 40
-        var floor = SurfaceLoop(id: id, kind: .screenBorder,
-                                segs: [Seg(V2(r.minX + inset, r.minY), V2(r.maxX - inset, r.minY), .up)],
-                                closed: false, depth: 1_000_000, rect: r)
-        floor.edge = [Seg(V2(f.minX, f.minY), V2(f.maxX, f.minY), .up)]
-        var ceiling = SurfaceLoop(id: id + ":top", kind: .screenBorder,
-                                  segs: [Seg(V2(r.maxX - inset, r.maxY), V2(r.minX + inset, r.maxY), .down)],
-                                  closed: false, depth: 1_000_000, rect: r)
-        ceiling.edge = [Seg(V2(f.maxX, f.maxY), V2(f.minX, f.maxY), .down)]
-        return [floor, ceiling]
+        let bl = V2(r.minX, r.minY), br = V2(r.maxX, r.minY)
+        let tr = V2(r.maxX, r.maxY), tl = V2(r.minX, r.maxY)
+        var rim = SurfaceLoop(id: id, kind: .screenBorder,
+                              segs: [Seg(tl, bl, .right), Seg(bl, br, .up), Seg(br, tr, .left), Seg(tr, tl, .down)],
+                              closed: true, depth: 1_000_000, rect: r)
+        rim.edge = SurfaceMap.rectEdge(f, inside: true)
+        return [rim]
     }
 
     func rebuild(windows: [TrackedWindow], cinema: [CGRect] = []) {
@@ -726,20 +728,29 @@ final class SurfaceMap {
     }
 
     /// Closest downward-facing edge above `p` — where a web can be anchored.
+    /// Only a spot it could actually take hold of at the top counts: an
+    /// underside behind another window is no good, and neither is the
+    /// covered stretch of one. Near the sides of the screen, where the menu
+    /// bar's walkable stretch stops short, the line goes to the nearest
+    /// bit of it rather than straight up into the corner under the bar.
     func ceiling(above p: V2, maxRise: CGFloat = 900) -> V2? {
         var best: V2?
         var bestDy = maxRise
         for l in loops {
+            let reach: CGFloat = l.kind == .menuBar ? 140 : 4
             for s in l.segs where s.facing == .down {
                 let minX = min(s.a.x, s.b.x), maxX = max(s.a.x, s.b.x)
-                guard p.x > minX - 4, p.x < maxX + 4 else { continue }
+                guard p.x > minX - reach, p.x < maxX + reach else { continue }
+                let x = clamp(p.x, minX, maxX)
                 let y = s.a.y
                 let dy = y - p.y
-                if dy > 12, dy < bestDy, l.kind != .windowEdge || isVisible(V2(p.x, y), depth: l.depth) {
-                    bestDy = dy
-                    // Silk attaches to the edge itself, not to the body line.
-                    best = V2(clamp(p.x, minX, maxX), y + standoff)
-                }
+                guard dy > 12, dy < bestDy else { continue }
+                let (t, _) = projectOnSegment(V2(x, y), s.a, s.b)
+                guard s.isOpen(at: t) else { continue }
+                if l.kind == .windowEdge, !isVisible(V2(x, y + standoff), depth: l.depth) { continue }
+                bestDy = dy
+                // Silk attaches to the edge itself, not to the body line.
+                best = V2(x, y + standoff)
             }
         }
         if let box = confine {
@@ -747,11 +758,41 @@ final class SurfaceMap {
             let y = box.maxY - 4
             if best == nil || best!.y > y, y - p.y > 12 { return V2(clamp(p.x, box.minX + 8, box.maxX - 8), y) }
         } else if best == nil {
-            // Fall back to the top of the screen we are over.
+            // Fall back to the top of the screen we are over — the underside
+            // of the menu bar, where there is one, since above that it
+            // cannot be seen.
             let f = screenFrame(containing: p)
-            let y = f.maxY - 4
+            let y = (menuBarBottom(for: f) ?? f.maxY) - 4
             if y - p.y > 12 { return V2(p.x, y) }
         }
         return best
+    }
+
+    /// The height of whatever it would come down on, falling straight from
+    /// `p`: the nearest top-facing edge under it that it could stand on,
+    /// within `halfWidth` either side. Nil if there is nothing at all.
+    func landingBelow(_ p: V2, halfWidth: CGFloat = 24) -> CGFloat? {
+        var best: CGFloat?
+        for l in loops {
+            for s in l.segs where s.facing == .up {
+                let minX = min(s.a.x, s.b.x), maxX = max(s.a.x, s.b.x)
+                guard p.x > minX - halfWidth, p.x < maxX + halfWidth else { continue }
+                let y = s.a.y
+                // Even an edge it is just brushing counts as under it.
+                guard y < p.y + standoff, best.map({ y > $0 }) ?? true else { continue }
+                let (t, _) = projectOnSegment(V2(clamp(p.x, minX, maxX), y), s.a, s.b)
+                guard s.isOpen(at: t) else { continue }
+                if l.kind == .windowEdge, !isVisible(V2(clamp(p.x, minX, maxX), y), depth: l.depth) { continue }
+                best = y
+            }
+        }
+        return best
+    }
+
+    /// The depth of the frontmost window a point lies in, or `Int.max` for
+    /// a point on nothing but the desktop: windows in front of that cover
+    /// the point, the rest are behind it.
+    func depth(at p: V2) -> Int {
+        occluders.filter { $0.rect.insetBy(dx: -4, dy: -4).contains(p.point) }.map(\.depth).min() ?? Int.max
     }
 }

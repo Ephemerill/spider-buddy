@@ -724,8 +724,8 @@ if CommandLine.arguments.contains("--swing") || CommandLine.arguments.contains("
             j.fill(CGRect(x: world.minX, y: world.minY, width: 10, height: world.height))
             hv.hammock = h
             j.saveGState()
-            j.translateBy(x: h.rect.minX, y: h.rect.minY)
-            hv.frame = CGRect(x: 0, y: 0, width: h.rect.width, height: h.rect.height)
+            j.translateBy(x: h.drawFrame.minX, y: h.drawFrame.minY)
+            hv.frame = CGRect(x: 0, y: 0, width: h.drawFrame.width, height: h.drawFrame.height)
             hv.draw(hv.bounds)
             j.restoreGState()
             if let silk = SpiderRenderer.silkPath(pose) {
@@ -766,8 +766,8 @@ if CommandLine.arguments.contains("--swing") || CommandLine.arguments.contains("
             sctx.scaleBy(x: sc, y: sc)
             hv.hammock = h
             sctx.saveGState()
-            sctx.translateBy(x: h.rect.minX, y: h.rect.minY)
-            hv.frame = CGRect(x: 0, y: 0, width: h.rect.width, height: h.rect.height)
+            sctx.translateBy(x: h.drawFrame.minX, y: h.drawFrame.minY)
+            hv.frame = CGRect(x: 0, y: 0, width: h.drawFrame.width, height: h.drawFrame.height)
             let keep = NSGraphicsContext.current
             NSGraphicsContext.current = NSGraphicsContext(cgContext: sctx, flipped: false)
             hv.draw(hv.bounds)
@@ -828,8 +828,8 @@ if CommandLine.arguments.contains("--swing") || CommandLine.arguments.contains("
             let box = CGRect(x: pose.pos.x - 110, y: pose.pos.y - 110, width: 220, height: 220)
             SpiderRenderer.draw(pose, in: j, bounds: box)
             j.saveGState()
-            j.translateBy(x: h.rect.minX, y: h.rect.minY)
-            hv.frame = CGRect(x: 0, y: 0, width: h.rect.width, height: h.rect.height)
+            j.translateBy(x: h.drawFrame.minX, y: h.drawFrame.minY)
+            hv.frame = CGRect(x: 0, y: 0, width: h.drawFrame.width, height: h.drawFrame.height)
             hv.draw(hv.bounds)
             j.restoreGState()
             j.restoreGState()
@@ -895,6 +895,126 @@ if CommandLine.arguments.contains("--swing") || CommandLine.arguments.contains("
     try NSBitmapImageRep(cgImage: ji).representation(using: .png, properties: [:])!
         .write(to: URL(fileURLWithPath: out))
     print("wrote \(out)")
+    exit(0)
+}
+
+// --- dropped by hand --------------------------------------------------------
+// Let go of high up: the twist, the line racing out to the ceiling, the
+// catch, the swing. Every few frames overlaid, with the line drawn at each.
+if CommandLine.arguments.contains("--drop") {
+    let dt: CGFloat = 1.0 / 60.0
+    let dw = 900, dh = 700
+    let deskRect = CGRect(x: 0, y: 0, width: CGFloat(dw), height: CGFloat(dh))
+    let jm = SurfaceMap()
+    jm.standoff = 22 * 1.0
+    jm.debugRebuild(screen: deskRect, menuBarHeight: 24, windows: [])
+    guard let j = CGContext(data: nil, width: dw * 2, height: dh * 2, bitsPerComponent: 8,
+                            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { exit(1) }
+    j.scaleBy(x: 2, y: 2)
+    j.setFillColor(NSColor(calibratedRed: 0.20, green: 0.24, blue: 0.33, alpha: 1).cgColor)
+    j.fill(deskRect)
+    j.setFillColor(NSColor(calibratedWhite: 0.85, alpha: 1).cgColor)
+    j.fill(CGRect(x: 0, y: CGFloat(dh) - 24, width: CGFloat(dw), height: 24))
+    NSGraphicsContext.current = NSGraphicsContext(cgContext: j, flipped: false)
+
+    let sp = Spider(map: jm)
+    sp.config.scale = 1.0
+    sp.config.followCursor = false
+    sp.debugAttach(loopID: "screen:0", segIdx: 0, t: 200, dir: 1)
+    for _ in 0..<20 { sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt) }
+    let hand = V2(300, CGFloat(dh) - 110)
+    sp.beginGrab(at: sp.worldPos)
+    for _ in 0..<40 { sp.setCursor(hand); sp.update(dt: dt) }
+    sp.endGrab(throwVelocity: V2(10, -20))
+    var trail: [CGPoint] = []
+    var log: [String] = []
+    var frame = 0
+    var done = -1
+    while frame < 600 {
+        sp.setCursor(V2(-9e4, -9e4))
+        sp.update(dt: dt)
+        frame += 1
+        let pose = sp.pose()
+        trail.append(pose.pos.point)
+        let st = sp.debugState
+        if log.last != st { log.append("\(st)@\(frame)") }
+        // The first second, where the shot happens, every other frame.
+        let every = frame < 60 ? 2 : 6
+        if frame % every == 0 {
+            if pose.web != nil, let path = SpiderRenderer.silkPath(pose) {
+                j.setStrokeColor(NSColor(calibratedWhite: 1, alpha: frame < 60 ? 0.6 : 0.3).cgColor)
+                j.setLineWidth(1)
+                j.beginPath(); j.addPath(path); j.strokePath()
+            }
+            let box = CGRect(x: pose.pos.x - 110, y: pose.pos.y - 110, width: 220, height: 220)
+            SpiderRenderer.draw(pose, in: j, bounds: box)
+            let f = CTFontCreateWithName("Menlo" as CFString, 8, nil)
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: "\(frame)", attributes: [.font: f, .foregroundColor: NSColor(white: 1, alpha: 0.7)]))
+            j.textPosition = CGPoint(x: pose.pos.x + 26, y: pose.pos.y + 20)
+            CTLineDraw(line, j)
+        }
+        if done < 0, frame > 30, st.hasPrefix("attached") { done = frame }
+        if done > 0, frame > done + 12 { break }
+    }
+    j.setStrokeColor(NSColor(calibratedWhite: 1, alpha: 0.3).cgColor)
+    j.setLineWidth(1.5)
+    j.beginPath(); j.addLines(between: trail); j.strokePath()
+    print("states: " + log.joined(separator: " > "))
+    guard let ji = j.makeImage() else { exit(1) }
+    try NSBitmapImageRep(cgImage: ji).representation(using: .png, properties: [:])!
+        .write(to: URL(fileURLWithPath: "build/drop.png"))
+    print("wrote build/drop.png")
+
+    // And the first second as a strip, one cell every three frames, each
+    // cell centred on the body with the line drawn from it.
+    let sp2 = Spider(map: jm)
+    sp2.config.scale = 1.0
+    sp2.config.followCursor = false
+    sp2.debugAttach(loopID: "screen:0", segIdx: 0, t: 200, dir: 1)
+    for _ in 0..<20 { sp2.setCursor(V2(-9e4, -9e4)); sp2.update(dt: dt) }
+    sp2.beginGrab(at: sp2.worldPos)
+    for _ in 0..<40 { sp2.setCursor(hand); sp2.update(dt: dt) }
+    sp2.endGrab(throwVelocity: V2(10, -20))
+    let cellW: CGFloat = 220, cellH: CGFloat = 260, cols = 8, rows = 3
+    let sw = Int(cellW) * cols, sh = Int(cellH) * rows
+    guard let k = CGContext(data: nil, width: sw * 2, height: sh * 2, bitsPerComponent: 8,
+                            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { exit(1) }
+    k.scaleBy(x: 2, y: 2)
+    k.setFillColor(NSColor(calibratedRed: 0.20, green: 0.24, blue: 0.33, alpha: 1).cgColor)
+    k.fill(CGRect(x: 0, y: 0, width: sw, height: sh))
+    NSGraphicsContext.current = NSGraphicsContext(cgContext: k, flipped: false)
+    var cellIdx = 0
+    for f in 1...(cols * rows * 3) {
+        sp2.setCursor(V2(-9e4, -9e4))
+        sp2.update(dt: dt)
+        guard f % 3 == 0, cellIdx < cols * rows else { continue }
+        let pose = sp2.pose()
+        let cx = CGFloat(cellIdx % cols) * cellW + cellW / 2
+        let cy = CGFloat(rows - 1 - cellIdx / cols) * cellH + cellH * 0.35
+        k.saveGState()
+        k.translateBy(x: cx, y: cy)
+        k.scaleBy(x: 1.6, y: 1.6)
+        k.translateBy(x: -pose.pos.x, y: -pose.pos.y)
+        if pose.web != nil, let path = SpiderRenderer.silkPath(pose) {
+            k.setStrokeColor(NSColor(calibratedWhite: 1, alpha: 0.8).cgColor)
+            k.setLineWidth(1)
+            k.beginPath(); k.addPath(path); k.strokePath()
+        }
+        let box = CGRect(x: pose.pos.x - 110, y: pose.pos.y - 110, width: 220, height: 220)
+        SpiderRenderer.draw(pose, in: k, bounds: box)
+        k.restoreGState()
+        let fnt = CTFontCreateWithName("Menlo" as CFString, 9, nil)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: "f\(f) \(sp2.debugState)", attributes: [.font: fnt, .foregroundColor: NSColor(white: 1, alpha: 0.8)]))
+        k.textPosition = CGPoint(x: cx - cellW / 2 + 4, y: cy - cellH * 0.35 + 4)
+        CTLineDraw(line, k)
+        cellIdx += 1
+    }
+    guard let ki = k.makeImage() else { exit(1) }
+    try NSBitmapImageRep(cgImage: ki).representation(using: .png, properties: [:])!
+        .write(to: URL(fileURLWithPath: "build/drop_strip.png"))
+    print("wrote build/drop_strip.png")
     exit(0)
 }
 

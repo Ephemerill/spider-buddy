@@ -166,6 +166,18 @@ with context:
   blushes, wiggles and puffs hearts
 - **Right-click** it for the menu
 - Swipe the cursor at it fast and it gets startled and scurries away
+- **Bring the pointer close** while it is sitting about or ambling and it
+  notices: it turns round to face it, eyes on it, head tipped toward it, up
+  on its toes and leaning after it; straight overhead, it squares up to you
+  and looks up. Busy with something — a hunt, a job, a film, a nap — it does
+  not stop for you, and a pointer that just sits there is old news after ten
+  or twenty seconds.
+- **Fidget the pointer** close by like something alive and it decides you
+  are prey: a freeze, a creep along its ledge, the poised wiggle, and it
+  springs at the pointer and catches it — then hangs off it by its front legs for a few seconds,
+  swinging as you drag it, before it drops away on a line. Shake the
+  pointer back and forth to fling it off sooner. Turn the hunt off with
+  **Pounce on the Cursor** (it still watches).
 - Leave it alone for a while and it grooms, rests, then falls asleep
 
 Clicks pass straight through to whatever is underneath unless the pointer is
@@ -446,20 +458,34 @@ the right shows up there and on your desktop immediately. Nothing is
 
 | Tab | Options |
 |---|---|
-| Body | 7 shapes (Classic … Chonk, Tall), 3 fuzz levels, size |
-| Face | 8 eye styles (Huge, Beady, Sleepy, Sparkly, Cross-eyed…), 7 brows, 6 mouths (fangs, tusks, the emerald chelicerae of a bold jumper, a smile) |
-| Hats | 18 hats — top hat, party hat, crown, beanie, flower, bow, cap, halo, wizard, propeller (it spins as it walks), cowboy, chef, bucket hat, viking, tiara, pirate, mushroom |
-| Extras | 15 things to wear — glasses, monocle, shades, bow tie, necktie, scarf, bandana, bell collar, flower lei, headphones, backpack, satchel, cape, fairy wings |
-| Legs | 8 styles — slender, chunky, stubby, long, fuzzy, banded, socks — which change the rig, so the walk, turn and jump all adapt |
-| Colours | 14 coats, 9 markings on the abdomen, 10 accent colours |
+| Body | 11 shapes (Classic … Chonk, Tall, Pear, Big Head, Bean, Petite), 3 fuzz levels, size |
+| Face | 13 eye styles (Huge, Beady, Sleepy, Sparkly, Cross-eyed, Wink, Glowing, Dizzy, Heart Eyes, Button…), 10 brows, 11 mouths (fangs, tusks, the emerald chelicerae of a bold jumper, a smile, a blep, a grin, buck teeth…), and whether the face is drawn in front of the front legs or behind them |
+| Hats | 38 hats — top hat, party hat, crown, beanie, flower, bow, cap, halo, wizard, propeller (it spins as it walks), cowboy, chef, bucket hat, viking, tiara, pirate, mushroom, sombrero, fez, beret, bowler, santa, mortarboard, bunny ears, cat ears, antlers, hard hat, sailor, jester, horns, unicorn, ushanka, pumpkin, strawberry, sweatband, flower crown, a little bird |
+| Extras | 30 things to wear — glasses, monocle, shades, heart shades, goggles, eyepatch, a hero mask, a clown nose, moustache, beard, bow tie, necktie, scarf, bandana, bell collar, pearls, a medal, flower lei, headphones, sweater, tutu, backpack, satchel, bindle, jetpack (it fires in the air), balloon, cape, fairy wings, bat wings |
+| Legs | 13 styles — slender, chunky, stubby, long, spindly, fuzzy, knobbly, robot, banded, striped, socks, boots — which change the rig, so the walk, turn and jump all adapt |
+| Colours | 30 flat coats, 16 gradient coats, 14 *living* coats that move — Rainbow sliding along it, Hot Lava with glowing cracks between drifting crust, Camouflage that takes on the colour of whatever is behind it, Galaxy with twinkling stars, Ocean, Aurora, Disco, Fire, Frost, Toxic, Pearl, Candy Cane, Thunderstorm with lightning, Chrome — plus your own: pick any body and leg colour, or blend two or three of your own colours in any direction, shimmering if you like |
+| Markings | 20 markings on the abdomen (stripe, spots, chevron, heart, star, skull, moon, flower, eyespots, hourglass, tiger, leopard, checker, lightning…), 20 accent colours or one of your own |
 | Personality | a temperament preset (Friendly, Shy, Hyper, Lazy, Curious, Show-off, Chill, Grumpy) or six sliders — energy, curiosity, bravery, playfulness, affection, laziness |
-| Gait | walking style (steady, bouncy, tiptoe, lumbering, scurrying), pace, stride, bounce, stance, how keen it is to leap between windows and to drop on silk |
+| Gait | walking style (steady, bouncy, tiptoe, lumbering, scurrying), pace, stride, bounce, stance |
+| Habits | a dial for each thing it does on its own — wandering, leaping, dropping on a thread, swinging, building and napping in a hammock, nodding off, drumming, dancing, rolling, spinning, push-ups, stretching, wiggling, arms up, looking about, resting, grooming, fidgeting, scratching, peering, thinking, coming to see the pointer, craning at it, staring, glancing, greeting, waving, peek-a-boo. All the way down it never does that; in the middle, as often as it usually would; all the way up, every chance it gets |
 
 Every part is drawn in the body's own frame, so hats stay on through
 corners, rolls and hanging upside down, and markings turn with the abdomen.
+A gradient or living coat is a colour field over the body: the body is
+filled with it, and each leg segment is painted the colour it passes
+through, so a rainbow spider's legs are each a different colour. Living
+coats are redrawn steadily even while it stands still. Camouflage goes by
+what it is standing on — the window colour for the current appearance on a
+window, the wallpaper's average colour on the edge of the screen — and, if
+you let it see the screen (Screen Recording, from the button in the
+Studio), by the actual pixels behind it; either way it drifts toward the
+new colour rather than snapping, so you can watch it change as it steps
+from a window onto the desktop.
 The personality sliders weight its decisions rather than switch things off: a
 shy spider still waves sometimes, a grumpy one occasionally turns its back on
-you when poked, a brave one stands its ground when you swipe at it.
+you when poked, a brave one stands its ground when you swipe at it. The habit
+dials are the switches: they sit on top of the personality, and the ends of
+each one really are never and always.
 
 Give it a **name** and it tells you: rest the pointer on it for a moment and a
 name tag appears. The dice picks one for you; **Surprise Me** rolls a whole
@@ -480,7 +506,9 @@ The design is saved as JSON in the app's defaults.
 | Size | Tiny → Chonky |
 | Energy | Sleepy → Caffeinated (the same slider as the studio's) |
 | Follow the Cursor | whether it cares where your pointer is |
-| Spin Webs | disable silk entirely |
+| Pounce on the Cursor | whether a pointer that fidgets close by gets stalked and caught (it still watches it either way) |
+| Shoot Webs | whether it rappels, swings, drops on a dragline and catches a fall on a line |
+| Build Hammocks | whether it spins a hammock in a corner on its own (also gates Behavior ▸ Build a Hammock) |
 | Click to Pick Up | turn off to make it fully click-through |
 | Pause | freeze it |
 | Launch at Login | |
@@ -506,6 +534,7 @@ entitlement — window *titles* and screen contents would, and are never read.
 | `Spider.swift` | state machine, physics, gait, decisions |
 | `SpiderRenderer.swift` | all the drawing, in body-local coordinates, parametrised by the look |
 | `SpiderDesign.swift` | every part, colourway, personality and gait option; the saved design |
+| `Skin.swift` | how the coat is painted: flat, gradient, custom and living coats, and the palette the renderer draws with |
 | `Studio.swift` | the studio window, option grids, thumbnails and the terrarium preview |
 | `OverlayWindow.swift` | transparent always-on-top panel, silk layers, input |
 | `AppDelegate.swift` | menu bar item, display link, settings |

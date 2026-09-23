@@ -78,8 +78,12 @@ final class SpiderView: NSView {
         // Moving the layer costs nothing; re-rasterising it does. The picture
         // only depends on the spider's *shape*, so a spider that is standing
         // still — or asleep, or gliding along a straight edge — is nearly free.
+        // A living coat changes colour on its own, so it is repainted at a
+        // steady rate whatever the shape is doing; a change of outfit is a
+        // new picture at once.
         let now = CACurrentMediaTime()
-        if let old = drawn, now - sinceDraw < 0.5, SpiderView.shapeDelta(old, pose) < 0.22 {
+        let hold: CFTimeInterval = pose.outfit.isAnimated ? 1.0 / 30.0 : 0.5
+        if let old = drawn, now - sinceDraw < hold, old.outfit == pose.outfit, SpiderView.shapeDelta(old, pose) < 0.04 {
             return
         }
         drawn = pose
@@ -101,7 +105,18 @@ final class SpiderView: NSView {
         d += (abs(a.blink - b.blink) + abs(a.happy - b.happy)) * 9
         d += abs(a.startled - b.startled) * 7
         d += abs(a.abdomenSway - b.abdomenSway) * 14
-        if a.emote != .none { d += abs(a.emoteT - b.emoteT) * 40 }
+        // The slow movements: a tip of the head, a lean, a nibble, the name
+        // tag fading — each a fraction of a point a frame, and each has to
+        // be drawn every frame or it comes in steps.
+        d += abs(a.headTilt - b.headTilt) * 45
+        d += abs(a.bodyPitch - b.bodyPitch) * 45
+        d += (a.bodyShift - b.bodyShift).length
+        d += abs(a.spin - b.spin) * 30
+        d += (abs(a.chew - b.chew) + abs(a.grabbed - b.grabbed) + abs(a.sleep - b.sleep)) * 9
+        d += abs(a.nameTag - b.nameTag) * 12
+        d += (a.silkAttach - b.silkAttach).length
+        if a.facing != b.facing || a.grounded != b.grounded { d += 1 }
+        if a.emote != .none { d += abs(a.emoteT - b.emoteT) * 40 + abs(a.emoteClock - b.emoteClock) * 20 }
         for (l, r) in zip(a.legs, b.legs) {
             d += (l.foot - r.foot).length + (l.knee - r.knee).length * 0.6
         }
@@ -282,9 +297,11 @@ final class HammockView: NSView {
         let fade: CGFloat = alive ? 1 : max(0, tear)
         guard fade > 0.01 else { return }
 
-        // Work in the hammock's own frame: its rect maps onto our bounds.
+        // Work in the hammock's own frame: its draw frame maps onto our
+        // bounds, with the corner box sitting inside it.
         var h = h0
-        h.rect = CGRect(origin: .zero, size: h0.rect.size)
+        let df = h0.drawFrame
+        h.rect = CGRect(origin: CGPoint(x: h0.rect.minX - df.minX, y: h0.rect.minY - df.minY), size: h0.rect.size)
         let progress = h.progress
         let damage = alive ? h.damage : 1
         let drop = damage * h.rect.height * 0.25        // sags further as it tears
@@ -315,7 +332,7 @@ final class HammockView: NSView {
             let sd = CGFloat((h.seed + i * 17) % 100) / 100
             let slack = (2 + sd * 6) * sin(u * .pi)               // hangs lower in the middle
             let wob = noise(i, u) * (1.2 + sd * 1.6)
-            let full = h.point(at: u, drop: drop) + V2(0, lift * sin(u * .pi) - slack + wob)
+            let full = h.point(at: u, drop: drop, strand: CGFloat(i) / CGFloat(max(strands - 1, 1))) + V2(0, lift * sin(u * .pi) - slack + wob)
             // A strand just stuck down is the taut line it was walked out
             // as; it sinks into its sag from there.
             let d = i < h.drape.count ? h.drape[i] : 1

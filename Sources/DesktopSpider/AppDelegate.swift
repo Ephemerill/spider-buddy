@@ -51,6 +51,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastCursor = V2(-9999, -9999)
     // SPIDER_STATS=1 prints a frame budget breakdown once a second.
     private let stats = ProcessInfo.processInfo.environment["SPIDER_STATS"] == "1"
+    /// SPIDER_CINEMA_LOG=1 prints when a display is taken by a full-screen app, and given back.
+    private let cinemaLog = ProcessInfo.processInfo.environment["SPIDER_CINEMA_LOG"] == "1"
     private var statFrames = 0
     private var statUpdate: CFTimeInterval = 0
     private var statApply: CFTimeInterval = 0
@@ -93,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Entering full screen counts at once; leaving it only after a
             // few quiet polls, so a player's controls flickering over the
             // video cannot keep unsettling the spider.
+            let cinemaWas = self.cinemaScreens
             if !fullScreens.isEmpty {
                 self.cinemaScreens = fullScreens
                 self.cinemaClearPolls = 0
@@ -101,6 +104,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if self.cinemaClearPolls >= 4 { self.cinemaScreens = [] }
             }
             self.map.rebuild(windows: windows, cinema: self.cinemaScreens)
+            // The rim of a taken screen is a different set of edges: the
+            // spider re-reads its footing from where it stands rather than
+            // carrying its place over by index and jumping.
+            if self.cinemaScreens != cinemaWas {
+                self.spider.surfacesRestructured()
+                if self.cinemaLog { fputs("cinema: \(self.cinemaScreens.isEmpty ? "over" : "\(self.cinemaScreens)") — \(self.spider.debugState)\n", stderr) }
+            }
             self.spider.fullScreenApp = !self.cinemaScreens.isEmpty
         }
         tracker.start()
@@ -239,8 +249,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // SPIDER_STUDIO_SHOT=dir writes one PNG per studio tab there, then quits.
         if let dir = ProcessInfo.processInfo.environment["SPIDER_STUDIO_SHOT"] {
             openStudio()
+            // SPIDER_STUDIO_SHOT_CUSTOM=1 shows the hand-shaping sliders too.
+            if ProcessInfo.processInfo.environment["SPIDER_STUDIO_SHOT_CUSTOM"] == "1" { studio?.debugSelectCustom() }
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-                for i in 0..<9 { self?.studio?.snapshot(to: "\(dir)/studio_tab\(i).png", tab: i) }
+                for i in 0..<11 { self?.studio?.snapshot(to: "\(dir)/studio_tab\(i).png", tab: i) }
                 NSApp.terminate(nil)
             }
         }
@@ -323,7 +335,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preyView.worldOrigin = frame.origin
         silkView.frame = CGRect(origin: .zero, size: frame.size)
         silkView.worldOrigin = frame.origin
-        map.rebuild(windows: [])
+        map.rebuild(windows: [], cinema: cinemaScreens)
+        spider.surfacesRestructured()
         spider.refitHammock()
     }
 
@@ -433,6 +446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         updatePrey()
         updateLaser()
+        updateSurroundings(now: now)
 
         // Only swallow clicks when the pointer is actually on the spider.
         let wantsMouse = interactive && (spider.isHeld || spider.hitTest(cursor))
@@ -493,9 +507,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let h = spider.hammock
         if h != lastHammock {
             if let h {
-                if !hammockShown || h.rect != hammockWindow.frame {
-                    hammockWindow.setFrame(h.rect, display: false)
-                    hammockView.frame = CGRect(origin: .zero, size: h.rect.size)
+                if !hammockShown || h.drawFrame != hammockWindow.frame {
+                    hammockWindow.setFrame(h.drawFrame, display: false)
+                    hammockView.frame = CGRect(origin: .zero, size: h.drawFrame.size)
                 }
                 hammockView.hammock = h
                 if !hammockShown {
@@ -529,6 +543,136 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 hammockWindow.orderOut(nil)
             }
         }
+    }
+
+    // MARK: - Camouflage
+    //
+    // A camouflaged coat wants to know what is behind it — behind its
+    // body, that is, not under its feet: standing on top of a window it
+    // is against whatever is above that window, the wallpaper more often
+    // than not. If it has been allowed to see the screen, it samples the
+    // patch its body covers; if not, it works out what is there — a window
+    // over that spot, or else the wallpaper at that spot — which is right
+    // more often than not.
+
+    private var lastSurroundingsSample: CFTimeInterval = 0
+    /// The wallpaper of each screen, shrunk to a thumbnail to sample from.
+    private var wallpaperCache: [String: CGImage] = [:]
+
+    private func updateSurroundings(now: CFTimeInterval) {
+        guard spider.look.isCamouflaged, now - lastSurroundingsSample > 0.4 else { return }
+        lastSurroundingsSample = now
+        spider.surroundings = sampleBehindSpider() ?? guessSurroundings()
+    }
+
+    /// The middle of its body, pushed a little off whatever it stands on so
+    /// the patch behind it is not the ledge under its feet.
+    private var bodyPoint: V2 {
+        spider.worldPos + spider.standingNormal * (4 * spider.config.scale)
+    }
+
+    /// The average colour of what is on screen behind its body, if it is
+    /// allowed to look.
+    private func sampleBehindSpider() -> RGB? {
+        guard !inHabitat, CGPreflightScreenCaptureAccess() else { return nil }
+        let pos = bodyPoint
+        let r = 18 * spider.config.scale
+        // Window-list space has its origin at the top left of the primary
+        // display.
+        guard let primary = NSScreen.screens.first else { return nil }
+        let rect = CGRect(x: pos.x - r, y: primary.frame.maxY - (pos.y + r), width: r * 2, height: r * 2)
+        guard let img = CGWindowListCreateImage(rect, [.optionOnScreenBelowWindow], CGWindowID(window.windowNumber), [.nominalResolution]) else { return nil }
+        return AppDelegate.average(of: img)
+    }
+
+    private func guessSurroundings() -> RGB {
+        var chrome = RGB(0.93, 0.93, 0.93)
+        NSApp.effectiveAppearance.performAsCurrentDrawingAppearance {
+            chrome = RGB(NSColor.windowBackgroundColor)
+        }
+        if inHabitat { return chrome }
+        let p = bodyPoint
+        // A window over that spot is what is behind it, whatever it is
+        // standing on. (The one under its feet does not reach its body.)
+        if map.occluders.contains(where: { $0.rect.contains(p.point) }) { return chrome }
+        // Otherwise the desktop shows through: the wallpaper, at that spot.
+        let screen = NSScreen.screens.first { $0.frame.insetBy(dx: -40, dy: -40).contains(p.point) } ?? NSScreen.main
+        guard let screen else { return RGB(0.5, 0.5, 0.55) }
+        return wallpaperColour(at: p, on: screen) ?? RGB(0.5, 0.5, 0.55)
+    }
+
+    /// The colour of the wallpaper where `p` is on `screen`: the picture as
+    /// the desktop shows it, filling the screen, or the plain colour behind
+    /// it if there is no picture.
+    private func wallpaperColour(at p: V2, on screen: NSScreen) -> RGB? {
+        let ws = NSWorkspace.shared
+        let options = ws.desktopImageOptions(for: screen) ?? [:]
+        let fill = (options[.fillColor] as? NSColor).map { RGB($0.usingColorSpace(.deviceRGB) ?? $0) }
+        guard let url = ws.desktopImageURL(for: screen) else { return fill }
+        let img: CGImage
+        if let cached = wallpaperCache[url.path] {
+            img = cached
+        } else {
+            guard let full = NSImage(contentsOf: url)?.cgImage(forProposedRect: nil, context: nil, hints: nil),
+                  let small = AppDelegate.shrink(full, toWidth: 320) else { return fill }
+            if wallpaperCache.count > 8 { wallpaperCache.removeAll() }
+            wallpaperCache[url.path] = small
+            img = small
+        }
+        // Where the point falls in the picture. Stretched to the screen's
+        // shape if the desktop is set that way; otherwise the picture
+        // fills the screen proportionally, centred, its overflow cropped.
+        let f = screen.frame
+        let iw = CGFloat(img.width), ih = CGFloat(img.height)
+        let scaling = (options[.imageScaling] as? NSNumber).flatMap { NSImageScaling(rawValue: UInt($0.intValue)) }
+        var sx: CGFloat, sy: CGFloat
+        if scaling == .scaleAxesIndependently {
+            sx = f.width / iw; sy = f.height / ih
+        } else {
+            let s = max(f.width / iw, f.height / ih)
+            sx = s; sy = s
+        }
+        let ox = (f.width - iw * sx) / 2, oy = (f.height - ih * sy) / 2
+        let px = (p.x - f.minX - ox) / sx
+        let py = ih - (p.y - f.minY - oy) / sy     // rows run top down
+        guard px.isFinite, py.isFinite else { return fill }
+        // A patch about the size of its body.
+        let r = max(2, 40 * spider.config.scale / sx)
+        let patch = CGRect(x: px - r, y: py - r, width: r * 2, height: r * 2)
+            .intersection(CGRect(x: 0, y: 0, width: iw, height: ih))
+        guard !patch.isNull, patch.width >= 1, patch.height >= 1, let crop = img.cropping(to: patch) else { return fill }
+        return AppDelegate.average(of: crop)
+    }
+
+    /// A small copy of an image, to sample from cheaply.
+    private static func shrink(_ img: CGImage, toWidth w: Int) -> CGImage? {
+        let h = max(1, Int(CGFloat(img.height) * CGFloat(w) / CGFloat(max(img.width, 1))))
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .high
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return ctx.makeImage()
+    }
+
+    /// Averages an image by drawing it down to a few pixels.
+    private static func average(of img: CGImage) -> RGB {
+        let n = 4
+        guard let ctx = CGContext(data: nil, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return RGB(0.5, 0.5, 0.5) }
+        ctx.interpolationQuality = .high
+        ctx.setFillColor(CGColor(gray: 0.5, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: n, height: n))
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: n, height: n))
+        guard let data = ctx.data else { return RGB(0.5, 0.5, 0.5) }
+        let px = data.bindMemory(to: UInt8.self, capacity: n * n * 4)
+        var r = 0, g = 0, b = 0
+        for i in 0..<(n * n) {
+            r += Int(px[i * 4]); g += Int(px[i * 4 + 1]); b += Int(px[i * 4 + 2])
+        }
+        let k = CGFloat(n * n * 255)
+        return RGB(CGFloat(r) / k, CGFloat(g) / k, CGFloat(b) / k)
     }
 
     private func updatePrey() {
@@ -608,7 +752,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             add(behavior, "Nap in the Hammock", #selector(nap))
             add(behavior, "Clear the Hammock", #selector(clearHammock))
         } else {
-            add(behavior, "Build a Hammock", #selector(buildHammock))
+            let build = NSMenuItem(title: "Build a Hammock", action: #selector(buildHammock), keyEquivalent: "")
+            build.target = self
+            build.isEnabled = spider.config.hammocks
+            behavior.addItem(build)
             if spider.hasAnyHammock { add(behavior, "Clear the Hammock", #selector(clearHammock)) }
         }
         behavior.addItem(.separator())
@@ -652,7 +799,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
 
         add(menu, "Follow the Cursor", #selector(toggleFollow), state: spider.config.followCursor)
-        add(menu, "Spin Webs", #selector(toggleWebs), state: spider.config.webs)
+        let pounce = NSMenuItem(title: "Pounce on the Cursor", action: #selector(togglePounce), keyEquivalent: "")
+        pounce.target = self
+        pounce.state = spider.config.pounceOnCursor ? .on : .off
+        pounce.isEnabled = spider.config.followCursor
+        menu.addItem(pounce)
+        add(menu, "Shoot Webs", #selector(toggleWebs), state: spider.config.webs)
+        add(menu, "Build Hammocks", #selector(toggleHammocks), state: spider.config.hammocks)
         add(menu, "Click to Pick Up", #selector(toggleInteractive), state: interactive)
         add(menu, "Pause", #selector(togglePause), state: spider.config.paused)
         menu.addItem(.separator())
@@ -1155,6 +1308,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.saveSettings()
                 self.refreshMenu()
             }
+            // The studio is a window like any other: something to climb on.
+            st.onVisibility = { [weak self] number, shown in
+                guard let self else { return }
+                if shown { self.tracker.ownFurniture.insert(number) } else { self.tracker.ownFurniture.remove(number) }
+                self.tracker.pollNow()
+            }
             studio = st
         }
         studio?.scale = spider.config.scale
@@ -1165,8 +1324,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spider.config.followCursor.toggle(); saveSettings(); refreshMenu()
     }
 
+    @objc private func togglePounce() {
+        spider.config.pounceOnCursor.toggle(); saveSettings(); refreshMenu()
+    }
+
     @objc private func toggleWebs() {
         spider.config.webs.toggle(); saveSettings(); refreshMenu()
+    }
+
+    @objc private func toggleHammocks() {
+        spider.config.hammocks.toggle(); saveSettings(); refreshMenu()
     }
 
     @objc private func toggleInteractive() {
@@ -1216,7 +1383,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let d = UserDefaults.standard
         d.set(Double(spider.config.scale), forKey: "scale")
         d.set(spider.config.followCursor, forKey: "followCursor")
+        d.set(spider.config.pounceOnCursor, forKey: "pounceOnCursor")
         d.set(spider.config.webs, forKey: "webs")
+        d.set(spider.config.hammocks, forKey: "hammocks")
         d.set(spider.config.paused, forKey: "paused")
         d.set(interactive, forKey: "interactive")
         d.set(hidden, forKey: "hidden")
@@ -1225,12 +1394,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func loadSettings() {
         let d = UserDefaults.standard
         d.register(defaults: [
-            "scale": 0.95, "liveliness": 1.0, "followCursor": true,
-            "webs": true, "paused": false, "interactive": true, "hidden": false,
+            "scale": 0.95, "liveliness": 1.0, "followCursor": true, "pounceOnCursor": true,
+            "webs": true, "hammocks": true, "paused": false, "interactive": true, "hidden": false,
         ])
         spider.config.scale = CGFloat(d.double(forKey: "scale"))
         spider.config.followCursor = d.bool(forKey: "followCursor")
+        spider.config.pounceOnCursor = d.bool(forKey: "pounceOnCursor")
         spider.config.webs = d.bool(forKey: "webs")
+        spider.config.hammocks = d.bool(forKey: "hammocks")
         spider.config.paused = d.bool(forKey: "paused")
         interactive = d.bool(forKey: "interactive")
         hidden = d.bool(forKey: "hidden")

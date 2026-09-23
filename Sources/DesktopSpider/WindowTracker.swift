@@ -31,6 +31,16 @@ final class WindowTracker {
     /// screen's edges, and it is not furniture to play on).
     var onUpdate: (([TrackedWindow], _ fullScreens: [CGRect]) -> Void)?
 
+    /// Our own windows that count as furniture all the same — the studio.
+    /// Everything else of ours is an overlay: the spider itself, its silk,
+    /// the box, the laser dot — and is skipped without a second look.
+    var ownFurniture: Set<CGWindowID> = []
+
+    /// The window-server layers of the desktop picture (the Dock's, before
+    /// Sonoma's Wallpaper process took it over) and of Finder's desktop icons.
+    private static let desktopLayer = Int(CGWindowLevelForKey(.desktopWindow))
+    private static let desktopIconLayer = Int(CGWindowLevelForKey(.desktopIconWindow))
+
     private var lastFrames: [CGWindowID: CGRect] = [:]
     private var busyUntil: TimeInterval = 0
     private var ticks = 0
@@ -64,9 +74,10 @@ final class WindowTracker {
         let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
         let screens = NSScreen.screens.map { $0.frame }
         let pid = selfPID
+        let own = ownFurniture
         queue.async { [weak self] in
             guard let self else { return }
-            let (result, fullScreens) = self.snapshot(primaryTop: primaryTop, screens: screens, selfPID: pid)
+            let (result, fullScreens) = self.snapshot(primaryTop: primaryTop, screens: screens, selfPID: pid, own: own)
             DispatchQueue.main.async {
                 var frames: [CGWindowID: CGRect] = [:]
                 var changed = false
@@ -97,37 +108,70 @@ final class WindowTracker {
         return regular
     }
 
-    private func snapshot(primaryTop: CGFloat, screens: [CGRect], selfPID: Int32) -> ([TrackedWindow], [CGRect]) {
-        let opts: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+    private func snapshot(primaryTop: CGFloat, screens: [CGRect], selfPID: Int32,
+                          own: Set<CGWindowID>) -> ([TrackedWindow], [CGRect]) {
+        // Desktop elements are listed too: the wallpaper is how a display
+        // shows it is on an ordinary Space.
+        let opts: CGWindowListOption = [.optionOnScreenOnly]
         guard let info = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else {
             return ([], [])
         }
+        // Displays with a desktop showing. An exclusive full-screen Space
+        // has none — no wallpaper, no desktop icons — while a zoomed or
+        // tiled window merely sits on top of one. (The menu bar is no
+        // guide: on a notched display it stays listed, at full alpha, in
+        // the black strip over a full-screen film.)
+        var desktopScreens: [CGRect] = []
+        for dict in info {
+            guard let layer = dict[kCGWindowLayer as String] as? Int,
+                  let boundsDict = dict[kCGWindowBounds as String] as? [String: CGFloat],
+                  let cg = CGRect(dictionaryRepresentation: boundsDict as CFDictionary)
+            else { continue }
+            let owner = (dict[kCGWindowOwnerName as String] as? String) ?? ""
+            let isDesktop = owner == "Wallpaper" || owner == "WallpaperAgent"
+                || layer == WindowTracker.desktopIconLayer
+                || (layer == WindowTracker.desktopLayer && owner != "Window Server")
+            guard isDesktop else { continue }
+            let frame = CGRect(x: cg.minX, y: primaryTop - cg.maxY, width: cg.width, height: cg.height)
+            for sc in screens where frame.contains(sc.insetBy(dx: 2, dy: 2)) || sc.insetBy(dx: -2, dy: -2).contains(frame) && frame.width >= sc.width * 0.9 {
+                if !desktopScreens.contains(sc) { desktopScreens.append(sc) }
+            }
+        }
+
         var out: [TrackedWindow] = []
         var fullScreens: [CGRect] = []
         var depth = 0
         for dict in info {
             guard let layer = dict[kCGWindowLayer as String] as? Int, layer == 0,
                   let number = dict[kCGWindowNumber as String] as? Int,
-                  let ownerPID = dict[kCGWindowOwnerPID as String] as? Int32, ownerPID != selfPID,
+                  let ownerPID = dict[kCGWindowOwnerPID as String] as? Int32,
                   let boundsDict = dict[kCGWindowBounds as String] as? [String: CGFloat],
                   let cg = CGRect(dictionaryRepresentation: boundsDict as CFDictionary)
             else { continue }
 
+            let ours = ownerPID == selfPID
+            if ours && !own.contains(CGWindowID(number)) { continue }
             let owner = (dict[kCGWindowOwnerName as String] as? String) ?? ""
-            if WindowTracker.ignoredOwners.contains(owner) { continue }
+            if !ours && WindowTracker.ignoredOwners.contains(owner) { continue }
             if let alpha = dict[kCGWindowAlpha as String] as? CGFloat, alpha < 0.35 { continue }
             guard cg.width > 130, cg.height > 90 else { continue }
-            guard isRegularApp(ownerPID) else { continue }
+            guard ours || isRegularApp(ownerPID) else { continue }
 
             // Flip into AppKit coordinates.
             let frame = CGRect(x: cg.minX, y: primaryTop - cg.maxY, width: cg.width, height: cg.height)
 
-            // A window covering a display — or near enough: a full-screen
-            // video on a notched display stops short of the camera housing —
-            // is a full-screen app: not furniture, and a sign to sit still.
+            // A window covering a display, menu-bar strip included, is an
+            // exclusive full-screen app: not furniture, and a sign to sit
+            // still. One that stops just short of the top could be a
+            // full-screen video on a notched display, which halts at the
+            // camera housing — or a merely zoomed or tiled window under the
+            // menu bar. Only the first has taken the desktop away with it;
+            // the second is ordinary furniture, and the spider climbs it
+            // like any other.
             if let taken = screens.first(where: { sc in
                 frame.contains(sc.insetBy(dx: 2, dy: 2))
-                    || (sc.insetBy(dx: -2, dy: -2).contains(frame)
+                    || (!desktopScreens.contains(sc)
+                        && sc.insetBy(dx: -2, dy: -2).contains(frame)
                         && frame.width >= sc.width * 0.98 && frame.height >= sc.height * 0.9)
             }) {
                 if !fullScreens.contains(taken) { fullScreens.append(taken) }

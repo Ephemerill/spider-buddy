@@ -8,7 +8,13 @@ struct SpiderConfig {
     var walkSpeed: CGFloat = 62          // px/s at scale 1
     var liveliness: CGFloat = 1.0        // how often it decides to do something
     var followCursor: Bool = true
+    /// A pointer that fidgets close by for long enough gets stalked and
+    /// pounced on. Off, it only watches.
+    var pounceOnCursor: Bool = true
+    /// Shooting lines: rappelling, swinging, draglines and catching a fall.
     var webs: Bool = true
+    /// Spinning a hammock in a corner to rest in.
+    var hammocks: Bool = true
     var paused: Bool = false
 }
 
@@ -41,6 +47,8 @@ struct SpiderPose {
     var facing: CGFloat = 1
     /// Extra rotation about the body, in sprite space: the roll.
     var spin: CGFloat = 0
+    /// How far it is balled up, 0..1: the body folded at the waist.
+    var ball: CGFloat = 0
     /// 1 when standing on something, 0 in the air. Drives the contact shadow.
     var grounded: CGFloat = 1
     /// World point the silk attaches to (top of the abdomen).
@@ -56,7 +64,11 @@ struct SpiderPose {
     var sleep: CGFloat = 0
     var abdomenSway: CGFloat = 0
     var emote: Emote = .none
+    /// How far through its time the emote is, 0…1: what fades it in and out.
     var emoteT: CGFloat = 0
+    /// Seconds since the emote began, never held back: what the looping
+    /// ones (the Z's) animate on, so a long sleep does not slow them down.
+    var emoteClock: CGFloat = 0
     var thought: Thought = .heart
     var web: (anchor: V2, alpha: CGFloat, slack: CGFloat)?
     /// The line as a chain of world points, anchor first, when it is live.
@@ -69,6 +81,9 @@ struct SpiderPose {
     var grabbed: CGFloat = 0
     /// How it is dressed.
     var outfit = SpiderLook()
+    /// The colour of whatever is behind it, for a camouflaged coat.
+    var surroundings = SpiderPose.defaultSurroundings
+    static let defaultSurroundings = RGB(0.94, 0.92, 0.88)
     var name = ""
     /// Opacity of the name tag under it.
     var nameTag: CGFloat = 0
@@ -117,6 +132,9 @@ private struct Leg {
     /// was just doing takes one proper step to its place (0..1 through it,
     /// or -1 for none) instead of sliding there.
     var settle: CGFloat = -1
+    /// Where the foot was as the current activity began: a raised pose is
+    /// reached from here on an eased path rather than snapped to.
+    var poseFrom: V2 = .zero
 
     var wobble: Wobble = Wobble()
 }
@@ -131,7 +149,11 @@ private enum Mode {
     case dangling
     case held
     case nesting     // in its silk hammock, building it or asleep in it
+    case clinging    // hanging off the pointer, having caught it
 }
+
+/// The pointer as prey: the stages of a hunt of the cursor itself.
+private enum CursorHunt { case none, stalking, pouncing, clinging }
 
 /// What it is doing on the end of a thread.
 private enum WebStyle { case hang, swing }
@@ -196,6 +218,13 @@ struct Hammock: Equatable {
     var load: CGFloat = 0
     /// A seed for the strands' wobbles, so every one is a little different.
     var seed: Int = 0
+    /// Where along the sling (0..1) its weight sits; nil means the bed.
+    /// The silk dips under it there, and the dip goes with it as it walks
+    /// the sling.
+    var loadU: CGFloat? = nil
+    /// How far the middle is swung sideways, px: a breeze, or the spider
+    /// shifting about in it.
+    var sway: CGFloat = 0
     /// How far each strand has draped, 0..1: a strand just stuck down at
     /// both ends is still the taut line it was walked out as, and sinks to
     /// its sag over a couple of seconds. Missing entries count as settled.
@@ -231,13 +260,34 @@ struct Hammock: Equatable {
     /// How far the middle hangs below the straight line between the anchors.
     var sag: CGFloat { rect.height * style.sagShare }
 
+    /// The area it is drawn in: the corner box, with room below and beside
+    /// it for the sag, the loops drooping under it, the extra give under
+    /// the spider and the swing. The geometry stays in `rect`.
+    var drawFrame: CGRect {
+        let below = rect.height * 0.8, side: CGFloat = 30
+        return CGRect(x: left ? rect.minX : rect.minX - side, y: rect.minY - below,
+                      width: rect.width + side, height: rect.height + below)
+    }
+
     /// The sling's centre line, a quadratic from the wall to the ceiling;
-    /// `drop` lowers the control point (torn, or weighed down).
-    func point(at u: CGFloat, drop: CGFloat = 0) -> V2 {
+    /// `drop` lowers the control point (torn, or weighed down). On top of
+    /// that the silk dips locally under the spider's weight — a hollow
+    /// where it lies, deepest on the lowest strands (`strand` 0) so the
+    /// sling closes round it — and the whole middle swings with `sway`,
+    /// lifting a touch at the ends of a swing as a pendulum does.
+    func point(at u: CGFloat, drop: CGFloat = 0, strand: CGFloat = 0) -> V2 {
         let a = wallAnchor, b = ceilingAnchor
         let c = (a + b) * 0.5 + V2(0, -(sag + drop + load * style.give) * 2)
         let v = 1 - u
-        return a * (v * v) + c * (2 * v * u) + b * (u * u)
+        var p = a * (v * v) + c * (2 * v * u) + b * (u * u)
+        let mid = sin(u * .pi)
+        if load > 0.001 {
+            let near = 1 - min(abs(u - (loadU ?? bedU)) / 0.32, 1)
+            let bell = near * near * (3 - 2 * near)
+            p.y -= load * style.give * 1.6 * bell * (1 - 0.4 * strand)
+        }
+        p += V2(sway, abs(sway) * 0.12) * mid
+        return p
     }
     func tangent(at u: CGFloat) -> V2 {
         let a = wallAnchor, b = ceilingAnchor
@@ -336,10 +386,21 @@ final class Spider {
     private(set) var inHabitat = false
     /// The studio's design: how it looks, who it is, how it walks.
     var look = SpiderLook()
+    /// What is behind it right now, as told by whoever can see the screen;
+    /// a camouflaged coat drifts toward it rather than snapping.
+    var surroundings = SpiderPose.defaultSurroundings
+    private var shownSurroundings = SpiderPose.defaultSurroundings
+    /// Whether it is standing on a window, as opposed to the screen edge,
+    /// the Dock or the menu bar.
+    var standingOnWindow: Bool {
+        guard mode == .attached, let loop = map.loop(anchor.loopID) else { return false }
+        return loop.kind == .windowEdge
+    }
     var personality = Personality() {
         didSet { config.liveliness = personality.liveliness }
     }
     var gait = Gait()
+    var habits = Habits()
     var name = "Spider"
     private var nameTag = Spring(0, stiffness: 60, damping: 12)
     private var hoverFor: CGFloat = 0
@@ -364,8 +425,8 @@ final class Spider {
 
     // Posture. Every activity sets targets for these and springs carry the
     // body between them, so nothing ever snaps from one stance to another.
-    private var lift = Spring(0, stiffness: 140, damping: 17)      // height off the ledge
-    private var pitch = Spring(0, stiffness: 120, damping: 16)     // nose up (+) / down (-)
+    private var lift = Spring(0, stiffness: 140, damping: 21)      // height off the ledge
+    private var pitch = Spring(0, stiffness: 120, damping: 20)     // nose up (+) / down (-)
     /// A touch of nose-down when running, folded into the body lean.
     private var runNose: CGFloat = 0
     /// Lean from getting going and pulling up (+ = rocking back).
@@ -382,7 +443,10 @@ final class Spider {
     private var rollTravel: CGFloat = 0
     private var rollSpinEnd: CGFloat = 0
     private var rollLanded = false
-    private var crouch = Spring(0, stiffness: 200, damping: 20)
+    private var rollTouched = false
+    /// How far it is balled up, 0..1.
+    private var ball: CGFloat = 0
+    private var crouch = Spring(0, stiffness: 200, damping: 25)
     private var wag = Spring(0, stiffness: 90, damping: 12)        // abdomen wiggle amplitude
     private var wagPhase: CGFloat = 0
     private var stretch = Spring(1, stiffness: 320, damping: 20)
@@ -409,6 +473,14 @@ final class Spider {
     private var bout: CGFloat = 1                 // per-walk speed multiplier
     private var boutBob: CGFloat = 1
     private var boutStride: CGFloat = 28
+    /// The stride actually being taken: the bout's own, lengthened once the
+    /// pace would have the legs cycling faster than `maxCadence` — a
+    /// hurrying spider reaches further, it does not only step quicker, and
+    /// a foot that is in the air for two frames reads as a flicker.
+    private var strideNow: CGFloat {
+        max(boutStride, speed / max(config.scale, 0.05) / Spider.maxCadence)
+    }
+    private static let maxCadence: CGFloat = 3.6
     private var gaitStyle: GaitStyle = .normal
     private var speedWobble = Wobble(seed: 17, freq: 0.9)
     private var liftWobble = Wobble(seed: 23, freq: 0.35)
@@ -423,6 +495,14 @@ final class Spider {
     private var t: CGFloat = 0
     private var activityTime: CGFloat = 0
     private var activityDur: CGFloat = 1
+    private var activityStarted: CGFloat = -9
+    /// Gestures whose legs come up off the ledge: they rise into the pose
+    /// over this long, and settle back to standing over the last stretch,
+    /// so a wave or a tap begins and ends as a movement rather than a cut.
+    private static let poseEaseIn: CGFloat = 0.42
+    private static let poseEaseOut: CGFloat = 0.32
+    private static let easedPoses: Set<Activity> = [.wave, .curious, .armsUp, .dance, .drum, .fidget, .scratch,
+                                                    .groom, .legStretch, .greet, .eat, .sleep, .stretch]
     private var decisionIn: CGFloat = 1.2
     private var airTime: CGFloat = 0
     private var noAttachFor: CGFloat = 0
@@ -431,6 +511,7 @@ final class Spider {
     private var blinkT: CGFloat = -1
     private var blinkTwice = false
     private var occludedFor: CGFloat = 0
+    private var offScreenFor: CGFloat = 0
     /// An escape from under a window is under way until then: the covered
     /// check must not keep restarting it, which is what used to freeze it
     /// mid-crouch.
@@ -440,6 +521,33 @@ final class Spider {
     private var shotPurpose: ShotPurpose = .swing
     /// Climbing out from under a window: hauls at double pace.
     private var hurrying = false
+    /// Scurrying out from under a window along the edge it is on: until
+    /// then the covered stretch is walked straight through rather than
+    /// stopped at.
+    private var escapeScurryUntil: CGFloat = 0
+    /// A fall it means to catch: the dragline fastened where it let go
+    /// pays out as it drops, and it takes hold at this height — decided
+    /// before it dropped, and well clear of whatever is below.
+    private var draglineCatchY: CGFloat?
+    /// A line shot up in mid-air: let go of with nothing fastened to it,
+    /// it twists to bring its spinnerets round to a mark on the ceiling,
+    /// the line races out to it, and once it has caught it takes hold at
+    /// `catchY` — at an angle, so it swings.
+    private struct AirShot {
+        var target: V2
+        var depth: Int
+        var catchY: CGFloat
+        var began: CGFloat
+        var progress: CGFloat = 0
+    }
+    private var airShot: AirShot?
+    /// The twist before the shot, and the line's flight, in seconds.
+    static let airShotAim: CGFloat = 0.14
+    static let airShotFlight: CGFloat = 0.2
+    /// A throw this fast (px/s) is a proper fling: it rides it out rather
+    /// than shooting a line. A hand moving the pointer at all quickly is
+    /// already well over a thousand, so only a real flick counts.
+    static let hardThrow: CGFloat = 1800
 
     // Food
     /// Everything loose on the desktop to hunt, plus whatever it is eating.
@@ -460,6 +568,20 @@ final class Spider {
     private(set) var fed: CGFloat = 0
     private var lastUserActivity: CGFloat = 0
     private var lastCurious: CGFloat = -10
+    /// The big gestures — a greeting, arms up, a wave, feeling the air, a
+    /// happy wiggle or dance — mean something because they are rare: one,
+    /// then a good while before the next of its own accord, and seldom the
+    /// same one twice running. (A click still gets an answer at once.)
+    private static let gestures: Set<Activity> = [.greet, .armsUp, .wave, .curious, .wiggle, .dance, .bounce]
+    private var lastGestureAt: CGFloat = -99
+    private var lastGesture: Activity = .idle
+    private var gestureGap: CGFloat = 0
+    private var gestureReady: Bool { t - lastGestureAt > gestureGap }
+    /// The weight multiplier for starting gesture `a` on its own.
+    private func gestureWeight(_ a: Activity) -> CGFloat {
+        guard gestureReady else { return 0 }
+        return a == lastGesture ? 0.25 : 1
+    }
     private var restedFor: CGFloat = 0
     private var wokeUp = false
     private var idleLook = V2.zero
@@ -476,13 +598,53 @@ final class Spider {
     /// gathers itself onto the edge instead of snapping there.
     private var anchorGlide: CGFloat = 45
     private var landedAt: CGFloat = -9
+    /// Just landed and still coming down onto the ledge: the body keeps
+    /// falling until the legs take its weight.
+    private var landDrop = false
+    /// How long the feet take to reach the ledge after a landing: they get
+    /// there just as the body does.
+    private var landStep: CGFloat = 0.1
+    /// The lurch along the ledge as a landing is absorbed: the body carries
+    /// on the way it was going over its planted feet, then comes back.
+    private var skid = Spring(0, stiffness: 140, damping: 21)
+    /// How long after a landing the planted feet hold their place in the
+    /// world while the body moves over them.
+    private static let landHold: CGFloat = 0.5
+    /// How much of the impact speed the body keeps once the legs have it.
+    private static let landAbsorb: CGFloat = 0.35
+    /// The lowest the body can sink toward the ledge, in points: its
+    /// belly and chin stay clear of the surface, whatever shape it is —
+    /// and however it is tilted, still swinging square to the ledge out
+    /// of a landing, when the nose or the tail hangs lower.
+    private func maxSink(tilt: CGFloat) -> CGFloat {
+        let m = look.bodyMetrics
+        let a = SpiderRenderer.abdomen, h = SpiderRenderer.head
+        let points = [V2(a.c.x, a.c.y - a.ry * m.ary), V2(a.c.x - a.rx * m.arx, a.c.y),
+                      V2(h.c.x, h.c.y - h.r * m.head), V2(h.c.x + h.r * m.head, h.c.y)]
+        // The lowest point in the ledge's frame: the sprite is squashed
+        // about its ground line and mirrored, as drawn, then turned by
+        // however far off the ledge's line the body is.
+        let (sx, sy) = bodySquash()
+        let g = SpiderRenderer.ground
+        let low = points.map { ($0.x * sx * mirrorSign) * sin(tilt) + (g + ($0.y - g) * sy) * cos(tilt) }.min()!
+        return clamp(low - g - 2, 0, 7) * config.scale
+    }
     private var anchorValid = false
     private var surfaceNormal = V2(0, 1)
     private var legFramePos = V2.zero
     private var legFrameHeading: CGFloat = 0
+    /// The body's motion this frame over its planted feet, in sprite
+    /// space — everything but the surface itself moving (a window being
+    /// dragged carries the feet with it) — and its turn, for feet holding
+    /// their place in the world to cancel out.
+    private var legOverFeet = V2.zero
+    private var legDTheta: CGFloat = 0
+    /// Where the anchor point on the surface was last frame, to tell the
+    /// surface moving from the body moving.
+    private var surfacePrev: V2?
+    private var surfaceMotion = V2.zero
     private var emote: Emote = .none
     private var thought: Thought = .heart
-    private var lastHop: CGFloat = -9
     private var lastThought: CGFloat = -30
     /// Heading for a window top to sleep on: sleep soon after landing.
     private var bedBoundUntil: CGFloat = -1
@@ -490,6 +652,7 @@ final class Spider {
     var packs: [ThoughtPack] = [.chitchat]
     var customPhrases: [String] = []
     private var emoteTime: CGFloat = 0
+    private var emoteClock: CGFloat = 0
     private var emoteDur: CGFloat = 0
     /// Set when a walk runs out of ledge, so the spider can react to it.
     private var reachedEnd = false
@@ -512,6 +675,7 @@ final class Spider {
         case toFloor            // all the way down and step off
         case swing              // work up a swing and let go
         case jumpOff            // spring off the line to somewhere near
+        case swingOff(CGFloat)  // the top is gone: pay out to this length, swing up and let go
     }
     private var webPlan: [WebPlan] = []
     private var lingerUntil: CGFloat = -1
@@ -566,6 +730,12 @@ final class Spider {
     /// Which way each leg's knee should bend when it is holding the line,
     /// in sprite units; nil means the ordinary walking knee.
     private var legBend: [V2?] = Array(repeating: nil, count: SpiderRenderer.legCount)
+    /// Each knee's shape, eased (see `updateKnees`), and where that puts
+    /// the knee, as drawn.
+    private var kneeShape: [V2] = []
+    private var kneeLocal: [V2] = []
+    private var kneeWorld: [V2] = []
+    private var kneeWorldVel: [V2] = []
 
     // Jump bookkeeping
     private var pendingJump: V2?
@@ -583,6 +753,8 @@ final class Spider {
                 homing = nil
                 huntTarget = nil
                 pendingJump = nil
+                // Whatever it was thinking can wait until after the show.
+                if emote == .thought { emote = .none }
                 if mode == .attached {
                     queued = nil
                     if activity != .eat { activity = .idle; activityTime = 0 }
@@ -663,10 +835,16 @@ final class Spider {
     private var outOfBoxSince: CGFloat = -1
     /// The short way round its edge back to the box was blocked: go the long way.
     private var returnTheLongWay = false
-    private var headTilt = Spring(0, stiffness: 60, damping: 12)
-    /// Where it sits to watch a film: the nearest corner of its floor (or
-    /// ceiling). Nil until it has picked one.
+    private var headTilt = Spring(0, stiffness: 180, damping: 20)
+    /// Where it sits to watch a film: the nearest of the four corners of
+    /// the screen, or the door of its hammock. Nil until it has picked one.
     private var cinemaSeat: V2?
+    private var cinemaSeatIsNest = false
+    private var hammockSwayVel: CGFloat = 0
+    private var breezeIn: CGFloat = 8
+    private var shiftIn: CGFloat = 10
+    /// How fast it crawls to its seat, as a fraction of its walk: no hurry.
+    static let cinemaPace: CGFloat = 0.6
     /// Cinema manners apply on a screen some app has taken whole.
     private var inCinema: Bool { !inHabitat && (fullScreenApp || map.isCinema(pos)) }
 
@@ -696,6 +874,53 @@ final class Spider {
     private var prevCursor = V2.zero
     private var pettingScore: CGFloat = 0
     private var lastPetSign: CGFloat = 0
+
+    // The pointer as prey
+    /// How taken it is with the pointer, 0..1: builds while the pointer
+    /// hangs about close by and it has nothing better to do, and shows in
+    /// the eyes, a tip of the head, a rise on its toes and a lean toward it.
+    private var interest: CGFloat = 0
+    private var interestNose = Spring(0, stiffness: 260, damping: 26)  // nose up (+) / down toward it
+    private var interestLean = Spring(0, stiffness: 200, damping: 22)  // along the ledge toward it
+    /// The yaw the pointer is asking for, in the ledge's frame; weighted by
+    /// `interest` when the body is turned.
+    private var interestYawTarget: CGFloat = 0
+    /// The pointer's bearing as the body follows it: smoothed, and with a
+    /// side it has committed to (see `updateInterest`).
+    private var interestBearing: CGFloat = 1
+    private var interestSide: CGFloat = 1
+    private var sideSwitchFor: CGFloat = 0
+    private var boredAfter: CGFloat = 16
+    /// Fidgeting: every reversal of the pointer's direction near it counts,
+    /// and the score decays. Enough of it, for long enough, and it stalks.
+    private var cursorWiggle: CGFloat = 0
+    private var wiggleSign = V2.zero
+    private var cursorNearFor: CGFloat = 0
+    private var cursorHunt: CursorHunt = .none
+    private var cursorHuntSince: CGFloat = 0
+    private var nextCursorHuntAt: CGFloat = 8
+    private var cursorPoised = false
+    private var cursorPoisedAt: CGFloat = 0
+    private var cursorCentre = V2.zero
+    private var cursorStalls = 0
+    private var cursorStalkLastPos = V2.zero
+    /// Hanging off the pointer: where it took hold, blending to a grip
+    /// with its mouth on the hotspot; the body swings under it as a
+    /// pendulum; shaking it back and forth wears its grip down.
+    private var clingOffset0 = V2.zero
+    private var clingBlend: CGFloat = 0
+    private var clingSwing: CGFloat = 0
+    private var clingSwingVel: CGFloat = 0
+    private var clingShake: CGFloat = 0
+    private var clingShakeSign = V2.zero
+    private var clingSince: CGFloat = 0
+    private var clingFor: CGFloat = 4
+    private var cursorAcc = V2.zero
+    private var prevCursorVel = V2.zero
+    /// Within this (× scale) the pointer holds its interest; within the
+    /// larger it may be stalked.
+    static let interestRange: CGFloat = 170
+    static let huntRange: CGFloat = 250
 
     // Drag
     private var grabOffset = V2.zero
@@ -760,13 +985,15 @@ final class Spider {
     var grabRadius: CGFloat { 30 * config.scale }
 
     func hitTest(_ p: V2) -> Bool {
-        p.distance(to: pos) < grabRadius
+        // Hanging off the pointer it is under every click: those go through.
+        mode != .clinging && p.distance(to: pos) < grabRadius
     }
 
     func beginGrab(at p: V2) {
         pendingMap = nil
         climbArrival = nil
         abandonBuild()
+        cursorHunt = .none
         isHeld = true
         mode = .held
         activity = .idle
@@ -805,6 +1032,10 @@ final class Spider {
             airTime = 0
             noAttachFor = 0.06
             launchLoop = ""
+            // Let go of from a height it shoots a line up at the ceiling as
+            // it leaves your hand and catches itself on the way down — a
+            // drop or a light toss, that is; flung hard, it flies.
+            if speedV.length < Spider.hardThrow { planFall(from: nil, lineUp: true) }
         }
         stretch.velocity = -4
         legMode = .free
@@ -894,6 +1125,12 @@ final class Spider {
     func reappear() {
         wake()
         if mode == .attached {
+            // The desktop has gone on without it while it was away: it
+            // takes its footing again from wherever it is standing, and if
+            // that is gone, it drops from there.
+            surfacesRestructured()
+        }
+        if mode == .attached {
             beginActivity(.shake, dur: 0.6)
             queue(.look, randRange(0.8, 1.5))
         }
@@ -909,6 +1146,7 @@ final class Spider {
         name = d.name
         personality = d.personality
         gait = d.gait
+        habits = d.habits
         packs = d.packs
         customPhrases = d.customPhrases
         config.walkSpeed = 62 * gait.speedMul
@@ -922,7 +1160,7 @@ final class Spider {
     }
 
     var design: SpiderDesign {
-        SpiderDesign(name: name, look: look, personality: personality, gait: gait, packs: packs, customPhrases: customPhrases)
+        SpiderDesign(name: name, look: look, personality: personality, gait: gait, habits: habits, packs: packs, customPhrases: customPhrases)
     }
 
     // MARK: - Frame update
@@ -931,13 +1169,15 @@ final class Spider {
         guard !config.paused else { return }
         let dt = min(rawDt, 1.0 / 30.0)
         t += dt
+        shownSurroundings = shownSurroundings.mix(surroundings, 1 - exp(-dt * 1.2))
 
         trackCursorMotion(dt: dt)
+        updateInterest(dt: dt)
         updateEmote(dt: dt)
         updateBlink(dt: dt)
 
         if mode != .airborne { landing = nil; landingReach = 0 }
-        if mode != .attached { runNose = approach(runNose, 0, 8, dt) }
+        if mode != .attached { runNose = approach(runNose, 0, 8, dt); surfacePrev = nil }
         keepHung(dt: dt)
         switch mode {
         case .attached: updateAttached(dt: dt)
@@ -945,28 +1185,54 @@ final class Spider {
         case .dangling: updateDangling(dt: dt)
         case .held:     updateHeld(dt: dt)
         case .nesting:  updateNesting(dt: dt)
+        case .clinging: updateClinging(dt: dt)
         }
 
-        headTilt.step(to: mode == .attached && activity == .watch ? 0.72 : 0, dt: dt)
+        // Heading spring, on the shortest way round. Before the legs, so a
+        // planted foot can hold its place against this frame's turn rather
+        // than being drawn swung round with the body and put right a frame
+        // late.
+        let err = angleDelta(heading, headingTarget)
+        // Turning round on a thread is a slow, deliberate roll rather than
+        // the snap of a landing.
+        var soft: CGFloat = mode == .dangling ? (webStyle == .hang ? 0.4 : 0.5) : 1
+        // Just landed: it swings down onto the surface over a few frames
+        // rather than snapping square to it.
+        if mode == .attached, t - landedAt < 0.4 { soft = 0.55 }
+        headingVel += (err * 190 * soft - headingVel * 21 * soft.squareRoot()) * dt
+        heading += headingVel * dt
+
+        headTilt.step(to: mode == .attached && activity == .watch ? 0.72 : (mode == .attached ? interestNose.value * 0.6 : 0), dt: dt)
         updateWeb(dt: dt)
         updatePrey(dt: dt)
         tidyAbandonedHammock()
         if var h = hammock, h.tickDrape(dt: dt) { hammock = h }
+        rockHammock(dt: dt)
         updateLook(dt: dt)
         updateLegs(dt: dt)
 
         // Rest the pointer on it for a moment and it tells you its name.
-        let hovering = cursor.distance(to: pos) < grabRadius * 1.15 && cursorVel.length < 30 && !isHeld
+        let hovering = cursor.distance(to: pos) < grabRadius * 1.15 && cursorVel.length < 30 && !isHeld && mode != .clinging
         hoverFor = hovering ? hoverFor + dt : 0
         nameTag.step(to: hoverFor > 0.7 || isHeld ? 1 : 0, dt: dt)
         odometer += speed * dt / max(config.scale, 0.05)
 
         if activity != .roll { rollSpin = 0 }
-        // Rolling, it balls up — shorter along the body, and the volume rule
-        // makes it correspondingly rounder.
-        let balled = activity == .roll && mode == .attached && rollPhase().phase == 1
+        // Rolling, it balls up: folds at the waist on the push off, and
+        // unfolds as it comes up onto its feet. (Not a squash: a squash is
+        // in the ledge's frame, and would thin the ball as it turned.)
+        let ballTarget: CGFloat = {
+            guard activity == .roll, mode == .attached else { return 0 }
+            let r = rollPhase()
+            switch r.phase {
+            case 0: return smoothstep(clamp((r.v - 0.4) / 0.6, 0, 1))
+            case 1: return 1
+            default: return 1 - smoothstep(min(r.v / 0.55, 1))
+            }
+        }()
+        ball = approach(ball, ballTarget, 30, dt)
         let curled = mode == .nesting && nestPhase == .sleeping
-        stretch.step(to: balled ? 0.7 : (curled ? 0.86 : 1), dt: dt)
+        stretch.step(to: curled ? 0.86 : 1, dt: dt)
         fatten.step(to: 1, dt: dt)
         happy.step(to: 0, dt: dt)
         startled.step(to: 0, dt: dt)
@@ -980,20 +1246,10 @@ final class Spider {
         // Volume preservation: fattening follows stretch inversely — except
         // balled up for a roll, where it pulls in all round.
         let s = stretch.value
-        fatten.value = lerp(fatten.value, balled ? 0.96 : (curled ? 1.0 : 1 / max(0.6, s)), 0.35)
-
-        // Heading spring, on the shortest way round.
-        let err = angleDelta(heading, headingTarget)
-        // Turning round on a thread is a slow, deliberate roll rather than
-        // the snap of a landing.
-        var soft: CGFloat = mode == .dangling ? (webStyle == .hang ? 0.4 : 0.5) : 1
-        // Just landed: it swings down onto the surface over a few frames
-        // rather than snapping square to it.
-        if mode == .attached, t - landedAt < 0.4 { soft = 0.55 }
-        headingVel += (err * 190 * soft - headingVel * 21 * soft.squareRoot()) * dt
-        heading += headingVel * dt
+        fatten.value = lerp(fatten.value, curled ? 1.0 : 1 / max(0.6, s), 0.35)
 
         updateRope(dt: dt)
+        updateKnees(dt: dt)
     }
 
     // MARK: The laser dot
@@ -1061,6 +1317,350 @@ final class Spider {
         }
     }
 
+
+    // MARK: The pointer as prey
+
+    /// Something it would not spare the pointer more than a glance for: a
+    /// hunt, a chase, a job, a film, sleep, or a move already under way.
+    private var preoccupied: Bool {
+        guard mode == .attached, !inCinema, laser == nil, huntTarget == nil, caught == nil,
+              homing == nil, build == nil, peek == nil, t > escapeUntil, t >= bedBoundUntil,
+              !(confined && !inBox), !hangOnly else { return true }
+        if [.sleep, .eat, .watch, .peekaboo, .roll, .spin, .crouch, .shoot, .fasten, .scurry,
+            .startle, .stretch, .shake, .bounce, .dance, .drum].contains(activity) { return true }
+        return speed > config.walkSpeed * 1.5
+    }
+
+    /// What it would drop for a hunt: sitting about, an aimless walk, or
+    /// its usual fuss over the pointer.
+    private var distractable: Bool {
+        !preoccupied && [.idle, .look, .rest, .stare, .glance, .fidget, .peer, .walk, .sneak,
+                         .curious, .greet, .armsUp, .wave, .groom, .scratch].contains(activity)
+    }
+
+    /// How the pointer holds its attention, every frame. Interest builds
+    /// while it hangs about close by and it has nothing better to do, and
+    /// shows in the eyes, a tip of the head and a lean toward it; a pointer
+    /// that fidgets close by for long enough gets stalked.
+    private func updateInterest(dt: CGFloat) {
+        let sc = config.scale
+        let d = cursor.distance(to: pos)
+        // A hunt only lives in the modes it belongs to: picked up, teleported
+        // or knocked off mid-way, it is over.
+        switch cursorHunt {
+        case .none: break
+        case .stalking: if mode != .attached { endCursorHunt(nextIn: 10) }
+        case .pouncing:
+            if mode == .attached ? !(activity == .crouch || activity == .turn) : mode != .airborne { endCursorHunt(nextIn: 10) }
+        case .clinging: if mode != .clinging { endCursorHunt(nextIn: 20) }
+        }
+        if dt > 0 { cursorAcc = approach(cursorAcc, (cursorVel - prevCursorVel) / dt, 20, dt) }
+        prevCursorVel = cursorVel
+
+        // Fidgeting: every quick reversal of the pointer's direction near it
+        // counts, and the score fades fast, so only a proper back-and-forth
+        // wiggle — several reversals in a couple of seconds — adds up.
+        if d < Spider.huntRange * sc {
+            let sx: CGFloat = cursorVel.x > 150 ? 1 : (cursorVel.x < -150 ? -1 : 0)
+            let sy: CGFloat = cursorVel.y > 150 ? 1 : (cursorVel.y < -150 ? -1 : 0)
+            if sx != 0, sx != wiggleSign.x { if wiggleSign.x != 0 { cursorWiggle += 0.3 }; wiggleSign.x = sx }
+            if sy != 0, sy != wiggleSign.y { if wiggleSign.y != 0 { cursorWiggle += 0.3 }; wiggleSign.y = sy }
+        } else {
+            wiggleSign = .zero
+        }
+        cursorWiggle = max(0, min(cursorWiggle, 3) - dt * 0.7)
+        if d < Spider.interestRange * sc {
+            cursorNearFor += dt
+        } else {
+            cursorNearFor = max(0, cursorNearFor - dt * 3)
+            if cursorNearFor == 0 { boredAfter = randRange(10, 22) }
+        }
+        // A pointer that just sits there is old news after a while: it
+        // loses interest and goes about its business, until the pointer
+        // goes away and comes back — or livens up.
+        let bored = cursorNearFor > boredAfter && cursorWiggle < 0.5
+
+        // Interest: quick to take, slow to fade — unless it has something
+        // else to do, in which case it barely spares the pointer a glance.
+        let busy = preoccupied
+        let wants = config.followCursor && !busy && !bored && d < Spider.interestRange * sc && inBoxOrFree(cursor)
+            && t - lastUserActivity < 8 && cursorHunt == .none
+        interest = approach(interest, wants ? 1 : 0, wants ? 6.0 : (busy ? 4 : 1.2), dt)
+        // Where the pointer is, give or take its fidgeting: what a pounce
+        // is aimed at.
+        cursorCentre = approach(cursorCentre, cursor, 7, dt)
+        var nose: CGFloat = 0
+        if interest > 0.01, mode == .attached {
+            // Body-local: +x is the way it faces along the ledge, +y away
+            // from the surface. The head tips up or down toward the pointer.
+            let l = toLocalDir(cursor - pos)
+            nose = clamp(atan2(l.y, max(abs(l.x), 12 * sc)), -0.8, 0.8)
+            nose *= SpiderRenderer.profileAmount(yaw: yaw)
+            // The body turns to point at the pointer, continuously: the yaw
+            // is the cosine of the pointer's bearing along the ledge, so
+            // ahead is profile, straight above is face on, and behind is
+            // the other profile — no stepping between fixed views. Ahead it
+            // stops just short of full profile so a little face still shows.
+            // On the move it only comes three-quarters round, so it
+            // never walks backwards.
+            //
+            // The eyes follow the pointer at once; the body comes after on
+            // a smoothed bearing, and only turns right round to the other
+            // side once the pointer has stayed well round there — so a
+            // pointer passing back and forth over it does not have it
+            // swinging from one profile to the other and back every pass,
+            // and a gesture already under way finishes on the side it began.
+            let a = (cursor - pos).rotated(by: -heading)
+            var c = a.x / max(a.length, 1)
+            if speed > 1 || [.walk, .scurry, .sneak].contains(activity) { c = facing * max(facing * c, 0.45) }
+            interestBearing = approach(interestBearing, c, 2.4, dt)
+            let gesturing = Spider.gestures.contains(activity) || activity == .stare
+            if interestBearing * interestSide < -0.3, !gesturing {
+                sideSwitchFor += dt
+                if sideSwitchFor > 0.5 { interestSide = -interestSide; sideSwitchFor = 0 }
+            } else {
+                sideSwitchFor = max(0, sideSwitchFor - dt * 2)
+            }
+            interestYawTarget = interestSide * max(interestSide * interestBearing, 0.12) * 0.88
+        }
+        if interest < 0.05 {
+            // Not following anything: start from however it stands.
+            interestSide = facing
+            interestBearing = yaw
+            sideSwitchFor = 0
+        }
+        interestNose.step(to: nose * interest, dt: dt)
+
+        // An aimless walk is dropped for a better look.
+        if interest > 0.75, activity == .walk, activityTime > 0.5, walkPauseAt > 90 || activityTime < walkPauseAt,
+           chance(dt * 1.2) {
+            queued = nil
+            walkThen = nil
+            beginActivity(.look, dur: randRange(1.0, 2.4))
+        }
+
+        // Fidgeting close by like something alive — and it has been a while
+        // since the last hunt: it is stalked. A pointer that merely sits
+        // there is only watched.
+        let fidgeting = cursorWiggle > 1.8 && cursorNearFor > 0.6
+        guard config.pounceOnCursor, config.followCursor, cursorHunt == .none, distractable, t > nextCursorHuntAt,
+              interest > 0.5, fidgeting, d < Spider.huntRange * sc,
+              inBoxOrFree(cursor), chance(dt * 2.5) else { return }
+        beginCursorHunt()
+    }
+
+    /// Locks on: a freeze, then the stalk begins.
+    private func beginCursorHunt() {
+        cursorHunt = .stalking
+        cursorHuntSince = t
+        cursorPoised = false
+        cursorStalls = 0
+        cursorStalkLastPos = pos
+        cursorWiggle = 0
+        queued = nil
+        walkThen = nil
+        glance = 0
+        beginActivity(.look, dur: randRange(0.5, 0.9))
+        decisionIn = 0.05
+    }
+
+    /// The hunt is over, one way or another; the next may come after `nextIn`.
+    private func endCursorHunt(nextIn: CGFloat) {
+        cursorHunt = .none
+        cursorPoised = false
+        huntPounce = false
+        pounceMark = nil
+        nextCursorHuntAt = t + nextIn / lerp(0.6, 1.5, personality.playfulness)
+        cursorWiggle = 0
+        cursorNearFor = 0
+    }
+
+    /// The stalk, one decision at a time: creeps along its ledge to within a
+    /// spring of the pointer, gathers itself — poised, wiggling — and pounces.
+    private func stalkCursor() {
+        guard mode == .attached, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else {
+            endCursorHunt(nextIn: 10)
+            return
+        }
+        let sc = config.scale
+        let d = cursor - pos
+        let dist = d.length
+        // Gone off, or it has been at this too long: it gives up, puzzled.
+        if dist > 460 * sc || t - cursorHuntSince > 14 || !inBoxOrFree(cursor) || inCinema
+            || t - lastUserActivity > 6 {
+            endCursorHunt(nextIn: randRange(10, 20))
+            beginActivity(.look, dur: randRange(0.8, 1.5))
+            setEmote(.question, 1.1)
+            return
+        }
+        decisionIn = randRange(0.2, 0.5)
+        // Going nowhere (blocked, say): after a few tries it springs from here.
+        if pos.distance(to: cursorStalkLastPos) < 10 * sc { cursorStalls += 1 } else { cursorStalls = 0 }
+        cursorStalkLastPos = pos
+        let seg = loop.segs[anchor.segIdx]
+        let along = d.dot(seg.dir)
+        let dir: CGFloat = along >= 0 ? 1 : -1
+        let facingIt = along * walkDir >= 0 || abs(along) < 10 * sc
+        let inReach = abs(along) < 100 * sc && dist < 260 * sc && ballistic(from: pos, to: cursor) != nil
+
+        if inReach || cursorStalls >= 4 {
+            if !facingIt, cursorStalls < 4 {
+                // Close, but it is behind: round to face it, and no further.
+                turnTo(dir, then: .look, for: 0.15)
+                return
+            }
+            // Poised: the crouch with the pounce wiggle, and a beat to let
+            // the pointer settle — a while longer if it is dashing about,
+            // but not for ever.
+            let dashing = cursorVel.length > 300
+            if cursorStalls < 4, !cursorPoised || (dashing && t - cursorPoisedAt < 2.5) {
+                if !cursorPoised { cursorPoisedAt = t }
+                cursorPoised = true
+                pendingJump = nil
+                beginActivity(.crouch, dur: randRange(0.4, 0.7))
+                return
+            }
+            pounceAtCursor()
+            return
+        }
+        // Closing in: a sneak for the last stretch, a walk before that.
+        let style: Activity = abs(along) < 220 * sc ? .sneak : .walk
+        let speed = style == .sneak ? config.walkSpeed * 0.42 : config.walkSpeed
+        let want = max(abs(along) - 70 * sc, 20 * sc)
+        turnTo(dir, then: style, for: clamp(want / max(speed, 1) * 0.85, 0.35, 2.5))
+    }
+
+    /// Where a pounce goes: where the pointer is, give or take its fidgeting,
+    /// a touch ahead of its drift, and a touch beyond for the air it flies
+    /// through. Straight through the face of whatever it stands on if the
+    /// pointer is over that: it is drawn in front of everything, so a leap
+    /// onto the glass reads.
+    private func aimPounceAtCursor() {
+        var mark = cursorCentre + cursorVel.clampedLength(300) * 0.06
+        mark += (mark - pos) * 0.05
+        pounceMark = mark
+        pendingJump = mark
+        glassLeap = (mark - pos).dot(surfaceNormal) < 0
+    }
+
+    private func pounceAtCursor() {
+        lastPounceAt = t
+        cursorHunt = .pouncing
+        huntPounce = true
+        aimPounceAtCursor()
+        beginActivity(.crouch, dur: randRange(0.28, 0.42))
+    }
+
+    /// Got it! It hangs off the pointer by its front legs.
+    private func catchCursor() {
+        cursorHunt = .clinging
+        mode = .clinging
+        huntPounce = false
+        pounceMark = nil
+        pendingJump = nil
+        landing = nil
+        landingReach = 0
+        draglineCatchY = nil
+        airShot = nil
+        detachWeb(fade: true)
+        clingOffset0 = pos - cursor
+        clingBlend = 0
+        clingSwing = 0
+        clingSwingVel = clamp(vel.x * 0.004, -3, 3)
+        clingShake = 0
+        clingShakeSign = .zero
+        clingSince = t
+        clingFor = randRange(3.5, 7.0) * lerp(0.8, 1.3, personality.playfulness)
+        vel = .zero
+        speed = 0
+        legMode = .free
+        happy.velocity = 7
+        stretch.velocity = 4
+        setEmote(.sparkle, 0.9)
+        queued = nil
+        activity = .idle
+        activityTime = 0
+    }
+
+    /// Hanging off the pointer: mouth on the hotspot, body swinging below
+    /// it as a pendulum driven by the pointer's jerks. It holds on for a
+    /// while and drops away on a line; shaken hard back and forth, it is
+    /// flung off.
+    private func updateClinging(dt: CGFloat) {
+        let sc = config.scale
+        // The pointer has gone somewhere it cannot follow.
+        if !map.isOnScreen(cursor, slack: 20) || cursor.distance(to: pos) > 400 * sc || !inBoxOrFree(cursor) {
+            letGoOfCursor(flung: false)
+            return
+        }
+        // Shaking: each reversal of a quick back-and-forth loosens its grip.
+        let sx: CGFloat = cursorVel.x > 260 ? 1 : (cursorVel.x < -260 ? -1 : 0)
+        let sy: CGFloat = cursorVel.y > 260 ? 1 : (cursorVel.y < -260 ? -1 : 0)
+        if sx != 0, sx != clingShakeSign.x { if clingShakeSign.x != 0 { clingShake += 0.55; startled.velocity = 4 }; clingShakeSign.x = sx }
+        if sy != 0, sy != clingShakeSign.y { if clingShakeSign.y != 0 { clingShake += 0.55; startled.velocity = 4 }; clingShakeSign.y = sy }
+        clingShake = max(0, clingShake - dt * 0.9)
+        if clingShake > 1.6 {
+            letGoOfCursor(flung: true)
+            return
+        }
+        if t - clingSince > clingFor {
+            letGoOfCursor(flung: false)
+            return
+        }
+
+        // The pendulum: hung from the hotspot, swung by the pointer's
+        // sideways jerks, and given a shake of its own when it struggles.
+        let len = 30 * sc
+        let drive = clamp(cursorAcc.x, -9000, 9000)
+        var acc = -(1950 / len) * sin(clingSwing) * 0.55 - clingSwingVel * 2.8 - (drive / len) * cos(clingSwing) * 0.35
+        if clingShake > 0.5 { acc += sin(t * 23) * 40 * clingShake }
+        clingSwingVel += acc * dt
+        clingSwing += clingSwingVel * dt
+        clingSwing = clamp(clingSwing, -1.4, 1.4)
+        headingTarget = facing * .pi / 2 + clingSwing
+
+        // Mouth on the hotspot, from wherever it took hold.
+        clingBlend = approach(clingBlend, 1, 6, dt)
+        let hd = SpiderRenderer.head(for: look)
+        let mouth = V2((hd.c.x + hd.r * 0.55) * mirrorSign, hd.c.y - hd.r * 0.62).rotated(by: heading) * sc
+        let prev = pos
+        pos = cursor + V2.lerp(clingOffset0, -mouth, smoothstep(clingBlend))
+        if dt > 0 { vel = (pos - prev) / dt }
+
+        legMode = .free
+        stretch.step(to: 1.04 + clamp(clingShake, 0, 1.6) * 0.04, dt: dt)
+        crouch.step(to: 0, dt: dt)
+        lift.step(to: 0, dt: dt)
+        pitch.step(to: 0, dt: dt)
+        wag.step(to: clingShake > 0.5 ? 0.6 : 0.15, dt: dt)
+        lid.step(to: 0, dt: dt)
+        happy.value = max(happy.value, clingShake > 0.8 ? 0 : 0.5)
+    }
+
+    /// Off the pointer: flung, it flies with the pointer's motion and
+    /// catches itself on a line; otherwise it lets go and drops away on
+    /// one, pleased with itself.
+    private func letGoOfCursor(flung: Bool) {
+        endCursorHunt(nextIn: flung ? randRange(14, 26) : randRange(20, 45))
+        mode = .airborne
+        air = flung ? .thrown : .fall
+        airTime = 0
+        noAttachFor = 0.08
+        launchLoop = ""
+        legMode = .free
+        if flung {
+            vel = (cursorVel.clampedLength(1500) * 0.7 + V2(0, 120)).clampedLength(1600)
+            startled.velocity = 10
+            setEmote(.surprise, 0.7)
+        } else {
+            vel = cursorVel.clampedLength(300) * 0.3 + V2(0, -40)
+            happy.velocity = 8
+            setEmote(.hearts, 1.3)
+        }
+        if vel.length < Spider.hardThrow { planFall(from: nil, lineUp: true) }
+        stretch.velocity = -4
+    }
+
     // MARK: Beds
 
     /// Standing on the top edge of a window.
@@ -1114,6 +1714,8 @@ final class Spider {
 
     /// Puts a thought in a bubble over its head for a while.
     func think(_ th: Thought, for dur: CGFloat = 3.2) {
+        // No bubbles over a film.
+        guard !inCinema else { return }
         thought = th
         setEmote(.thought, dur)
         lastThought = t
@@ -1599,6 +2201,38 @@ final class Spider {
         }
     }
 
+    /// The surfaces were rebuilt in a different shape under it — a film has
+    /// started or finished, so the rim of the screen is a different set of
+    /// edges, or the displays were rearranged. It stays exactly where it
+    /// is: its anchor is read off the new map from where it is standing,
+    /// not carried over by index (an index that meant "the left wall" a
+    /// moment ago may mean "the floor" now). A short shift, such as the
+    /// menu bar sliding away from under it, it glides across; only if the
+    /// ground has really gone — a window now under the video — does it fall.
+    func surfacesRestructured() {
+        guard mode == .attached else { return }
+        // Still standing on the very same line: nothing to do.
+        if let p = map.worldPoint(anchor), p.distance(to: anchorPos) < 1 { return }
+        guard let spot = map.nearestSpot(to: anchorPos, within: 60 * config.scale) else {
+            detachAndFall()
+            return
+        }
+        // Keep walking the same way across the screen, whichever way the
+        // new edge happens to run.
+        let wasAlong = surfaceNormal.rotated(by: -.pi / 2)
+        if spot.seg.dir.dot(wasAlong) < 0 {
+            walkDir = -walkDir
+            facing = -facing
+            pendingDir = -pendingDir
+        }
+        anchor = spot.anchor
+        lastLoopRect = nil
+        stuckFor = 0
+        anchorValid = true
+        anchorGlide = 3
+        cinemaSeat = nil
+    }
+
     // MARK: Rescue
 
     /// Puts it in the air at `p`, whatever it was doing, with everything it
@@ -1619,6 +2253,7 @@ final class Spider {
         hurrying = false
         escapeUntil = 0
         occludedFor = 0
+        offScreenFor = 0
         if let c = caught {
             // Whatever it was eating comes along and is dropped loose.
             c.state = .loose
@@ -1912,7 +2547,9 @@ final class Spider {
     /// slung under a swing.
     private func silkAttachLocal() -> V2 {
         let ab = SpiderRenderer.abdomen(for: look)
-        if mode == .dangling {
+        // On a line, or shooting one in mid-air with its rear brought
+        // round to the mark: the spinnerets at the tip of the abdomen.
+        if mode == .dangling || (mode == .airborne && (airShot != nil || draglineCatchY != nil)) {
             return V2(ab.c.x - ab.rx + 3, ab.c.y)
         }
         return V2(ab.c.x, ab.c.y + ab.ry - 2)
@@ -1943,6 +2580,11 @@ final class Spider {
             webAlpha.stiffness = 120
             webAlpha.damping = 16
             rope.length = from.distance(to: attach) * 1.012 + 2
+            rope.tailPinned = true
+        } else if let shot = airShot, shot.progress > 0 {
+            let tip = V2.lerp(attach, shot.target, easeOutCubic(shot.progress))
+            head = tip
+            rope.length = tip.distance(to: attach) * 1.01
             rope.tailPinned = true
         } else if mode == .attached, activity == .shoot {
             let tip = V2.lerp(attach, shotTarget, easeOutCubic(shotProgress))
@@ -2001,16 +2643,35 @@ final class Spider {
             }
         } else if mode == .nesting {
             yaw = approach(yaw, facing, 6, dt)
+        } else if mode == .airborne, airShot != nil || draglineCatchY != nil {
+            // Side on for the shot and the line, so the twist reads.
+            yaw = approach(yaw, facing, 12, dt)
         } else if mode == .attached && (activity == .greet || activity == .stare) {
-            // Square on to you, the whole way round to the front view.
-            yaw = approach(yaw, facing * 0.02, 7, dt)
+            // Square on to you, all but the whole way round to the front
+            // view — not right on it, where the spring's overshoot would
+            // tip it over into the mirror image and back.
+            yawSpring(to: facing * 0.1, dt: dt)
         } else {
             // A glance turns it part-way toward you without changing which
-            // way it faces along the ledge.
-            let g = activity == .glance ? 0.62 : glance
-            yaw = approach(yaw, facing * (1 - g), 9, dt)
+            // way it faces along the ledge. (Only on a ledge: a glance it
+            // was in the middle of when it was picked up does not follow
+            // it into the air.)
+            let g = activity == .glance ? 0.62 : (mode == .attached ? glance : 0)
+            var target = facing * (1 - g)
+            // Interested, it turns toward the pointer instead — the whole
+            // way round if need be, on the same spring.
+            if mode == .attached { target = lerp(target, interestYawTarget, interest) }
+            yawSpring(to: target, dt: dt)
         }
+        if mode != .attached || activity == .turn { yawVel = 0 }
         if (yaw >= 0) != (before >= 0) {
+            // Come round past the front view after the pointer, not in a
+            // turn: it now faces the other way along the ledge, and stays
+            // that way when the pointer leaves.
+            if mode == .attached, activity != .turn {
+                facing = yaw >= 0 ? 1 : -1
+                walkDir = facing
+            }
             for i in legs.indices {
                 legs[i].foot.x = -legs[i].foot.x
                 legs[i].footVel.x = -legs[i].footVel.x
@@ -2034,11 +2695,34 @@ final class Spider {
                 (a.swingPh0, b.swingPh0) = (b.swingPh0, a.swingPh0)
                 legs[i] = a
                 legs[j] = b
+                if footWorld.count == legs.count, footWorldVel.count == legs.count {
+                    footWorld.swapAt(i, j)
+                    footWorldVel.swapAt(i, j)
+                }
+                if kneeWorld.count == legs.count, kneeWorldVel.count == legs.count {
+                    kneeWorld.swapAt(i, j)
+                    kneeWorldVel.swapAt(i, j)
+                }
+                // A mirrored knee bends the other way round its line.
+                if kneeShape.count == legs.count {
+                    let (ki, kj) = (kneeShape[i], kneeShape[j])
+                    kneeShape[i] = V2(kj.x, -kj.y)
+                    kneeShape[j] = V2(ki.x, -ki.y)
+                }
             }
         }
     }
 
     private var mirrorSign: CGFloat { yaw >= 0 ? 1 : -1 }
+
+    /// The body comes round toward or away from you on a spring — a
+    /// movement with a start and a finish — rather than the snap-and-settle
+    /// of a plain exponential.
+    private var yawVel: CGFloat = 0
+    private func yawSpring(to target: CGFloat, dt: CGFloat) {
+        yawVel += ((target - yaw) * 120 - yawVel * 19) * dt
+        yaw = clamp(yaw + yawVel * dt, -1, 1)
+    }
 
     /// Sprite-local units to world points, and back.
     private func toWorld(_ l: V2) -> V2 {
@@ -2073,26 +2757,43 @@ final class Spider {
         return toLocal(snapped)
     }
 
+    /// Puts a posed foot that is meant to be standing onto the real
+    /// surface. Gesture poses are laid out against the sprite's flat
+    /// ground line, which is not where the edge is round a corner, seen
+    /// front on looking at the pointer, or with the body lifted up on its
+    /// toes for a wave: the feet would hang in the air beside it. A foot
+    /// the pose leaves on the ground line goes onto the edge itself, so
+    /// the legs flex under the body instead of floating with it; a foot
+    /// the pose raises or tucks is left as it is, relative to the body.
+    private func groundPose(_ i: Int, _ target: V2) -> V2 {
+        guard mode == .attached, target.y <= legs[i].rest.y + 1.5 else { return target }
+        return groundFoot(target)
+    }
+
     private func trackCursorMotion(dt: CGFloat) {
         let d = cursor - prevCursor
         prevCursor = cursor
         if dt > 0 { cursorVel = approach(cursorVel, d / dt, 18, dt) }
 
         // Petting: quick back-and-forth right on top of the spider.
+        // Only a reversal made on top of it counts, at stroking pace: a
+        // pointer whipped across it and back from outside is not a pet.
         let near = cursor.distance(to: pos) < 40 * config.scale
-        if near && d.length > 1.2 {
+        if !near { lastPetSign = 0 }
+        if near && d.length > 1.2 && cursorVel.length < 700 * config.scale {
             let sign: CGFloat = d.x >= 0 ? 1 : -1
             if sign != lastPetSign {
+                if lastPetSign != 0 { pettingScore = min(pettingScore + 0.42, 1.6) }
                 lastPetSign = sign
-                pettingScore = min(pettingScore + 0.42, 1.6)
             }
         }
         pettingScore = max(0, pettingScore - dt * 0.55)
-        if pettingScore > 0.85 {
+        // (Not while it has the pointer marked as prey: that is not a pet.)
+        if pettingScore > 0.85, cursorHunt == .none {
             happy.value = max(happy.value, 0.85)
             if emote == .none { setEmote(.hearts, 1.0) }
-            if mode == .attached, activity != .wiggle, activity != .dance, chance(dt * 1.5) {
-                beginActivity(chance(0.6) ? .wiggle : .dance, dur: 0.9)
+            if mode == .attached, gestureReady, activity != .wiggle, activity != .dance, chance(dt * 1.5) {
+                beginActivity(chance(0.6) || lastGesture == .dance ? .wiggle : .dance, dur: 0.9)
             }
             wake()
         }
@@ -2106,6 +2807,9 @@ final class Spider {
             detachAndFall()
             return
         }
+
+        surfaceMotion = surfacePrev.map { here.pos - $0 } ?? .zero
+        surfacePrev = here.pos
 
         // Safety nets. A window that jumps a long way in one poll has gone
         // somewhere we cannot follow (another Space, another display), and a
@@ -2149,6 +2853,12 @@ final class Spider {
             if !hunting.contains(activity) { queued = nil; finishActivity() }
             else if [.walk, .sneak, .scurry].contains(activity), activityTime > 1.0 { activityDur = min(activityDur, activityTime) }
         }
+        // Stalking the pointer: the same, with the creep re-aimed often.
+        if cursorHunt == .stalking {
+            let stalking: Set<Activity> = [.walk, .sneak, .scurry, .look, .turn, .crouch, .idle, .startle, .shake, .stare]
+            if !stalking.contains(activity) { queued = nil; finishActivity() }
+            else if [.walk, .sneak].contains(activity), activityTime > 0.9 { activityDur = min(activityDur, activityTime) }
+        }
         if activityTime > activityDur { finishActivity() }
         if activity == .idle && decisionIn <= 0 { think() }
 
@@ -2159,7 +2869,17 @@ final class Spider {
         let onWindow = loop.kind == .windowEdge && activity != .peekaboo && !calmUnderCover
         let covered = onWindow && (map.seg(anchor).map { !$0.isOpen(at: anchor.t) } ?? true)
         let bodyCovered = onWindow && !map.isVisible(pos, depth: loop.depth)
-        if covered || bodyCovered || !map.isOnScreen(here.pos, slack: 20) {
+        // Carried off the screen by a window: no alarm. It carries on for a
+        // while — the window may well come back — and only then hauls
+        // itself back up into view.
+        let offScreen = !map.isOnScreen(here.pos, slack: 20)
+        if offScreen {
+            offScreenFor += dt
+            if offScreenFor > 10, ![.shoot, .crouch, .turn].contains(activity), pendingJump == nil { climbBackOnScreen() }
+        } else {
+            offScreenFor = 0
+        }
+        if !offScreen && (covered || bodyCovered) {
             occludedFor += dt
             if occludedFor > 0.05, t > escapeUntil { escapeOcclusion() }
         } else {
@@ -2169,8 +2889,35 @@ final class Spider {
         // Posture targets for whatever it is doing.
         let post = posture()
         targetSpeed = config.walkSpeed * post.speed * bout
-        lift.step(to: post.lift * config.scale, dt: dt)
-        pitch.step(to: post.pitch, dt: dt)
+        // Taken with the pointer: up on its toes, nose tipped toward it.
+        // (Not face on: there the feet are free of the ledge and would
+        // rise with it.)
+        if landDrop {
+            // Still coming down out of a landing: it falls on at its own
+            // speed until it reaches its legs, and then they have it —
+            // taking most of the blow, and giving under the rest.
+            lift.value += lift.velocity * dt
+            if lift.value <= 0 || t - landedAt > Spider.landHold {
+                lift.value = min(lift.value, 0)
+                lift.velocity *= Spider.landAbsorb
+                landDrop = false
+            }
+        } else {
+            lift.step(to: (post.lift + 1.6 * interest * SpiderRenderer.profileAmount(yaw: yaw)) * config.scale, dt: dt)
+        }
+        // The roll's ups and downs are the shape of the ball on the ledge,
+        // frame by frame; a spring would smooth the thump out of them.
+        if activity == .roll {
+            lift.value = approach(lift.value, post.lift * config.scale, 40, dt); lift.velocity = 0
+        } else if lift.value < -maxSink(tilt: angleDelta(here.tangent.angle, heading)) {
+            // However hard it comes down, the belly never goes into the
+            // ledge: the legs bottom out.
+            lift.value = -maxSink(tilt: angleDelta(here.tangent.angle, heading))
+            lift.velocity = max(lift.velocity, 0)
+        }
+        skid.step(to: 0, dt: dt)
+        skid.value = clamp(skid.value, -8 * config.scale, 8 * config.scale)
+        pitch.step(to: post.pitch + interestNose.value * 0.3, dt: dt)
         crouch.step(to: post.crouch, dt: dt)
         wag.step(to: post.wag, dt: dt)
         lid.step(to: post.lid, dt: dt)
@@ -2185,6 +2932,8 @@ final class Spider {
         let wantSpeed = targetSpeed * turnFactor
         let prevSpeed = speed
         speed = approach(speed, wantSpeed, wantSpeed > speed ? 5.5 : 11, dt)
+        // Rolling, the ground speed is the roll's own: no working up to it.
+        if activity == .roll { speed = config.walkSpeed * post.speed }
         inertia = approach(inertia, clamp((speed - prevSpeed) / max(dt, 0.001) * 0.00035, -0.09, 0.09), 14, dt)
 
         if speed > 0.5, let loop = map.loop(anchor.loopID) { advanceAlong(loop: loop, dt: dt) }
@@ -2204,7 +2953,7 @@ final class Spider {
         headingTarget = here.tangent.angle
         runNose = -0.05 * speedFrac - inertia
 
-        gaitPhase += speed / (boutStride * config.scale) * dt
+        gaitPhase += speed / (strideNow * config.scale) * dt
         if gaitPhase > 1 { gaitPhase -= gaitPhase.rounded(.down) }
 
         // Body follows the anchor with a little lag, so moving windows drag it.
@@ -2216,12 +2965,16 @@ final class Spider {
         // the direction of travel once a cycle. The planted feet stay put, so
         // the legs flex against it. Breathing when still.
         // One gentle rise per step (two steps a cycle), not a buzz.
-        let bobAmp = speedFrac * 1.0 * boutBob * config.scale
+        let bobAmp = speedFrac * 1.0 * boutBob * config.scale * (activity == .roll ? 0 : 1)
         let bob = sin(gaitPhase * 4 * .pi) * bobAmp * 0.5 + sin(gaitPhase * 2 * .pi) * bobAmp * 0.3
         let sway = cos(gaitPhase * 2 * .pi) * bobAmp * 0.3
         let breathe = bodyWobble.value(t * (activity == .sleep ? 0.6 : 1.0))
             * (activity == .sleep || activity == .rest ? 1.1 : 0.45) * config.scale
-        pos = anchorPos + here.normal * (bob + lift.value + breathe) + here.tangent * sway
+        // Interested, it leans along the ledge toward the pointer: the body
+        // shifts and the planted feet stay put.
+        let toward = clamp((cursor - pos).dot(here.tangent) / (90 * config.scale), -1, 1)
+        interestLean.step(to: toward * interest * 4 * config.scale * SpiderRenderer.profileAmount(yaw: yaw), dt: dt)
+        pos = anchorPos + here.normal * (bob + lift.value + breathe) + here.tangent * (sway + interestLean.value + skid.value)
 
         // Every so often it looks over at you — a three-quarter turn of the
         // body, briefly, even mid-walk.
@@ -2240,17 +2993,47 @@ final class Spider {
 
     // MARK: Posture
 
-    static let rollRadius: CGFloat = 16
-    static let rollFraction: CGFloat = 0.6
+    /// The balled-up body is not a true ball: an egg, a bit longer along
+    /// the ledge than it is tall, in sprite units. A rolling egg does not
+    /// keep a level middle — it climbs onto its long side and drops off it
+    /// again, twice a turn — and that lumpiness is what makes the roll
+    /// look like a body rather than a picture turning.
+    static let ballAlong: CGFloat = 20
+    static let ballAcross: CGFloat = 17
+    static let rollWindup: CGFloat = 0.25
+    static let rollFraction: CGFloat = 0.55
+    /// How far the push off its back legs lifts it, going into the ball.
+    static let rollHop: CGFloat = 9
+    /// How far it tips forward into the ball on that push, before it
+    /// touches down and the ground takes over the turning.
+    static let rollTip: CGFloat = 0.6
     /// The roll in three parts: 0 winding up, 1 rolling, 2 landing out of
     /// it — and how far through that part it is.
     private func rollPhase() -> (phase: Int, v: CGFloat) {
         let u = activityDur > 0 ? clamp(activityTime / activityDur, 0, 1) : 1
-        let windup: CGFloat = 0.22
+        let windup = Spider.rollWindup
         let roll = Spider.rollFraction
         if u < windup { return (0, u / windup) }
         if u < windup + roll { return (1, (u - windup) / roll) }
         return (2, (u - windup - roll) / max(1 - windup - roll, 0.01))
+    }
+    /// How high the ball's middle sits off the ledge, turned by `spin`
+    /// (0 = upright, long side down): the egg's radius toward the ground.
+    private static func ballHeight(spin: CGFloat) -> CGFloat {
+        let sn = sin(spin), cs = cos(spin)
+        return ((ballAlong * sn) * (ballAlong * sn) + (ballAcross * cs) * (ballAcross * cs)).squareRoot()
+    }
+    /// The lift that puts the ball, turned by `spin`, down on the ledge.
+    private static func ballLift(spin: CGFloat) -> CGFloat {
+        ballHeight(spin: spin) + SpiderRenderer.ground - SpiderRenderer.ballCentre.y
+    }
+    /// Ground speed at the start of the roll, in points a second: a linear
+    /// run-down from here covers the one turn the roll takes.
+    private var rollPeakSpeed: CGFloat {
+        let turn = 2 * .pi - Spider.rollTip
+        let r = (Spider.ballAlong + Spider.ballAcross) / 2 * config.scale
+        // ∫₀¹ (1 - 0.85v) dv = 0.575
+        return turn * r / (0.575 * Spider.rollFraction * max(activityDur, 0.3))
     }
 
     private struct Posture {
@@ -2287,12 +3070,14 @@ final class Spider {
             case .tiptoe: p.lift = 3.5; p.speed *= 0.8
             case .lumber: p.lift = -1.5; p.speed *= 0.7; p.wag = 0.5
             }
+            // Off to its seat for the film: a slow crawl, no hurry.
+            if inCinema { p.speed *= Spider.cinemaPace }
         case .sneak:
             p.speed = 0.42
             p.crouch = 0.4
             p.pitch = -0.08
         case .scurry:
-            p.speed = 2.6
+            p.speed = 1.9
             p.pitch = -0.12
         case .look:
             p.lift = 1.5
@@ -2369,24 +3154,36 @@ final class Spider {
             // ledge, the ball actually turning with the ground it covers,
             // and lands out of it with a squash before the feet come down.
             let r = rollPhase()
+            let peak = rollPeakSpeed / max(config.walkSpeed, 1)
             switch r.phase {
             case 0:
-                p.crouch = 0.55 * r.v
-                p.pitch = 0.2 * r.v
-                p.lift = -2 * r.v
-                p.legsFree = false
+                // Sinks and rocks back, drawing its legs in from the back
+                // pair forward; then, at the last, a shove off the back
+                // legs that pitches it up and forward into the ball.
+                let sink = smoothstep(min(r.v / 0.65, 1))
+                let push = max(0, (r.v - 0.65) / 0.35)
+                p.crouch = 0.6 * sink
+                p.pitch = 0.22 * sink
+                p.lift = -3 * sink + Spider.rollHop * push * push
+                p.speed = peak * push * push
+                p.legsFree = r.v > 0.3
             case 1:
-                // Balled up, its middle sits one radius off the ledge.
-                p.lift = -4
+                // Comes down out of the hop onto the ledge, and from then on
+                // sits on it — the egg riding up and down as it turns —
+                // running down as it goes, as anything rolling does.
+                let ground = Spider.ballLift(spin: rollSpin)
+                let fall = min(r.v / 0.15, 1)
+                p.lift = lerp(Spider.rollHop, ground, fall * fall)
+                p.speed = peak * (1 - 0.85 * r.v)
                 p.legsFree = true
-                // A bell of speed that covers one circumference in the roll.
-                let circumference = 2 * .pi * Spider.rollRadius * config.scale
-                let peak = (.pi / 2) * circumference / (Spider.rollFraction * max(activityDur, 0.3)) * 1.12
-                p.speed = peak / max(config.walkSpeed, 1) * sin(r.v * .pi)
             default:
-                p.lift = -4 + 4 * r.v
-                p.crouch = 0.4 * (1 - r.v)
-                p.legsFree = false
+                // Sits a beat where it stopped while the legs come out,
+                // then comes up onto them with a bit of a spring in it.
+                let up = easeOutBack(max(0, (r.v - 0.15) / 0.85), 1.4)
+                p.lift = lerp(Spider.ballLift(spin: rollSpin), 0, up)
+                p.crouch = 0.5 * (1 - r.v)
+                p.speed = peak * 0.15 * (1 - min(r.v / 0.35, 1))
+                p.legsFree = r.v < 0.7
             }
         case .dance:
             p.lift = 1.5 + abs(sin(u * .pi * 6)) * 3
@@ -2496,7 +3293,11 @@ final class Spider {
             headingVel += sin(activityTime * 62) * 6 * decay
             wag.value = decay * 1.2
         case .crouch:
-            if activityTime > activityDur { launchPendingJump() }
+            if activityTime > activityDur {
+                // A pounce at the pointer is aimed where the pointer is now.
+                if cursorHunt == .pouncing, pendingJump != nil { aimPounceAtCursor() }
+                launchPendingJump()
+            }
         case .shoot:
             // The line races out to its mark, then it lets go of the ledge.
             shotProgress = clamp(activityTime / max(activityDur - 0.05, 0.05), 0, 1)
@@ -2518,12 +3319,24 @@ final class Spider {
             let r = rollPhase()
             switch r.phase {
             case 0:
-                rollSpin = 0
+                // Tips forward into the ball on the push off.
+                let push = max(0, (r.v - 0.65) / 0.35)
+                rollSpin = -Spider.rollTip * push * push
                 rollTravel = 0
                 rollLanded = false
+                rollTouched = false
             case 1:
+                // Down out of the hop onto the ledge with a thump.
+                if !rollTouched, r.v >= 0.15 {
+                    rollTouched = true
+                    fatten.velocity = -4
+                    stretch.velocity = 2.5
+                }
+                // Turns with the ground it covers, about whatever radius of
+                // the egg is down at the moment: fast over its short side,
+                // slower over the long.
                 rollTravel += speed * dt
-                rollSpin = -min(rollTravel / (Spider.rollRadius * config.scale), 2 * .pi)
+                rollSpin = max(rollSpin - speed * dt / (Spider.ballHeight(spin: rollSpin) * config.scale), -2 * .pi)
                 rollSpinEnd = rollSpin
             default:
                 rollSpin = lerp(rollSpinEnd, -2 * .pi, smoothstep(r.v))
@@ -2584,10 +3397,23 @@ final class Spider {
 
     private func beginActivity(_ a: Activity, dur: CGFloat) {
         if a != .peekaboo { peek = nil; peekPace = 0 }
+        // The Z's belong to the sleep: when it ends — however it ends —
+        // the last of them fade out at once rather than following it about.
+        if activity == .sleep, a != .sleep, emote == .zzz {
+            emoteDur = 0.8
+            emoteTime = 0.6
+        }
         activity = a
         activityTime = 0
         activityDur = dur
         turned = false
+        activityStarted = t
+        if Spider.gestures.contains(a) {
+            lastGestureAt = t
+            lastGesture = a
+            gestureGap = randRange(10, 18) * lerp(1.25, 0.8, personality.playfulness)
+        }
+        for i in legs.indices { legs[i].poseFrom = legs[i].foot }
         if a == .turn {
             turnFromYaw = yaw == 0 ? 0.01 : yaw
             turnGait = 0
@@ -2600,7 +3426,7 @@ final class Spider {
         if a == .walk {
             // A first pause a little way in, on longer walks; none on a
             // short one, and none when it is going somewhere on purpose.
-            let purposeful = huntTarget != nil || laser != nil || homing != nil || build != nil || inCinema || t < bedBoundUntil || (confined && !inBox)
+            let purposeful = huntTarget != nil || laser != nil || homing != nil || build != nil || inCinema || t < bedBoundUntil || (confined && !inBox) || cursorHunt != .none
             walkPauseAt = (dur > 2.2 && !purposeful && chance(0.7)) ? randRange(0.7, 1.6) : 99
             walkPauseFor = randRange(0.25, 0.7)
         }
@@ -2716,7 +3542,8 @@ final class Spider {
             // Furthest it can go on this edge before something in front of the
             // edge — or the end of it — stops it. Playing peek-a-boo it goes
             // behind the window on purpose.
-            let lim = activity == .peekaboo ? (walkDir > 0 ? seg.len : 0) : seg.limit(from: anchor.t, dir: walkDir)
+            let through = activity == .peekaboo || (t < escapeScurryUntil && activity == .scurry)
+            let lim = through ? (walkDir > 0 ? seg.len : 0) : seg.limit(from: anchor.t, dir: walkDir)
             let room = walkDir > 0 ? lim - anchor.t : anchor.t - lim
             if remaining <= room {
                 anchor.t += walkDir * remaining
@@ -2740,7 +3567,7 @@ final class Spider {
             let wrapped = (nextIdx + n) % n
             let next = loop.segs[wrapped]
             let entryT: CGFloat = walkDir > 0 ? 0 : next.len
-            guard next.isOpen(at: entryT + (walkDir > 0 ? 0.5 : -0.5)) else {
+            guard through || next.isOpen(at: entryT + (walkDir > 0 ? 0.5 : -0.5)) else {
                 reachedEnd = true
                 speed = 0
                 break
@@ -2755,39 +3582,16 @@ final class Spider {
     // MARK: Cursor reactions
 
     private func reactToCursor(dt: CGFloat) {
-        guard config.followCursor, !inCinema else { return }
+        guard config.followCursor, !inCinema, cursorHunt == .none else { return }
         let d = cursor.distance(to: pos)
         let busy = [.startle, .crouch, .turn, .sleep, .curious, .stretch, .shake, .roll, .spin, .armsUp, .shoot].contains(activity)
 
-        // A quick swipe not far off: a small nervous hop, "!!" — nothing
-        // more; it does not run.
-        if !busy && d < 150 * config.scale && cursorVel.length > 520 && t - lastHop > 1.8
-            && (activity == .idle || activity == .look || activity == .walk || activity == .rest || activity == .stare || activity == .groom) {
-            lastHop = t
-            beginActivity(.hop, dur: 0.42)
-            queued = nil
-            setEmote(.exclaim, 0.7)
-            startled.velocity = 4
-            return
-        }
-
-        // The pointer whipped right across it: properly startled. A brave
-        // spider takes more startling, and stands its ground when it is.
-        let brave = personality.bravery
-        let startleSpeed = lerp(900, 2200, brave)
-        let startleRange = lerp(34, 22, brave) * config.scale
-        if !busy && startled.value < 0.2 && d < startleRange && cursorVel.length > startleSpeed {
-            beginActivity(.startle, dur: 0.5)
-            queued = nil
-            startled.velocity = 13
-            setEmote(.surprise, 0.6)
-            if chance(lerp(0.9, 0.15, brave)) { fleeFromCursor() }
-            return
-        }
+        // A pointer swept past it, however fast, gets no start out of it: no
+        // nervous hop, no "!" — it is only ever curious about the pointer.
 
         // A pointer hovering close by is interesting.
         let curiousGap = lerp(20, 4, personality.curiosity)
-        if !busy && d < 110 * config.scale && d > 36 * config.scale && cursorVel.length < 60
+        if !busy && gestureReady && d < 110 * config.scale && d > 36 * config.scale && cursorVel.length < 60
             && t - lastCurious > curiousGap && (activity == .idle || activity == .look || activity == .walk) {
             lastCurious = t
             if chance(lerp(0.2, 0.5, personality.affection)) {
@@ -2821,23 +3625,42 @@ final class Spider {
             if build != nil { abandonBuild(); hammock = nil }
             decisionIn = randRange(2.5, 6.0)
             let watching = t - cinemaSince
-            // Its seat: the nearest corner of the floor (or the ceiling),
-            // picked once; it walks there before it settles, and faces the
-            // picture — the middle of the screen — once it is there.
+            // Its seat, picked once: whichever is nearest of the four
+            // corners of the screen — a little in from the corner, on the
+            // floor or the ceiling — and the door of its hammock, if it has
+            // one finished. It crawls there along the rim, up or down, and
+            // faces the picture — the middle of the screen — once it is
+            // there.
             let f = map.screenFrame(containing: pos)
-            if cinemaSeat == nil, let loop = map.loop(anchor.loopID), let seg = loop.segs.first {
-                // A little short of the very end, so it can be reached
-                // without running into it.
-                let ends = [seg.a + seg.dir * 24, seg.b - seg.dir * 24]
-                cinemaSeat = ends.min { $0.distance(to: pos) < $1.distance(to: pos) }
+            if cinemaSeat == nil, let loop = map.loop(anchor.loopID) {
+                var seats: [(V2, Bool)] = []
+                for s in loop.segs where s.facing == .up || s.facing == .down {
+                    seats.append((s.a + s.dir * 24, false))
+                    seats.append((s.b - s.dir * 24, false))
+                }
+                if let h = hammock, h.progress >= 1, f.intersects(h.rect) { seats.append((hammockDoor(h), true)) }
+                if let seat = seats.min(by: { $0.0.distance(to: pos) < $1.0.distance(to: pos) }) {
+                    cinemaSeat = seat.0
+                    cinemaSeatIsNest = seat.1
+                }
+            }
+            if let seat = cinemaSeat, cinemaSeatIsNest, hammock?.progress ?? 0 >= 1 {
+                if pos.distance(to: seat) < 40 * config.scale {
+                    enterNest()
+                } else {
+                    walkToward(seat)
+                    activityDur = max(activityDur, 3.5)
+                }
+                return
             }
             if let seat = cinemaSeat, pos.distance(to: seat) > 34 * config.scale {
                 walkToward(seat)
                 // Never overshoot: the walk ends when it gets there.
-                activityDur = min(activityDur, max(pos.distance(to: seat) / max(config.walkSpeed * 0.9, 1), 0.4))
+                activityDur = min(activityDur, max(pos.distance(to: seat) / max(config.walkSpeed * Spider.cinemaPace * 0.9, 1), 0.4))
                 return
             }
-            if let seat = cinemaSeat, let loop = map.loop(anchor.loopID), let seg = loop.segs.first {
+            if let seat = cinemaSeat, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count {
+                let seg = loop.segs[anchor.segIdx]
                 let towardMiddle: CGFloat = (V2(f.midX, f.midY) - seat).dot(seg.dir) >= 0 ? 1 : -1
                 if walkDir != towardMiddle {
                     turnTo(towardMiddle, then: .watch, for: randRange(5, 12))
@@ -2877,6 +3700,11 @@ final class Spider {
             chaseLaser(dot)
             return
         }
+        // On the pointer's trail.
+        if cursorHunt == .stalking {
+            stalkCursor()
+            return
+        }
 
         // Strayed out of its patch: back in first.
         if confined, !inBox {
@@ -2901,7 +3729,8 @@ final class Spider {
         // Left alone, it settles down and eventually nods off. The lazy ones
         // do not wait to be left alone — and if it has a hammock, that is
         // where it goes.
-        if idleFor > lerp(120, 20, P.laziness), chance(lerp(0.1, 0.6, P.laziness)) {
+        if idleFor > lerp(120, 20, P.laziness) || habits.sleep >= 0.995,
+           chance(min(1, lerp(0.1, 0.6, P.laziness) * hw(\.sleep))) {
             if let h = hammock, h.progress >= 1, chance(0.7) {
                 goHome(.sleep)
                 return
@@ -2929,9 +3758,10 @@ final class Spider {
             return
         }
 
-        if config.followCursor, dCursor < 340, inBoxOrFree(cursor), chance(lerp(0.1, 0.65, P.curiosity)) {
-            // Investigate the pointer.
-            if dCursor > 70 {
+        if config.followCursor, dCursor < 340, inBoxOrFree(cursor), chance(min(1, lerp(0.1, 0.65, P.curiosity) * hw(\.approach))) {
+            // Investigate the pointer — from where it stands, if it is
+            // already close enough to have its attention.
+            if dCursor > 70, interest < 0.5 {
                 walkToward(cursor)
             } else {
                 beginActivity(.look, dur: randRange(0.8, 2.0))
@@ -2942,7 +3772,8 @@ final class Spider {
         // Someone is about and there is a window edge to hide behind nearby:
         // peek-a-boo, now and then (or as soon as it can if it was asked to).
         let asked = t < wantsPeekabooUntil
-        if asked || (config.followCursor && dCursor < 520 && t - lastUserActivity < 20 && chance(lerp(0.03, 0.14, P.playfulness))) {
+        if asked || (config.followCursor && dCursor < 520 && t - lastUserActivity < 20
+                     && chance(min(1, lerp(0.03, 0.14, P.playfulness) * hw(\.peekaboo)))) {
             if startPeekaboo(reach: asked ? 600 : 260) { wantsPeekabooUntil = -1; return }
             if asked { goHideSomewhere() ; return }
         }
@@ -2959,7 +3790,23 @@ final class Spider {
         let lazy = lerp(0.3, 2.4, P.laziness) / chill
         let busy = lerp(0.5, 1.6, P.energy) * chill
         var options: [(CGFloat, () -> Void)] = []
-        options.append((30 * busy, {
+        if interest > 0.5 {
+            // The pointer has its attention: it stays on it — watching,
+            // craning, a greeting or the arms up now and then — and none of
+            // the drumming, dancing and wandering off it gets up to alone.
+            decisionIn = randRange(1.6, 3.2)
+            options.append((10 * hw(\.look), { self.beginActivity(.look, dur: randRange(1.4, 3.0)) }))
+            options.append((6 * lerp(0.6, 1.4, P.curiosity) * hw(\.stare), { self.beginActivity(.stare, dur: randRange(2.5, 5)) }))
+            options.append((5 * lerp(0.5, 1.5, P.curiosity) * hw(\.curious) * gestureWeight(.curious), { self.beginActivity(.curious, dur: randRange(1.2, 2.2)) }))
+            options.append((4 * love * hw(\.greet) * gestureWeight(.greet), { self.beginActivity(.greet, dur: randRange(1.6, 2.4)); self.happy.velocity = 4 }))
+            options.append((3 * play * hw(\.armsUp) * gestureWeight(.armsUp), { self.beginActivity(.armsUp, dur: randRange(0.9, 1.4)) }))
+            options.append((2 * love * hw(\.wave) * gestureWeight(.wave), { self.beginActivity(.wave, dur: 1.5); self.happy.velocity = 4 }))
+            options.append((3 * hw(\.fidget), { self.beginActivity(.fidget, dur: randRange(0.7, 1.2)) }))
+            options.append((2 * hw(\.peer), { self.beginActivity(.peer, dur: randRange(1.0, 1.6)) }))
+            draw(options)
+            return
+        }
+        options.append((30 * busy * hw(\.wander), {
             let dir: CGFloat = chance(0.7) ? self.walkDir : -self.walkDir
             let sneaky = lerp(0.3, 0.05, P.bravery)
             let hurried = lerp(0.04, 0.22, P.energy)
@@ -2977,68 +3824,68 @@ final class Spider {
                 if let f = follow { self.walkThen = f } else { self.walkThen = nil }
             }
         }))
-        options.append((10, { self.beginActivity(.look, dur: randRange(0.7, 2.2)) }))
-        options.append((6 * lazy, { self.beginActivity(.rest, dur: randRange(3, 8)) }))
-        options.append((6, { self.beginActivity(.groom, dur: randRange(1.4, 2.8)) }))
-        options.append((6 * (0.5 + busy * 0.5), { self.beginActivity(.fidget, dur: randRange(0.7, 1.2)) }))
-        options.append((4, { self.beginActivity(.scratch, dur: randRange(1.0, 1.6)) }))
-        options.append((2 * love, {
+        options.append((10 * hw(\.look), { self.beginActivity(.look, dur: randRange(0.7, 2.2)) }))
+        options.append((6 * lazy * hw(\.rest), { self.beginActivity(.rest, dur: randRange(3, 8)) }))
+        options.append((6 * hw(\.groom), { self.beginActivity(.groom, dur: randRange(1.4, 2.8)) }))
+        options.append((6 * (0.5 + busy * 0.5) * hw(\.fidget), { self.beginActivity(.fidget, dur: randRange(0.7, 1.2)) }))
+        options.append((4 * hw(\.scratch), { self.beginActivity(.scratch, dur: randRange(1.0, 1.6)) }))
+        options.append((2 * love * hw(\.wave) * gestureWeight(.wave), {
             self.beginActivity(.wave, dur: 1.5)
             self.happy.velocity = 4
         }))
-        options.append((2 * play, { self.beginActivity(.wiggle, dur: 0.8) }))
-        options.append((3 * love, { self.beginActivity(.glance, dur: randRange(0.8, 1.6)) }))
+        options.append((2 * play * hw(\.wiggle) * gestureWeight(.wiggle), { self.beginActivity(.wiggle, dur: 0.8) }))
+        options.append((3 * love * hw(\.glance), { self.beginActivity(.glance, dur: randRange(0.8, 1.6)) }))
         if config.followCursor, dCursor < 520, t - lastUserActivity < 30 {
-            options.append((3 * love, {
+            options.append((3 * love * hw(\.greet) * gestureWeight(.greet), {
                 self.beginActivity(.greet, dur: randRange(1.8, 2.6))
                 if chance(0.5) { self.setEmote(.hearts, 1.0) }
             }))
         }
         // Sitting still, turned to face you, just watching.
         if config.followCursor, dCursor < 560, t - lastUserActivity < 40 {
-            options.append((3 * love * lerp(0.6, 1.4, P.curiosity), {
+            options.append((3 * love * lerp(0.6, 1.4, P.curiosity) * hw(\.stare), {
                 self.beginActivity(.stare, dur: randRange(3, 7))
             }))
         }
         // A thought, now and then.
-        options.append((4 * lerp(0.5, 1.5, P.curiosity), { self.museIfSoMoved(); if self.emote == .none { self.beginActivity(.look, dur: randRange(0.6, 1.2)) } }))
+        options.append((4 * lerp(0.5, 1.5, P.curiosity) * hw(\.muse), { self.museIfSoMoved(); if self.emote == .none { self.beginActivity(.look, dur: randRange(0.6, 1.2)) } }))
 
         // Drumming on whatever it is standing on, the way a jumping spider
         // signals: a few bursts of quick taps with its front legs.
-        options.append((2.5 * play * lerp(0.6, 1.4, P.energy), {
+        options.append((2.5 * play * lerp(0.6, 1.4, P.energy) * hw(\.drum), {
             self.beginActivity(.drum, dur: randRange(2.9, 5.8))
             self.setEmote(.note, 1.4)
         }))
-        options.append((3 * lerp(0.4, 1.8, P.curiosity), { self.beginActivity(.peer, dur: randRange(1.2, 2.0)) }))
-        options.append((2.5 * lerp(0.5, 1.5, (P.affection + P.bravery) / 2), {
+        options.append((3 * lerp(0.4, 1.8, P.curiosity) * hw(\.peer), { self.beginActivity(.peer, dur: randRange(1.2, 2.0)) }))
+        options.append((2.5 * lerp(0.5, 1.5, (P.affection + P.bravery) / 2) * hw(\.armsUp) * gestureWeight(.armsUp), {
             self.beginActivity(.armsUp, dur: randRange(0.9, 1.5))
             if chance(0.5) { self.setEmote(.sparkle, 0.9) }
         }))
-        options.append((2 * play, {
-            self.beginActivity(.roll, dur: randRange(0.8, 1.1))
+        options.append((2 * play * hw(\.roll), {
+            self.beginActivity(.roll, dur: randRange(1.5, 1.9))
             self.queue(.shake, 0.45)
         }))
-        options.append((1.5 * play, {
+        options.append((1.5 * play * hw(\.dance) * gestureWeight(.dance), {
             self.beginActivity(.dance, dur: randRange(1.2, 2.0))
             self.setEmote(.note, 1.4)
         }))
-        options.append((1.5 * busy, { self.beginActivity(.pushup, dur: randRange(1.2, 1.8)) }))
-        options.append((1.5 * (0.5 + lazy * 0.5), { self.beginActivity(.legStretch, dur: 1.6) }))
-        options.append((1 * play, { self.beginActivity(.spin, dur: 0.1) }))
-        options.append((2, { self.turnTo(-self.walkDir, then: .look, for: randRange(0.6, 1.4)) }))
+        options.append((1.5 * busy * hw(\.pushup), { self.beginActivity(.pushup, dur: randRange(1.2, 1.8)) }))
+        options.append((1.5 * (0.5 + lazy * 0.5) * hw(\.stretch), { self.beginActivity(.legStretch, dur: 1.6) }))
+        options.append((1 * play * hw(\.spin), { self.beginActivity(.spin, dur: 0.1) }))
+        options.append((2 * hw(\.look), { self.turnTo(-self.walkDir, then: .look, for: randRange(0.6, 1.4)) }))
         if surfaceNormal.y < -0.5 {
             // Hanging under something is no place to linger: let go and
             // drop onto whatever is below.
             options.append((14, { if !self.dropOffUnderside() { self.turnTo(-self.walkDir, then: .walk, for: randRange(1.2, 3.0)) } }))
         }
-        options.append((8 * lerp(0.15, 2.0, self.gait.jumpiness) * chill, {
+        options.append((8 * hw(\.leap) * chill, {
             if let spot = self.bestJumpSpot(from: self.pos, exclude: self.anchor.loopID) {
                 self.startJump(to: spot.point)
             } else {
                 self.turnTo(chance(0.5) ? 1 : -1, then: .walk, for: randRange(1.2, 3.0))
             }
         }))
-        options.append((8 * lerp(0.1, 2.0, self.gait.webbiness) * chill, {
+        options.append((8 * hw(\.rappel) * chill, {
             if self.config.webs, self.canRappel() {
                 self.dropOnWeb()
             } else {
@@ -3048,32 +3895,43 @@ final class Spider {
         // Swinging off on a line, if there is something up ahead to hang it
         // from — not in a box, where there is no room for it.
         if !confined {
-            options.append((7 * lerp(0.1, 2.2, self.gait.webbiness) * lerp(0.6, 1.4, P.playfulness), {
+            options.append((7 * hw(\.swing) * lerp(0.6, 1.4, P.playfulness), {
                 if self.config.webs, self.startSwing() { return }
                 self.beginActivity(.look, dur: randRange(0.6, 1.2))
             }))
         }
         // Spinning a retreat, once, when it has been about for a while.
-        if config.webs, hammock == nil, t > 45, !confined {
-            options.append((1.6 * lerp(0.3, 1.8, self.gait.webbiness) * lerp(0.6, 1.6, P.laziness), {
+        if config.hammocks, hammock == nil, t > 45, !confined {
+            options.append((1.6 * hw(\.hammock) * lerp(0.6, 1.6, P.laziness), {
                 self.goHome(.build)
             }))
         }
         if let h = hammock, h.progress >= 1, !confined {
-            options.append((1.5 * lerp(0.2, 2.5, P.laziness), { self.goHome(.sleep) }))
+            options.append((1.5 * lerp(0.2, 2.5, P.laziness) * hw(\.nap), { self.goHome(.sleep) }))
         }
         // A hammock left half-spun: back to finish it, before long.
-        if let h = hammock, h.progress < 1, config.webs, !confined {
-            options.append((12, { self.goHome(.build) }))
+        if let h = hammock, h.progress < 1, config.hammocks, !confined {
+            options.append((12 * hw(\.hammock), { self.goHome(.build) }))
         }
+        draw(options)
+    }
 
-        let total = options.reduce(0) { $0 + $1.0 }
+    /// The multiplier one of its habit dials puts on a weight.
+    private func hw(_ habit: KeyPath<Habits, CGFloat>) -> CGFloat { Habits.weight(habits[keyPath: habit]) }
+
+    /// One weighted draw from what it could do. Things dialled down to
+    /// never are not in the hat at all; with nothing left in it, it just
+    /// stands there until the next thought.
+    private func draw(_ options: [(CGFloat, () -> Void)]) {
+        let live = options.filter { $0.0 > 0 }
+        guard !live.isEmpty else { return }
+        let total = live.reduce(0) { $0 + $1.0 }
         var pick = randRange(0, total)
-        for (w, act) in options {
+        for (w, act) in live {
             pick -= w
             if pick <= 0 { act(); return }
         }
-        options.last?.1()
+        live.last?.1()
     }
 
     /// On its own it only pays out silk from something it is hanging under; if
@@ -3094,22 +3952,12 @@ final class Spider {
         turnTo(dir, then: .walk, for: clamp(abs(along) / max(config.walkSpeed, 1), 0.5, 4.5))
     }
 
-    private func fleeFromCursor() {
-        guard let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return }
-        let seg = loop.segs[anchor.segIdx]
-        let away = (pos - cursor).dot(seg.dir)
-        let dir: CGFloat = away >= 0 ? 1 : -1
-        // No time for a tidy turn when scared: spin round and go.
-        if dir != walkDir {
-            walkDir = dir
-            facing = dir
-        }
-        queue(.scurry, randRange(0.5, 1.1))
-    }
-
-    /// A window has come over it: get out from under, at once. It fires a
-    /// line straight up and climbs to whatever is above, or simply lets go
-    /// and drops; failing both, it leaps for the nearest clear spot.
+    /// A window has come over it: get out from under, at once. If the open
+    /// part of the edge it is on is close, it scurries there along the
+    /// edge — the natural thing, and no drama. Otherwise it fires a line
+    /// straight up and climbs to whatever is above, or simply lets go and
+    /// drops on its dragline; failing all of those, it leaps for the
+    /// nearest clear spot.
     private func escapeOcclusion() {
         abandonBuild()
         occludedFor = 0
@@ -3119,6 +3967,18 @@ final class Spider {
         wake()
         startled.velocity = 6
         setEmote(.surprise, 0.5)
+        if let (dir, dist) = openStretchAlongEdge(within: 220 * config.scale) {
+            walkThen = nil
+            if dir != walkDir {
+                walkDir = dir
+                facing = dir
+            }
+            let dur = clamp(dist / max(config.walkSpeed * 2.0, 1) + 0.25, 0.4, 2.0)
+            escapeScurryUntil = t + dur + 0.4
+            escapeUntil = t + dur + 0.6
+            beginActivity(.scurry, dur: dur)
+            return
+        }
         let screen = map.screenFrame(containing: pos)
         let roomBelow = pos.y - screen.minY > 70
         let ceiling = config.webs && !inCinema ? map.ceiling(above: pos, maxRise: 900) : nil
@@ -3139,6 +3999,77 @@ final class Spider {
         } else {
             detachAndFall()
         }
+    }
+
+    /// Off the screen, and still off it after a good while: a line straight
+    /// up to the nearest thing on screen above it — the top of the screen
+    /// if nothing else — and a haul back up it. Off the side, the line goes
+    /// up to the screen's edge and it swings in under it. Without silk, it
+    /// leaps for the nearest spot on screen instead.
+    private func climbBackOnScreen() {
+        offScreenFor = 0
+        abandonBuild()
+        queued = nil
+        pendingJump = nil
+        walkThen = nil
+        wake()
+        let screen = map.screenFrame(containing: pos)
+        let x = clamp(pos.x, screen.minX + 24, screen.maxX - 24)
+        if config.webs {
+            let top = V2(x, (map.menuBarBottom(for: screen) ?? screen.maxY) - 4)
+            var target = map.ceiling(above: V2(x, pos.y), maxRise: 4000) ?? top
+            if !map.isOnScreen(target, slack: -4) || target.y <= pos.y + 30 { target = top }
+            if target.y > pos.y + 30 {
+                shotTarget = target
+                shotPurpose = .climb
+                shotProgress = 0
+                beginActivity(.shoot, dur: 0.25)
+                return
+            }
+        }
+        if let spot = map.nearestSpot(to: V2(x, clamp(pos.y, screen.minY + 24, screen.maxY - 24)), within: 1200, excluding: anchor.loopID) {
+            startJump(to: spot.point)
+        } else {
+            detachAndFall()
+        }
+    }
+
+    /// The nearest stretch of the edge it is on that is out in the open —
+    /// clear of the covered part by a body's width — as a direction along
+    /// the edge and the distance to it, if there is one within `limit`.
+    private func openStretchAlongEdge(within limit: CGFloat) -> (dir: CGFloat, dist: CGFloat)? {
+        guard let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return nil }
+        let n = loop.segs.count
+        let clear = 26 * config.scale
+        var best: (dir: CGFloat, dist: CGFloat)?
+        for dir: CGFloat in [walkDir, -walkDir] {
+            var idx = anchor.segIdx
+            var t = anchor.t
+            var travelled: CGFloat = 0
+            var openRun: CGFloat = 0
+            scan: while travelled < limit {
+                let seg = loop.segs[idx]
+                let step: CGFloat = 6
+                let end = dir > 0 ? seg.len : 0
+                while dir > 0 ? t < end : t > end {
+                    t = dir > 0 ? min(t + step, end) : max(t - step, end)
+                    travelled += step
+                    let open = seg.isOpen(at: t) && map.isVisible(seg.point(at: t), depth: loop.depth)
+                    openRun = open ? openRun + step : 0
+                    if openRun >= clear {
+                        let d = travelled - clear * 0.5
+                        if best == nil || d < best!.dist { best = (dir, d) }
+                        break scan
+                    }
+                    if travelled >= limit { break scan }
+                }
+                let next = idx + (dir > 0 ? 1 : -1)
+                guard loop.closed || (next >= 0 && next < n) else { break }
+                idx = (next + n) % n
+                t = dir > 0 ? 0 : loop.segs[idx].len
+            }
+        }
+        return best
     }
 
     /// The line fired straight up has caught: haul up it to the surface.
@@ -3193,6 +4124,8 @@ final class Spider {
             glassLeap = false
             activity = .idle
             crouch.velocity = -6
+            // A pounce at a pointer that has got out of range: nothing doing.
+            if cursorHunt == .pouncing { endCursorHunt(nextIn: randRange(5, 10)); setEmote(.question, 1.0) }
             return
         }
         // Hanging under something and aiming below: it lets go and drops,
@@ -3283,6 +4216,15 @@ final class Spider {
         vel *= exp(-0.22 * dt)
         pos += vel * dt
 
+        // Pouncing on the pointer: passing within reach of it, it takes hold.
+        if cursorHunt == .pouncing {
+            let prev = pos - vel * dt
+            if projectOnSegment(cursor, prev, pos).dist < 30 * config.scale {
+                catchCursor()
+                return
+            }
+        }
+
         // Fly head-first: mirror to face the direction of travel, pitch into
         // the arc, but never roll past 50 degrees or it reads as tumbling.
         var flightHeading: CGFloat?
@@ -3301,15 +4243,19 @@ final class Spider {
         landingReach = 0
         var aim = landing
         if huntPounce, let mark = pounceMark, pos.distance(to: mark) > 60 * config.scale { aim = nil; landing = nil }
-        if aim == nil, mayGrabSoon, vel.length > 40,
-           let spot = map.nearestSpot(to: pos + vel * 0.12, within: 70 * config.scale,
+        // On a line, or shooting one, it is not looking for a landing.
+        let onLine = airShot != nil || draglineCatchY != nil
+        // The faster it is going, the further ahead it looks, and the
+        // sooner it turns: it has to be feet first by the time it hits.
+        if aim == nil, !onLine, mayGrabSoon, vel.length > 40,
+           let spot = map.nearestSpot(to: pos + vel * 0.12, within: max(70 * config.scale, vel.length * 0.1),
                                       excluding: airTime < 0.28 ? launchLoop : nil) {
             aim = (spot.point, spot.seg.angle, spot.seg.dir)
         }
         if let a = aim {
             let to = a.point - pos
             let closing = to.dot(vel) > 0 || vel.length < 80
-            let range = (landing != nil ? 130 : 70) * config.scale
+            let range = max((landing != nil ? 130 : 70) * config.scale, vel.length * 0.22)
             if closing { landingReach = clamp(1 - to.length / range, 0, 1) }
         }
         if landingReach > 0.001, let a = aim {
@@ -3318,6 +4264,11 @@ final class Spider {
             if w > 0.45 { facing = along >= 0 ? 1 : -1 }
             let fh = flightHeading ?? heading
             headingTarget = fh + angleDelta(fh, a.angle) * w
+        } else if let mark = airShot?.target ?? (draglineCatchY != nil ? webAnchor : nil) {
+            // Spinnerets to the mark: it twists to put its abdomen at
+            // whatever the line goes to, and hangs in line with it as it
+            // falls — the way it will hang once the line takes its weight.
+            headingTarget = (pos - mark).angle + (facing < 0 ? .pi : 0)
         } else if let fh = flightHeading {
             headingTarget = fh
         }
@@ -3348,29 +4299,68 @@ final class Spider {
             mayGrab = mayGrab && (near || past || tooLong)
         }
         if mayGrab {
-            if let spot = map.nearestSpot(to: pos, within: 18 * config.scale,
+            // The reach grows with speed: at a full fall it covers more
+            // than one frame's travel, so it can never step straight over
+            // a ledge between one frame and the next.
+            let reach = max(18 * config.scale, vel.length * dt * 0.8)
+            if let spot = map.nearestSpot(to: pos, within: reach,
                                           excluding: airTime < 0.28 ? launchLoop : nil) {
                 // Only grab on if we are moving toward the surface, or slow enough.
                 let toward = (spot.point - pos).normalized.dot(vel.normalized)
-                if vel.length < 260 || toward > -0.25 {
+                // Dropping past the underside of something is not landing
+                // on it: an underside is reached from below, or slowly —
+                // or by a leap that was aimed there.
+                let fromAbove = spot.seg.facing == .down && vel.y < -80 && landing == nil
+                if !fromAbove, vel.length < 260 || toward > -0.25 {
                     land(on: spot.anchor, seg: spot.seg)
                     return
                 }
             }
         }
 
-        // Web rescue: fire a line if we are falling with nothing below. Never
-        // during a leap — it is aimed at something, and cutting it short with a
-        // dangle reads as the spider changing its mind mid-air. A jump that has
-        // been going for well over its flight time has already failed, though.
-        if config.webs, air != .jump || airTime > 1.5 {
-            let fallingLong = airTime > 0.55 && vel.y < 40
+        // Shooting a line up: a beat to twist round, then the line races
+        // out to the mark; when it gets there it is fastened, and the fall
+        // goes on on a dragline from here.
+        if var shot = airShot {
+            let age = t - shot.began
+            shot.progress = clamp((age - Spider.airShotAim) / Spider.airShotFlight, 0, 1)
+            if shot.progress >= 1 {
+                webAnchor = shot.target
+                webFromDepth = shot.depth
+                webActive = true
+                webLen = max(20, pos.distance(to: webAnchor))
+                webLenTarget = webLen
+                draglineCatchY = shot.catchY
+                airShot = nil
+                stretch.velocity = 2
+            } else {
+                airShot = shot
+            }
+        }
+        // On its dragline: the line pays out behind it as it drops, and it
+        // takes hold where it decided to before it let go.
+        if let catchY = draglineCatchY {
+            webLen = max(webLen, pos.distance(to: webAnchor))
+            webLenTarget = webLen
+            // Where it meant to, or sooner if it is about to hit the side
+            // of the screen: it takes the line up before it smacks in.
+            let screen = map.screenFrame(containing: pos)
+            let ahead = pos.x + vel.x * 0.12
+            let wallSoon = ahead < screen.minX + 40 * config.scale || ahead > screen.maxX - 40 * config.scale
+            if (pos.y <= catchY && vel.y < 0) || (wallSoon && webLen > 60) {
+                catchDragline()
+                return
+            }
+        } else if airShot == nil, config.webs, air != .jump || airTime > 1.5 {
+            // Nothing planned and nothing under it at all — off the bottom
+            // of the world, or a leap that has plainly failed: a line to the
+            // ceiling is the last resort, never a habit.
             let aboutToLeave = pos.y < map.worldBounds.minY + 60 && vel.y < 0
-            if (fallingLong && chance(dt * 2.2)) || aboutToLeave {
-                if let c = map.ceiling(above: pos, maxRise: 720) {
-                    attachWeb(at: c)
-                    return
-                }
+            let failedLeap = air == .jump && airTime > 1.5 && vel.y < 0
+            if aboutToLeave || failedLeap, map.landingBelow(pos, halfWidth: 24 * config.scale) == nil,
+               let c = map.ceiling(above: pos, maxRise: 720) {
+                attachWeb(at: c)
+                return
             }
         }
 
@@ -3415,19 +4405,50 @@ final class Spider {
         anchor = a
         lastLoopRect = nil
         walkDir = vel.dot(seg.dir) >= 0 ? 1 : -1
-        if abs(vel.dot(seg.dir)) < 20 { walkDir = chance(0.5) ? 1 : -1 }
-        // Keep the body where it actually is and let it glide the last few
-        // points onto the ledge, rather than snapping there.
-        anchorPos = pos
+        // Coming straight down onto it, it keeps facing the way it already
+        // does rather than flipping round as it lands.
+        if abs(vel.dot(seg.dir)) < 20 {
+            let forward = V2.angle(heading) * facing
+            walkDir = forward.dot(seg.dir) >= 0 ? 1 : -1
+        }
+        // The feet take the ledge now, and the body carries on the way it
+        // was going over them — down onto the legs, which take the blow and
+        // give under it, and on along the ledge, which it leans into and
+        // recovers from — rather than stopping dead in the air and sliding
+        // to its spot. Whatever it is doing, the feet go where the ledge
+        // is, not into it, and the body never sinks so far as to touch it.
         anchorValid = true
         anchorGlide = 9
         landedAt = t
+        surfacePrev = nil
+        if let here = map.resolve(a, cornerRadius: Spider.cornerRadius * config.scale) {
+            let off = pos - here.pos
+            let above = off.dot(here.normal)
+            anchorPos = here.pos + here.tangent * off.dot(here.tangent)
+            // Caught past where it stands (a fast one, or one that came
+            // through from the far side): it lands at its standing height
+            // and the blow is all in the speed it arrived with.
+            lift.value = max(above, 0)
+            if above < 0 { pos = anchorPos }
+            // Into the ledge; a slow drift onto it still comes down at a
+            // fair pace rather than hovering.
+            let into = min(vel.dot(here.normal), -150 * config.scale)
+            landDrop = above > 0
+            lift.velocity = landDrop ? into : into * Spider.landAbsorb
+            landStep = clamp(above / -into, 0.04, 0.12)
+            skid.value = 0
+            skid.velocity = clamp(vel.dot(here.tangent), -900, 900) * Spider.landAbsorb
+        } else {
+            anchorPos = pos
+            landDrop = false
+        }
         legFramePos = pos
+        legFrameHeading = heading
         vel = .zero
         speed = 0
         // Stand on the ledge, facing the way it was going. The heading is left
         // to its spring, so the body swings down onto the surface rather than
-        // snapping to it; the feet ease in from wherever they were.
+        // snapping to it; the planted feet hold the ledge under the swing.
         headingTarget = seg.angle
         facing = walkDir
         travelLocal = V2(1, 0)
@@ -3435,9 +4456,26 @@ final class Spider {
         // Splat onto the ledge, then spring back up.
         stretch.velocity = remap(impact, 100, 1200, 3, 12)
         crouch.velocity = remap(impact, 100, 1200, 2, 8)
+        // Every foot goes straight for the ledge under it: a quick step
+        // to a spot fixed in the world, planted before the body gets there.
+        // One that is already at the ledge — or, coming in at an angle,
+        // past it — is planted on it now.
+        let normal = map.resolve(a, cornerRadius: Spider.cornerRadius * config.scale)?.normal ?? seg.normal
         for i in legs.indices {
             legs[i].footVel = .zero
             legs[i].swinging = false
+            legs[i].lift = 0
+            let spot = groundFoot(legs[i].rest)
+            let foot = toWorld(legs[i].foot)
+            let through = map.snapToEdge(foot, loopID: a.loopID).map { (foot - $0).dot(normal) < 1 } ?? false
+            if through {
+                legs[i].foot = spot
+                legs[i].settle = -1
+            } else {
+                legs[i].settle = 0
+                legs[i].swingFrom = legs[i].foot
+                legs[i].settleTo = spot
+            }
         }
         detachWeb(fade: true)
         webPlan = []
@@ -3459,6 +4497,13 @@ final class Spider {
             snapAtPrey(reach: 14)
             if caught == nil { decisionIn = 0.15 }
         }
+        if cursorHunt == .pouncing {
+            // Missed the pointer: a look about for where it went, and it
+            // may try again soon.
+            endCursorHunt(nextIn: randRange(6, 14))
+            beginActivity(.look, dur: randRange(0.9, 1.6))
+            setEmote(.question, 1.1)
+        }
         if impact > 800, caught == nil {
             setEmote(.surprise, 0.5)
             beginActivity(.shake, dur: 0.5)
@@ -3472,6 +4517,7 @@ final class Spider {
     private func detachAndFall() {
         abandonBuild()
         lastLoopRect = nil
+        let ledge = ledgePoint()
         mode = .airborne
         air = .fall
         vel = V2(randRange(-30, 30), -20)
@@ -3482,6 +4528,111 @@ final class Spider {
         queued = nil
         setEmote(.surprise, 0.6)
         startled.velocity = 7
+        planFall(from: ledge)
+    }
+
+    /// The point on the edge under its feet, and the depth of what it is
+    /// standing on: where a dragline is fastened. On a wall the line is
+    /// fastened at the body's own line rather than on the edge, so hanging
+    /// straight down from it does not put half of it off the screen.
+    private func ledgePoint() -> (point: V2, depth: Int)? {
+        guard mode == .attached, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return nil }
+        let seg = loop.segs[anchor.segIdx]
+        // The edge must still be under its feet: a window that has moved
+        // away or closed leaves nothing to fasten to.
+        guard seg.point(at: anchor.t).distance(to: pos) < map.standoff * 2.5 else { return nil }
+        let flat = seg.facing == .up || seg.facing == .down
+        return (flat ? pos - seg.normal * map.standoff : pos, loop.depth)
+    }
+
+    /// Decides, as a fall begins, whether it will catch itself and where —
+    /// never on the way down. A short drop is just a drop: it lands. A long
+    /// one it takes on its dragline, fastened where it let go, paying it
+    /// out as it falls and taking hold a third to a half of the way down,
+    /// always well clear of whatever is below, so it never snatches at a
+    /// line inches from the floor. With no ledge to fasten to, a line shot
+    /// up at the ceiling does instead — when it is let go of in mid-air
+    /// (`lineUp`), or as a last resort with nothing under it at all.
+    private func planFall(from ledge: (point: V2, depth: Int)?, lineUp: Bool = false) {
+        draglineCatchY = nil
+        airShot = nil
+        guard config.webs, !inCinema, !hangOnly else { return }
+        let screen = map.screenFrame(containing: pos)
+        let lowest = (confine.map { max($0.minY, screen.minY) } ?? screen.minY) + 30 * config.scale
+        // Moving sideways it will most likely clear whatever is right
+        // under it, so only a straight drop counts that as its landing.
+        let landingY = abs(vel.x) > 300 ? nil : map.landingBelow(pos, halfWidth: 24 * config.scale)
+        let room = pos.y - (landingY ?? lowest)
+        if let a = ledge {
+            guard room > 240 * config.scale else { return }
+            let drop = clamp(room * randRange(0.3, 0.55), 60, room - 150 * config.scale)
+            draglineCatchY = pos.y - drop
+            webAnchor = a.point
+            webFromDepth = a.depth
+            webActive = true
+            webPlan = []
+            webLen = max(20, pos.distance(to: a.point))
+            webLenTarget = webLen
+            rope.clear()
+            return
+        }
+        // Nothing fastened: a shot at the ceiling. It takes a moment to
+        // twist and the line a moment to get there, so there has to be
+        // room for that and a proper swing under it. The mark is off to
+        // one side, toward the middle of the screen, so the line comes
+        // taut at an angle and swings it rather than just stopping it.
+        guard lineUp || landingY == nil, room > 320 * config.scale else { return }
+        // Tossed sideways, the mark is ahead of it — past where the toss
+        // will have carried it by the time the line lands — so the swing
+        // carries the motion on; otherwise toward the middle of the screen.
+        let side: CGFloat = abs(vel.x) > 80 ? (vel.x > 0 ? 1 : -1) : (pos.x < screen.midX ? 1 : -1)
+        let carried = clamp(vel.x * (Spider.airShotAim + Spider.airShotFlight), -400, 400)
+        var mark: V2?
+        for off in [carried + randRange(200, 360) * config.scale * side, carried, 0] where mark == nil {
+            let x = clamp(pos.x + off, screen.minX + 40, screen.maxX - 40)
+            mark = map.ceiling(above: V2(x, pos.y), maxRise: 900)
+        }
+        guard let c = mark else { return }
+        let drop = clamp(room * randRange(0.35, 0.55), 60, room - 150 * config.scale)
+        airShot = AirShot(target: c, depth: map.depth(at: c), catchY: pos.y - drop, began: t)
+        webPlan = []
+        rope.clear()
+    }
+
+    /// The dragline goes taut: from a fall to a hang, with a bounce on the
+    /// line that matches how fast it was going.
+    private func catchDragline() {
+        let anchor = webAnchor, depth = webFromDepth
+        let fallSpeed = max(0, -vel.y)
+        let speed = vel.length
+        attachWeb(at: anchor)
+        webFromDepth = depth
+        draglineCatchY = nil
+        webStyle = .hang
+        swingPumping = false
+        // Only a little more line, then a beat to gather itself.
+        webLenTarget = min(webLen + randRange(0, 40 * config.scale), 780)
+        bungee.velocity = clamp(fallSpeed * 0.35, 40, 320)
+        stretch.velocity = 3
+        webGrace = 0.6
+        decisionIn = randRange(1.2, 2.4)
+        planWeb(afterFall: true)
+        // Taut at an angle and moving: that is a swing, not a stop — it
+        // rides the arc and lets go near the top, or grabs what it passes.
+        let alongArc = abs(webAngleVel) * webLen
+        if abs(webAngle) > 0.2 || alongArc > 250, speed > 300, webLen > 90, !confined {
+            webStyle = .swing
+            swingFromLoop = ""
+            swingPumping = false
+            swingHalfSwings = 0
+            lastSwingVelSign = 0
+            swingPeak = abs(webAngle)
+            swingReleaseAfter = chance(0.6) ? 1 : 2
+            swingReleaseAt = randRange(0.55, 0.9)
+            decisionIn = 99
+            happy.velocity = 5
+            if chance(0.5) { setEmote(.sparkle, 0.8) }
+        }
     }
 
     // MARK: Dangling
@@ -3635,12 +4786,18 @@ final class Spider {
 
         // A window has come over it on the line: straight up and out. Only
         // a window in front of the one it hung from counts — hanging down
-        // the face of the very window it dropped off is the point.
+        // the face of the very window it dropped off is the point. If the
+        // window has come over the top of the line as well, there is
+        // nothing up there to climb out onto: it swings off instead.
         if !map.isVisible(pos, depth: webFromDepth) {
-            webLenTarget = 26
-            webPlan = [.climbHome]
-            lingerUntil = -1
-            twirlUntil = 0
+            if homeIsOpen {
+                webLenTarget = 26
+                webPlan = [.climbHome]
+                lingerUntil = -1
+                twirlUntil = 0
+            } else if !leavingLostLine {
+                leaveLostLine()
+            }
         }
 
         // Curious about a pointer below it: pays out line to come and see.
@@ -3689,13 +4846,18 @@ final class Spider {
         // On its way up and out, nothing on the way distracts it.
         guard climbArrival == nil else { return }
 
-        // Reached the ceiling: climb on.
-        if webLen < 34, let spot = map.nearestSpot(to: pos, within: 40) {
+        // Reached the top: climb on. The line may be fastened to the lip
+        // of a shelf it fell off, in which case the last bit is a pull-up
+        // over the edge.
+        if webLen < 34, let spot = map.nearestSpot(to: pos, within: 40 + map.standoff)
+            ?? map.nearestSpot(to: webAnchor, within: 40 * config.scale + map.standoff) {
             land(on: spot.anchor, seg: spot.seg)
             return
         }
-        // Touched down on something below while barely swinging.
-        if abs(webAngleVel) < 0.7, abs(bungee.velocity) < 40,
+        // Touched down on something below while barely swinging. Not while
+        // it is hauling itself up: on its way somewhere it does not grab at
+        // whatever it happens to pass.
+        if !hauling, abs(webAngleVel) < 0.7, abs(bungee.velocity) < 40,
            let spot = map.nearestSpot(to: pos, within: 22 * config.scale),
            spot.point.y < pos.y + 6 {
             land(on: spot.anchor, seg: spot.seg)
@@ -3914,6 +5076,59 @@ final class Spider {
         }
     }
 
+    /// What it does once its dragline has caught it: a moment to collect
+    /// itself where it hangs, then one thing — back up the line to where it
+    /// fell from, if that is still there and in the open; else on down to
+    /// the floor, or a leap to something else. No dithering up and down
+    /// the line first: the fall was enough excitement.
+    private func planWeb(afterFall: Bool) {
+        let screen = map.screenFrame(containing: webAnchor)
+        let maxLen = max(40, webAnchor.y - (screen.minY + 30 * config.scale))
+        webPlan = [.linger(randRange(1.5, 4.0))]
+        lingerUntil = -1
+        if homeIsOpen, chance(0.6) {
+            webPlan.append(.climbHome)
+        } else if maxLen < 760 {
+            webPlan.append(.toFloor)
+        } else {
+            webPlan.append(.jumpOff)
+        }
+    }
+
+    /// Whether the top of the line is somewhere it could take hold of: an
+    /// edge that is still there, and not behind another window.
+    private var homeIsOpen: Bool {
+        guard map.isVisible(webAnchor, depth: webFromDepth) else { return false }
+        return map.nearestSpot(to: webAnchor, within: 40 * config.scale + map.standoff) != nil
+    }
+
+    /// Already on its way off a line whose top has gone.
+    private var leavingLostLine: Bool {
+        switch webPlan.first {
+        case .swingOff?, .toFloor?: return true
+        default: return false
+        }
+    }
+
+    /// The top of the line is no longer anywhere to climb out onto — the
+    /// window it hung from has gone, or another has come over it. Rather
+    /// than hang under nothing, it pays out enough line to swing on, works
+    /// up a swing and lets go. With no room below for a swing, it goes on
+    /// down to the floor and steps off there.
+    private func leaveLostLine() {
+        let screen = map.screenFrame(containing: webAnchor)
+        let maxLen = max(40, webAnchor.y - (screen.minY + 30 * config.scale))
+        if maxLen >= 120, !confined {
+            let len = clamp(max(webLen, 170 * config.scale), 110, min(maxLen, 420))
+            webPlan = [.swingOff(len)]
+        } else {
+            webPlan = [.toFloor]
+        }
+        lingerUntil = -1
+        twirlUntil = 0
+        decisionIn = 0
+    }
+
     /// Works through the plan. Called every frame on a hang; it only ever
     /// does one thing at a time and moves on when that thing is done.
     private func thinkOnWeb() {
@@ -3952,7 +5167,11 @@ final class Spider {
             }
         case .climbHome:
             webLenTarget = 26
-            // Reached the top: the landing check below takes it from here.
+            // Reached the top: the landing check below takes it from here —
+            // unless there is nothing there to take hold of any more (the
+            // window has gone, or something has come over it): then down
+            // it goes instead, rather than hanging under nothing.
+            if webLen < 34, !homeIsOpen { leaveLostLine() }
         case .toFloor:
             let screen = map.screenFrame(containing: webAnchor)
             let floorLen = max(40, webAnchor.y - (screen.minY + 30 * config.scale))
@@ -3967,6 +5186,12 @@ final class Spider {
         case .swing:
             webPlan.removeFirst()
             if webLen > 90, !confined { workUpSwing() } else { webPlan = [.climbHome] }
+        case .swingOff(let l):
+            webLenTarget = l
+            if abs(webLen - l) < 4 {
+                webPlan.removeFirst()
+                if webLen > 90, !confined { workUpSwing() } else { webPlan = [.toFloor] }
+            }
         case .jumpOff:
             webPlan.removeFirst()
             if let spot = bestJumpSpot(from: pos, exclude: ""), let launch = ballistic(from: pos, to: spot.point) {
@@ -3983,6 +5208,8 @@ final class Spider {
     }
 
     private func attachWeb(at p: V2) {
+        draglineCatchY = nil
+        airShot = nil
         webAnchor = p
         webActive = true
         webFromDepth = map.occluders.filter { $0.rect.insetBy(dx: -4, dy: -4).contains(p.point) }.map(\.depth).min() ?? Int.max
@@ -4038,6 +5265,8 @@ final class Spider {
 
     private func detachWeb(fade: Bool) {
         hurrying = false
+        draglineCatchY = nil
+        airShot = nil
         if webActive && fade {
             // A slow fade, so the let-go line can be seen drifting down.
             webAlpha = Spring(0.7, stiffness: 14, damping: 7.6)
@@ -4418,6 +5647,7 @@ final class Spider {
         let uu = lerp(nestWalkU.from, nestWalkU.to, k)
         let ride = V2(0, 10 * config.scale)
         let target = h.point(at: uu) + ride
+        hammock?.loadU = uu
         let forward: CGFloat = nestWalkU.to >= nestWalkU.from ? 1 : -1
         let along = h.tangent(at: uu) * forward
         pos = approach(pos, target, 10, maxSpeed: 170 * config.scale, dt)
@@ -4438,7 +5668,7 @@ final class Spider {
         nestPrevPos = pos
         speed = dt > 0 ? moved / dt : 0
         if boutStride < 10 { boutStride = 26 }
-        gaitPhase += speed / (boutStride * config.scale) * dt
+        gaitPhase += speed / (strideNow * config.scale) * dt
         if gaitPhase > 1 { gaitPhase -= gaitPhase.rounded(.down) }
     }
 
@@ -4528,6 +5758,10 @@ final class Spider {
                 nestWalking = false
                 legMode = .free
                 facing = h.left ? 1 : -1
+                // Settling into the bed sets the whole thing swinging.
+                hammock?.loadU = nil
+                nudgeHammock(randRange(18, 28))
+                shiftIn = randRange(6, 14)
             }
         case .leaving:
             // Out along the silk to the wall end, and onto the wall.
@@ -4563,6 +5797,12 @@ final class Spider {
                 nestZzzIn = randRange(3, 5)
                 setEmote(.zzz, 2.8)
             }
+            // Now and then it shifts in its sleep, and the sling rocks.
+            shiftIn -= dt
+            if shiftIn <= 0 {
+                shiftIn = randRange(7, 18)
+                nudgeHammock(randRange(8, 16))
+            }
             // A fast pointer right by it wakes it.
             if !fullScreenApp, cursor.distance(to: pos) < 70 * config.scale && cursorVel.length > 500 {
                 leaveNest(startled: true)
@@ -4570,6 +5810,32 @@ final class Spider {
             }
             if nestTime > nestDur && !fullScreenApp { leaveNest(startled: false) }
         }
+    }
+
+    // MARK: Hammock swing
+
+    /// The sling as a slow pendulum. A puff of breeze sets it rocking now
+    /// and then; with the spider in it the rocking comes more often — its
+    /// weight shifting — and dies away more slowly.
+    private func rockHammock(dt: CGFloat) {
+        guard var h = hammock, h.progress > 0.3 else { hammockSwayVel = 0; return }
+        let occupied = mode == .nesting
+        breezeIn -= dt
+        if breezeIn <= 0 {
+            breezeIn = occupied ? randRange(3, 9) : randRange(9, 26)
+            nudgeHammock(randRange(5, 16))
+        }
+        let omega: CGFloat = 2.8                       // about a 2 s swing
+        let damping: CGFloat = occupied ? 0.3 : 0.5
+        hammockSwayVel += (-omega * omega * h.sway - 2 * damping * hammockSwayVel) * dt
+        h.sway += hammockSwayVel * dt
+        if abs(h.sway) < 0.03, abs(hammockSwayVel) < 0.1 { h.sway = 0; hammockSwayVel = 0 }
+        if h.sway != hammock!.sway { hammock = h }
+    }
+
+    /// Gives the sling a push of `strength` px/s, either way.
+    private func nudgeHammock(_ strength: CGFloat) {
+        hammockSwayVel += strength * (chance(0.5) ? 1 : -1)
     }
 
     /// Out of the sac: onto the wall beside it, or a startled tumble.
@@ -4647,7 +5913,7 @@ final class Spider {
     /// An unfinished one goes with a single wipe.
     func wipeHammock(at p: V2, movement: CGFloat) {
         guard var h = hammock, movement > 0.5,
-              h.rect.insetBy(dx: -6, dy: -6).contains(p.point) else { return }
+              h.rect.insetBy(dx: -6, dy: -6).contains(p.point) || h.nearest(to: p).distance(to: p) < 14 else { return }
         h.damage = min(1, h.damage + movement / (h.progress >= 1 ? 520 : 60))
         hammock = h
         if h.damage >= 1 {
@@ -4660,7 +5926,7 @@ final class Spider {
 
     /// Menu commands.
     func buildHammock() {
-        guard config.webs else { return }
+        guard config.hammocks else { return }
         wake()
         if hammock == nil || hammock!.progress < 1 {
             hammock = nil
@@ -4756,6 +6022,9 @@ final class Spider {
             target = (centre - pos).normalized * 0.75
         } else if huntTarget != nil || caught != nil, let q = caught ?? prey.first(where: { $0.id == huntTarget }) {
             target = (q.pos - pos).normalized * (caught != nil ? 0.5 : 1)
+        } else if mode == .clinging || cursorHunt != .none || interest > 0.05 {
+            // Eyes locked on the pointer.
+            target = (cursor - pos).normalized
         } else if watching {
             target = (cursor - pos).normalized
         } else if speed > 2 {
@@ -4806,12 +6075,14 @@ final class Spider {
         if emote == .thought, emoteTime < emoteDur, e != .thought, e != .surprise, e != .exclaim, e != .none { return }
         emote = e
         emoteTime = 0
+        emoteClock = 0
         emoteDur = dur
     }
 
     private func updateEmote(dt: CGFloat) {
         guard emote != .none else { return }
         emoteTime += dt
+        emoteClock += dt
         if emote == .zzz && activity == .sleep { emoteTime = min(emoteTime, emoteDur * 0.5) }
         if emoteTime > emoteDur { emote = .none }
     }
@@ -4855,6 +6126,20 @@ final class Spider {
             let curl = leg.hip + reach * 0.45
             let kick = V2(sin(t * 9 + CGFloat(i) * 1.1), cos(t * 7.5 + CGFloat(i) * 0.9)) * 3.2
             return curl + kick
+        case (.clinging, _):
+            // Hanging off the pointer, head up: the front two pairs hooked
+            // round the hotspot past the mouth, the rest tucked in and
+            // kicking — harder the more it is being shaken.
+            let grip = toLocal(cursor)
+            let struggle = 1 + clamp(clingShake, 0, 2) * 1.5
+            let kick = V2(sin(t * 8 * struggle + CGFloat(i) * 1.1), cos(t * 6.5 * struggle + CGFloat(i) * 0.9)) * 2.2 * struggle
+            let side: CGFloat = near ? 1 : -1
+            switch k {
+            case 0: return grip + V2(3, side * 4.5) + kick * 0.25
+            case 1: return grip + V2(-3, side * 7) + kick * 0.35
+            case 2: return leg.hip + reach * 0.5 + kick * 0.6
+            default: return leg.hip + reach * 0.6 + V2(-2, -2) + kick
+            }
         case (.attached, .shoot):
             // One front leg thrown out along the line, the rest braced.
             if k == 0 && near {
@@ -4959,6 +6244,13 @@ final class Spider {
                 // The push-off: everything driven back and down behind it.
                 return leg.hip + V2(-reach.x * 0.4 - 10, reach.y * 1.1)
             }
+            if airShot != nil {
+                // Gathered in for the twist and the shot, the hind pair
+                // drawn up by the spinnerets to guide the line out.
+                let tuck = leg.hip + reach * 0.55 + V2(k < 2 ? 2 : -3, 3)
+                if k == 3 { return V2(leg.hip.x - 8, -4 + (near ? 0 : 1.5)) }
+                return tuck
+            }
             let stretchOut: CGFloat = air == .jump ? 1.15 : 1.05
             var target = leg.hip + reach * stretchOut + V2(0, 6)
             target.x += k < 2 ? 5 : -5
@@ -5047,16 +6339,24 @@ final class Spider {
             // Seen face on, the outermost pair are its front legs: both go
             // straight up beside the head and wave a little; the next pair
             // come up half way. Symmetric, so nothing jumps as it turns.
-            let outer = k == 0 || k == 3
-            let side: CGFloat = (k == 0) == near ? 1 : -1   // which side of the face
+            // Each leg stays on the side of the face its foot stands on —
+            // none sweeps across in front of it to get to the other side.
+            let side: CGFloat = SpiderRenderer.frontLegs[i].foot.x >= 0 ? 1 : -1
             let a = t * 4 + (side > 0 ? 0 : 0.8)
-            if outer {
+            let up = smoothstep(clamp(activityTime / 0.45, 0, 1))
+            if i == 0 || i == 7 {
                 // Up and out, clear of the face, knees bent outward.
-                let up = clamp(activityTime / 0.35, 0, 1)
                 legBend[i] = V2(side, 0.2)
-                return V2(side * (30 + sin(a) * 2), lerp(rest.y, 27 + cos(a * 1.3) * 2, easeOutBack(up)))
+                return V2(side * (30 + sin(a) * 2), lerp(rest.y, 27 + cos(a * 1.3) * 2, up))
             }
-            if k == 1 || k == 2 { return V2(rest.x * 1.05, rest.y + 3) }
+            if i == 3 || i == 4 {
+                // Half way, out to the side, keeping time with the front pair.
+                legBend[i] = V2(side, 0.4)
+                return V2(side * (34 + sin(a) * 1.2), lerp(rest.y, 6 + cos(a * 1.3) * 1.5, up))
+            }
+            // The rest stay planted: the body is up on its toes, so the
+            // legs stretch under it rather than the feet coming up with it.
+            if k == 1 || k == 2 { return V2(rest.x * 1.05, rest.y) }
             return rest
         case (.attached, .armsUp):
             // Both front legs straight up, swaying; second pair half raised.
@@ -5067,10 +6367,35 @@ final class Spider {
             if k == 1 { return V2(leg.hip.x + 12, 8 + (near ? 0 : -2)) }
             return rest
         case (.attached, .roll):
-            // Everything tucked in tight against the body, each leg curled
-            // a little differently so the ball is not a smooth lump.
-            let curl: CGFloat = 0.2 + CGFloat(k % 2) * 0.06
-            return leg.hip + reach * curl + V2(near ? 1 : -1, 2.5 + CGFloat(k) * 0.4)
+            // Curled up tight: every leg folds at the knee, foot drawn in
+            // close under the hip, so the ball is a bundle of bent legs
+            // rather than a smooth lump, as a spider curled up is. The
+            // knees fan out round the ball — the front pairs' forward and
+            // under the face, the back pairs' back under the abdomen — and
+            // each foot goes wherever puts its knee there.
+            let rig = SpiderRenderer.rig(i, profile: 1, look: look)
+            let kneeOff = (rig.knee - rig.hip).angle - (rig.foot - rig.hip).angle
+            let kneeAng: CGFloat = (near ? [-0.2, -0.85, -2.3, -2.8] : [-0.5, -1.15, -2.0, -3.1])[k]
+            let footAng = kneeAng - kneeOff
+            let tuck = leg.hip + V2(cos(footAng), sin(footAng)) * (rig.foot - rig.hip).length * 0.45
+            let r = rollPhase()
+            switch r.phase {
+            case 0:
+                // The legs come in a pair at a time from the back, the
+                // front pair last, folding under the face as it goes over.
+                let start = 0.3 + CGFloat(3 - k) * 0.1
+                return V2.lerp(rest, tuck, smoothstep(clamp((r.v - start) / 0.3, 0, 1)))
+            case 1:
+                // A ball of legs is never quite still: they clutch and
+                // shift as it goes round.
+                let jitter = V2(sin(t * 13 + CGFloat(i) * 1.7), cos(t * 10 + CGFloat(i) * 1.3)) * 0.5
+                return tuck + jitter
+            default:
+                // Out they come to catch it, the front pair first, reaching
+                // for the ledge.
+                let start = CGFloat(k) * 0.07
+                return V2.lerp(tuck, rest, smoothstep(clamp((r.v - start) / 0.4, 0, 1)))
+            }
         case (.attached, .dance):
             // Front legs pump up and down in turn.
             if k == 0 {
@@ -5134,6 +6459,14 @@ final class Spider {
     /// step; a foot already near the ledge just eases on. Returns true while
     /// it has hold of the foot.
     private func settleFoot(_ leg: inout Leg, _ i: Int, to target: V2, dt: CGFloat) -> Bool {
+        // The step's ends are fixed in the world, not to the body: a body
+        // still coming down onto a ledge, or leaning as it lands, does not
+        // carry the foot with it past where the ledge is. (A step begun
+        // this frame is already in this frame's terms.)
+        if leg.settle >= 0 {
+            leg.swingFrom = leg.swingFrom.rotated(by: -legDTheta) - legOverFeet
+            leg.settleTo = leg.settleTo.rotated(by: -legDTheta) - legOverFeet
+        }
         if leg.settle < 0 {
             let far = leg.foot.distance(to: target)
             let high = leg.foot.y > max(target.y, leg.hip.y) + 5
@@ -5146,15 +6479,96 @@ final class Spider {
             leg.swingFrom = leg.foot
             leg.settleTo = target
         }
-        leg.settle += dt / 0.24
+        let quick = t - landedAt < Spider.landHold
+        leg.settle += dt / (quick ? landStep : 0.24)
         let u = clamp(leg.settle, 0, 1)
-        leg.lift = sin(u * .pi) * 0.7
+        leg.lift = sin(u * .pi) * (quick ? 0.3 : 0.7)
         leg.foot = stepPath(i, from: leg.swingFrom, to: leg.settleTo, u: u) + V2(0, leg.lift * 3.5)
         if u >= 1 { leg.settle = -1; leg.lift = 0 }
         return true
     }
 
+    /// Which of the leg controllers has the feet this frame.
+    private enum LegController { case gait, posed, turn, hang }
+    private var legController: LegController = .gait
+    /// A hand-off between controllers: each foot eases from where it
+    /// really was into where the new controller puts it, instead of being
+    /// teleported there in a frame.
+    private var handoffFrom: [V2] = []
+    private var handoffT: CGFloat = 1
+    private static let handoffTime: CGFloat = 0.26
+
     private func updateLegs(dt: CGFloat) {
+        let before = legs.map(\.foot)
+        let was = legController
+        updateLegControllers(dt: dt)
+        defer { limitFootJolts(dt: dt) }
+        if legController != was {
+            // A step in flight belongs to the clock that started it; the
+            // next controller begins its own.
+            for i in legs.indices { legs[i].swinging = false }
+            handoffFrom = before
+            handoffT = 0
+        }
+        guard handoffT < 1, handoffFrom.count == legs.count else { return }
+        handoffT = min(1, handoffT + dt / Spider.handoffTime)
+        let e = smoothstep(handoffT)
+        for i in legs.indices {
+            // The start point stays on the ground while the body moves.
+            handoffFrom[i] = handoffFrom[i].rotated(by: -legDTheta) - legOverFeet
+            legs[i].foot = V2.lerp(handoffFrom[i], legs[i].foot, e)
+        }
+    }
+
+    /// Each foot's last screen position and velocity, for the limiter.
+    private var footWorld: [V2] = []
+    private var footWorldVel: [V2] = []
+    private var footLimitPos: V2 = .zero
+    /// px/s² at scale 1: well above a quick step (under ~20 000), well
+    /// below a foot teleported by an edge flicker or a hand-off.
+    private static let footJolt: CGFloat = 26_000
+
+    /// The last word on the feet, on a surface: whatever the controllers
+    /// decided, a foot cannot pick up speed faster than a leg can move it —
+    /// a target that flickers between the two edges of a corner as the body
+    /// swings onto it, a leg handed from one pose to the next, all come
+    /// out as quick movements instead of jumps. Only speeding up is capped:
+    /// a foot may always stop at once, so nothing overshoots and swings
+    /// back. Off the ground (a leap, a throw, a line) the feet go with the
+    /// body as they are.
+    private func limitFootJolts(dt: CGFloat) {
+        let world = legs.map { toWorld($0.foot) }
+        let onSurface = (mode == .attached || mode == .nesting) && activity != .roll
+        let bodyJump = pos.distance(to: footLimitPos) > 30 * config.scale
+        footLimitPos = pos
+        guard onSurface, !bodyJump, dt > 0, footWorld.count == legs.count, footWorldVel.count == legs.count else {
+            footWorldVel = footWorld.count == world.count ? zip(world, footWorld).map { ($0 - $1) / max(dt, 0.001) }
+                : Array(repeating: .zero, count: world.count)
+            footWorld = world
+            return
+        }
+        for i in legs.indices {
+            var w = world[i]
+            if Spider.limitJolt(&w, last: &footWorld[i], vel: &footWorldVel[i], cap: Spider.footJolt * config.scale, dt: dt) {
+                legs[i].foot = toLocal(w)
+            }
+        }
+    }
+
+    /// Moves `last` on to `w`, holding back any part of the step that would
+    /// have it pick up speed faster than `cap` (px/s²). Returns true if `w`
+    /// was held back.
+    private static func limitJolt(_ w: inout V2, last: inout V2, vel: inout V2, cap: CGFloat, dt: CGFloat) -> Bool {
+        let step = w - last
+        let most = (vel.length + cap * dt) * dt
+        let held = step.length > most
+        if held { w = last + step.normalized * most }
+        vel = (w - last) / dt
+        last = w
+        return held
+    }
+
+    private func updateLegControllers(dt: CGFloat) {
         let scale = max(config.scale, 0.05)
         for i in legBend.indices { legBend[i] = nil }
         // Sprite space is rotated by `heading` and mirrored by the sign of the
@@ -5166,6 +6580,16 @@ final class Spider {
         deltaLocal.x *= m
         legFramePos = pos
         legFrameHeading = heading
+        // The body's motion over its feet: its own, not the surface's.
+        var overFeet = deltaLocal
+        if mode == .attached {
+            var surf = (surfaceMotion / scale).rotated(by: -heading)
+            surf.x *= m
+            overFeet = deltaLocal - surf
+        }
+        surfaceMotion = .zero
+        legOverFeet = overFeet
+        legDTheta = dTheta
 
         let profile = SpiderRenderer.profileAmount(yaw: yaw)
         let duty = Spider.swingDuty
@@ -5176,6 +6600,7 @@ final class Spider {
         // in a turn, so every leg re-plants twice — once toward the front view
         // and once into the new profile.
         if mode == .attached && activity == .turn {
+            legController = .turn
             turnGait += dt * (2.0 / max(activityDur, 0.3))
             for i in legs.indices {
                 var leg = legs[i]
@@ -5214,19 +6639,47 @@ final class Spider {
 
         // On a line, the legs climb it hand over hand.
         if mode == .dangling, webStyle == .hang, t >= twirlUntil {
+            legController = .hang
             updateHangLegs(dt: dt)
             return
         }
 
         // Feet are free while the body is well round toward the front view;
         // a mere glance keeps them stepping.
-        guard legMode == .planted, facing == m, profile > 0.45 else {
+        // (A little either way of the switch-over, so a body hovering about
+        // it — following the pointer — does not flap between the two.)
+        guard legMode == .planted, facing == m, profile > (legController == .posed ? 0.55 : 0.45) else {
+            legController = .posed
+            // On a ledge, a gesture is eased into from wherever the feet
+            // were, and eased out of back to standing before it ends.
+            let eased = mode == .attached && Spider.easedPoses.contains(activity)
+            let rise = eased ? smoothstep(clamp((t - activityStarted) / Spider.poseEaseIn, 0, 1)) : 1
+            let fall = eased && activityDur > Spider.poseEaseOut * 2 && activity != .sleep
+                ? smoothstep(clamp((activityDur - activityTime) / Spider.poseEaseOut, 0, 1)) : 1
             for i in legs.indices {
-                let target = poseTarget(i)
+                let posed = poseTarget(i)
+                var target = groundPose(i, posed)
+                if rise < 1 { target = V2.lerp(legs[i].poseFrom, target, rise) }
+                if fall < 1 {
+                    let stand = groundPose(i, SpiderRenderer.rig(i, profile: profile, look: look).foot)
+                    target = V2.lerp(stand, target, fall)
+                }
+                // A foot on the ledge stays where it is in the world while
+                // the body moves over it — coming down out of a landing,
+                // lifting for a wave, swinging round — and the spring only
+                // eases it to its spot; a raised foot goes with the body.
+                if mode == .attached, posed.y <= legs[i].rest.y + 1.5 {
+                    legs[i].foot = legs[i].foot.rotated(by: -dTheta) - overFeet
+                }
                 // Soft, well-damped spring, so every pose change eases — but
                 // a drumming front leg has to keep up with the beat.
+                // Legs folding into a ball, and shooting out to catch it
+                // at the end, are quicker than a gesture.
                 let quick = activity == .drum && mode == .attached && i % 4 == 0
-                let a = (target - legs[i].foot) * (quick ? 1800 : 200) - legs[i].footVel * (quick ? 60 : 26)
+                let rolling = activity == .roll && mode == .attached
+                let (k, c): (CGFloat, CGFloat) = quick ? (1800, 60)
+                    : rolling ? (rollPhase().phase == 2 ? (750, 42) : (420, 34)) : (200, 26)
+                let a = (target - legs[i].foot) * k - legs[i].footVel * c
                 legs[i].footVel += a * dt
                 legs[i].foot += legs[i].footVel * dt
                 legs[i].lift = approach(legs[i].lift, 0, 6, dt)
@@ -5238,7 +6691,9 @@ final class Spider {
 
         // Where a foot aims to touch down: half a stance ahead of its rest
         // position, so over the stance it drifts back through the rest pose.
-        let landAhead = boutStride * (1 - duty) * 0.5
+        legController = .gait
+        let stride = strideNow
+        let landAhead = stride * (1 - duty) * 0.5
         let walking = speed > 1
 
         for i in legs.indices {
@@ -5254,13 +6709,25 @@ final class Spider {
                     leg.swinging = true
                     leg.swingFrom = leg.foot
                     leg.swingPh0 = ph
+                } else {
+                    // The step runs over the ground, not with the body: it
+                    // leaves from the spot the foot stood on, which stays
+                    // where it is while the body carries on over it.
+                    leg.swingFrom = leg.swingFrom.rotated(by: -dTheta) - deltaLocal
                 }
                 let u = clamp((ph - leg.swingPh0) / max(duty - leg.swingPh0, 0.01), 0, 1)
-                // Land on the edge itself, wherever that is relative to the body.
+                // Land on the edge itself, wherever that is relative to the
+                // body — at the spot on the ground that will be there at
+                // touchdown, not where it is now. Both ends of the step are
+                // then still on the ground, so the foot lifts off and sets
+                // down at rest instead of being yanked from a standstill to
+                // the body's pace and stopped dead again.
                 let restNow = SpiderRenderer.rig(i, profile: profile, look: look).foot
-                let target = groundFoot(restNow + travelLocal * landAhead)
+                let ahead = (duty - ph) * stride   // body travel before it lands
+                let target = groundFoot(restNow + travelLocal * (landAhead + ahead))
                 let base = stepPath(i, from: leg.swingFrom, to: target, u: u)
-                leg.lift = sin(u * .pi)
+                // Eased off and onto the ledge at both ends of the arc.
+                leg.lift = pow(sin(u * .pi), 1.5)
                 // The foot lifts clear of the ledge on a shallow arc — higher
                 // when it is being bouncy or walking on tiptoe.
                 let stepHeight: CGFloat = gaitStyle == .bouncy ? 8 : (gaitStyle == .tiptoe ? 6.5 : 5)
@@ -5297,6 +6764,16 @@ final class Spider {
                     var rest = SpiderRenderer.rig(i, profile: profile, look: look).foot
                     rest.x += leg.wobble.value(t * 0.8) * 0.5
                     let target = groundFoot(rest)
+                    // A planted foot holds its place in the world while the
+                    // body moves over it — coming down and lurching out of
+                    // a landing, leaning, breathing — the leg giving, never
+                    // dragged into the ledge with it; then eases to its spot.
+                    if leg.settle < 0 {
+                        leg.foot = leg.foot.rotated(by: -dTheta) - overFeet
+                        let reach = leg.foot - leg.hip
+                        let maxReach = (leg.rest - leg.hip).length * 1.4
+                        if reach.length > maxReach { leg.foot = groundFoot(leg.hip + reach.normalized * maxReach) }
+                    }
                     // One leg at a time unless a foot is well out of place.
                     let othersBusy = legs.contains(where: { $0.settle >= 0 }) && leg.settle < 0
                     if othersBusy && leg.foot.distance(to: target) <= 14 || !settleFoot(&leg, i, to: target, dt: dt) {
@@ -5454,6 +6931,15 @@ final class Spider {
         config.followCursor && cursor.y < webAnchor.y - 60 && abs(cursor.x - webAnchor.x) < 120 * config.scale && t - lastUserActivity < 6
     }
 
+    /// Tools only: how taken it is with the pointer right now.
+    var debugInterest: CGFloat { interest }
+
+    /// Tools only: the clock and the aim of whatever it is doing.
+    var debugActivity: String {
+        String(format: "%@ %.2f/%.2f jump=%@ poised=%d stalls=%d", "\(activity)", Double(activityTime), Double(activityDur),
+               pendingJump.map { "\(Int($0.x)),\(Int($0.y))" } ?? "-", cursorPoised ? 1 : 0, cursorStalls)
+    }
+
     var debugState: String {
         let m: String
         switch mode {
@@ -5462,8 +6948,23 @@ final class Spider {
         case .dangling: m = webStyle == .swing ? "swinging" : "dangling"
         case .held:     m = "held"
         case .nesting:  m = nestPhase == .building ? "building" : "nesting"
+        case .clinging: m = "clinging"
         }
-        return mode == .attached ? "\(m):\(activity) on \(anchor.loopID)" + (build != nil ? " [spinning]" : "") : m
+        let hunt: String
+        switch cursorHunt {
+        case .none: hunt = ""
+        case .stalking: hunt = " [stalking]"
+        case .pouncing: hunt = " [pouncing]"
+        case .clinging: hunt = ""
+        }
+        return (mode == .attached ? "\(m):\(activity) on \(anchor.loopID)" + (build != nil ? " [spinning]" : "") : m) + hunt
+    }
+
+    /// Tools only: its footing goes from under it, as if the surface had
+    /// slid away — a fall, with whatever line it means to take.
+    func debugFall() {
+        guard mode == .attached else { return }
+        detachAndFall()
     }
 
     func debugAttach(loopID: String, segIdx: Int, t: CGFloat, dir: CGFloat) {
@@ -5494,6 +6995,8 @@ final class Spider {
         }
         detachWeb(fade: false)
         webAlpha.reset(0)
+        kneeShape = []
+        footWorld = []
     }
 
     func debugJump(to point: V2) {
@@ -5537,18 +7040,134 @@ final class Spider {
 
     // MARK: - Pose out
 
+    /// How the sprite is scaled about its ground line right now: crouching
+    /// squashes the whole thing down onto its feet, a landing splats it
+    /// wide.
+    private func bodySquash() -> (stretch: CGFloat, fatten: CGFloat) {
+        let squash = 1 - clamp(crouch.value, 0, 1) * 0.26
+        return (clamp(stretch.value * (1 + (1 - squash) * 0.5), 0.74, 1.22),
+                clamp(fatten.value * squash, 0.66, 1.26))
+    }
+
+    private var bodyPitchNow: CGFloat { clamp(pitch.value + runNose, -0.6, 0.6) }
+
+    /// Leg `i` as drawn: hip and foot where the pose puts them, and the
+    /// knee the leg models ask for. The lean turns the hips (and a foot in
+    /// the air) about the pivot; the squash and stretch scales the whole
+    /// sprite about its ground line, and the feet are taken out of it, so a
+    /// splat or a crouch does not shove a planted foot along the ledge (or,
+    /// tilted, into it).
+    private func modelLeg(_ i: Int, profile: CGFloat) -> (hip: V2, foot: V2, knee: V2) {
+        let bp = bodyPitchNow
+        let shift = V2(-bp * 8, bp * 2)
+        let pivot = SpiderRenderer.leanPivot
+        func leaned(_ v: V2) -> V2 { pivot + (v - pivot).rotated(by: bp) + shift }
+        let onSurface = mode == .attached || mode == .nesting
+        let g = SpiderRenderer.ground
+        let leg = legs[i]
+        var hip = SpiderRenderer.rig(i, profile: profile, look: look).hip
+        var foot = leg.foot
+        if abs(bp) > 0.0005 {
+            hip = leaned(hip)
+            let inAir = clamp((foot.y - (g + 3)) / 10, 0, 1)
+            if inAir > 0 { foot = V2.lerp(foot, leaned(foot), inAir) }
+        }
+        if onSurface {
+            let sq = bodySquash()
+            foot = V2(foot.x / sq.stretch, g + (foot.y - g) / sq.fatten)
+        }
+        let knee: V2
+        if let bend = legBend[i] {
+            knee = SpiderRenderer.kneeIK(leg: i, hip: hip, foot: foot, away: bend, profile: profile, look: look)
+        } else {
+            knee = SpiderRenderer.knee(leg: i, hip: hip, foot: foot, lift: leg.lift, profile: profile, look: look)
+        }
+        return (hip, foot, knee)
+    }
+
+    /// A knee as a shape: how far along the hip-to-foot line it sits and
+    /// how far out to the side, both as fractions of that line's length.
+    private static func kneeShape(hip: V2, foot: V2, knee: V2) -> V2 {
+        let d = foot - hip
+        let len = max(d.length, 1)
+        let u = d / len
+        let k = knee - hip
+        return V2(k.dot(u) / len, u.cross(k) / len)
+    }
+
+    private static func knee(from shape: V2, hip: V2, foot: V2) -> V2 {
+        let d = foot - hip
+        let len = max(d.length, 1)
+        let u = d.length > 0.001 ? d / d.length : V2(1, 0)
+        // (x, y) -> along u, and out along u's left normal: the inverse of
+        // the cross product above.
+        return hip + u * (shape.x * len) + V2(-u.y, u.x) * (shape.y * len)
+    }
+
+    /// The knees ease between shapes. Two different leg models answer for
+    /// the knee (a bend held for a pose, the rest shape swung about the hip
+    /// otherwise) and either can flip the bend from one side to the other
+    /// from one frame to the next — the pops that make a leg look broken.
+    /// A foot moving carries its knee with it rigidly, so nothing lags; only
+    /// a change of shape is eased, and a bend going over to the other side
+    /// passes through a straightened leg, as a real one does.
+    private func updateKnees(dt: CGFloat) {
+        let profile = SpiderRenderer.profileAmount(yaw: yaw)
+        let fresh = kneeShape.count != legs.count
+        if fresh { kneeShape = Array(repeating: .zero, count: legs.count) }
+        let k = 1 - exp(-dt * 24)
+        // On a surface the knees come under the same limit as the feet: a
+        // knee riding a hip-to-foot line that swings round fast (a foot
+        // passing close under the hip) is held to a movement too.
+        let limit = (mode == .attached || mode == .nesting) && activity != .roll && !fresh
+            && kneeWorld.count == legs.count && kneeWorldVel.count == legs.count && dt > 0
+            && pos.distance(to: kneeLimitPos) < 30 * config.scale
+        kneeLimitPos = pos
+        if kneeWorld.count != legs.count { kneeWorld = Array(repeating: .zero, count: legs.count) }
+        if kneeWorldVel.count != legs.count { kneeWorldVel = Array(repeating: .zero, count: legs.count) }
+        kneeLocal = legs.indices.map { i in
+            let j = modelLeg(i, profile: profile)
+            let want = Spider.kneeShape(hip: j.hip, foot: j.foot, knee: j.knee)
+            kneeShape[i] = fresh ? want : kneeShape[i] + (want - kneeShape[i]) * k
+            let local = Spider.knee(from: kneeShape[i], hip: j.hip, foot: j.foot)
+            var w = kneeWorldPoint(local)
+            if limit {
+                if Spider.limitJolt(&w, last: &kneeWorld[i], vel: &kneeWorldVel[i], cap: Spider.footJolt * config.scale, dt: dt) {
+                    return kneeLocalPoint(w)
+                }
+            } else {
+                kneeWorldVel[i] = dt > 0 ? (w - kneeWorld[i]) / dt : .zero
+                kneeWorld[i] = w
+            }
+            return local
+        }
+    }
+    private var kneeLimitPos: V2 = .zero
+
+    /// A drawn leg point (as `pose()` lays it out, with the squash and
+    /// stretch) to the world, and back.
+    private func kneeWorldPoint(_ l: V2) -> V2 {
+        let sq = bodySquash()
+        let g = SpiderRenderer.ground
+        return toWorld(V2(l.x * sq.stretch, g + (l.y - g) * sq.fatten))
+    }
+    private func kneeLocalPoint(_ w: V2) -> V2 {
+        let sq = bodySquash()
+        let g = SpiderRenderer.ground
+        let l = toLocal(w)
+        return V2(l.x / max(sq.stretch, 0.01), g + (l.y - g) / max(sq.fatten, 0.01))
+    }
+
     func pose() -> SpiderPose {
         var p = SpiderPose()
         p.pos = pos
         p.heading = heading
         p.spin = rollSpin
+        p.ball = ball
         p.facing = clamp(yaw, -1, 1)
         p.grounded = clamp(grounded.value, 0, 1)
         p.scale = config.scale
-        // Crouching squashes the whole sprite down onto its feet.
-        let squash = 1 - clamp(crouch.value, 0, 1) * 0.26
-        p.stretch = clamp(stretch.value * (1 + (1 - squash) * 0.5), 0.74, 1.22)
-        p.fatten = clamp(fatten.value * squash, 0.66, 1.26)
+        (p.stretch, p.fatten) = bodySquash()
         let mirror: CGFloat = yaw >= 0 ? 1 : -1
         var attach = silkAttachLocal()
         attach.x *= mirror
@@ -5558,12 +7177,15 @@ final class Spider {
         p.blink = clamp(max(blinkValue, sleepiness.value, lid.value), 0, 1)
         p.happy = clamp(happy.value + pettingScore * 0.5 + fed * 0.3, 0, 1)
         if activity == .eat, mode == .attached { p.chew = 0.5 + 0.5 * sin(t * 11) }
+        // A nibble at the pointer it has caught, now and then.
+        if mode == .clinging { p.chew = max(0, sin(t * 7)) * (0.5 + 0.5 * sin(t * 0.9)) }
         p.headTilt = headTilt.value
-        // Standing on a window with other windows in front of it, the parts
-        // of it inside those windows are behind them. The screen's own rim,
-        // the menu bar and the Dock are the glass in front of everything: on
-        // those it is never covered, whatever window reaches the edge.
-        if mode == .attached, let loop = map.loop(anchor.loopID), loop.kind == .windowEdge {
+        // It is drawn in front of everything, and it stays there: it never
+        // slips behind a window. The one exception is peek-a-boo, where
+        // hiding behind the edge of a window in front of the one it stands
+        // on is the whole game — then the parts of it inside that window
+        // are behind it.
+        if mode == .attached, activity == .peekaboo, let loop = map.loop(anchor.loopID), loop.kind == .windowEdge {
             let r = 62 * config.scale
             let sprite = CGRect(x: pos.x - r, y: pos.y - r, width: r * 2, height: r * 2)
             p.hiddenBy = map.occluders.filter { $0.depth < loop.depth && $0.rect.intersects(sprite) }.map { $0.rect }
@@ -5575,9 +7197,11 @@ final class Spider {
             + sin(wagPhase) * wag.value * 0.55
         p.emote = emote
         p.emoteT = emoteDur > 0 ? clamp(emoteTime / emoteDur, 0, 1) : 0
+        p.emoteClock = emoteClock
         p.thought = thought
         p.grabbed = grabbed.value
         p.outfit = look
+        p.surroundings = shownSurroundings
         p.name = name
         p.nameTag = clamp(nameTag.value, 0, 1)
         p.odometer = odometer
@@ -5585,29 +7209,22 @@ final class Spider {
         // The lean: body and hips turn about a point between the hips and
         // shift a little with it; a foot on the ground stays put, a foot in
         // the air goes with the body.
-        let bp = clamp(pitch.value + runNose, -0.6, 0.6)
+        let bp = bodyPitchNow
         p.bodyPitch = bp
         p.bodyShift = V2(-bp * 8, bp * 2)
-        let pivot = SpiderRenderer.leanPivot
-        func leaned(_ v: V2) -> V2 { pivot + (v - pivot).rotated(by: bp) + p.bodyShift }
-        p.legs = legs.enumerated().map { i, leg in
-            var hip = SpiderRenderer.rig(i, profile: profile, look: look).hip
-            var foot = leg.foot
-            if abs(bp) > 0.0005 {
-                hip = leaned(hip)
-                let inAir = clamp((foot.y - (SpiderRenderer.ground + 3)) / 10, 0, 1)
-                if inAir > 0 { foot = V2.lerp(foot, leaned(foot), inAir) }
-            }
-            let knee: V2
-            if let bend = legBend[i] {
-                knee = SpiderRenderer.kneeIK(leg: i, hip: hip, foot: foot, away: bend, profile: profile, look: look)
-            } else {
-                knee = SpiderRenderer.knee(leg: i, hip: hip, foot: foot, lift: leg.lift, profile: profile, look: look)
-            }
-            return LegPose(hip: hip, knee: knee, foot: foot, lift: leg.lift)
+        p.legs = legs.indices.map { i in
+            let j = modelLeg(i, profile: profile)
+            // The knee keeps the shape it has been easing toward, laid on
+            // this frame's hip and foot.
+            let knee = kneeLocal.count == legs.count ? kneeLocal[i] : j.knee
+            return LegPose(hip: j.hip, knee: knee, foot: j.foot, lift: legs[i].lift)
         }
         if let from = buildThreadFrom, !webActive {
             p.web = (from, clamp(webAlpha.value, 0, 1), 0.15)
+        } else if let shot = airShot, shot.progress > 0 {
+            // The line on its way up to the mark.
+            let tip = V2.lerp(p.silkAttach, shot.target, easeOutCubic(shot.progress))
+            p.web = (tip, 0.9, 0)
         } else if webAlpha.value > 0.01 {
             let d = pos.distance(to: webAnchor)
             let slack = webActive ? clamp(1 - d / max(webLen + bungee.value, 1), 0, 1) : 0.3
