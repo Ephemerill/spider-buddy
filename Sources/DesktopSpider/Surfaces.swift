@@ -734,6 +734,24 @@ final class SurfaceMap {
         return true
     }
 
+    /// Clear of every window in front of `depth` by `margin`: a spot it can
+    /// take hold of with the whole of it out in the open, not just the
+    /// point under its feet.
+    func isClear(_ p: V2, depth: Int, margin: CGFloat) -> Bool {
+        for o in occluders where o.depth < depth {
+            if o.rect.insetBy(dx: -margin, dy: -margin).contains(p.point) { return false }
+        }
+        return true
+    }
+
+    /// Somewhere on this loop it may take hold of: open, and — on a window
+    /// edge — with room for all of it clear of any window in front, so it
+    /// never lands or perches half under one.
+    func canHold(_ l: SurfaceLoop, _ s: Seg, at t: CGFloat) -> Bool {
+        guard s.isOpen(at: t) else { return false }
+        return l.kind != .windowEdge || isClear(s.point(at: t), depth: l.depth, margin: standoff * 2)
+    }
+
     /// The underside of the menu bar on a screen, if it has one.
     func menuBarBottom(for screen: CGRect) -> CGFloat? {
         for l in loops where l.kind == .menuBar {
@@ -772,7 +790,7 @@ final class SurfaceMap {
                 var t = step * 0.5
                 while t < s.len {
                     let p = s.point(at: t)
-                    if !visibleOnly || (isOnScreen(p, slack: 4) && s.isOpen(at: t)) {
+                    if !visibleOnly || (isOnScreen(p, slack: 4) && canHold(l, s, at: t)) {
                         out.append((Anchor(loopID: l.id, segIdx: i, t: t), p, l, s))
                     }
                     t += step
@@ -791,7 +809,7 @@ final class SurfaceMap {
             if l.id == excludeLoop { continue }
             for (i, s) in l.segs.enumerated() {
                 let (t, d) = projectOnSegment(p, s.a, s.b)
-                if d < bestD, s.isOpen(at: t) {
+                if d < bestD, canHold(l, s, at: t) {
                     bestD = d
                     best = (Anchor(loopID: l.id, segIdx: i, t: t), s.point(at: t), s, l)
                 }

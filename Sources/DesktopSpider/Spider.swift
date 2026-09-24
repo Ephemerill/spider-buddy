@@ -529,10 +529,6 @@ final class Spider {
     private var shotPurpose: ShotPurpose = .swing
     /// Climbing out from under a window: hauls at double pace.
     private var hurrying = false
-    /// Scurrying out from under a window along the edge it is on: until
-    /// then the covered stretch is walked straight through rather than
-    /// stopped at.
-    private var escapeScurryUntil: CGFloat = 0
     /// A fall it means to catch: the dragline fastened where it let go
     /// pays out as it drops, and it takes hold at this height — decided
     /// before it dropped, and well clear of whatever is below.
@@ -3899,7 +3895,7 @@ final class Spider {
             // Furthest it can go on this edge before something in front of the
             // edge — or the end of it — stops it. Playing peek-a-boo it goes
             // behind the window on purpose.
-            let through = activity == .peekaboo || (t < escapeScurryUntil && activity == .scurry)
+            let through = activity == .peekaboo
             let lim = through ? (walkDir > 0 ? seg.len : 0) : seg.limit(from: anchor.t, dir: walkDir)
             let room = walkDir > 0 ? lim - anchor.t : anchor.t - lim
             if remaining <= room {
@@ -4309,12 +4305,12 @@ final class Spider {
         turnTo(dir, then: .walk, for: clamp(abs(along) / max(config.walkSpeed, 1), 0.5, 4.5))
     }
 
-    /// A window has come over it: get out from under, at once. If the open
-    /// part of the edge it is on is close, it scurries there along the
-    /// edge — the natural thing, and no drama. Otherwise it fires a line
-    /// straight up and climbs to whatever is above, or simply lets go and
-    /// drops on its dragline; failing all of those, it leaps for the
-    /// nearest clear spot.
+    /// A window has come over it: get out from under, at once. The edge it
+    /// is on is behind that window now — nothing to walk on, not even to
+    /// the open part of it further along — so it leaves it: a line
+    /// straight up to climb to whatever is above, or it lets go and drops,
+    /// often shooting a line on the way down to swing out on. Failing all
+    /// of those, it leaps for the nearest clear spot.
     private func escapeOcclusion() {
         abandonBuild()
         occludedFor = 0
@@ -4324,18 +4320,6 @@ final class Spider {
         wake()
         startled.velocity = 6
         setEmote(.surprise, 0.5)
-        if let (dir, dist) = openStretchAlongEdge(within: 220 * config.scale) {
-            walkThen = nil
-            if dir != walkDir {
-                walkDir = dir
-                facing = dir
-            }
-            let dur = clamp(dist / max(config.walkSpeed * 2.0, 1) + 0.25, 0.4, 2.0)
-            escapeScurryUntil = t + dur + 0.4
-            escapeUntil = t + dur + 0.6
-            beginActivity(.scurry, dur: dur)
-            return
-        }
         let screen = map.screenFrame(containing: pos)
         let roomBelow = pos.y - screen.minY > 70
         let ceiling = config.webs && !inCinema ? map.ceiling(above: pos, maxRise: 900) : nil
@@ -4348,7 +4332,7 @@ final class Spider {
             shotProgress = 0
             beginActivity(.shoot, dur: 0.2)
         } else if roomBelow {
-            detachAndFall()
+            detachAndFall(lineUp: chance(0.5))
         } else if let spot = bestJumpSpot(from: pos, exclude: anchor.loopID) {
             startJump(to: spot.point)
         } else if let spot = map.nearestSpot(to: pos, within: 900) {
@@ -4389,44 +4373,6 @@ final class Spider {
         } else {
             detachAndFall()
         }
-    }
-
-    /// The nearest stretch of the edge it is on that is out in the open —
-    /// clear of the covered part by a body's width — as a direction along
-    /// the edge and the distance to it, if there is one within `limit`.
-    private func openStretchAlongEdge(within limit: CGFloat) -> (dir: CGFloat, dist: CGFloat)? {
-        guard let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return nil }
-        let n = loop.segs.count
-        let clear = 26 * config.scale
-        var best: (dir: CGFloat, dist: CGFloat)?
-        for dir: CGFloat in [walkDir, -walkDir] {
-            var idx = anchor.segIdx
-            var t = anchor.t
-            var travelled: CGFloat = 0
-            var openRun: CGFloat = 0
-            scan: while travelled < limit {
-                let seg = loop.segs[idx]
-                let step: CGFloat = 6
-                let end = dir > 0 ? seg.len : 0
-                while dir > 0 ? t < end : t > end {
-                    t = dir > 0 ? min(t + step, end) : max(t - step, end)
-                    travelled += step
-                    let open = seg.isOpen(at: t) && map.isVisible(seg.point(at: t), depth: loop.depth)
-                    openRun = open ? openRun + step : 0
-                    if openRun >= clear {
-                        let d = travelled - clear * 0.5
-                        if best == nil || d < best!.dist { best = (dir, d) }
-                        break scan
-                    }
-                    if travelled >= limit { break scan }
-                }
-                let next = idx + (dir > 0 ? 1 : -1)
-                guard loop.closed || (next >= 0 && next < n) else { break }
-                idx = (next + n) % n
-                t = dir > 0 ? 0 : loop.segs[idx].len
-            }
-        }
-        return best
     }
 
     /// The line fired straight up has caught: haul up it to the surface.
@@ -4914,10 +4860,12 @@ final class Spider {
         }
     }
 
-    private func detachAndFall() {
+    /// `lineUp`: rather than a dragline from where it let go, a line shot
+    /// up at the ceiling on the way down, to swing out on.
+    private func detachAndFall(lineUp: Bool = false) {
         abandonBuild()
         lastLoopRect = nil
-        let ledge = ledgePoint()
+        let ledge = lineUp ? nil : ledgePoint()
         mode = .airborne
         air = .fall
         vel = V2(randRange(-30, 30), -20)
@@ -4928,7 +4876,7 @@ final class Spider {
         queued = nil
         setEmote(.surprise, 0.6)
         startled.velocity = 7
-        planFall(from: ledge)
+        planFall(from: ledge, lineUp: lineUp)
     }
 
     /// The point on the edge under its feet, and the depth of what it is
@@ -4942,7 +4890,10 @@ final class Spider {
         // away or closed leaves nothing to fasten to.
         guard seg.point(at: anchor.t).distance(to: pos) < map.standoff * 2.5 else { return nil }
         let flat = seg.facing == .up || seg.facing == .down
-        return (flat ? pos - seg.normal * map.standoff : pos, loop.depth)
+        let point = flat ? pos - seg.normal * map.standoff : pos
+        // Nor can it fasten to a stretch a window has come over.
+        guard loop.kind != .windowEdge || map.isVisible(point, depth: loop.depth) else { return nil }
+        return (point, loop.depth)
     }
 
     /// Decides, as a fall begins, whether it will catch itself and where —

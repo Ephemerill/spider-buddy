@@ -998,6 +998,9 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         col.addArrangedSubview(partGrid(Pattern.self, columns: 5, label: { $0.label },
                                         get: { self.design.look.pattern }, set: { self.design.look.pattern = $0 },
                                         preview: { var l = self.design.look; l.pattern = $0; return l }))
+        col.addArrangedSubview(checkbox("Camouflage markings", get: { self.design.look.camoMarkings },
+                                        set: { self.design.look.camoMarkings = $0 }))
+        col.addArrangedSubview(note("With the Camouflage coat, the markings take on the colour of whatever is behind it too — just a shade darker than the coat — instead of the accent colour."))
         col.addArrangedSubview(header("Accent colour"))
         col.addArrangedSubview(note("The colour of the markings, and of leg bands, socks, hats, scarves and the rest."))
         let accents = Array(Accent.allCases)

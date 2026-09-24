@@ -917,7 +917,7 @@ enum SpiderRenderer {
                 let a = CGFloat(k) / 6 * 2 * .pi
                 ellipse(cos(a) * 0.3, sin(a) * 0.3, 0.17, 0.17)
             }
-            ctx.setFillColor(pal.accentRGB.luma > 0.5 ? pal.accentRGB.darker(0.4).cg : pal.accentRGB.lighter(0.5).cg)
+            ctx.setFillColor(pal.accentShade(darker: 0.4, lighter: 0.5))
             ellipse(0, 0, 0.14, 0.14)
         case .eyespots:
             // Two false eyes on the back, to scare the birds.
@@ -945,7 +945,7 @@ enum SpiderRenderer {
                 ctx.strokePath()
             }
         case .leopard:
-            let dark = pal.accentRGB.luma > 0.45 ? pal.accentRGB.darker(0.55).cg : pal.accentRGB.lighter(0.4).cg
+            let dark = pal.accentShade(darker: 0.55, lighter: 0.4, over: 0.45)
             for (x, y, r) in [(CGFloat(0.35), CGFloat(0.35), CGFloat(0.2)), (-0.35, 0.2, 0.17), (0.05, -0.35, 0.16), (-0.5, -0.45, 0.13), (0.55, -0.25, 0.14), (-0.05, 0.6, 0.12)] {
                 ctx.setFillColor(pal.accent)
                 ellipse(x, y, r, r)
@@ -1125,7 +1125,7 @@ enum SpiderRenderer {
         ctx.addPath(bundle); ctx.setFillColor(pal.accent); ctx.fillPath()
         ctx.saveGState()
         ctx.addPath(bundle); ctx.clip()
-        ctx.setFillColor(pal.accentRGB.luma > 0.5 ? pal.accentRGB.darker(0.4).cg : pal.accentRGB.lighter(0.5).cg)
+        ctx.setFillColor(pal.accentShade(darker: 0.4, lighter: 0.5))
         for (x, y) in [(CGFloat(-3), CGFloat(2)), (2, 3), (-1, -2), (4, -1), (-4, -3)] {
             ctx.fillEllipse(in: CGRect(x: b.x + x - 1.1, y: b.y + y - 1.1, width: 2.2, height: 2.2))
         }
@@ -2530,7 +2530,7 @@ enum SpiderRenderer {
             ctx.beginPath(); ctx.move(to: CGPoint(x: -w * 0.98, y: w * 0.18)); ctx.addQuadCurve(to: CGPoint(x: w * 0.98, y: w * 0.18), control: CGPoint(x: 0, y: w * 0.36)); ctx.strokePath()
         case .jester:
             // Three floppy points with bells, in two colours.
-            let a = accent, b = pal.accentRGB.luma > 0.5 ? pal.accentRGB.darker(0.5).cg : pal.accentRGB.lighter(0.5).cg
+            let a = accent, b = pal.accentShade(darker: 0.5, lighter: 0.5)
             let bob = sin(pose.odometer * 0.3) * 0.08
             for (k, (dx, dy, tilt)) in [(-w * 1.2, w * 1.2, CGFloat(-0.9)), (0, w * 2.0, CGFloat(0)), (w * 1.2, w * 1.2, CGFloat(0.9))].enumerated() {
                 let p = CGMutablePath()
@@ -2637,7 +2637,7 @@ enum SpiderRenderer {
         case .sweatband:
             let band = CGPath(roundedRect: CGRect(x: -w * 1.05, y: -3, width: w * 2.1, height: 5), cornerWidth: 2.5, cornerHeight: 2.5, transform: nil)
             outlined(band, fill: accent)
-            ctx.setStrokeColor(pal.accentRGB.luma > 0.5 ? pal.accentRGB.darker(0.4).cg : pal.accentRGB.lighter(0.5).cg)
+            ctx.setStrokeColor(pal.accentShade(darker: 0.4, lighter: 0.5))
             ctx.setLineWidth(1)
             ctx.beginPath(); ctx.move(to: CGPoint(x: -w * 0.9, y: -0.5)); ctx.addLine(to: CGPoint(x: w * 0.9, y: -0.5)); ctx.strokePath()
         case .flowerCrown:

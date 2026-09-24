@@ -36,6 +36,9 @@ struct Paint {
         case stars(RGB, t: CGFloat, count: Int)
         /// A lightning bolt across the abdomen.
         case bolt(CGFloat)
+        /// Web lines spun out from the middle of each body part, and a
+        /// little spider emblem on the abdomen.
+        case webbing(RGB)
     }
 
     // The body spans roughly x -32…26, y -22…18; the axis maps that onto 0…1.
@@ -80,7 +83,7 @@ struct Paint {
     /// Fills `path` (in body space) with the paint. The gradient is
     /// resampled into many even stops, so moving and repeating ones need
     /// nothing special from Core Graphics.
-    func fill(_ path: CGPath, in ctx: CGContext) {
+    func fill(_ path: CGPath, head: Bool = false, in ctx: CGContext) {
         ctx.saveGState()
         ctx.addPath(path)
         ctx.clip()
@@ -109,6 +112,7 @@ struct Paint {
             }
         }
         drawTexture(in: ctx)
+        if case .webbing(let ink) = texture { drawWebbing(ink, over: path.boundingBox, head: head, in: ctx) }
         ctx.restoreGState()
     }
 
@@ -166,6 +170,9 @@ struct Paint {
                     ctx.strokePath()
                 }
             }
+        case .webbing:
+            // Drawn per part, from its outline, in `fill`.
+            break
         case .bolt(let a):
             guard a > 0.01 else { return }
             ctx.setStrokeColor(CGColor(red: 1, green: 0.98, blue: 0.75, alpha: a))
@@ -179,6 +186,63 @@ struct Paint {
             ctx.addLine(to: CGPoint(x: -18, y: -9))
             ctx.strokePath()
         }
+    }
+}
+
+extension Paint {
+    /// Spokes from the part's middle, joined by rings that sag toward the
+    /// centre between each pair of spokes, like a suit's webbing. The
+    /// abdomen also gets a small spider on its back.
+    fileprivate func drawWebbing(_ ink: RGB, over box: CGRect, head: Bool, in ctx: CGContext) {
+        let c = CGPoint(x: box.midX, y: box.midY)
+        let reach = max(box.width, box.height) * 0.75
+        let spokes = head ? 10 : 12
+        let angle = { (i: Int) -> CGFloat in CGFloat(i) / CGFloat(spokes) * 2 * .pi + 0.2 }
+        func at(_ i: Int, _ r: CGFloat) -> CGPoint {
+            CGPoint(x: c.x + cos(angle(i)) * r, y: c.y + sin(angle(i)) * r)
+        }
+        ctx.setStrokeColor(ink.alpha(0.85))
+        ctx.setLineWidth(0.75)
+        ctx.setLineCap(.round)
+        ctx.beginPath()
+        for i in 0..<spokes {
+            ctx.move(to: c)
+            ctx.addLine(to: at(i, reach))
+        }
+        let rings = head ? 4 : 5
+        for k in 1...rings {
+            let r = reach * CGFloat(k) / CGFloat(rings + 1)
+            ctx.move(to: at(0, r))
+            for i in 0..<spokes {
+                let mid = (angle(i) + angle(i + 1)) / 2
+                let sag = r * 0.8
+                ctx.addQuadCurve(to: at(i + 1, r), control: CGPoint(x: c.x + cos(mid) * sag, y: c.y + sin(mid) * sag))
+            }
+        }
+        ctx.strokePath()
+
+        guard !head else { return }
+        // The emblem: a round body, a smaller head, four legs a side bent
+        // at the knee.
+        let s = min(box.width, box.height) * 0.2
+        ctx.setFillColor(ink.cg)
+        ctx.fillEllipse(in: CGRect(x: c.x - s * 0.55, y: c.y - s * 1.1, width: s * 1.1, height: s * 1.6))
+        ctx.fillEllipse(in: CGRect(x: c.x - s * 0.38, y: c.y + s * 0.45, width: s * 0.76, height: s * 0.76))
+        ctx.setStrokeColor(ink.cg)
+        ctx.setLineWidth(s * 0.22)
+        ctx.setLineJoin(.round)
+        ctx.beginPath()
+        for side: CGFloat in [-1, 1] {
+            for (knee, foot) in [(CGPoint(x: 1.3, y: 1.3), CGPoint(x: 1.6, y: 2.4)),
+                                 (CGPoint(x: 1.5, y: 0.5), CGPoint(x: 2.2, y: 1.3)),
+                                 (CGPoint(x: 1.5, y: -0.4), CGPoint(x: 2.2, y: -1.2)),
+                                 (CGPoint(x: 1.3, y: -1.1), CGPoint(x: 1.6, y: -2.3))] {
+                ctx.move(to: CGPoint(x: c.x + side * s * 0.3, y: c.y + (knee.y > 0 ? s * 0.3 : -s * 0.2)))
+                ctx.addLine(to: CGPoint(x: c.x + side * s * knee.x, y: c.y + s * knee.y))
+                ctx.addLine(to: CGPoint(x: c.x + side * s * foot.x, y: c.y + s * foot.y))
+            }
+        }
+        ctx.strokePath()
     }
 }
 
@@ -204,6 +268,17 @@ struct Palette {
     var legTones: [RGB]?
     /// How much of the body's own light/shadow to keep over a paint.
     var sheen: CGFloat = 1
+    /// Markings that melt into the camouflage: their second shades are a
+    /// touch darker, always, rather than whichever way contrasts more —
+    /// which, as the colour behind it drifts, would flip back and forth.
+    var quietAccent = false
+
+    /// A second shade of the accent that stands out from it: darker on a
+    /// light accent, lighter on a dark one.
+    func accentShade(darker d: CGFloat, lighter l: CGFloat, over threshold: CGFloat = 0.5) -> CGColor {
+        if quietAccent { return accentRGB.darker(0.1).cg }
+        return (accentRGB.luma > threshold ? accentRGB.darker(d) : accentRGB.lighter(l)).cg
+    }
 
     init(body: RGB, legs: RGB, accent: RGB, paint: Paint? = nil) {
         // Dark coats need a rim that is lighter than the body, not darker,
@@ -239,7 +314,7 @@ struct Palette {
     /// Fills a body part: the flat colour, or the paint.
     func fillBody(_ path: CGPath, head: Bool, in ctx: CGContext) {
         if let paint {
-            paint.fill(path, in: ctx)
+            paint.fill(path, head: head, in: ctx)
         } else {
             ctx.addPath(path)
             ctx.setFillColor(head ? headFill : bodyFill)
@@ -252,6 +327,11 @@ extension SpiderLook {
     /// The palette for this look at this moment. `surroundings` is what is
     /// behind it, for camouflage.
     func palette(time: CGFloat, surroundings: RGB) -> Palette {
+        if isCamouflaged, camoMarkings {
+            var pal = living.palette(time: time, surroundings: surroundings, accent: surroundings.darker(0.1))
+            pal.quietAccent = true
+            return pal
+        }
         let accent = accentRGB
         switch skin {
         case .coat:
@@ -307,19 +387,23 @@ extension LivingCoat {
             // Its base is whatever is behind it; the blotches are that
             // colour pushed a little either way, so it still reads as a
             // spider up close and melts away from across the room.
+            // Every shade is a fixed step from the base, whatever the base:
+            // one that switched from darker to lighter on a dark enough
+            // background would flash as the colour behind it drifted past
+            // the switch.
             let base = surroundings
-            let dark = base.luma < 0.3
             // (Blotches kept faint: it reads as one colour, the colour of
             // what is behind it, with just enough pattern to be a spider.)
-            let tones = [base.darker(dark ? 0 : 0.09).lighter(dark ? 0.07 : 0), base.lighter(dark ? 0.12 : 0.08), base.darker(dark ? 0 : 0.15).lighter(dark ? 0.04 : 0)]
+            let tones = [base.darker(0.07), base.lighter(0.06), base.darker(0.11)]
             var p = Paint(stops: [base, base.mix(tones[0], 0.4), base], direction: .down)
             p.texture = .blotches(tones, drift: t)
             // The legs are the one colour, all of them, all the time.
-            var pal = Palette.painted(p, accent: accent, legTones: [base.mix(tones[0], 0.5)], sheen: 0.35)
-            let rim = dark ? base.lighter(0.30) : base.darker(0.42)
-            pal.outline = rim.cg
-            pal.outlineFar = rim.darker(0.12).cg
-            pal.eyeDark = (dark ? RGB(0.05, 0.04, 0.05) : base.darker(0.72)).cg
+            var pal = Palette.painted(p, accent: accent, legTones: [base.darker(0.04)], sheen: 0.35)
+            // The outline just a shade darker than the body, always.
+            pal.outline = base.darker(0.14).cg
+            pal.outlineFar = base.darker(0.2).cg
+            pal.bodyLight = base.lighter(0.2).cg
+            pal.eyeDark = base.darker(0.72).cg
             return pal
         case .galaxy:
             var p = Paint(stops: [RGB(0.08, 0.06, 0.22), RGB(0.30, 0.12, 0.46), RGB(0.10, 0.20, 0.50), RGB(0.08, 0.06, 0.22)], direction: .diagonal)
@@ -419,6 +503,17 @@ extension LivingCoat {
             var pal = Palette.painted(p, accent: accent, sheen: 0.2)
             pal.outline = RGB(0.22, 0.23, 0.26).cg
             pal.outlineFar = RGB(0.16, 0.17, 0.20).cg
+            return pal
+        case .webSlinger:
+            // Red over a blue belly, black webbing; blue upper legs and red
+            // boots.
+            let red = RGB(0.84, 0.10, 0.12), blue = RGB(0.10, 0.24, 0.66)
+            var p = Paint(stops: [red, red, red, blue], direction: .down)
+            p.texture = .webbing(RGB(0.06, 0.04, 0.05))
+            var pal = Palette.painted(p, accent: accent, legTones: [blue, red], sheen: 0.45)
+            pal.outline = RGB(0.10, 0.04, 0.05).cg
+            pal.outlineFar = RGB(0.07, 0.03, 0.04).cg
+            pal.eyeDark = RGB(0.06, 0.04, 0.05).cg
             return pal
         }
     }

@@ -894,9 +894,9 @@ do {
 }
 
 // Covered on a shelf with no open stretch near, and the ceiling covered
-// too: the only way is down, on its dragline. It catches itself well above
-// the floor, and since home is under the window now it goes on down to
-// the floor or leaps — it never climbs back up under the window.
+// too: the only way is down. The shelf is behind the window now, so no
+// line is fastened to it — it drops — and it never climbs back up under
+// the window.
 do {
     let cm = SurfaceMap()
     cm.standoff = map.standoff
@@ -912,8 +912,7 @@ do {
     cm.debugRebuild(screen: screen, menuBarHeight: 25, windows: [shelf, TrackedWindow(id: 42, frame: cover, depth: 0, owner: "Cover")], cinema: false)
     var n = 0
     var seen: [String] = []
-    var catchY: CGFloat?
-    var lowestOnLine = CGFloat.greatestFiniteMagnitude
+    var hiddenLine = 0
     var backUnder = 0
     var done = ""
     var last = ""
@@ -922,24 +921,25 @@ do {
         let st = s.debugState
         let kind = String(st.split(separator: ":").first ?? "")
         if seen.last != kind { seen.append(kind) }
-        if kind == "dangling" || kind == "swinging" {
-            if catchY == nil { catchY = s.worldPos.y }
-            lowestOnLine = min(lowestOnLine, s.worldPos.y)
-        }
+        // Hanging from it, that is: a line still racing out to its mark
+        // may pass over the window. (And the menu bar is over every
+        // window, whatever the cover's rect says.)
+        if kind == "dangling" || kind == "swinging", let w = s.pose().web, w.anchor.y < screen.maxY - 40,
+           cover.insetBy(dx: 4, dy: 4).contains(w.anchor.point) { hiddenLine += 1 }
         if last == "dangling", kind == "attached", cover.contains(s.worldPos.point) { backUnder += 1 }
         last = kind
         if st.hasPrefix("attached"), CGFloat(n) * dt > 3, !cover.contains(s.worldPos.point) { done = st; break }
     }
-    expect("covered, only way is down: drops on its dragline", catchY != nil, seen.joined(separator: " > "))
-    expect("covered, only way is down: catches well above the floor", (catchY ?? 0) - screen.minY > 140, "caught \(Int((catchY ?? 0) - screen.minY)) px up")
+    expect("covered, only way is down: drops", seen.contains("fall"), seen.joined(separator: " > "))
+    expect("covered, only way is down: no line fastened under the window", hiddenLine == 0, "\(hiddenLine) frames")
     expect("covered, only way is down: does not climb back under the window", backUnder == 0, seen.joined(separator: " > "))
     expect("covered, only way is down: ends up standing in the open", !done.isEmpty, done.isEmpty ? s.debugState + "  " + seen.joined(separator: " > ") : done)
 }
 
 // A window dropped right over it while it stands on another window's
-// shelf, with the open part of the shelf close by: it scurries out along
-// the shelf rather than firing lines and falling about, and once out it
-// stays out.
+// shelf, with the open part of the shelf close by: the shelf is behind the
+// window now, so it leaves it — drops, or a line out — and never walks
+// along it under the window to the open part. Once out it stays out.
 do {
     let em = SurfaceMap()
     em.standoff = map.standoff
@@ -956,23 +956,58 @@ do {
     var n = 0
     var out = -1.0
     var seen: [String] = []
-    var wild = 0
+    var walkedUnder = 0
     var backUnder = 0
     while CGFloat(n) * dt < 8 {
         s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
         let st = s.debugState
         if seen.last != st { seen.append(st) }
-        let kind = String(st.split(separator: ":").first ?? "")
-        // (Once out it is its own spider again; only the escape itself
-        // must be tidy.)
-        if CGFloat(n) * dt < 3, kind == "fall" || kind == "dangling" || kind == "jump" || st.contains(":shoot") { wild += 1 }
         let under = cover.contains(s.worldPos.point)
+        if n > 6, under, s.currentLoopID == "win:31", st.contains(":walk") || st.contains(":scurry") { walkedUnder += 1 }
         if out < 0, !under { out = Double(n) * Double(dt) }
         if out >= 0, under { backUnder += 1 }
     }
-    expect("covered with the open shelf near: scurries out along it", out >= 0 && out < 2.5 && wild == 0,
-           (out < 0 ? "never left" : String(format: "out in %.1fs", out)) + ", wild frames \(wild)  " + seen.prefix(5).joined(separator: " > "))
+    expect("covered with the open shelf near: gets off the shelf", out >= 0 && out < 2.5,
+           (out < 0 ? "never left" : String(format: "out in %.1fs", out)) + "  " + seen.prefix(5).joined(separator: " > "))
+    expect("covered with the open shelf near: never walks along it under the window", walkedUnder == 0, "\(walkedUnder) frames")
     expect("covered with the open shelf near: stays out", backUnder == 0, "\(backUnder) frames back under it")
+}
+
+// On the side of a window when another opens over it: it drops or lines
+// out — never walks down the covered side to the open part below — and
+// never takes hold of the covered window anywhere the new one hides it.
+do {
+    var walked = 0, touched = 0, runs = 0
+    for trial in 0..<20 {
+        let em = SurfaceMap()
+        em.standoff = map.standoff
+        let wall = TrackedWindow(id: 41, frame: CGRect(x: screen.minX + 300, y: screen.minY + 200, width: 700, height: 600), depth: 1, owner: "Wall")
+        em.debugRebuild(screen: screen, menuBarHeight: 25, windows: [wall], cinema: false)
+        let s = Spider(map: em)
+        s.config.webs = true
+        s.config.followCursor = false
+        _ = settleUntilAttached(s)
+        let side = trial % 2 == 0 ? 1 : 3
+        _ = park(s, loopID: "win:41", segIdx: side, t: 300)
+        guard s.currentLoopID == "win:41" else { continue }
+        runs += 1
+        let p = s.worldPos
+        let cover = CGRect(x: p.x - 250, y: p.y - 150, width: 500, height: 300)
+        em.debugRebuild(screen: screen, menuBarHeight: 25, windows: [wall, TrackedWindow(id: 42, frame: cover, depth: 0, owner: "Cover")], cinema: false)
+        // (A beat to notice, and the line fired from where it stands, are
+        // the escape itself; taking hold there again once gone is not.)
+        var left = false
+        for n in 0..<(60 * 8) {
+            s.setCursor(V2(-4000, -4000)); s.update(dt: dt)
+            if s.currentLoopID != "win:41" { left = true }
+            guard n > 6, s.currentLoopID == "win:41", cover.insetBy(dx: -4, dy: -4).contains(s.worldPos.point) else { continue }
+            let st = s.debugState
+            if st.contains(":walk") || st.contains(":scurry") { walked += 1; break }
+            if left { touched += 1; break }
+        }
+    }
+    expect("covered on a window's side: never walks down it under the window", runs > 0 && walked == 0, "\(walked) of \(runs)")
+    expect("covered on a window's side: never holds the hidden part", touched == 0, "\(touched) of \(runs)")
 }
 
 // Petting.

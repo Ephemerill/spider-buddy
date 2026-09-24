@@ -595,7 +595,7 @@ enum GradientCoat: String, Codable, CaseIterable {
 
 /// Coats that move: colours that shift, drift, pulse or match the world.
 enum LivingCoat: String, Codable, CaseIterable {
-    case rainbow, lava, camo, galaxy, ocean, aurora, disco, fire, frost, toxic, pearl, candy, storm, chrome
+    case rainbow, lava, camo, galaxy, ocean, aurora, disco, fire, frost, toxic, pearl, candy, storm, chrome, webSlinger
     var label: String {
         switch self {
         case .rainbow: return "Rainbow"
@@ -612,6 +612,7 @@ enum LivingCoat: String, Codable, CaseIterable {
         case .candy: return "Candy Cane"
         case .storm: return "Thunderstorm"
         case .chrome: return "Chrome"
+        case .webSlinger: return "Web-Slinger"
         }
     }
     var blurb: String {
@@ -630,6 +631,7 @@ enum LivingCoat: String, Codable, CaseIterable {
         case .candy: return "Stripes turning like a barber's pole."
         case .storm: return "Grey cloud, with lightning now and then."
         case .chrome: return "Polished metal with a sweeping shine."
+        case .webSlinger: return "Red and blue, webbed all over, with the emblem on its back."
         }
     }
 }
@@ -673,6 +675,9 @@ struct SpiderLook: Codable, Hashable {
     var accent: Accent = .cream
     /// A colour of your own for the markings, instead of a preset.
     var customAccent: RGB? = nil
+    /// With the Camouflage coat, the markings (and everything else in the
+    /// accent colour) take on what is behind it too.
+    var camoMarkings = false
     var hat: Hat = .none
     var accessory: Accessory = .none
     /// 0 sleek .. 2 very fuzzy.
@@ -709,7 +714,7 @@ struct SpiderLook: Codable, Hashable {
     private enum CodingKeys: String, CodingKey {
         case body, eyes, brows, fangs, legs, pattern, skin, coat, gradient, living, custom, customGradient
         case bodyTune, eyeTune, legTune
-        case accent, customAccent, hat, accessory, fuzz, faceOverLegs
+        case accent, customAccent, camoMarkings, hat, accessory, fuzz, faceOverLegs
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -730,6 +735,7 @@ struct SpiderLook: Codable, Hashable {
         legTune = (try? c.decodeIfPresent(LegTune.self, forKey: .legTune)) ?? LegTune()
         accent = (try? c.decodeIfPresent(Accent.self, forKey: .accent)) ?? .cream
         customAccent = try? c.decodeIfPresent(RGB.self, forKey: .customAccent)
+        camoMarkings = (try? c.decodeIfPresent(Bool.self, forKey: .camoMarkings)) ?? false
         hat = (try? c.decodeIfPresent(Hat.self, forKey: .hat)) ?? .none
         accessory = (try? c.decodeIfPresent(Accessory.self, forKey: .accessory)) ?? .none
         fuzz = (try? c.decodeIfPresent(Int.self, forKey: .fuzz)) ?? 1

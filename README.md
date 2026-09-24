@@ -329,9 +329,13 @@ such a window opens on top of the spider, or is dragged over it, it gets out
 from under at once — within a poll or two — rather than sitting there as if
 perched on the glass. It either fires a line straight up and hauls itself,
 double time, to whatever is above (a window's underside, the menu bar, the
-top of the screen), or simply lets go and drops to whatever is below; from
-the floor, where a drop is no use, it always goes up. If neither is
-possible it leaps for the nearest clear spot. The same applies when it is
+top of the screen), or lets go and drops — often shooting a line on the way
+down to swing out on; from the floor, where a drop is no use, it always goes
+up. It never walks along the covered edge to the open part of it: that edge
+is behind the window now. If neither is possible it leaps for the nearest
+clear spot. Nor does it ever take hold of a window where another hides it —
+no dragline fastened to the covered stretch, and no landing on a window
+edge unless all of it is clear of every window in front. The same applies when it is
 hanging on a line (it climbs straight up out of the way) or asleep in its
 hammock (it bails out). "Covered" means either its edge is blocked by a
 window in front, or its body is: a window that only overlaps the body
@@ -464,8 +468,8 @@ the right shows up there and on your desktop immediately. Nothing is
 | Hats | 38 hats — top hat, party hat, crown, beanie, flower, bow, cap, halo, wizard, propeller (it spins as it walks), cowboy, chef, bucket hat, viking, tiara, pirate, mushroom, sombrero, fez, beret, bowler, santa, mortarboard, bunny ears, cat ears, antlers, hard hat, sailor, jester, horns, unicorn, ushanka, pumpkin, strawberry, sweatband, flower crown, a little bird |
 | Extras | 30 things to wear — glasses, monocle, shades, heart shades, goggles, eyepatch, a hero mask, a clown nose, moustache, beard, bow tie, necktie, scarf, bandana, bell collar, pearls, a medal, flower lei, headphones, sweater, tutu, backpack, satchel, bindle, jetpack (it fires in the air), balloon, cape, fairy wings, bat wings |
 | Legs | 13 styles — slender, chunky, stubby, long, spindly, fuzzy, knobbly, robot, banded, striped, socks, boots — which change the rig, so the walk, turn and jump all adapt |
-| Colours | 30 flat coats, 16 gradient coats, 14 *living* coats that move — Rainbow sliding along it, Hot Lava with glowing cracks between drifting crust, Camouflage that takes on the colour of whatever is behind it, Galaxy with twinkling stars, Ocean, Aurora, Disco, Fire, Frost, Toxic, Pearl, Candy Cane, Thunderstorm with lightning, Chrome — plus your own: pick any body and leg colour, or blend two or three of your own colours in any direction, shimmering if you like |
-| Markings | 20 markings on the abdomen (stripe, spots, chevron, heart, star, skull, moon, flower, eyespots, hourglass, tiger, leopard, checker, lightning…), 20 accent colours or one of your own |
+| Colours | 30 flat coats, 16 gradient coats, 15 *living* coats that move — Rainbow sliding along it, Hot Lava with glowing cracks between drifting crust, Camouflage that takes on the colour of whatever is behind it, Galaxy with twinkling stars, Ocean, Aurora, Disco, Fire, Frost, Toxic, Pearl, Candy Cane, Thunderstorm with lightning, Chrome, Web-Slinger (red and blue, webbed all over, with the emblem on its back) — plus your own: pick any body and leg colour, or blend two or three of your own colours in any direction, shimmering if you like |
+| Markings | 20 markings on the abdomen (stripe, spots, chevron, heart, star, skull, moon, flower, eyespots, hourglass, tiger, leopard, checker, lightning…), 20 accent colours or one of your own, or camouflage markings that take on the colour behind it along with a Camouflage coat |
 | Personality | a temperament preset (Friendly, Shy, Hyper, Lazy, Curious, Show-off, Chill, Grumpy) or six sliders — energy, curiosity, bravery, playfulness, affection, laziness |
 | Gait | walking style (steady, bouncy, tiptoe, lumbering, scurrying), pace, stride, bounce, stance |
 | Habits | a dial for each thing it does on its own — wandering, leaping, dropping on a thread, swinging, building and napping in a hammock, nodding off, drumming, dancing, rolling, spinning, push-ups, stretching, wiggling, arms up, looking about, resting, grooming, fidgeting, scratching, peering, thinking, coming to see the pointer, craning at it, staring, glancing, greeting, waving, peek-a-boo. All the way down it never does that; in the middle, as often as it usually would; all the way up, every chance it gets |
@@ -481,7 +485,10 @@ window, the wallpaper's average colour on the edge of the screen — and, if
 you let it see the screen (Screen Recording, from the button in the
 Studio), by the actual pixels behind it; either way it drifts toward the
 new colour rather than snapping, so you can watch it change as it steps
-from a window onto the desktop.
+from a window onto the desktop. Every shade of it — blotches, legs, and the
+outline, always a touch darker than the body — is a fixed step from that
+colour, so nothing flips from darker to lighter as the colour behind it
+drifts.
 The personality sliders weight its decisions rather than switch things off: a
 shy spider still waves sometimes, a grumpy one occasionally turns its back on
 you when poked, a brave one stands its ground when you swipe at it. The habit
