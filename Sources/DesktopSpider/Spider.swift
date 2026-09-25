@@ -401,6 +401,18 @@ final class Spider {
     }
     var gait = Gait()
     var habits = Habits()
+    /// 0…1: how run down it feels, up while the Mac is in Low Power Mode. It
+    /// makes up its mind less often, rests and naps more and dashes about
+    /// less — which is fewer frames to draw, too.
+    var drowsy: CGFloat = 0
+    /// It is raining outside: rain is on its mind.
+    var raining = false {
+        didSet {
+            if raining, !oldValue, mode == .attached, activity != .sleep, emote == .none {
+                think(.rain, for: 3.5)
+            }
+        }
+    }
     var name = "Spider"
     private var nameTag = Spring(0, stiffness: 60, damping: 12)
     private var hoverFor: CGFloat = 0
@@ -996,6 +1008,14 @@ final class Spider {
     static let interestRange: CGFloat = 170
     static let huntRange: CGFloat = 250
 
+    // Commotions
+    /// Where something last went off on the screen — a notification, the
+    /// volume or the brightness — and until when it stays turned to it.
+    private var commotionAt = V2.zero
+    private var commotionUntil: CGFloat = -99
+    private var commotionLast: CGFloat = -99
+    private var noticing: Bool { t < commotionUntil && mode == .attached }
+
     // Drag
     private var grabOffset = V2.zero
     private(set) var isHeld = false
@@ -1071,6 +1091,8 @@ final class Spider {
         climbArrival = nil
         abandonBuild()
         cursorHunt = .none
+        departLeap = false
+        if flyingHome { flyingHome = false; noAttachFor = 0 }
         isHeld = true
         mode = .held
         activity = .idle
@@ -1292,6 +1314,220 @@ final class Spider {
         }
     }
 
+    // MARK: Locked away
+
+    /// Put to bed while the Mac is locked or asleep, so that the first thing
+    /// you see when you come back is it fast asleep: curled up in its
+    /// hammock if it has one, or on the top of a window or the floor of the
+    /// screen you are on. It stays asleep, however long, until
+    /// `wakeAndGreet()`.
+    private(set) var dormant = false
+    /// Once it is up: straight over to say hello.
+    private var greetOnWaking = false
+
+    func tuckIn(near: V2) {
+        wake()
+        dormant = true
+        greetOnWaking = false
+        departing = nil
+        laser = nil
+        cursorHunt = .none
+        homing = nil
+        bedBoundUntil = -1
+        abandonBuild()
+        // The hammock, if there is one, and it stays in it: its weight
+        // sags the sling, which may take the bed down behind a window.
+        if let h = hammock, h.progress >= 1, config.hammocks, !inHabitat, confine == nil,
+           map.isVisible(nestCentre(h), depth: Int.max) {
+            if mode != .nesting || nestPhase != .sleeping {
+                teleport(to: nestCentre(h))
+                hammock = h
+                mode = .nesting
+                nestPhase = .sleeping
+                nestWalking = false
+                legMode = .free
+                nestZzzIn = 0
+                shiftIn = randRange(6, 14)
+            }
+            nestTime = 0
+            nestDur = .greatestFiniteMagnitude
+            settleAsleep()
+            if mode == .nesting { return }
+        }
+        // Otherwise on a ledge in sight: the top of a window for choice.
+        let screen = confine ?? map.screenFrame(containing: near)
+        var best: (score: CGFloat, point: V2)?
+        for spot in map.sampleSpots(spacing: 40) where spot.seg.facing == .up && screen.contains(spot.point.point) {
+            guard spot.seg.isOpen(at: spot.anchor.t), spot.loop.kind == .windowEdge || spot.loop.kind == .screenBorder else { continue }
+            // Somewhere it will be seen: the middle of things rather
+            // than off in a corner.
+            let off = abs(spot.point.x - screen.midX) / max(screen.width / 2, 1)
+            let score = (spot.loop.kind == .windowEdge ? 1.3 : 1) * (1.2 - off * 0.7) * randRange(0.8, 1.2)
+            if best == nil || score > best!.score { best = (score, spot.point) }
+        }
+        let bed = best?.point ?? V2(screen.midX, screen.minY + map.standoff)
+        teleport(to: bed + V2(0, 14 * config.scale))
+        setEmote(.none, 0)
+        startled.reset(0)
+        // Down onto the bed, out of sight, before it is seen.
+        for _ in 0..<150 where mode != .attached { update(dt: 1.0 / 60.0) }
+        fallAsleep()
+        settleAsleep()
+    }
+
+    /// Asleep where it stands, for as long as it is dormant.
+    private func fallAsleep() {
+        guard mode == .attached else { return }
+        beginActivity(.sleep, dur: .greatestFiniteMagnitude)
+        // The Z's fade on their own span, held half through while it sleeps.
+        setEmote(.zzz, 4)
+    }
+
+    /// Eyes shut, and a moment, out of sight, for the legs to fold up.
+    private func settleAsleep() {
+        sleepiness.reset(1)
+        lid.reset(1)
+        happy.reset(0)
+        for _ in 0..<90 { update(dt: 1.0 / 60.0) }
+    }
+
+    var debugHammockBed: String {
+        guard let h = hammock else { return "no hammock" }
+        return "progress \(h.progress) hammocks \(config.hammocks) confine \(confine != nil) bed \(Int(nestCentre(h).x)),\(Int(nestCentre(h).y)) visible \(map.isVisible(nestCentre(h), depth: Int.max))"
+    }
+
+    /// Asleep where it can be seen: not under a window that has come over it.
+    var bedInSight: Bool {
+        switch mode {
+        case .nesting: return map.isVisible(pos, depth: Int.max)
+        case .attached:
+            guard let loop = map.loop(anchor.loopID) else { return false }
+            guard loop.kind == .windowEdge else { return true }
+            return (map.seg(anchor).map { $0.isOpen(at: anchor.t) } ?? false) && map.isVisible(pos, depth: loop.depth)
+        default: return false
+        }
+    }
+
+    /// You are back: it wakes — a stretch, a shake — and comes to say hello.
+    func wakeAndGreet() {
+        guard dormant else { return }
+        dormant = false
+        greetOnWaking = true
+        if mode == .nesting {
+            nestDur = 0   // up and out along the silk; a stretch on the wall
+            return
+        }
+        guard mode == .attached else { return }
+        if activity == .sleep {
+            wokeUp = false
+            beginActivity(.stretch, dur: 1.5)
+            queue(.shake, 0.55)
+            sleepiness.velocity = -2
+            lastUserActivity = t
+        }
+    }
+
+    private func greetYou() {
+        greetOnWaking = false
+        happy.velocity = 8
+        setEmote(.hearts, 1.6)
+        beginActivity(.greet, dur: 2.6)
+        queue(.wave, 1.5)
+        decisionIn = randRange(1.5, 3)
+    }
+
+    /// The charger has gone in: a jolt of excitement, even out of a nap.
+    func perkUp() {
+        guard !config.paused, !dormant, !inCinema, !isHeld, activity != .eat else { return }
+        happy.velocity = 9
+        setEmote(.sparkle, 1.2)
+        guard mode == .attached else { return }
+        wake()
+        beginActivity(.bounce, dur: 1.0)
+        queue(chance(0.5) ? .wiggle : .armsUp, 0.9)
+    }
+
+    /// Something went off up on the screen. A notification sliding in is a
+    /// fright (`fright`): it jumps — right up off whatever it is standing
+    /// on, if it is on top of something — and stares at where it happened.
+    /// The volume or the brightness changing only makes it turn and look.
+    /// A run of them (a key held down) is all one: the rest only keep its
+    /// eyes there a while longer.
+    func noticeCommotion(at p: V2, fright: Bool) {
+        guard !config.paused, !dormant, !inCinema else { return }
+        let fresh = t - commotionLast > 2.5
+        commotionLast = t
+        let jumpy = lerp(1.35, 0.6, personality.bravery)
+        // Busy with something that matters more — a hunt, the laser, a
+        // meal, you — it only flinches; asleep, only a fright wakes it.
+        let settled = mode == .attached && !isHeld && laser == nil && huntTarget == nil && caught == nil
+            && build == nil && peek == nil && cursorHunt == .none && departing == nil && pendingJump == nil
+            && friendChase == nil && friendFlee == nil && (fright || activity != .sleep)
+            && ![.eat, .crouch, .shoot, .turn, .fasten, .roll, .spin].contains(activity)
+        if settled {
+            commotionAt = p
+            let look = fright ? randRange(2.0, 3.0) : randRange(1.4, 2.2)
+            commotionUntil = max(commotionUntil, t + look * lerp(0.8, 1.3, personality.curiosity))
+        }
+        guard fresh else {
+            if fright { startled.velocity = max(startled.velocity, 3 * jumpy) }
+            if activity == .look, t < commotionUntil { activityDur = max(activityDur, activityTime + commotionUntil - t) }
+            return
+        }
+        guard fright else {
+            guard settled, distractable || activity == .rest else { return }
+            wake()
+            queued = nil
+            walkThen = nil
+            beginActivity(.look, dur: commotionUntil - t)
+            decisionIn = max(decisionIn, commotionUntil - t)
+            return
+        }
+        startled.velocity = 11 * jumpy
+        setEmote(.surprise, 0.8)
+        guard settled else { return }
+        wake()
+        queued = nil
+        walkThen = nil
+        decisionIn = max(decisionIn, commotionUntil - t)
+        if surfaceNormal.y > 0.85 {
+            startleHop(awayFrom: p)
+        } else {
+            beginActivity(.startle, dur: 0.55)
+            queue(.look, max(commotionUntil - t - 0.55, 0.8))
+        }
+    }
+
+    /// Stood on top of something: a fright sends it straight up off it —
+    /// no crouch first, it is a flinch — and down again where it was, or a
+    /// little back from where the fright came from if the ledge goes on
+    /// that way. (It looks on once it lands: see `land`.)
+    private func startleHop(awayFrom p: V2) {
+        let sc = config.scale
+        let g = -gravity.y
+        let height = randRange(42, 56) * sc * lerp(1.2, 0.85, personality.bravery)
+        let vy = (2 * g * height).squareRoot()
+        let flight = 2 * vy / g
+        var back = (pos.x < p.x ? -1 : 1) * randRange(8, 20) * sc
+        var spot = map.nearestSpot(to: anchorPos + V2(back, 0), within: 6 * sc)
+        if spot == nil {
+            back = 0
+            spot = map.nearestSpot(to: anchorPos, within: 12 * sc)
+        }
+        mode = .airborne
+        air = .jump
+        airTime = 0
+        vel = V2(back / flight, vy)
+        // Not caught by the ledge it is leaving on the way up.
+        noAttachFor = vy / g
+        launchLoop = ""
+        if let spot { landing = (spot.point, spot.seg.angle, spot.seg.dir) }
+        crouch.velocity = -9
+        stretch.velocity = 6
+        wag.reset(0)
+        legMode = .free
+    }
+
     /// Menu command: walk / jump toward a point.
     func summon(to p: V2) {
         wake()
@@ -1505,13 +1741,220 @@ final class Spider {
         }
     }
 
+    // MARK: Friends
+    //
+    // With visitors out on the desktop, a `Playground` runs their games
+    // and tells each spider what it is up to: chasing a friend (much as it
+    // chases the laser dot), running from one, or a one-off — a hello, a
+    // dance, a start.
+
+    /// Where the friend it is chasing is, in a game of tag.
+    var friendChase: V2? {
+        didSet {
+            guard (friendChase == nil) != (oldValue == nil) else { return }
+            if friendChase != nil { startPlaying() } else { fleeCornered = false }
+        }
+    }
+    /// Where the friend it is running from is.
+    var friendFlee: V2? {
+        didSet {
+            guard (friendFlee == nil) != (oldValue == nil) else { return }
+            if friendFlee != nil { startPlaying() } else { fleeCornered = false }
+        }
+    }
+    /// Ran out of ledge while running away: next time it leaps.
+    private var fleeCornered = false
+
+    private func startPlaying() {
+        wake()
+        if mode == .attached { queued = nil; walkThen = nil; decisionIn = min(decisionIn, 0.15) }
+    }
+
+    /// Free for a game: on something, awake, and not busy with anything
+    /// that matters more — a hunt, the laser, its hammock, a film, you.
+    var canPlay: Bool {
+        mode == .attached && !config.paused && departing == nil && !inCinema && laser == nil && huntTarget == nil && caught == nil
+            && homing == nil && build == nil && peek == nil && cursorHunt == .none && t > escapeUntil
+            && !(confined && !inBox) && !hangOnly && pendingJump == nil && !absorbingLanding
+            && ![.sleep, .eat, .crouch, .shoot, .turn, .roll, .spin, .peekaboo].contains(activity)
+    }
+
+    private func chaseFriend(_ p: V2) {
+        chaseLaser(p)
+        // Quicker to re-aim than for the dot: a friend runs.
+        decisionIn = min(decisionIn, randRange(0.2, 0.4))
+    }
+
+    /// Runs from the one who is it: along its edge away from them, and a
+    /// leap somewhere further off when cornered or when they get close.
+    private func fleeFriend(_ p: V2) {
+        guard mode == .attached, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return }
+        decisionIn = randRange(0.3, 0.6)
+        let sc = config.scale
+        let d = pos - p
+        if d.length > 380 * sc, !fleeCornered {
+            // Well clear: a cheeky wiggle, looking back.
+            beginActivity(chance(0.5) ? .wiggle : .look, dur: randRange(0.5, 0.9))
+            return
+        }
+        if fleeCornered || (d.length < 110 * sc && chance(0.4)) {
+            fleeCornered = false
+            var best: (score: CGFloat, point: V2)?
+            for spot in map.sampleSpots(spacing: 40) where inBoxOrFree(spot.point) {
+                let hop = spot.point.distance(to: pos)
+                guard hop > 60 * sc, hop < 520, spot.loop.id != anchor.loopID || hop > 200 * sc else { continue }
+                let away = spot.point.distance(to: p)
+                guard away > d.length + 40 else { continue }
+                guard let launch = ballistic(from: pos, to: spot.point), launch.normalized.dot(surfaceNormal) > -0.15 else { continue }
+                let score = away + randRange(0, 120)
+                if best == nil || score > best!.score { best = (score, spot.point) }
+            }
+            if let b = best { startJump(to: b.point); return }
+        }
+        let seg = loop.segs[anchor.segIdx]
+        let along = d.dot(seg.dir)
+        let dir: CGFloat = abs(along) < 4 ? (chance(0.5) ? 1 : -1) : (along >= 0 ? 1 : -1)
+        if dir != walkDir { walkDir = dir; facing = dir }
+        beginActivity(.scurry, dur: randRange(0.5, 1.1))
+    }
+
+    /// Hello to a friend close by: it turns their way and puts both front
+    /// legs up.
+    func greetFriend(at p: V2) {
+        guard canPlay, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return }
+        wake()
+        queued = nil
+        walkThen = nil
+        let dir: CGFloat = (p - pos).dot(loop.segs[anchor.segIdx].dir) >= 0 ? 1 : -1
+        turnTo(dir, then: .greet, for: randRange(1.8, 2.4))
+        happy.velocity = 6
+        setEmote(chance(0.6) ? .hearts : .sparkle, 1.1)
+        decisionIn = max(decisionIn, 3)
+    }
+
+    /// Dancing along with a friend.
+    func danceWithFriend() {
+        guard canPlay else { return }
+        wake()
+        queued = nil
+        beginActivity(chance(0.6) ? .dance : .drum, dur: randRange(1.6, 2.6))
+        setEmote(.note, 1.4)
+        decisionIn = max(decisionIn, 2.5)
+    }
+
+    /// Goes over to see a friend.
+    func visitFriend(at p: V2) {
+        guard canPlay else { return }
+        summon(to: p)
+        decisionIn = max(decisionIn, 2)
+    }
+
+    /// A friend landed on it, or tagged it: a jump, and a look round.
+    func startledByFriend() {
+        guard mode == .attached, !isHeld else { return }
+        wake()
+        queued = nil
+        beginActivity(.startle, dur: 0.55)
+        startled.velocity = 10
+        setEmote(.surprise, 0.7)
+        queue(chance(0.5) ? .bounce : .wiggle, 0.9)
+    }
+
+    /// Caught one: a little victory.
+    func taggedFriend() {
+        guard mode == .attached else { return }
+        queued = nil
+        beginActivity(chance(0.5) ? .armsUp : .wiggle, dur: 0.9)
+        happy.velocity = 7
+        setEmote(.sparkle, 0.9)
+    }
+
+    // MARK: Going home
+
+    /// A visitor on its way out: which way it is heading off the screen,
+    /// -1 left or +1 right. It walks to that side of the screen along
+    /// whatever it is on — hopping across from one thing to the next if it
+    /// has to — and at the edge leaps out past it, and is gone.
+    private(set) var departing: CGFloat?
+    /// Ran out of ledge on the way: leap on from here.
+    private var departCornered = false
+    /// The leap about to be made is the one out past the edge: nothing
+    /// is caught hold of on the way.
+    private var departLeap = false
+    /// In the air on that leap: the rim of the screen does not stop it.
+    private var flyingHome = false
+
+    func depart() {
+        guard departing == nil else { return }
+        let f = map.screenFrame(containing: pos)
+        // The nearer side — unless another display carries on past it and
+        // the far side is the way out.
+        let y = pos.y
+        func openSide(_ d: CGFloat) -> Bool {
+            !NSScreen.screens.contains { s in
+                s.frame.minY < y && s.frame.maxY > y && (d > 0 ? abs(s.frame.minX - f.maxX) < 2 : abs(s.frame.maxX - f.minX) < 2)
+            }
+        }
+        let nearer: CGFloat = pos.x - f.minX < f.maxX - pos.x ? -1 : 1
+        departing = !openSide(nearer) && openSide(-nearer) ? -nearer : nearer
+        friendChase = nil
+        friendFlee = nil
+        homing = nil
+        huntTarget = nil
+        cursorHunt = .none
+        wake()
+        queued = nil
+        walkThen = nil
+        if mode == .attached { decisionIn = min(decisionIn, 0.1) }
+    }
+
+    private func pursueDeparture(_ dir: CGFloat) {
+        decisionIn = randRange(0.25, 0.5)
+        guard let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return }
+        let sc = config.scale
+        let f = map.screenFrame(containing: pos)
+        let edgeX = dir > 0 ? f.maxX : f.minX
+        let cornered = departCornered
+        departCornered = false
+        // At the edge: out past it, and away.
+        let exit = V2(edgeX + dir * 220 * sc, min(pos.y + 80 * sc, f.maxY - 30))
+        if abs(edgeX - pos.x) < 140 * sc, ballistic(from: pos, to: exit) != nil {
+            departLeap = true
+            startJump(to: exit)
+            return
+        }
+        // Along this edge, if it runs that way.
+        let seg = loop.segs[anchor.segIdx]
+        if !cornered, abs(seg.dir.x) > 0.5 {
+            let along: CGFloat = seg.dir.x * dir > 0 ? 1 : -1
+            turnTo(along, then: .walk, for: clamp(abs(edgeX - pos.x) / max(config.walkSpeed, 1), 0.6, 3.0))
+            return
+        }
+        // Otherwise across to whatever gets it furthest that way.
+        var best: (gain: CGFloat, point: V2)?
+        for spot in map.sampleSpots(spacing: 40) where spot.loop.id != anchor.loopID {
+            let gain = (spot.point.x - pos.x) * dir
+            guard gain > 30, spot.point.distance(to: pos) < 600,
+                  let launch = ballistic(from: pos, to: spot.point), launch.normalized.dot(surfaceNormal) > -0.15 else { continue }
+            if best == nil || gain > best!.gain { best = (gain, spot.point) }
+        }
+        if let b = best {
+            startJump(to: b.point)
+        } else if ballistic(from: pos, to: exit) != nil {
+            departLeap = true
+            startJump(to: exit)
+        } else {
+            detachAndFall()
+        }
+    }
+
 
     // MARK: The pointer as prey
 
     /// Something it would not spare the pointer more than a glance for: a
     /// hunt, a chase, a job, a film, sleep, or a move already under way.
     private var preoccupied: Bool {
-        guard mode == .attached, !inCinema, laser == nil, huntTarget == nil, caught == nil,
+        guard mode == .attached, !inCinema, laser == nil, departing == nil, huntTarget == nil, caught == nil,
               homing == nil, build == nil, peek == nil, t > escapeUntil, t >= bedBoundUntil,
               !(confined && !inBox), !hangOnly else { return true }
         if [.sleep, .eat, .watch, .peekaboo, .roll, .spin, .crouch, .shoot, .fasten, .scurry,
@@ -1570,8 +2013,11 @@ final class Spider {
 
         // Interest: quick to take, slow to fade — unless it has something
         // else to do, in which case it barely spares the pointer a glance.
+        // Something going off on the screen takes it over from the pointer
+        // for a moment, however far off it is.
         let busy = preoccupied
-        let wants = config.followCursor && !busy && !bored && d < Spider.interestRange * sc && inBoxOrFree(cursor)
+        let focus = noticing ? commotionAt : cursor
+        let wants = noticing || config.followCursor && !busy && !bored && d < Spider.interestRange * sc && inBoxOrFree(cursor)
             && t - lastUserActivity < 8 && cursorHunt == .none
         interest = approach(interest, wants ? 1 : 0, wants ? 6.0 : (busy ? 4 : 1.2), dt)
         // Where the pointer is, give or take its fidgeting: what a pounce
@@ -1581,7 +2027,7 @@ final class Spider {
         if interest > 0.01, mode == .attached {
             // Body-local: +x is the way it faces along the ledge, +y away
             // from the surface. The head tips up or down toward the pointer.
-            let l = toLocalDir(cursor - pos)
+            let l = toLocalDir(focus - pos)
             nose = clamp(atan2(l.y, max(abs(l.x), 12 * sc)), -0.8, 0.8)
             nose *= SpiderRenderer.profileAmount(yaw: yaw)
             // The body turns to point at the pointer, continuously: the yaw
@@ -1598,7 +2044,7 @@ final class Spider {
             // pointer passing back and forth over it does not have it
             // swinging from one profile to the other and back every pass,
             // and a gesture already under way finishes on the side it began.
-            let a = (cursor - pos).rotated(by: -heading)
+            let a = (focus - pos).rotated(by: -heading)
             var c = a.x / max(a.length, 1)
             if speed > 1 || [.walk, .scurry, .sneak].contains(activity) { c = facing * max(facing * c, 0.45) }
             interestBearing = approach(interestBearing, c, 2.4, dt)
@@ -1631,7 +2077,7 @@ final class Spider {
         // since the last hunt: it is stalked. A pointer that merely sits
         // there is only watched.
         let fidgeting = cursorWiggle > 1.8 && cursorNearFor > 0.6
-        guard config.pounceOnCursor, config.followCursor, cursorHunt == .none, distractable, t > nextCursorHuntAt,
+        guard config.pounceOnCursor, config.followCursor, cursorHunt == .none, !noticing, distractable, t > nextCursorHuntAt,
               interest > 0.5, fidgeting, d < Spider.huntRange * sc,
               inBoxOrFree(cursor), chance(dt * 2.5) else { return }
         beginCursorHunt()
@@ -1919,11 +2365,13 @@ final class Spider {
 
     /// A thought that fits the moment, or a random one.
     private func museIfSoMoved() {
-        guard mode == .attached, emote == .none, t - lastThought > 14 else { return }
+        guard mode == .attached, emote == .none, t - lastThought > (raining ? 9 : 14) else { return }
         let P = personality
         let roll = CGFloat.random(in: 0...1)
         if fed < 0.15, prey.isEmpty, roll < 0.35 {
             think(.hungry)
+        } else if raining, chance(0.5) {
+            think(.rain)
         } else if roll < 0.55 {
             thinkSomething()
         } else if roll < 0.7, t - lastUserActivity < 20 {
@@ -2241,6 +2689,130 @@ final class Spider {
         teleport(to: p)
     }
 
+    // MARK: The habitat
+
+    /// The line being climbed goes up into the habitat: nothing on the
+    /// desktop can come between it and the top.
+    private var tankClimb = false
+    /// On its way up a line to somewhere (the habitat, say).
+    var isClimbingAway: Bool { climbArrival != nil }
+
+    /// Fires a line up at `point` — the lip of the habitat's ground — and
+    /// hauls itself up it; `arrived` is called as it gets to the top.
+    /// Needs to be standing on something below the point.
+    @discardableResult
+    func climbIntoHabitat(at point: V2, arrived: @escaping () -> Void) -> Bool {
+        guard mode == .attached, !isHeld, point.y > pos.y + 40 else { return false }
+        abandonBuild()
+        wake()
+        homing = nil
+        tankClimb = true
+        climbArrival = arrived
+        queued = nil
+        pendingJump = nil
+        huntTarget = nil
+        shotTarget = point
+        shotPurpose = .climb
+        shotProgress = 0
+        beginActivity(.shoot, dur: 0.3)
+        return true
+    }
+
+    /// At the top of its line into the habitat: onto the habitat's map,
+    /// and up over the lip in a little hop onto the ground at `target`.
+    func hopIntoHabitat(map newMap: SurfaceMap, landing target: V2) {
+        climbArrival = nil
+        tankClimb = false
+        detachWeb(fade: false)
+        webAlpha.reset(0)
+        rope.clear()
+        moveInMidAir(map: newMap, habitat: true)
+        // Up to a little over the ground and down onto it: the rise is
+        // left alone, so it cannot catch the ground from underneath.
+        let g = -gravity.y
+        let apex = max(target.y, pos.y) + 30 * config.scale
+        let vy = (2 * g * max(apex - pos.y, 4)).squareRoot()
+        let rise = vy / g
+        let fall = (2 * max(apex - target.y, 1) / g).squareRoot()
+        mode = .airborne
+        air = .jump
+        airTime = 0
+        vel = V2((target.x - pos.x) / (rise + fall), vy)
+        noAttachFor = rise + 0.02
+        launchLoop = ""
+        anchorValid = false
+        if let spot = map.nearestSpot(to: target, within: 60 * config.scale) {
+            landing = (spot.point, spot.seg.angle, spot.seg.dir)
+        }
+        legMode = .free
+        activity = .idle
+        crouch.velocity = -6
+        stretch.velocity = 5
+        happy.velocity = 6
+        setEmote(.sparkle, 1.0)
+        decisionIn = randRange(1.0, 1.6)
+    }
+
+    /// Lets go of whatever it is standing on and drops (down to where it
+    /// can get at the habitat from).
+    func dropOff() {
+        guard mode == .attached, !isHeld else { return }
+        wake()
+        queued = nil
+        pendingJump = nil
+        let wall = abs(surfaceNormal.x) > 0.7 ? surfaceNormal : nil
+        detachAndFall()
+        // Off a wall it kicks away from it, or it would only grab the same
+        // wall again on the way down.
+        if let n = wall, mode == .airborne {
+            vel += V2(n.x * 170, 60)
+            noAttachFor = 0.35
+            draglineCatchY = nil
+            webActive = false
+        }
+    }
+
+    /// Put straight into the habitat, standing on its ground at `p` —
+    /// where it was when the app last quit.
+    func placeInHabitat(map newMap: SurfaceMap, at p: V2) {
+        enter(map: newMap, at: p, habitat: true)
+        if let spot = map.nearestSpot(to: p, within: 400) {
+            pos = spot.point + spot.seg.normal * 2
+            vel = V2(0, -60)
+        }
+        emote = .none
+    }
+
+    /// The habitat has gone from round it: back on `newMap` (the desktop)
+    /// at the very spot it was, and it drops from there — whatever it was
+    /// standing on, or hanging from, went with the tank.
+    func dropOutOfHabitat(onto newMap: SurfaceMap) {
+        tankClimb = false
+        pendingMap = nil
+        moveInMidAir(map: newMap, habitat: false)
+        climbArrival = nil
+        guard !isHeld, mode != .airborne else { return }
+        abandonBuild()
+        detachWeb(fade: false)
+        webAlpha.reset(0)
+        rope.clear()
+        webPlan = []
+        mode = .airborne
+        air = .fall
+        vel = V2(0, -30)
+        airTime = 0
+        noAttachFor = 0.12
+        launchLoop = ""
+        anchorValid = false
+        legMode = .free
+        activity = .idle
+        queued = nil
+        pendingJump = nil
+        startled.velocity = 6
+        setEmote(.surprise, 0.6)
+        planFall(from: nil)
+    }
+
     /// Its first arrival on the desktop: out of the menu bar icon it lives
     /// in and down on a line from there — a look round its new home from
     /// the end of the thread, then on down to the floor or off onto
@@ -2406,6 +2978,8 @@ final class Spider {
         legFramePos = pos
         if let l = laser { laser = l + d }
         if webActive { webAnchor += d; rope.clear() }
+        // Whatever is loose in there goes along with the scenery too.
+        for p in prey { p.pos += d }
     }
 
     /// The map it is on was rebuilt under it (the habitat window was
@@ -3189,13 +3763,20 @@ final class Spider {
         // Activity clock. Some activities have a moment in the middle where
         // something happens, so those are checked before the generic reset.
         activityTime += dt
-        decisionIn -= dt * config.liveliness
+        decisionIn -= dt * config.liveliness * lerp(1, 0.55, drowsy)
         restedFor = (activity == .rest || activity == .sleep) ? restedFor + dt : 0
         progressActivity(dt: dt)
         // On a hunt nothing else is allowed to run long: a walk toward the
         // prey is re-aimed every second or so, and idle habits are dropped.
         if laser != nil, !inCinema, [.walk, .sneak, .rest, .sleep, .watch, .stare, .groom, .look, .glance, .drum, .eat].contains(activity) {
             if activityTime > 0.4 { queued = nil; finishActivity() }
+        }
+        if departing != nil, ![.walk, .turn, .crouch, .shoot, .fasten, .idle].contains(activity), activityTime > 0.4 {
+            queued = nil
+            finishActivity()
+        }
+        if friendChase != nil || friendFlee != nil, !inCinema, [.walk, .sneak, .rest, .sleep, .watch, .stare, .groom, .look, .glance, .drum, .fidget, .scratch, .peer].contains(activity) {
+            if activityTime > 0.6 { queued = nil; finishActivity() }
         }
         if caught == nil, huntTarget != nil, prey.contains(where: { $0.id == huntTarget && $0.state == .loose }) {
             let hunting: Set<Activity> = [.walk, .sneak, .scurry, .look, .turn, .crouch, .idle, .startle, .shake]
@@ -3209,6 +3790,8 @@ final class Spider {
             else if [.walk, .sneak].contains(activity), activityTime > 0.9 { activityDur = min(activityDur, activityTime) }
         }
         if activityTime > activityDur { finishActivity() }
+        // Put to bed while you are away: whatever roused it, back to sleep.
+        if dormant, activity != .sleep { fallAsleep() }
         if activity == .idle && decisionIn <= 0 { think() }
 
         // Something has slid in front of where it is standing, or it has been
@@ -3708,12 +4291,12 @@ final class Spider {
             }
         case .rest:
             // Nodding off: the longer it rests, the more likely it sleeps.
-            if t - lastUserActivity > lerp(60, 10, personality.laziness), restedFor > 6,
-               chance(dt * lerp(0.06, 0.4, personality.laziness)) {
-                beginActivity(.sleep, dur: randRange(15, 45))
+            if t - lastUserActivity > lerp(60, 10, personality.laziness) * lerp(1, 0.35, drowsy), restedFor > lerp(6, 3, drowsy),
+               chance(dt * lerp(0.06, 0.4, personality.laziness) * lerp(1, 2.5, drowsy)) {
+                beginActivity(.sleep, dur: randRange(15, 45) * lerp(1, 2, drowsy))
             }
         case .sleep:
-            if !fullScreenApp, cursor.distance(to: pos) < 90 * config.scale && cursorVel.length > 40 {
+            if !fullScreenApp, !dormant, cursor.distance(to: pos) < 90 * config.scale && cursorVel.length > 40 {
                 wake()
                 beginActivity(.startle, dur: 0.6)
                 startled.velocity = 10
@@ -3863,6 +4446,22 @@ final class Spider {
             decisionIn = 0
             return
         }
+        if departing != nil {
+            // On its way home: on from here some other way.
+            departCornered = true
+            activity = .idle
+            activityTime = 0
+            decisionIn = 0
+            return
+        }
+        if friendChase != nil || friendFlee != nil {
+            // Mid-game: cornered, it leaps next time.
+            if friendFlee != nil { fleeCornered = true }
+            activity = .idle
+            activityTime = 0
+            decisionIn = 0
+            return
+        }
         if caught == nil, huntTarget != nil {
             // Mid-hunt: no sightseeing, just decide again from here.
             activity = .idle
@@ -3969,6 +4568,18 @@ final class Spider {
         let dCursor = cursor.distance(to: pos)
         let P = personality
 
+        // Just up after you came back: hello first.
+        if greetOnWaking, mode == .attached {
+            greetYou()
+            return
+        }
+
+        // A visitor going home: nothing else now.
+        if let dir = departing {
+            pursueDeparture(dir)
+            return
+        }
+
         // A full-screen video: it watches with you. Mostly it sits, eyes on
         // the screen; now and then a slow amble along the floor, a groom, a
         // glance your way; and only after a very long while does it nod off.
@@ -4053,6 +4664,15 @@ final class Spider {
             chaseLaser(dot)
             return
         }
+        // A game of tag with a friend.
+        if let p = friendChase {
+            chaseFriend(p)
+            return
+        }
+        if let p = friendFlee {
+            fleeFriend(p)
+            return
+        }
         // On the pointer's trail.
         if cursorHunt == .stalking {
             stalkCursor()
@@ -4082,8 +4702,8 @@ final class Spider {
         // Left alone, it settles down and eventually nods off. The lazy ones
         // do not wait to be left alone — and if it has a hammock, that is
         // where it goes.
-        if idleFor > lerp(120, 20, P.laziness) || habits.sleep >= 0.995,
-           chance(min(1, lerp(0.1, 0.6, P.laziness) * hw(\.sleep))) {
+        if idleFor > lerp(120, 20, P.laziness) * lerp(1, 0.35, drowsy) || habits.sleep >= 0.995,
+           chance(min(1, lerp(0.1, 0.6, P.laziness) * lerp(1, 1.8, drowsy) * hw(\.sleep))) {
             if let h = hammock, h.progress >= 1, chance(0.7) {
                 goHome(.sleep)
                 return
@@ -4138,10 +4758,11 @@ final class Spider {
         // about, and it never leaves the box.
         let chill: CGFloat = confined ? 0.4 : 1
         if confined { decisionIn *= 2.2 }
-        let play = lerp(0.25, 2.2, P.playfulness) * chill
+        // Run down (Low Power Mode): less play, more lying about.
+        let play = lerp(0.25, 2.2, P.playfulness) * chill * lerp(1, 0.5, drowsy)
         let love = lerp(0.2, 2.2, P.affection)
-        let lazy = lerp(0.3, 2.4, P.laziness) / chill
-        let busy = lerp(0.5, 1.6, P.energy) * chill
+        let lazy = lerp(0.3, 2.4, P.laziness) / chill * lerp(1, 2, drowsy)
+        let busy = lerp(0.5, 1.6, P.energy) * chill * lerp(1, 0.55, drowsy)
         var options: [(CGFloat, () -> Void)] = []
         if interest > 0.5 {
             // The pointer has its attention: it stays on it — watching,
@@ -4162,7 +4783,7 @@ final class Spider {
         options.append((30 * busy * hw(\.wander), {
             let dir: CGFloat = chance(0.7) ? self.walkDir : -self.walkDir
             let sneaky = lerp(0.3, 0.05, P.bravery)
-            let hurried = lerp(0.04, 0.22, P.energy)
+            let hurried = lerp(0.04, 0.22, P.energy) * lerp(1, 0.2, self.drowsy)
             let style: Activity = chance(sneaky) ? .sneak : (chance(hurried) ? .scurry : .walk)
             let dur = style == .scurry ? randRange(0.5, 1.2) : randRange(1.4, 5.0)
             self.turnTo(dir, then: style, for: dur)
@@ -4201,7 +4822,7 @@ final class Spider {
             }))
         }
         // A thought, now and then.
-        options.append((4 * lerp(0.5, 1.5, P.curiosity) * hw(\.muse), { self.museIfSoMoved(); if self.emote == .none { self.beginActivity(.look, dur: randRange(0.6, 1.2)) } }))
+        options.append((4 * lerp(0.5, 1.5, P.curiosity) * (raining ? 1.8 : 1) * hw(\.muse), { self.museIfSoMoved(); if self.emote == .none { self.beginActivity(.look, dur: randRange(0.6, 1.2)) } }))
 
         // Drumming on whatever it is standing on, the way a jumping spider
         // signals: a few bursts of quick taps with its front legs.
@@ -4379,6 +5000,9 @@ final class Spider {
     private func climbOutOnLine() {
         applyPendingMap()
         attachWeb(at: shotTarget)
+        // Up into the habitat, which sits in front of every window: none
+        // of them can cover this line.
+        if tankClimb { webFromDepth = Int.min }
         webStyle = .hang
         swingPumping = false
         webLenTarget = 26
@@ -4425,6 +5049,7 @@ final class Spider {
             pendingJump = nil
             pendingMap = nil
             glassLeap = false
+            departLeap = false
             activity = .idle
             crouch.velocity = -6
             // A pounce at a pointer that has got out of range: nothing doing.
@@ -4444,7 +5069,11 @@ final class Spider {
         mode = .airborne
         air = .jump
         airTime = 0
-        noAttachFor = 0.1
+        // Out past the edge of the screen for good: it catches hold of
+        // nothing on the way.
+        noAttachFor = departLeap ? 30 : 0.1
+        flyingHome = departLeap
+        departLeap = false
         vel = launch
         applyPendingMap()
         if let spot = map.nearestSpot(to: point, within: 40 * config.scale) {
@@ -4602,7 +5231,7 @@ final class Spider {
             if caught != nil { pounceMark = nil }
         }
 
-        bounceOffScreens()
+        if !flyingHome { bounceOffScreens() }
 
         // A pounce is aimed at the prey, not at the furniture on the way: it
         // grabs nothing until it is near its mark, or has sailed past it and
@@ -4668,7 +5297,7 @@ final class Spider {
                 catchDragline()
                 return
             }
-        } else if airShot == nil, config.webs, air != .jump || airTime > 1.5 {
+        } else if airShot == nil, config.webs, !flyingHome, air != .jump || airTime > 1.5 {
             // Nothing planned and nothing under it at all — off the bottom
             // of the world, or a leap that has plainly failed: a line to the
             // ceiling is the last resort, never a habit.
@@ -4681,8 +5310,13 @@ final class Spider {
             }
         }
 
-        // Off the world entirely: put it back at the top of the main screen.
-        if !map.worldBounds.insetBy(dx: -400, dy: -400).contains(pos.point) {
+        // Off the world entirely: put it back at the top of the main screen
+        // — or, in the habitat, which is its whole world, back in the tank.
+        if inHabitat, !map.worldBounds.insetBy(dx: -60, dy: -60).contains(pos.point) {
+            let f = map.worldBounds
+            pos = V2(clamp(pos.x, f.minX + 40, f.maxX - 40), clamp(pos.y, f.minY + 40, f.maxY - 40))
+            vel = V2(0, -50)
+        } else if !flyingHome, !map.worldBounds.insetBy(dx: -400, dy: -400).contains(pos.point) {
             let f = NSScreen.main?.frame ?? map.worldBounds
             pos = V2(f.midX + randRange(-200, 200), f.maxY - 60)
             vel = V2(0, -50)
@@ -4857,6 +5491,11 @@ final class Spider {
         if let c = caught, c.state == .caught, activity != .eat {
             // Landed with the catch: settle down to it.
             beginActivity(.eat, dur: c.kind.mealTime * randRange(0.9, 1.15))
+        }
+        if t < commotionUntil, activity == .idle {
+            // Down from a start: still staring at what made it jump.
+            queue(.look, max(commotionUntil - t - 0.3, 0.6))
+            decisionIn = max(decisionIn, commotionUntil - t)
         }
     }
 
@@ -6156,11 +6795,11 @@ final class Spider {
                 nudgeHammock(randRange(8, 16))
             }
             // A fast pointer right by it wakes it.
-            if !fullScreenApp, cursor.distance(to: pos) < 70 * config.scale && cursorVel.length > 500 {
+            if !fullScreenApp, !dormant, cursor.distance(to: pos) < 70 * config.scale && cursorVel.length > 500 {
                 leaveNest(startled: true)
                 return
             }
-            if nestTime > nestDur && !fullScreenApp { leaveNest(startled: false) }
+            if nestTime > nestDur && (!fullScreenApp || greetOnWaking) { leaveNest(startled: false) }
         }
     }
 
@@ -6248,6 +6887,14 @@ final class Spider {
     }
 
     // MARK: Hammock API
+
+    /// Up and out of its hammock, if it is in it: along the silk to the
+    /// wall and off (somewhere else wants it — the habitat, say).
+    func leaveHammock() {
+        guard mode == .nesting else { return }
+        wake()
+        leaveNest(startled: false)
+    }
 
     /// A hammock saved from last time.
     func restoreHammock(left: Bool, style: HammockStyle = .sling, seed: Int = 4242) {
@@ -6359,6 +7006,8 @@ final class Spider {
             || isHeld || pettingScore > 0.4 || activity == .curious || activity == .greet || activity == .stare
         if let dot = laser {
             target = (dot - pos).normalized
+        } else if noticing {
+            target = (commotionAt - pos).normalized
         } else if activity == .peekaboo, mode == .attached, config.followCursor {
             target = (cursor - pos).normalized * ((peek?.stage ?? 0) >= 3 ? 1 : 0.6)
         } else if activity == .watch, mode == .attached {

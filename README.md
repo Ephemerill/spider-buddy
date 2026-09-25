@@ -343,54 +343,84 @@ counts too.
 
 ## The habitat
 
-**Enter Habitat…** (⌘E) opens a window that is a terrarium for it: a
-tank with scenery behind the glass, furniture to climb on, and the spider
-living inside. The tank grows out of the menu bar icon and then, for as
-long as the spider is outside it, it is simply part of the desktop: a
-window it can walk on top of, climb the sides of and hang beneath, and the
-place it wants to be. So it makes its own way there from wherever it is,
-exactly as it goes anywhere — walking, leaping, climbing — and when it
-reaches the tank it gets in the way a spider would: standing on the lid or
-a side, it leaps in through the glass onto the furniture; hanging beneath,
-it fires a line up through the floor and climbs in; and thrown or falling
-over the tank, it drops in. Once inside it is kept entirely within the
-glass — every leap, line and bounce stays inside — with one exception:
-you can pick it up and drag it out. Then it is out, on the desktop, and
-wants back in, and gets back in the same way, until the tank is closed.
-It is the same spider moving house — same looks, same appetite, same
-mood, same thoughts. **Leave
-Habitat** (or closing the window) drops it out of the bottom of the tank
-onto the desktop, and the tank shrinks back into the
-menu bar. It is the one desktop spider throughout — the same size, drawn
-by the same overlay above the tank — simply living in the tank's part of
-the screen, so the tank can be dragged about and it comes along. The app
-remembers which side of the glass it was on across a restart. Everything
-it does on the desktop it does in there: walks and leaps between the
-furniture, hangs under logs, rappels from branches, drums, greets you,
-naps on top of a log with Z's rising, hunts anything you release with
-**Feed**, and you can pick it up, throw it, click it and scroll it on a
-line just the same. Desktop-only things — the hammock, the box, cinema
-manners, the laser — wait for it outside.
+**Open Habitat** (Play ▸ Places in the menu bar panel) opens a terrarium
+for it: a glass tank in a dark frame, with a painted, living scene behind
+the glass, a substrate you can see through the front, and furniture to
+climb. The tank rises into place over the spider, and the spider shoots a
+line up to the lip of the tank's ground, climbs it hand over hand, and
+hops over onto the ground inside. (Up on a window or a wall, it drops down
+first; off to one side, it walks over; in its hammock, it gets up; thrown
+over the tank, it just drops in.)
 
-**Build** (top right) opens a discreet panel to make the habitat your own:
-- **Scenery**: eight backdrops — forest, jungle, desert, meadow, cave,
-  beach, tundra and night — each with sky, distance and ground painted to
-  match, plus something in the air: leaves drifting down in the forest and
-  jungle, pollen in the meadow and on the beach, dust in the cave's light,
-  snow falling in the tundra, fireflies and twinkling stars at night.
-- **Start from** a preset layout for any of those, or **Surprise me** for
-  a shuffled one.
-- **Add** things to climb — log, branch, rock, boulder, cork bark slab,
-  hollow log, cactus, hanging vine, leafy plant, water dish — and scenery
-  to look at — fern, flowers, mushrooms, moss, leaf litter, twigs. Every
-  piece is drawn a little differently from the last.
-- In the scene: click to select, drag to move (things settle onto the floor
-  or stick to the ceiling when put near them), drag the corner handle to
-  resize, ⌫ to remove. The panel sizes, flips, duplicates and removes the
-  selection, and orders it forward or back among the rest. Things in front
-  hide what is behind them, so the spider cannot walk on a log a plant is
-  covering.
-The habitat is saved as you go.
+Inside, it lives in the tank: it walks along the ground, up and over the
+logs and stones standing on it, onto branches, vines and the leaves of the
+plant, and up the glass — and it never leaves by itself. It is drawn *in*
+the tank, among its furniture, so foliage placed in front hides it as it
+walks behind, and other windows cover it like anything else in a window.
+Everything it does on the desktop it does in there — hunting what you let
+loose with **Feed**, drumming, napping, greeting you — and you can click
+it, scroll it on a line, pick it up and throw it just the same. Picked up,
+it is in your hand, drawn over everything; carried out through the glass
+and let go, it is out on the desktop, and after a while it climbs back in
+the same way. Carried over the tank and let go, it is in. Click the glass
+and it rings. Drag the tank about and it comes along.
+
+**Let Out** (or the window's close button) closes the tank: the spider
+drops from exactly where it was — off the log, the branch, the glass —
+onto whatever is below on the desktop, as the tank fades away. The app
+remembers which side of the glass it was on across a restart. Desktop-only
+things — the hammock, the box, cinema manners, the laser, visitors — wait
+for it outside (a box you have drawn is set aside while the tank is open).
+
+The scenery moves, all of it by Core Animation, so it costs the app next
+to nothing and stops altogether while the tank is hidden: clouds drift,
+light shafts breathe, leaves fall, mist rolls, butterflies wander, the sea
+rolls and sparkles with gulls and a sailboat on it, sand blows and a
+tumbleweed goes by, crystals glow and water drips in the cave, snow falls
+under the northern lights, stars twinkle and fireflies blink by moonlight.
+Plants sway, crystals and mushrooms glow, water dishes ripple.
+
+**Decorate** opens a panel beside the tank (the tank itself does not move):
+- **Scenery**: Forest, Jungle, Desert, Meadow, Cave, Beach, Snowfall and
+  Moonlit, each a picture tile. The furniture takes on the light of the
+  place — bluer by moonlight, dimmer in the cave.
+- **Add**: perches it can climb (log, branch, driftwood, cork bark, hollow
+  log, rock, boulder, bamboo, cactus, leafy plant, hanging vine, water
+  dish) and plants and details (fern, tall grass, flowers, succulent,
+  mushrooms, moss, leaf litter, pebbles, twigs, crystals). Click one and it
+  drops into the most open spot.
+- **Layouts**: eight ready-made tanks and a bare one, **Surprise Me** and
+  **Clear All**.
+- In the tank: click a piece to select it, drag to move it (rocks, pots and
+  the like stay on the ground; branches, logs and small things can be
+  propped up off it; vines hang from the lid), drag a corner handle to
+  resize it. The inspector sizes, flips, duplicates and removes it, and
+  puts plants and details **In Front** of the spider or **Behind** it
+  (perches are always behind — it climbs them). Keys: ⌫ remove, ⌘D
+  duplicate, F flip, arrows nudge (⇧ for more), ⌘Z / ⇧⌘Z undo and redo,
+  Esc deselect, then leave.
+
+The habitat is saved as you go. The tank keeps its shape as the window is
+resized, and remembers its size.
+
+## Your Mac
+
+Under **Your Mac** in the menu bar panel:
+- **Feel the Battery**: in Low Power Mode it gets sleepy and slow, and
+  draws fewer frames itself. Plugging in the charger perks it right up.
+- **Notice the Weather**: when it rains where you are, rain is on its mind
+  (checked every twenty minutes from Open-Meteo, going by roughly where
+  your internet connection is). **Rain on the Screen** adds faint streaks
+  across the desktop while it rains.
+- **Notice Pop-ups**: a notification sliding in makes it jump — right up
+  in the air if it is standing on top of something, a start where it
+  clings if it is on a side or underneath — and then it stares up at the
+  banner for a moment. Turn the volume or brightness up or down and it
+  only looks up to see. What a notification says is never read: it only
+  sees that a banner came up.
+
+Under **Visitors**, now and then another spider can drop by to play, then
+head off again.
 
 ## Keeping it in a box
 
@@ -508,7 +538,7 @@ The design is saved as JSON in the app's defaults.
 | Hide *name* / Show *name* | toggle it off and on (the icon dims while hidden) |
 | Spider Studio… | customise it (see above) |
 | Come Here | it walks or jumps to your pointer |
-| Enter Habitat… / Leave Habitat | into the tank and back (⌘E); see The habitat |
+| Open Habitat / Close Habitat | the terrarium; see The habitat |
 | Behavior ▸ | everything it can be asked to do: Say Hi, Toss It, Swing!, Feed ▸, the hammock, and the box |
 | Behavior ▸ Build a Hammock / Nap in the Hammock / Clear the Hammock | see Silk |
 | Size | Tiny → Chonky |
@@ -527,7 +557,10 @@ The design is saved as JSON in the app's defaults.
 ## Permissions
 
 None. Window geometry comes from `CGWindowListCopyWindowInfo`, which needs no
-entitlement — window *titles* and screen contents would, and are never read.
+entitlement — window *titles* and screen contents would, and are never read. Notification
+banners are noticed the same way, by their windows alone; the volume comes
+from Core Audio, and the brightness of a built-in display from
+DisplayServices.
 
 ## Code map
 
@@ -535,10 +568,17 @@ entitlement — window *titles* and screen contents would, and are never read.
 |---|---|
 | `Math.swift` | vectors, springs, easing, smooth noise |
 | `Surfaces.swift` | turns screens/windows/Dock/menu bar into walkable loops |
-| `Habitat.swift` | the tank: its model and presets, the backdrops, the furniture art, and how the furniture becomes surfaces |
-| `HabitatWindow.swift` | the habitat window: the live scene, the mouse, and the builder panel |
+| `Habitat.swift` | the tank's model: biomes, furniture, layouts, and the surfaces the spider walks on in there |
+| `HabitatArt.swift` | painting the tank: palettes, sky, scenery, substrate, glass, and the pictures the moving parts are made of |
+| `HabitatItems.swift` | painting the furniture, and the picker's thumbnails |
+| `HabitatAtmosphere.swift` | what moves in the tank's air, per biome, as Core Animation layers and emitters |
+| `HabitatScene.swift` | the inside of the tank: its layers, the spider and creatures drawn in it, the mouse, decorating |
+| `HabitatWindow.swift` | the tank's window: frame, toolbar buttons, the decorating panel, undo |
 | `Prey.swift` | the creatures: their behaviour, drawing, and the click-through window they live in |
-| `WindowTracker.swift` | polls window rectangles — 30 Hz while any window is moving, 10 Hz when the desktop is still |
+| `WindowTracker.swift` | polls window rectangles — 30 Hz while any window is moving, 10 Hz when the desktop is still — and spots notification banners coming up |
+| `SystemSense.swift` | the Mac it lives on: Low Power Mode, the charger, the weather, the volume and the brightness |
+| `Visitors.swift` | spiders from elsewhere dropping by to play |
+| `Panel.swift` | the menu bar panel: its pages, switches, sliders and buttons |
 | `Spider.swift` | state machine, physics, gait, decisions |
 | `SpiderRenderer.swift` | all the drawing, in body-local coordinates, parametrised by the look |
 | `SpiderDesign.swift` | every part, colourway, personality and gait option; the saved design |

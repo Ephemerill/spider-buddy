@@ -29,7 +29,7 @@ echo "==> Compiling $VERSION ($CONF)  [$(xcrun swiftc --version | head -1)]"
 mkdir -p build
 # shellcheck disable=SC2086
 xcrun swiftc $FLAGS -swift-version 5 -target "$(uname -m)-apple-macos13.0" \
-  -framework AppKit -framework QuartzCore -framework ServiceManagement \
+  -framework AppKit -framework QuartzCore -framework ServiceManagement -framework IOKit \
   -o "build/$BIN" Sources/DesktopSpider/*.swift
 
 echo "==> Assembling $APP"

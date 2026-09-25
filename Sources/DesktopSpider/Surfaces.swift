@@ -492,30 +492,17 @@ final class SurfaceMap {
         return best
     }
 
-    /// Builds a map from a scene rectangle and any loops at all: the walls
-    /// of the scene are a closed box (glass, all four sides walkable), and
-    /// the loops are whatever furniture the scene has. Used by the habitat.
-    func rebuild(scene: CGRect, loops given: [SurfaceLoop]) {
-        let off = standoff
-        var newLoops: [SurfaceLoop] = []
-        let r = scene.insetBy(dx: off, dy: off)
-        var box = SurfaceLoop(id: "screen:0", kind: .screenBorder,
-                              segs: SurfaceMap.rectEdge(r, inside: true),
-                              closed: true, depth: 1_000_000, rect: r)
-        box.edge = SurfaceMap.rectEdge(scene, inside: true)
-        newLoops.append(box)
-        newLoops += given
+    /// Builds a map for the habitat: `air` is the open space of the tank
+    /// (its "screen"), and `given` is everything in it to walk on, rim
+    /// included. Nothing in there hides anything else: the spider is drawn
+    /// in front of all the furniture it can climb.
+    func rebuild(habitat air: CGRect, loops given: [SurfaceLoop]) {
         occluders = []
-        screenFrames = [scene]
-        worldBounds = scene
+        dockRects = []
+        screenFrames = [air]
+        worldBounds = air
         cinemaScreens = []
-        // Furniture in front hides furniture behind, as windows do.
-        var occ: [(rect: CGRect, depth: Int)] = []
-        for l in given where l.kind == .windowEdge { occ.append((l.rect, l.depth)) }
-        occluders = occ
-        applyBlocks(to: &newLoops)
-        occluders = []
-        unclipped = newLoops
+        unclipped = given
         reclip()
     }
 

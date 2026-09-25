@@ -94,7 +94,7 @@ final class SpiderView: NSView {
 
     /// Roughly "how many points of outline moved", so the threshold is in
     /// units a person could actually see.
-    private static func shapeDelta(_ a: SpiderPose, _ b: SpiderPose) -> CGFloat {
+    static func shapeDelta(_ a: SpiderPose, _ b: SpiderPose) -> CGFloat {
         if a.emote != b.emote || a.legs.count != b.legs.count { return .infinity }
         // Partly behind a window: the cut-out moves with it, so every move
         // is a new picture.
@@ -197,7 +197,8 @@ final class SpiderView: NSView {
 /// Screen-sized, click-through, and ordered out whenever there is no silk to
 /// draw — which is most of the time.
 final class SilkView: NSView {
-    private let silkLayer = CAShapeLayer()
+    /// One line per spider out, by slot (0 is the first spider).
+    private var silkLayers: [Int: CAShapeLayer] = [:]
 
     var worldOrigin = CGPoint.zero
     override var isFlipped: Bool { false }
@@ -206,42 +207,51 @@ final class SilkView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.isOpaque = false
-        let scale = NSScreen.main?.backingScaleFactor ?? 2
-        for l in [silkLayer] {
-            l.fillColor = nil
-            l.lineCap = .round
-            l.contentsScale = scale
-            l.actions = ["path": NSNull(), "opacity": NSNull(), "hidden": NSNull()]
-            layer?.addSublayer(l)
-        }
-        silkLayer.strokeColor = CGColor(red: 1, green: 1, blue: 1, alpha: 0.62)
-        silkLayer.lineWidth = 1.1
-        silkLayer.shadowColor = CGColor(red: 0, green: 0, blue: 0, alpha: 0.45)
-        silkLayer.shadowOffset = CGSize(width: 0.5, height: -0.5)
-        silkLayer.shadowRadius = 1.2
-        silkLayer.shadowOpacity = 1
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// Returns true if anything is visible, so the window can be hidden when not.
-    @discardableResult
-    func apply(_ pose: SpiderPose) -> Bool {
-        var anything = false
-
-        if let web = pose.web {
-            silkLayer.path = SpiderRenderer.silkPath(pose, origin: V2(worldOrigin.x, worldOrigin.y))
-            silkLayer.opacity = Float(web.alpha)
-            silkLayer.isHidden = false
-            anything = true
-        } else if !silkLayer.isHidden {
-            silkLayer.isHidden = true
-            silkLayer.path = nil
-        }
-
-        return anything
+    private func silkLayer(_ slot: Int) -> CAShapeLayer {
+        if let l = silkLayers[slot] { return l }
+        let l = CAShapeLayer()
+        l.fillColor = nil
+        l.lineCap = .round
+        l.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+        l.actions = ["path": NSNull(), "opacity": NSNull(), "hidden": NSNull()]
+        l.strokeColor = CGColor(red: 1, green: 1, blue: 1, alpha: 0.62)
+        l.lineWidth = 1.1
+        l.shadowColor = CGColor(red: 0, green: 0, blue: 0, alpha: 0.45)
+        l.shadowOffset = CGSize(width: 0.5, height: -0.5)
+        l.shadowRadius = 1.2
+        l.shadowOpacity = 1
+        l.isHidden = true
+        layer?.addSublayer(l)
+        silkLayers[slot] = l
+        return l
     }
 
+    /// Returns true if this spider's line is visible.
+    @discardableResult
+    func apply(_ pose: SpiderPose, slot: Int = 0) -> Bool {
+        if let web = pose.web {
+            let l = silkLayer(slot)
+            l.path = SpiderRenderer.silkPath(pose, origin: V2(worldOrigin.x, worldOrigin.y))
+            l.opacity = Float(web.alpha)
+            l.isHidden = false
+            return true
+        }
+        clear(slot: slot)
+        return false
+    }
+
+    func clear(slot: Int) {
+        guard let l = silkLayers[slot], !l.isHidden else { return }
+        l.isHidden = true
+        l.path = nil
+    }
+
+    /// Whether any spider has a line out.
+    var anyShown: Bool { silkLayers.values.contains { !$0.isHidden } }
 }
 
 
@@ -593,6 +603,81 @@ final class BoxOutlineView: NSView {
     }
 }
 
+// MARK: - Rain
+
+/// A few faint streaks of rain drifting down the whole desktop while it is
+/// raining outside. Core Animation runs the drops, so it costs the app
+/// nothing per frame.
+final class RainView: NSView {
+    private let emitter = CAEmitterLayer()
+    private(set) var falling = false
+
+    override var isFlipped: Bool { false }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.isOpaque = false
+        emitter.emitterShape = .line
+        emitter.renderMode = .unordered
+        emitter.birthRate = 0
+        let cell = CAEmitterCell()
+        cell.contents = RainView.streak()
+        cell.velocity = 950
+        cell.velocityRange = 250
+        cell.emissionLongitude = -.pi / 2
+        cell.scale = 1
+        cell.scaleRange = 0.45
+        cell.alphaRange = 0.5
+        cell.color = CGColor(red: 0.55, green: 0.63, blue: 0.74, alpha: 0.22)
+        emitter.emitterCells = [cell]
+        layer?.addSublayer(emitter)
+        layout()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        // Tipped a little, as if there were a breeze; wide enough that the
+        // slant leaves no dry corner.
+        emitter.frame = bounds
+        emitter.emitterPosition = CGPoint(x: bounds.midX, y: bounds.maxY + 40)
+        emitter.emitterSize = CGSize(width: bounds.width * 1.3, height: 1)
+        emitter.setAffineTransform(CGAffineTransform(rotationAngle: -0.12))
+        guard let cell = emitter.emitterCells?.first else { return }
+        cell.lifetime = Float((bounds.height + 200) / 700)
+        // Sparse: about one drop in flight per hundred and twenty points across.
+        cell.birthRate = Float(bounds.width / 120) / cell.lifetime
+        emitter.emitterCells = [cell]
+    }
+
+    func start() {
+        guard !falling else { return }
+        falling = true
+        emitter.beginTime = CACurrentMediaTime()
+        emitter.birthRate = 1
+    }
+
+    /// Stops new drops; the ones already falling finish their fall.
+    func stop() {
+        falling = false
+        emitter.birthRate = 0
+    }
+
+    /// One drop: a thin streak, clear at the top.
+    private static func streak() -> CGImage? {
+        let w = 2, h = 26
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                    colors: [CGColor(gray: 1, alpha: 1), CGColor(gray: 1, alpha: 0)] as CFArray,
+                                    locations: [0, 1]) else { return nil }
+        ctx.drawLinearGradient(grad, start: .zero, end: CGPoint(x: 0, y: h), options: [])
+        return ctx.makeImage()
+    }
+}
 
 // MARK: - Laser dot
 

@@ -35,6 +35,15 @@ final class WindowTracker {
     /// screen's edges, and it is not furniture to play on).
     var onUpdate: (([TrackedWindow], _ fullScreens: [CGRect]) -> Void)?
 
+    /// A notification banner came up, on the display given. Each banner is
+    /// a window of its own from Notification Center, over everything else
+    /// and as big as the display it is on (on macOS 26: layer 21, about
+    /// four seconds). What it says is not ours to read, and is not read.
+    var onBanner: ((_ screen: CGRect) -> Void)?
+    /// The banners up at the last look; nil until the first, so one already
+    /// showing at launch is not news.
+    private var banners: Set<CGWindowID>?
+
     /// Our own windows that count as furniture all the same — the studio.
     /// Everything else of ours is an overlay: the spider itself, its silk,
     /// the box, the laser dot — and is skipped without a second look.
@@ -81,8 +90,12 @@ final class WindowTracker {
         let own = ownFurniture
         queue.async { [weak self] in
             guard let self else { return }
-            let (result, fullScreens) = self.snapshot(primaryTop: primaryTop, screens: screens, selfPID: pid, own: own)
+            let (result, fullScreens, banners) = self.snapshot(primaryTop: primaryTop, screens: screens, selfPID: pid, own: own)
             DispatchQueue.main.async {
+                if let before = self.banners {
+                    for (id, screen) in banners where !before.contains(id) { self.onBanner?(screen) }
+                }
+                self.banners = Set(banners.keys)
                 var frames: [CGWindowID: CGRect] = [:]
                 var changed = false
                 for w in result {
@@ -112,13 +125,40 @@ final class WindowTracker {
         return regular
     }
 
+    /// Whether a process is Notification Center, by bundle rather than by
+    /// its (translated) name.
+    private var notificationCenter: [Int32: Bool] = [:]
+
+    private func isNotificationCenter(_ pid: Int32) -> Bool {
+        if let known = notificationCenter[pid] { return known }
+        let nc = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.apple.notificationcenterui"
+        notificationCenter[pid] = nc
+        if notificationCenter.count > 200 { notificationCenter.removeAll() }
+        return nc
+    }
+
     private func snapshot(primaryTop: CGFloat, screens: [CGRect], selfPID: Int32,
-                          own: Set<CGWindowID>) -> ([TrackedWindow], [CGRect]) {
+                          own: Set<CGWindowID>) -> ([TrackedWindow], [CGRect], [CGWindowID: CGRect]) {
         // Desktop elements are listed too: the wallpaper is how a display
         // shows it is on an ordinary Space.
         let opts: CGWindowListOption = [.optionOnScreenOnly]
         guard let info = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String: Any]] else {
-            return ([], [])
+            return ([], [], [:])
+        }
+        // Notification banners: Notification Center's windows above the
+        // ordinary ones (its desktop widgets sit down at the desktop).
+        var banners: [CGWindowID: CGRect] = [:]
+        for dict in info {
+            guard let layer = dict[kCGWindowLayer as String] as? Int, layer > 0, layer < 1000,
+                  let number = dict[kCGWindowNumber as String] as? Int,
+                  let ownerPID = dict[kCGWindowOwnerPID as String] as? Int32,
+                  ownerPID != selfPID, isNotificationCenter(ownerPID),
+                  let boundsDict = dict[kCGWindowBounds as String] as? [String: CGFloat],
+                  let cg = CGRect(dictionaryRepresentation: boundsDict as CFDictionary)
+            else { continue }
+            let frame = CGRect(x: cg.minX, y: primaryTop - cg.maxY, width: cg.width, height: cg.height)
+            let screen = screens.first { $0.intersects(frame) } ?? screens.first ?? frame
+            banners[CGWindowID(number)] = screen
         }
         // Displays with a desktop showing. An exclusive full-screen Space
         // has none — no wallpaper, no desktop icons — while a zoomed or
@@ -188,6 +228,6 @@ final class WindowTracker {
         // Whatever else is listed on a taken display is on a different
         // Space, or under the video: nothing to walk on.
         out.removeAll { w in fullScreens.contains { $0.intersects(w.frame) } }
-        return (out, fullScreens)
+        return (out, fullScreens, banners)
     }
 }

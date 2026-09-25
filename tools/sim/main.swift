@@ -670,7 +670,8 @@ do {
     tank.standoff = map.standoff
     let scene = CGRect(x: 0, y: 0, width: 900, height: 540)
     let hab = Habitat.preset(.forestFloor)
-    tank.rebuild(scene: scene, loops: hab.loops(standoff: tank.standoff))
+    let built = hab.surfaces(in: scene, standoff: tank.standoff)
+    tank.rebuild(habitat: built.air, loops: built.loops)
     let s = Spider(map: map)
     s.config.followCursor = false
     _ = settleUntilAttached(s)
@@ -1333,4 +1334,83 @@ do {
     expect("habits: dialled to never, it never does those", seen["never"]!.isDisjoint(with: banned),
            "\(seen["never"]!.intersection(banned).sorted())")
     expect("habits: dialled all the way up, it drums", seen["always"]!.contains("drum"), "\(seen["always"]!.sorted())")
+}
+
+// Commotions: a notification makes it jump — straight up off the top of a
+// window and back down onto it — and stare at where it came up; on a side
+// or underneath it only starts. The volume or brightness only turns its
+// head: no start, no jump.
+do {
+    let cm = SurfaceMap()
+    cm.standoff = map.standoff
+    let w = TrackedWindow(id: 31, frame: CGRect(x: screen.minX + 400, y: screen.minY + 200, width: 700, height: 400), depth: 0, owner: "W")
+    cm.debugRebuild(screen: screen, menuBarHeight: 25, windows: [w], cinema: false)
+    let banner = V2(screen.maxX - 180, screen.maxY - 75)
+    guard let loop = cm.loop("win:31"),
+          let top = loop.segs.firstIndex(where: { $0.facing == .up }),
+          let side = loop.segs.firstIndex(where: { $0.facing == .left || $0.facing == .right }),
+          let under = loop.segs.firstIndex(where: { $0.facing == .down }) else {
+        print("  [skip] commotion: no window loop"); exit(0)
+    }
+    func fresh() -> Spider {
+        let s = Spider(map: cm)
+        s.config.followCursor = false
+        s.config.webs = false
+        _ = settleUntilAttached(s)
+        return s
+    }
+    // On top: up, and back down on the same window, staring.
+    var hops = 0, landedBack = 0, stared = 0, rises: [CGFloat] = [], trials = 0
+    for trial in 0..<6 {
+        let s = fresh()
+        // Mid-turn or gathering for a leap it only flinches: not a trial.
+        guard park(s, loopID: "win:31", segIdx: top, t: 150 + CGFloat(trial) * 60),
+              !["turn", "crouch", "shoot", "eat"].contains(where: { s.debugState.contains(":\($0)") }) else { continue }
+        trials += 1
+        let y0 = s.worldPos.y
+        s.noticeCommotion(at: banner, fright: true)
+        var peak = y0, sawJump = false, n = 0
+        while CGFloat(n) * dt < 1.5 {
+            s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+            peak = max(peak, s.worldPos.y)
+            if s.debugState.hasPrefix("jump") { sawJump = true }
+            if sawJump, s.debugState.hasPrefix("attached") { break }
+        }
+        if sawJump { hops += 1; rises.append(peak - y0) }
+        if s.debugState.hasPrefix("attached"), s.debugState.contains("win:31") { landedBack += 1 }
+        _ = settle(s, seconds: 0.5, cursor: V2(-4000, -4000))
+        if s.debugState.contains(":look") { stared += 1 }
+    }
+    expect("notification on top of a window: it jumps up", trials > 0 && hops == trials, "\(hops)/\(trials), rises \(rises.map { Int($0) })")
+    expect("notification on top of a window: it lands back on it", landedBack == trials, "\(landedBack)/\(trials)")
+    expect("notification on top of a window: then it stares", stared == trials, "\(stared)/\(trials)")
+
+    // A side, and underneath: a start in place, then the stare.
+    for (label, seg) in [("side", side), ("underneath", under)] {
+        let s = fresh()
+        guard park(s, loopID: "win:31", segIdx: seg, t: 60) else { print("  [skip] commotion \(label): would not park"); continue }
+        s.noticeCommotion(at: banner, fright: true)
+        var jumped = false, startled = false, n = 0
+        while CGFloat(n) * dt < 0.5 {
+            s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+            if !s.debugState.hasPrefix("attached") { jumped = true }
+            if s.debugState.contains(":startle") { startled = true }
+        }
+        _ = settle(s, seconds: 0.3, cursor: V2(-4000, -4000))
+        expect("notification on a window's \(label): it starts, no jump", startled && !jumped, s.debugState)
+        expect("notification on a window's \(label): then it stares", s.debugState.contains(":look"), s.debugState)
+    }
+
+    // The volume: a look, nothing more.
+    let s = fresh()
+    if park(s, loopID: "win:31", segIdx: top, t: 200) {
+        s.noticeCommotion(at: banner, fright: false)
+        var jumped = false, startled = false, n = 0
+        while CGFloat(n) * dt < 1.0 {
+            s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+            if !s.debugState.hasPrefix("attached") { jumped = true }
+            if s.debugState.contains(":startle") { startled = true }
+        }
+        expect("volume change: only a look", !jumped && !startled && s.debugState.contains(":look"), s.debugState)
+    }
 }
