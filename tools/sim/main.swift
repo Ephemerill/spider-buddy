@@ -307,7 +307,8 @@ do {
     }
 }
 
-// Feeding: each kind of prey gets hunted down and eaten, and it cheers up.
+// Feeding: each kind of prey gets hunted down and eaten, and it cheers up —
+// except a ladybug, which is tasted, spat out, and then left alone.
 for kind in PreyKind.allCases {
     let s = Spider(map: map)
     s.config.followCursor = false
@@ -315,27 +316,202 @@ for kind in PreyKind.allCases {
     let p = s.release(kind)
     var caughtAt = -1.0
     var eatenAt = -1.0
+    var spatAt = -1.0
+    var recaught = 0
     var seen: [String] = []
     var n = 0
     var off = 0
-    let limit: CGFloat = kind == .fruitFly ? 150 : 90
+    let limit: CGFloat = kind.flies || kind.bitter ? 150 : 90
     while CGFloat(n) * dt < limit {
         s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
         let st = s.debugState
         if seen.last != st { seen.append(st) }
         if !map.worldBounds.insetBy(dx: -60, dy: -60).contains(s.worldPos.point) { off += 1 }
-        if !map.worldBounds.insetBy(dx: -60, dy: -60).contains(p.pos.point) { off += 1 }
+        if !p.leaving, !map.worldBounds.insetBy(dx: -60, dy: -60).contains(p.pos.point) { off += 1 }
         if caughtAt < 0, p.state != .loose { caughtAt = Double(n) * Double(dt) }
-        if ProcessInfo.processInfo.environment["SIM_DEBUG"] != nil, n % 120 == 0 {
-            print("    \(kind.label) t=\(n / 60)s \(st) spider=\(Int(s.worldPos.x)),\(Int(s.worldPos.y)) prey=\(Int(p.pos.x)),\(Int(p.pos.y)) on=\(p.anchor?.loopID ?? "air") \(p.state)")
+        if caughtAt >= 0, spatAt < 0, p.state == .loose { spatAt = Double(n) * Double(dt) }
+        if spatAt >= 0, p.state == .caught { recaught += 1 }
+        if ProcessInfo.processInfo.environment["SIM_DEBUG"] != nil, n % (kind == .ant ? 30 : 120) == 0 {
+            print("    \(kind.label) t=\(n / 60)s \(st) spider=\(Int(s.worldPos.x)),\(Int(s.worldPos.y)) prey=\(Int(p.pos.x)),\(Int(p.pos.y)) on=\(p.anchor?.loopID ?? "air") \(p.state)\(p.tucked ? " tucked" : "")\(p.flying ? " flying" : "") fear \(String(format: "%.2f", p.fear)) travel \(Int(p.travel.x)),\(Int(p.travel.y))")
         }
         if p.state == .eaten { eatenAt = Double(n) * Double(dt); break }
+        if spatAt >= 0, Double(n) * Double(dt) > spatAt + 20 { break }
     }
     let tail = seen.suffix(5).joined(separator: " > ")
-    expect("\(kind.label): catches it", caughtAt >= 0, caughtAt < 0 ? "never  " + tail : "")
-    expect("\(kind.label): eats it", eatenAt >= 0, String(format: "%.0fs  ", eatenAt) + tail)
-    expect("\(kind.label): well fed afterwards", s.fed > 0.2, "fed \(s.fed)")
+    expect("\(kind.label): catches it", caughtAt >= 0, caughtAt < 0 ? "never  " + tail : String(format: "%.0fs", caughtAt))
+    if kind.bitter {
+        expect("\(kind.label): spits it out", spatAt >= 0 && p.spurned, "state \(p.state)")
+        expect("\(kind.label): and leaves it be", recaught == 0, "caught again \(recaught) frames")
+    } else {
+        expect("\(kind.label): eats it", eatenAt >= 0, String(format: "%.0fs  ", eatenAt) + tail)
+        expect("\(kind.label): well fed afterwards", s.fed > 0.2, "fed \(s.fed)")
+    }
     expect("\(kind.label): both stay on the desktop", off == 0, "off \(off)")
+}
+
+// The creatures themselves, each on its own, with a make-believe spider.
+do {
+    let far = V2(-3000, -3000)
+    func run(_ p: Prey, _ secs: CGFloat, spider: (CGFloat) -> V2 = { _ in V2(-3000, -3000) }, cursor: V2? = nil,
+             each: (CGFloat) -> Void = { _ in }) {
+        var tt: CGFloat = 0
+        while tt < secs {
+            tt += dt
+            p.update(dt: dt, t: tt, map: map, spider: spider(tt), cursor: cursor)
+            each(tt)
+        }
+    }
+    func top(_ id: String) -> (Int, Seg)? {
+        guard let l = map.loop(id), let i = l.segs.firstIndex(where: { $0.facing == .up }) else { return nil }
+        return (i, l.segs[i])
+    }
+    // An ant goes round the corner and down the side of a window.
+    if let (i, seg) = top("win:3") {
+        let ant = Prey(kind: .ant, id: 900, at: .zero, scale: 0.95)
+        ant.emerge(on: Anchor(loopID: "win:3", segIdx: i, t: seg.len - 40), dir: 1, map: map)
+        var sides = Set<Int>()
+        var lowest = ant.pos.y
+        run(ant, 12, each: { _ in
+            if let a = ant.anchor { sides.insert(a.segIdx) }
+            lowest = min(lowest, ant.pos.y)
+        })
+        expect("ant: walks round corners onto the sides", sides.count >= 2, "segs \(sides.sorted())")
+        expect("ant: and down them", lowest < seg.a.y - 60, "lowest \(Int(lowest)) top \(Int(seg.a.y))")
+        expect("ant: still on the window", ant.anchor?.loopID == "win:3", "\(ant.anchor?.loopID ?? "air")")
+    }
+    // A ladybug put low on a wall climbs it, and before long flies.
+    if let l = map.loop("win:3"), let si = l.segs.firstIndex(where: { $0.facing == .right }) {
+        let bug = Prey(kind: .ladybug, id: 901, at: .zero, scale: 0.95)
+        let seg = l.segs[si]
+        let lowT = seg.dir.y > 0 ? CGFloat(30) : seg.len - 30
+        bug.emerge(on: Anchor(loopID: "win:3", segIdx: si, t: lowT), dir: seg.dir.y > 0 ? -1 : 1, map: map)
+        let startY = bug.pos.y
+        var highest = startY
+        var flew = -1.0
+        run(bug, 120, each: { tt in
+            highest = max(highest, bug.pos.y)
+            if flew < 0, bug.flying { flew = Double(tt) }
+            if ProcessInfo.processInfo.environment["SIM_DEBUG"] != nil, Int(tt * 60) % 60 == 0 {
+                print("    ladybug t=\(Int(tt)) \(Int(bug.pos.x)),\(Int(bug.pos.y)) on \(bug.anchor.map { "\($0.loopID)#\($0.segIdx)" } ?? "air") flying \(bug.flying)")
+            }
+        })
+        expect("ladybug: climbs up the wall", highest > startY + 120, "from \(Int(startY)) to \(Int(highest))")
+        expect("ladybug: flies off from the top", flew >= 0, flew < 0 ? "never" : String(format: "%.0fs", flew))
+    }
+    // A beetle rushed at shuts itself up; left in peace, it comes out.
+    if let (i, seg) = top("screen:0") {
+        let beetle = Prey(kind: .beetle, id: 902, at: .zero, scale: 0.95)
+        beetle.emerge(on: Anchor(loopID: "screen:0", segIdx: i, t: seg.len / 2), dir: 1, map: map)
+        run(beetle, 2)
+        let home = beetle.pos
+        var tuckedAt = -1.0
+        run(beetle, 6, spider: { tt in home + V2(300 - tt * 70, 20) }, each: { tt in
+            if tuckedAt < 0, beetle.tucked { tuckedAt = Double(tt) }
+        })
+        expect("beetle: walked right past, it tucks in", tuckedAt >= 0, "fear \(beetle.fear)")
+        let still = home + V2(60, 20)
+        var outAt = -1.0
+        run(beetle, 15, spider: { _ in still }, each: { tt in
+            if outAt < 0, !beetle.tucked { outAt = Double(tt) }
+        })
+        expect("beetle: with the spider keeping still, it comes out", outAt >= 0, "fear \(beetle.fear)")
+        let sneaky = Prey(kind: .beetle, id: 903, at: .zero, scale: 0.95)
+        sneaky.emerge(on: Anchor(loopID: "screen:0", segIdx: i, t: seg.len / 2), dir: 1, map: map)
+        run(sneaky, 2)
+        let spot = sneaky.pos
+        var sneakTucked = false
+        run(sneaky, 9, spider: { tt in spot + V2(max(40, 300 - tt * 25), 20) }, each: { _ in if sneaky.tucked { sneakTucked = true } })
+        expect("beetle: a sneak up on it goes unnoticed", !sneakTucked)
+    }
+    // A mosquito hangs about the pointer, now hovering, now darting.
+    do {
+        let c = V2(screen.midX, screen.midY)
+        let m = Prey(kind: .mosquito, id: 904, at: c + V2(300, 100), scale: 0.95)
+        var hover = 0, frames = 0
+        var dsum: CGFloat = 0
+        var jumps = 0
+        var last = m.pos
+        run(m, 30, cursor: c, each: { tt in
+            if m.pos.distance(to: last) > 12 { jumps += 1 }
+            last = m.pos
+            guard tt > 5 else { return }
+            frames += 1
+            if m.hovering { hover += 1 }
+            dsum += m.pos.distance(to: c)
+        })
+        let h = Double(hover) / Double(frames) * 100
+        expect("mosquito: spends a good part of its time hovering", h > 25 && h < 95, String(format: "%.0f%%", h))
+        expect("mosquito: keeps near the pointer", dsum / CGFloat(frames) < 160, "mean \(Int(dsum / CGFloat(frames)))")
+        expect("mosquito: never teleports", jumps == 0, "\(jumps) jumps")
+    }
+    // A moth circles the pointer like a lamp.
+    do {
+        let c = V2(screen.midX, screen.midY + 100)
+        let moth = Prey(kind: .moth, id: 905, at: c + V2(-220, -40), scale: 0.95)
+        var dsum: CGFloat = 0, frames = 0
+        run(moth, 14, cursor: c, each: { tt in
+            guard tt > 6 else { return }
+            frames += 1
+            dsum += moth.pos.distance(to: c)
+        })
+        expect("moth: drawn to the pointer", dsum / CGFloat(frames) < 110, "mean \(Int(dsum / CGFloat(frames)))")
+        let alone = Prey(kind: .moth, id: 906, at: c, scale: 0.95)
+        var perched = -1.0
+        run(alone, 30, each: { tt in if perched < 0, alone.onSurface { perched = Double(tt) } })
+        expect("moth: with no lamp about, settles somewhere", perched >= 0)
+    }
+    // Things that wandered in go again in their own time.
+    for kind in [PreyKind.moth, .ant, .beetle, .cricket] {
+        let s = Spider(map: map)
+        let p = Prey(kind: kind, id: 907, at: V2(screen.midX, screen.midY), scale: 0.95)
+        if !kind.flies, let (i, seg) = top("screen:0") {
+            p.emerge(on: Anchor(loopID: "screen:0", segIdx: i, t: seg.len / 3), dir: 1, map: map)
+        }
+        p.leaveAge = 3
+        var goneAt = -1.0
+        run(p, 30, each: { tt in if goneAt < 0, p.gone { goneAt = Double(tt) } })
+        _ = s
+        expect("\(kind.label): wandered in, leaves again", goneAt >= 0, "alpha \(p.alpha) at \(Int(p.pos.x)),\(Int(p.pos.y))")
+    }
+    _ = far
+}
+
+// Wandering in: every kind turns up somewhere sensible, unnoticed, and none
+// of them outstays its welcome.
+do {
+    let s = Spider(map: map)
+    s.config.followCursor = false
+    _ = settleUntilAttached(s)
+    var kinds: [PreyKind: Int] = [:]
+    var badSpawn = 0
+    let probe = Spider(map: map)
+    _ = settleUntilAttached(probe)
+    for _ in 0..<200 {
+        for p in probe.releaseWild(night: chance(0.5), raining: chance(0.2)) {
+            kinds[p.kind, default: 0] += 1
+            if p.noticed || !p.wild { badSpawn += 1 }
+            if !map.worldBounds.insetBy(dx: -40, dy: -40).contains(p.pos.point) { badSpawn += 1 }
+            if !p.kind.flies, p.anchor == nil { badSpawn += 1 }
+        }
+    }
+    print("  wandering in, 200 tries: " + PreyKind.allCases.map { "\($0.label) \(kinds[$0] ?? 0)" }.joined(separator: ", "))
+    expect("wandering in: every kind turns up", kinds.count == PreyKind.allCases.count)
+    expect("wandering in: unnoticed, and somewhere sensible", badSpawn == 0, "\(badSpawn)")
+    var released = 0
+    var eaten = 0
+    var off = 0
+    for _ in 0..<3 { released += s.releaseWild(night: false, raining: false).count }
+    let mine = s.prey.map { $0 }
+    var n = 0
+    while CGFloat(n) * dt < 280 {
+        s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+        for p in mine where !p.leaving && !map.worldBounds.insetBy(dx: -60, dy: -60).contains(p.pos.point) { off += 1 }
+    }
+    eaten = mine.filter { $0.state == .eaten }.count
+    let left = s.prey.filter { $0.state == .loose }.count
+    print("  \(released) wandered in: \(eaten) eaten, \(mine.filter { $0.gone }.count) went off, \(left) still about")
+    expect("wandering in: none of them stay for good", left == 0, "\(left) left")
+    expect("wandering in: all stay on the desktop", off == 0, "\(off)")
 }
 
 // Picking prey up and dropping it elsewhere: it lands, and gets hunted anew.
@@ -1412,5 +1588,390 @@ do {
             if s.debugState.contains(":startle") { startled = true }
         }
         expect("volume change: only a look", !jumped && !startled && s.debugState.contains(":look"), s.debugState)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Memory: what it goes through nudges its personality — a little, within
+// bounds, fading again — and never touches the Studio's design.
+// ---------------------------------------------------------------------------
+
+print("\n--- memory ---")
+do {
+    let day: TimeInterval = 86_400
+    let shy = Personality.presets.first { $0.name == "Shy" }!.p
+    let showOff = Personality.presets.first { $0.name == "Show-off" }!.p
+    var shyDesign = SpiderDesign(); shyDesign.personality = shy
+    func fmt(_ s: TraitShift) -> String {
+        String(format: "energy %+.3f curiosity %+.3f bravery %+.3f play %+.3f affection %+.3f lazy %+.3f prowess %+.3f roaming %+.3f",
+               s.energy, s.curiosity, s.bravery, s.playfulness, s.affection, s.laziness, s.prowess, s.roaming)
+    }
+    func bounded(_ s: TraitShift) -> Bool { TraitShift.traits.allSatisfy { abs(s[keyPath: $0]) <= TraitShift.most + 1e-6 } }
+
+    let plain = Spider(map: map)
+    plain.apply(design: shyDesign)
+    expect("no memory: its personality is the Studio's", plain.personality == shy)
+
+    // A fortnight of gentle attention: stroked and said hello to a few
+    // times a day, and an hour of company.
+    let loved = SpiderMemory()
+    for _ in 0..<14 {
+        for _ in 0..<6 { loved.record(.petted); loved.record(.greeted) }
+        loved.record(.company, 6)
+        loved.live(for: day, Moment(), base: shy)
+    }
+    let l = loved.shift
+    print("  loved shy spider after a fortnight: \(fmt(l))")
+    expect("gentle attention: warmer and bolder", l.affection > 0.04 && l.bravery > 0.03, fmt(l))
+    expect("gentle attention: bounded", bounded(l))
+    expect("gentle attention: still a shy spider", shy.shifted(by: l).bravery < 0.4,
+           String(format: "bravery %.2f -> %.2f", shy.bravery, shy.shifted(by: l).bravery))
+    let sp = Spider(map: map)
+    sp.apply(design: shyDesign)
+    sp.memory = loved
+    expect("with memory: the design it hands the Studio is untouched", sp.design.personality == shy && sp.basePersonality == shy)
+    expect("with memory: the personality it acts on is shifted", sp.personality.affection > shy.affection)
+
+    // Reinforced over and over it saturates rather than running away.
+    let doted = SpiderMemory()
+    for _ in 0..<2000 { doted.record(.petted); doted.record(.played); doted.record(.huntWon) }
+    doted.settle(base: shy)
+    expect("endless reinforcement stays bounded", bounded(doted.shift), fmt(doted.shift))
+
+    // A burst of frights: warier at once, much less so an hour or two on.
+    let fright = SpiderMemory()
+    for _ in 0..<5 { fright.record(.startled) }
+    fright.settle(base: shy)
+    let dip = fright.shift.bravery
+    fright.live(for: 2 * 3600, Moment(), base: shy)
+    let later = fright.shift.bravery
+    print(String(format: "  frights: bravery %+.3f at once, %+.3f two hours on", dip, later))
+    expect("frights: warier for a while", dip < -0.05 && later > dip * 0.45 && later < 0)
+
+    // Left be: every lesson fades back to who it was.
+    loved.live(for: 90 * day, Moment(), base: shy)
+    expect("unkept memories fade back to the Studio's personality", TraitShift.traits.allSatisfy { abs(loved.shift[keyPath: $0]) < 0.01 }, fmt(loved.shift))
+
+    // The same fling is fun to a show-off and a fright to a shy one.
+    let flungShy = SpiderMemory(), flungBold = SpiderMemory()
+    for _ in 0..<6 { flungShy.record(.thrown); flungBold.record(.thrown) }
+    flungShy.settle(base: shy); flungBold.settle(base: showOff)
+    expect("thrown: a show-off takes it as play, a shy spider as a fright",
+           flungBold.shift.playfulness > 0.02 && flungShy.shift.bravery < flungBold.shift.bravery - 0.03,
+           "bold \(fmt(flungBold.shift)) | shy \(fmt(flungShy.shift))")
+
+    // Left alone: more independent — never sulky.
+    let lonely = SpiderMemory()
+    lonely.live(for: 6 * 3600, Moment(company: false, alone: true, calm: false, place: nil), base: shy)
+    expect("left alone: more independent, no less affectionate", lonely.shift.roaming > 0.03 && lonely.shift.affection >= 0, fmt(lonely.shift))
+
+    // Good hunts: surer of itself, and a taste for what it ate.
+    let hunter = SpiderMemory()
+    for _ in 0..<10 { hunter.record(.huntWon); hunter.record(.fed); hunter.warm(to: PreyKind.cricket.memoryName, by: 0.15) }
+    hunter.record(.huntMissed)
+    hunter.settle(base: shy)
+    expect("good hunts: more sure of itself", hunter.shift.prowess > 0.03, fmt(hunter.shift))
+    expect("a favourite snack", hunter.favourite(prefix: "prey.") == "cricket")
+
+    // Places: a fright somewhere puts it off; settling somewhere endears it.
+    let homely = SpiderMemory()
+    let top = Place(at: V2(screen.midX, screen.maxY - 30), in: screen, on: .menuBar, habitat: false)
+    let floor = Place(at: V2(screen.midX, screen.minY + 20), in: screen, on: .screenBorder, habitat: false)
+    homely.live(for: 1800, Moment(company: false, alone: false, calm: true, place: top), base: shy)
+    for _ in 0..<3 { homely.record(.startled, at: floor) }
+    expect("places: likes where it settles, less where it was frightened",
+           homely.appeal(of: top) > 1.03 && homely.appeal(of: floor) < 0.97,
+           String(format: "top %.2f floor %.2f", homely.appeal(of: top), homely.appeal(of: floor)))
+
+    // Kept across launches (in a throwaway defaults domain, not the app's).
+    let suite = "com.gabriel.desktopspider.memorytest"
+    if let defaults = UserDefaults(suiteName: suite) {
+        hunter.save(to: defaults)
+        let back = SpiderMemory.load(from: defaults)
+        back.settle(base: shy)
+        let same = TraitShift.traits.allSatisfy { abs(back.shift[keyPath: $0] - hunter.shift[keyPath: $0]) < 0.002 }
+        expect("remembered across launches", same && back.favourite(prefix: "prey.") == "cricket", fmt(back.shift))
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    // What it does: the same shy spider, with and without a well-loved
+    // memory, you about with the pointer resting on the desktop. The loved
+    // one spends more of its time over by the pointer and doing things
+    // with you; both stay on the desktop and never get stuck.
+    struct Run { var near = 0; var frames = 0; var social = 0; var starts = 0; var off = 0; var stuck = 0 }
+    func live(_ memory: SpiderMemory?, seconds: Int) -> Run {
+        let s = Spider(map: map)
+        s.apply(design: shyDesign)
+        s.memory = memory
+        var r = Run(), lastAct = "", stuck = 0
+        var lastP = s.worldPos
+        var tt: CGFloat = 0
+        let rest = V2(screen.midX - 120, screen.midY + 80)
+        for _ in 0..<(60 * seconds) {
+            tt += dt
+            // Resting, but not idle: a hand on the mouse, barely moving it.
+            s.setCursor(rest + V2(sin(tt * 0.7) * 3, cos(tt * 0.5) * 3))
+            s.update(dt: dt)
+            let st = s.debugState
+            let parts = st.split(separator: ":")
+            let act = parts.count > 1 ? String(parts[1].split(separator: " ").first ?? "") : ""
+            if act != lastAct, !act.isEmpty {
+                r.starts += 1
+                if ["greet", "wave", "stare", "curious", "glance", "armsUp"].contains(act) { r.social += 1 }
+            }
+            lastAct = act
+            r.frames += 1
+            if s.worldPos.distance(to: rest) < 260 { r.near += 1 }
+            if !map.worldBounds.insetBy(dx: -60, dy: -60).contains(s.worldPos.point) { r.off += 1 }
+            if s.worldPos.distance(to: lastP) < 0.02, st != "nesting" { stuck += 1; r.stuck = max(r.stuck, stuck) } else { stuck = 0 }
+            lastP = s.worldPos
+        }
+        return r
+    }
+    let fond = SpiderMemory()
+    for _ in 0..<40 { fond.record(.petted); fond.record(.greeted); fond.record(.company, 3) }
+    fond.live(for: day, Moment(), base: shy)
+    var a = Run(), b = Run()
+    var fine = true
+    for _ in 0..<4 {
+        let x = live(nil, seconds: 300), y = live(fond, seconds: 300)
+        a.near += x.near; a.frames += x.frames; a.social += x.social; a.starts += x.starts
+        b.near += y.near; b.frames += y.frames; b.social += y.social; b.starts += y.starts
+        if x.off > 0 || y.off > 0 || x.stuck > 60 * 40 || y.stuck > 60 * 40 { fine = false }
+    }
+    let nearA = Double(a.near) / Double(a.frames) * 100, nearB = Double(b.near) / Double(b.frames) * 100
+    print(String(format: "  shy, pointer resting, 4×300s: plain %.0f%% of the time near it, %d social of %d starts; loved %.0f%%, %d of %d",
+                 nearA, a.social, a.starts, nearB, b.social, b.starts))
+    print("  (loved shift \(fmt(fond.shift)))")
+    // (Too little in it, against how much one run differs from the next,
+    // to hold a run to: a report only.)
+    _ = (nearA, nearB)
+
+    // The clearest place to see it: how it takes a click. The same weighted
+    // draw as ever, read off hundreds of times: a loved shy spider answers
+    // with a wave or a hello more often, and starts less; one given a run
+    // of frights starts more.
+    // (Each click gets the same memory, fresh: a click is itself something
+    // to remember, and would otherwise change what is being measured.)
+    func clicks(_ p: Personality, _ memory: SpiderMemory?, _ n: Int) -> (warm: Double, start: Double) {
+        let s = Spider(map: map)
+        s.config.followCursor = false
+        var d = SpiderDesign(); d.personality = p
+        s.apply(design: d)
+        _ = settleUntilAttached(s)
+        var warm = 0, start = 0
+        for _ in 0..<n {
+            if let m = memory { s.memory = SpiderMemory(state: m.state) }
+            s.poke()
+            let st = s.debugState
+            if st.contains(":wave") || st.contains(":greet") || st.contains(":armsUp") { warm += 1 }
+            if st.contains(":startle") { start += 1 }
+            s.update(dt: dt)
+        }
+        return (Double(warm) / Double(n) * 100, Double(start) / Double(n) * 100)
+    }
+    let frightened = SpiderMemory()
+    for _ in 0..<6 { frightened.record(.startled) }
+    let mid = Personality()
+    let c0 = clicks(shy, nil, 3000), c1 = clicks(shy, fond, 3000)
+    let c2 = clicks(mid, nil, 3000), c3 = clicks(mid, frightened, 3000)
+    print(String(format: "  3000 clicks each: shy %.1f%% warm / %.1f%% startled, loved shy %.1f%% / %.1f%%; middling %.1f%% / %.1f%%, just frightened %.1f%% / %.1f%%",
+                 c0.warm, c0.start, c1.warm, c1.start, c2.warm, c2.start, c3.warm, c3.start))
+    expect("loved: takes a click more warmly, and starts less", c1.warm > c0.warm + 2 && c1.start < c0.start)
+    expect("just frightened: starts at a click more, for now", c3.start > c2.start)
+    expect("with memories it stays on the desktop and never gets stuck", fine)
+}
+
+// Toys: each kind lands, settles and stays put on the desktop however it is
+// batted about; the wind-up bug walks and runs down; the feather drifts,
+// and dangles on its string. Then a spider finds each, plays with it and
+// in the end tires of it — a lively one sooner and harder than a lazy one.
+do {
+    print("\n--- toys ---")
+    for kind in ToyKind.allCases {
+        let box = ToyBox(map: map); box.scale = 0.95
+        let toy = box.add(kind, near: V2(screen.midX, screen.midY))!
+        var rest = -1.0, off = 0, n = 0
+        while CGFloat(n) * dt < 20 {
+            box.update(dt: dt); n += 1
+            if !map.worldBounds.insetBy(dx: -5, dy: -5).contains(toy.pos.point) { off += 1 }
+            if rest < 0, toy.onSurface, toy.speed < 1 { rest = Double(n) * Double(dt) }
+        }
+        expect("toy \(kind.label): lands and settles", rest >= 0 && toy.onSurface, String(format: "%.1fs on %@", rest, toy.anchor?.loopID ?? "air"))
+        var still = 0
+        for i in 0..<6 {
+            toy.bat(V2(i % 2 == 0 ? 700 : -700, 250), map: map)
+            for _ in 0..<(60 * (kind == .feather ? 30 : 12)) {
+                box.update(dt: dt)
+                if !map.worldBounds.insetBy(dx: -5, dy: -5).contains(toy.pos.point) { off += 1 }
+            }
+            if toy.speed < 1 { still += 1 }
+        }
+        expect("toy \(kind.label): batted about, stays on the desktop and comes to rest", off == 0 && still == 6, "off \(off), at rest \(still)/6")
+    }
+    do {
+        let box = ToyBox(map: map); box.scale = 0.95
+        let w = windows[0].frame
+        let ball = Toy(kind: .ball, id: 90, at: V2(w.midX - 200, w.maxY + 40), scale: 0.95)
+        box.debugInsert(ball)
+        for _ in 0..<120 { box.update(dt: dt) }
+        let onTop = ball.anchor?.loopID
+        ball.bat(V2(-420, 0), map: map)
+        var fellAtX: CGFloat?
+        for _ in 0..<(60 * 8) { box.update(dt: dt); if fellAtX == nil, ball.airborne { fellAtX = ball.pos.x } }
+        expect("ball: rolls along a window top and tips off the end", onTop == "win:1" && fellAtX.map { abs($0 - w.minX) < 12 } == true,
+               "on \(onTop ?? "-"), fell at x \(fellAtX.map { "\(Int($0))" } ?? "never") (edge \(Int(w.minX)))")
+        expect("ball: lands on something below", ball.onSurface && ball.pos.y < w.maxY, "\(ball.anchor?.loopID ?? "air")")
+    }
+    do {
+        let box = ToyBox(map: map); box.scale = 0.95
+        let bug = box.add(.windUpBug, near: V2(screen.midX, screen.midY))!
+        for _ in 0..<(60 * 3) { box.update(dt: dt) }
+        bug.poke(map: map)
+        var travelled: CGFloat = 0, last = bug.pos, ranDown = -1.0
+        for n in 0..<(60 * 40) {
+            box.update(dt: dt)
+            travelled += bug.pos.distance(to: last); last = bug.pos
+            if ranDown < 0, bug.wound <= 0 { ranDown = Double(n) * Double(dt) }
+        }
+        expect("wind-up bug: walks off when wound, and runs down", travelled > 200 && ranDown > 8 && ranDown < 30 && bug.speed < 1,
+               String(format: "%.0f px, ran down at %.0fs", Double(travelled), ranDown))
+    }
+    do {
+        let box = ToyBox(map: map); box.scale = 0.95
+        let f = Toy(kind: .feather, id: 91, at: V2(screen.midX, screen.minY + 400), scale: 0.95)
+        box.debugInsert(f)
+        var n = 0
+        while !f.onSurface, n < 60 * 30 { box.update(dt: dt); n += 1 }
+        expect("feather: drifts down slowly", CGFloat(n) * dt > 3, String(format: "%.1fs", Double(CGFloat(n) * dt)))
+        f.grab(at: f.pos)
+        var g = f.pos
+        for i in 0..<(60 * 3) { g = V2(screen.midX + sin(CGFloat(i) * 0.05) * 200, screen.minY + 500); f.drag(to: g); box.update(dt: dt) }
+        let hang = f.pos.distance(to: g)
+        expect("feather: dangles on its string below the pointer", hang > 60 && hang < 110 && f.pos.y < g.y, "\(Int(hang)) px")
+    }
+
+    func play(_ kind: ToyKind, _ p: Personality, secs: CGFloat = 150) -> (firstBat: Double, bored: Double, off: Int, retreats: Int) {
+        let s = Spider(map: map)
+        s.config.followCursor = false
+        var d = SpiderDesign(); d.personality = p
+        s.apply(design: d)
+        _ = settleUntilAttached(s)
+        let box = ToyBox(map: map); box.scale = 0.95
+        s.toys = box
+        let toy = box.add(kind, near: s.worldPos)!
+        s.seeToy(toy)
+        var firstBat = -1.0, bored = -1.0, played = false, off = 0, retreats = 0, lastStage = ""
+        var n = 0
+        while CGFloat(n) * dt < secs {
+            s.setCursor(V2(-4000, -4000)); s.update(dt: dt); box.update(dt: dt); n += 1
+            let st = s.debugToy
+            let stage = String(st.split(separator: " ").first ?? "-")
+            if stage != lastStage { if stage == "retreat" { retreats += 1 }; lastStage = stage }
+            if stage == "play" { played = true }
+            if firstBat < 0, st.contains("bats "), !st.contains("bats 0") { firstBat = Double(n) * Double(dt) }
+            if played, bored < 0, stage == "-" { bored = Double(n) * Double(dt) }
+            if !map.worldBounds.insetBy(dx: -60, dy: -60).contains(s.worldPos.point) { off += 1 }
+        }
+        return (firstBat, bored, off, retreats)
+    }
+    func preset(_ name: String) -> Personality { Personality.presets.first { $0.name == name }!.p }
+    for kind in ToyKind.allCases {
+        // (Two goes: whether it gets round to a toy in time is a matter of chance.)
+        var r = play(kind, preset("Friendly"))
+        if r.firstBat < 0 || r.bored < 0 { r = play(kind, preset("Friendly")) }
+        expect("toy \(kind.label): a spider finds it, plays, and tires of it", r.firstBat >= 0 && r.bored > r.firstBat && r.off == 0,
+               String(format: "first bat %.0fs, bored at %.0fs, off %d", r.firstBat, r.bored, r.off))
+    }
+    var shyRetreats = 0, boldRetreats = 0
+    for _ in 0..<5 {
+        boldRetreats += play(.ball, preset("Hyper"), secs: 90).retreats
+        shyRetreats += play(.ball, preset("Shy"), secs: 90).retreats
+    }
+    // A ball put down near it, twenty times over: how long before it is
+    // after it — the lively at once, the lazy when they get round to it.
+    func reaction(_ p: Personality) -> Double {
+        let s = Spider(map: map)
+        s.config.followCursor = false
+        var d = SpiderDesign(); d.personality = p
+        s.apply(design: d)
+        _ = settleUntilAttached(s)
+        s.debugActivity("rest", for: 20)
+        let box = ToyBox(map: map); box.scale = 0.95
+        s.toys = box
+        let toy = box.place(.ball, at: s.worldPos + V2(200, 120))
+        toy.grab(at: toy.pos)
+        box.update(dt: dt)
+        toy.release(fling: .zero)
+        var n = 0
+        while CGFloat(n) * dt < 4 {
+            s.setCursor(V2(-4000, -4000)); s.update(dt: dt); box.update(dt: dt); n += 1
+            if s.debugToy.hasPrefix("play") || s.debugToy.hasPrefix("investigate") { break }
+        }
+        return Double(n) * Double(dt)
+    }
+    let hyperReact = (0..<20).map { _ in reaction(preset("Hyper")) }.reduce(0, +) / 20
+    let lazyReact = (0..<20).map { _ in reaction(preset("Lazy")) }.reduce(0, +) / 20
+    expect("toys: a lively spider is after a toy sooner than a lazy one", hyperReact * 2 < lazyReact,
+           String(format: "hyper %.2fs, lazy %.2fs on average", hyperReact, lazyReact))
+    expect("toys: only a timid one backs away", boldRetreats == 0, "shy \(shyRetreats), hyper \(boldRetreats)")
+}
+
+// Toys played with the pointer: thrown for it, it goes straight for it,
+// like the dot; a feather dangled for it keeps it at it, leaping, with no
+// tiring of it while you play.
+do {
+    func friendly() -> Spider {
+        let s = Spider(map: map)
+        s.config.followCursor = false
+        var d = SpiderDesign(); d.personality = Personality.presets.first { $0.name == "Friendly" }!.p
+        s.apply(design: d)
+        _ = settleUntilAttached(s)
+        s.debugActivity("rest", for: 20)
+        return s
+    }
+    for kind in ToyKind.allCases where kind != .feather {
+        let s = friendly()
+        let box = ToyBox(map: map); box.scale = 0.95
+        s.toys = box
+        let toy = box.place(kind, at: s.worldPos + V2(260, 220))
+        toy.grab(at: toy.pos)
+        // Held up for it a few seconds first: it waits on it, eyes on it.
+        for _ in 0..<(60 * 3) { s.setCursor(V2(-4000, -4000)); s.update(dt: dt); box.update(dt: dt) }
+        expect("held \(kind.label): waits on it in your hand", s.debugToy.hasPrefix("play"), s.debugToy + " — " + s.debugState)
+        toy.release(fling: V2(-150, 50))
+        toy.wind()
+        var reacted = -1.0, reached = -1.0, n = 0
+        while CGFloat(n) * dt < 15, reached < 0 {
+            s.setCursor(V2(-4000, -4000)); s.update(dt: dt); box.update(dt: dt); n += 1
+            if reacted < 0, s.debugToy.hasPrefix("play") { reacted = Double(n) * Double(dt) }
+            if s.worldPos.distance(to: toy.pos) < 45 { reached = Double(n) * Double(dt) }
+        }
+        expect("thrown \(kind.label): goes straight for it", reacted >= 0 && reacted < 2.5 && reached >= 0,
+               String(format: "after %.1fs, there at %.1fs — %@", reacted, reached, s.debugState))
+    }
+    do {
+        let s = friendly()
+        let box = ToyBox(map: map); box.scale = 0.95
+        s.toys = box
+        let f = box.place(.feather, at: s.worldPos + V2(0, 150))
+        f.grab(at: f.pos)
+        let home = f.pos
+        var n = 0, leaps = 0, lastMode = "", ended = false, dropped = false, hand = f.pos
+        while CGFloat(n) * dt < 40 {
+            // Waved slowly back and forth over it, re-caught if it pulls it off.
+            let tt = CGFloat(n) * dt
+            if !f.held { dropped = true; f.grab(at: hand) }
+            hand = home + V2(sin(tt * 0.8) * 140, 0)
+            f.drag(to: hand)
+            s.setCursor(V2(-4000, -4000)); s.update(dt: dt); box.update(dt: dt); n += 1
+            let m = String(s.debugState.prefix(4))
+            if m == "jump", lastMode != "jump" { leaps += 1 }
+            lastMode = m
+            if n > 60 * 3, !s.debugToy.hasPrefix("play") && !s.debugToy.hasPrefix("investigate") { ended = true }
+        }
+        expect("dangled feather: leaps at it, again and again", leaps >= 3, "\(leaps) leaps")
+        expect("dangled feather: stays on its string", !dropped)
+        expect("dangled feather: never tires of it while you play", !ended, s.debugToy)
     }
 }

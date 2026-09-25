@@ -1,0 +1,320 @@
+tools/sim/main.swift:294:17: warning: initialization of immutable value 'end' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+ 292 |             // The screen's rim is always its to walk: it draws above the
+ 293 |             // window, so it just carries on there, unbothered.
+ 294 |             let end = s.debugState
+     |                 `- warning: initialization of immutable value 'end' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+ 295 |             // (It may still wander off in its own time — a swing is its own
+ 296 |             // idea, not an escape — so only the first few seconds count.)
+world (0.0, 0.0, 1512.0, 982.0)  loops: 5
+  screen:0     screenBorder segs=3 perim=3272 depth=1000000
+  menu:0       menuBar segs=1 perim=1332 depth=-20
+  win:1        windowEdge segs=4 perim=2727 depth=0
+  win:2        windowEdge segs=4 perim=2207 depth=1  blocked: seg2[371..661] seg3[0..370]
+  win:3        windowEdge segs=4 perim=1567 depth=2  blocked: seg0[0..318] seg3[291..341]
+reachable spots: 247
+   0.02s  attached:idle on win:2
+   0.28s  attached:glance on win:2
+   1.27s  attached:groom on win:2
+   3.95s  attached:drum on win:2
+  12.00s  attached:wiggle on win:2
+  12.80s  attached:rest on win:2
+  16.35s  attached:turn on win:2
+  17.15s  attached:crouch on win:2
+  17.68s  jump
+  17.95s  attached:idle on win:1
+  18.47s  attached:walk on win:1
+  20.18s  attached:glance on win:1
+  21.72s  attached:look on win:1
+  23.07s  attached:scurry on win:1
+  24.08s  attached:look on win:1
+  24.82s  attached:crouch on win:1
+  25.38s  jump
+  25.72s  attached:idle on menu:0
+  25.95s  attached:look on menu:0
+  27.00s  dangling
+  34.48s  attached:idle on menu:0
+  35.12s  attached:look on menu:0
+  36.48s  attached:turn on menu:0
+  37.33s  attached:walk on menu:0
+  38.98s  attached:turn on menu:0
+  39.88s  attached:walk on menu:0
+  42.02s  attached:look on menu:0
+  43.10s  attached:turn on menu:0
+  44.07s  attached:walk on menu:0
+  45.20s  attached:look on menu:0
+  47.03s  attached:scurry on menu:0
+  48.23s  attached:glance on menu:0
+  49.22s  attached:idle on menu:0
+  49.37s  attached:scurry on menu:0
+  50.20s  attached:look on menu:0
+  52.35s  attached:turn on menu:0
+  53.32s  attached:walk on menu:0
+  56.27s  attached:sneak on menu:0
+  58.23s  attached:glance on menu:0
+  60.82s  attached:scratch on menu:0
+  61.95s  attached:look on menu:0
+  62.78s  attached:walk on menu:0
+  67.35s  attached:wave on menu:0
+  68.87s  attached:turn on menu:0
+  69.78s  attached:look on menu:0
+  70.62s  attached:turn on menu:0
+  71.52s  attached:look on menu:0
+  72.28s  attached:turn on menu:0
+  73.10s  attached:look on menu:0
+  73.77s  attached:scurry on menu:0
+  74.92s  attached:peer on menu:0
+  76.22s  attached:walk on menu:0
+  78.58s  attached:look on menu:0
+  79.90s  attached:roll on menu:0
+  81.73s  attached:shake on menu:0
+  82.20s  attached:glance on menu:0
+  83.33s  attached:sneak on menu:0
+  85.43s  attached:turn on menu:0
+  86.40s  attached:sneak on menu:0
+
+--- 240s summary ---
+state transitions: 139  (0.6/s)
+  attached  75.8%
+  nesting  17.9%
+  dangling   3.1%
+  building   2.1%
+  jump   1.1%
+lowest y reached: 431  (world minY 0)
+frames off-world: 0
+
+--- interaction tests ---
+  [ok  ] settles onto a surface  — attached:walk on win:2
+  [ok  ] grab takes hold  — held
+  [ok  ] follows the pointer  — gap 7px
+  [ok  ] release throws it  — thrown
+  [ok  ] a thrown spider ends up somewhere  — attached:rest on win:2
+  [ok  ] a hard throw recovers  — attached:look on win:1
+  [ok  ] stays inside the desktop  — (157.70255173452455, 568.0208204580886)
+  [ok  ] scroll-down starts a rappel  — dangling
+  [ok  ] it descends  — y 399 -> 204  [dangling]
+  [ok  ] scroll-up reels it in  — y 204 -> 398  [attached:idle on win:2]
+  [ok  ] on a line: never turns right round  — 0 side changes
+  [ok  ] on a line: gets on with it  — longest hang 9s, ended by landed
+  [ok  ] covered on the floor: carries on along the rim  — attached:walk on screen:0  then attached:walk on screen:0 > attached:armsUp on screen:0 > attached:idle on screen:0 > attached:look on screen:0
+  [ok  ] covered on the shelf: gets clear quickly  — 0.0s  fall > thrown > attached:idle on screen:0 > attached:turn on screen:0 > attached:walk on screen:0 > attached:scurry on screen:0
+  [ok  ] covered on the shelf: ends up clear of it  — attached:groom on screen:0
+  [ok  ] Cricket: catches it  — 58s
+  [ok  ] Cricket: eats it  — 64s  attached:sneak on win:2 > attached:crouch on win:2 > jump > attached:eat on win:2 > attached:wiggle on win:2
+  [ok  ] Cricket: well fed afterwards  — fed 0.5499814814814815
+  [ok  ] Cricket: both stay on the desktop  — off 0
+  [ok  ] Worm: catches it  — 2s
+  [ok  ] Worm: eats it  — 8s  attached:idle on win:1 > attached:crouch on win:1 > jump > attached:eat on win:1 > attached:wiggle on win:1
+  [ok  ] Worm: well fed afterwards  — fed 0.5999814814814814
+  [ok  ] Worm: both stay on the desktop  — off 0
+  [ok  ] Fruit Fly: catches it  — 5s
+  [ok  ] Fruit Fly: eats it  — 9s  attached:sneak on win:2 > attached:crouch on win:2 > jump > attached:eat on screen:0 > attached:wiggle on screen:0
+  [ok  ] Fruit Fly: well fed afterwards  — fed 0.29998148148148146
+  [ok  ] Fruit Fly: both stay on the desktop  — off 0
+  [ok  ] Moth: catches it  — 3s
+  [ok  ] Moth: eats it  — 8s  attached:walk on win:2 > attached:crouch on win:2 > jump > attached:eat on win:2 > attached:wiggle on win:2
+  [ok  ] Moth: well fed afterwards  — fed 0.49998148148148147
+  [ok  ] Moth: both stay on the desktop  — off 0
+  [ok  ] Beetle: catches it  — 5s
+  [ok  ] Beetle: eats it  — 14s  attached:idle on win:1 > attached:crouch on win:1 > jump > attached:eat on screen:0 > attached:wiggle on screen:0
+  [ok  ] Beetle: well fed afterwards  — fed 0.6999814814814814
+  [ok  ] Beetle: both stay on the desktop  — off 0
+  [ok  ] Ant: catches it  — 13s
+  [ok  ] Ant: eats it  — 15s  attached:crouch on win:2 > jump > attached:idle on win:2 > attached:eat on win:2 > attached:wiggle on win:2
+  [ok  ] Ant: well fed afterwards  — fed 0.24998148148148147
+  [ok  ] Ant: both stay on the desktop  — off 0
+  [ok  ] Mosquito: catches it  — 1s
+  [ok  ] Mosquito: eats it  — 4s  attached:idle on win:2 > attached:crouch on win:2 > jump > attached:eat on win:2 > attached:wiggle on win:2
+  [ok  ] Mosquito: well fed afterwards  — fed 0.24998148148148147
+  [ok  ] Mosquito: both stay on the desktop  — off 0
+  [ok  ] Ladybug: catches it  — 15s
+  [ok  ] Ladybug: spits it out  — state loose
+  [ok  ] Ladybug: and leaves it be  — caught again 0 frames
+  [ok  ] Ladybug: both stay on the desktop  — off 0
+  [ok  ] ant: walks round corners onto the sides  — segs [0, 1, 2]
+  [ok  ] ant: and down them  — lowest 99 top 440
+  [ok  ] ant: still on the window  — win:3
+  [ok  ] ladybug: climbs up the wall  — from 129 to 843
+  [ok  ] ladybug: flies off from the top  — 51s
+  [ok  ] beetle: walked right past, it tucks in  — fear 0.8599999999999999
+  [ok  ] beetle: with the spider keeping still, it comes out  — fear 0.0
+  [ok  ] beetle: a sneak up on it goes unnoticed
+  [ok  ] mosquito: spends a good part of its time hovering  — 67%
+  [ok  ] mosquito: keeps near the pointer  — mean 105
+  [ok  ] mosquito: never teleports  — 0 jumps
+  [ok  ] moth: drawn to the pointer  — mean 31
+  [ok  ] moth: with no lamp about, settles somewhere
+  [ok  ] Moth: wandered in, leaves again  — alpha 1.0 at 1661,1021
+  [ok  ] Ant: wandered in, leaves again  — alpha 0.0 at 4,199
+  [ok  ] Beetle: wandered in, leaves again  — alpha 1.0 at -150,1022
+  [ok  ] Cricket: wandered in, leaves again  — alpha 0.0 at 436,6
+  wandering in, 200 tries: Cricket 18, Worm 14, Fruit Fly 41, Moth 35, Beetle 16, Ant 99, Mosquito 27, Ladybug 11
+  [ok  ] wandering in: every kind turns up
+  [ok  ] wandering in: unnoticed, and somewhere sensible  — 0
+  5 wandered in: 4 eaten, 1 went off, 0 still about
+  [ok  ] wandering in: none of them stay for good  — 0 left
+  [ok  ] wandering in: all stay on the desktop  — 0
+  [ok  ] held prey follows the pointer  — V2(x: 852.1349999999999, y: 869.2656528417335)
+  [ok  ] dropped prey lands on something  — V2(x: 960.4974977733749, y: 826.8000000000001) state loose
+  [ok  ] dropped prey stays on the desktop  — V2(x: 960.4974977733749, y: 826.8000000000001)
+  [ok  ] gets down from a window just above the floor  — 5s
+  [ok  ] never freezes under it  — still for 1s
+  [ok  ] teleport puts it in the air at the middle  — fall from dangling
+  [ok  ] and it comes down on something  — attached:walk on win:1
+  [ok  ] prey is still loose afterwards  — loose
+  [ok  ] starting a build stakes out the corner
+  [ok  ] a thrown builder keeps its plan  — attached:crouch on win:1
+  [ok  ] an abandoned build leaves nothing behind  — attached:turn on win:1
+  [ok  ] a wipe clears a half-made hammock  — fall progress -1.0
+  [ok  ] boxed: keeps to its patch  — out 5% of the time, longest 5s  attached:idle 37%, attached:rest 23%, attached:walk 18%, attached:sneak 4%, attached:turn 3%
+  [ok  ] boxed: no swinging  — 0 frames
+  [ok  ] boxed: takes it easy  — 63% restful  attached:idle 37%, attached:rest 23%, attached:walk 18%, attached:sneak 4%, attached:turn 3%
+  [ok  ] thrown out of its box, it comes back  — back in 29s
+  [ok  ] freed, it goes back to its usual ways  — left after 50s
+  [ok  ] an empty box has nothing to stand on
+  [ok  ] empty box: hangs on a line  — 88% hanging, now dangling
+  [ok  ] empty box: a light sway, not a swing  — sways over 38 px
+  [ok  ] empty box: stays inside  — out 0 frames
+  [ok  ] a window over the screen edge does not block it  — 0 blocked stretches
+  [ok  ] it walks the rim right across the overlapping window  — crossed true, fell false, now attached:walk on screen:0 at 1490
+  [ok  ] peek-a-boo: plays when asked  — attached:wiggle on win:7
+  [ok  ] peek-a-boo: hides behind the window and pops out again  — hidden 251 frames, popped out 2 times
+  [ok  ] peek-a-boo: ends up out in the open  — attached:wiggle on win:7
+  [ok  ] laser: races to the dot  — 3s
+  [ok  ] laser: pounces on it  — attached:curious on win:1
+  [ok  ] laser: follows when it moves  — 1s, attached:scurry on win:1
+  [ok  ] laser: puzzled when it vanishes  — attached:look on win:1
+  [ok  ] a quick swipe nearby: no hop or startle  — attached:look on win:2
+  [ok  ] a quick swipe nearby: no exclamation marks
+  [ok  ] a quick swipe nearby: it stays put  — 0 px away, attached:look on win:2
+  [ok  ] sleepy: beds down on top of a window  — after 12s
+  [ok  ] sleepy: Z's rise from it
+  [ok  ] habitat: stays in the tank  — out 0 frames  attached:walk 21%, attached:idle 19%, attached:look 11%, attached:drum 7%, attached:sneak 7%
+  [ok  ] habitat: climbs about on the furniture  — item:2,item:2:under,item:9,screen:0
+  [ok  ] habitat: comes back to the desktop  — attached:idle on win:2
+  [ok  ] swinging at the edge: reverses only at the ends of the arc  — 2 direction changes in 2s on the line, now attached:drum on screen:0
+  [ok  ] swinging well inside: reverses only at the ends of the arc  — 5 direction changes in 5s on the line, now attached:walk on menu:0
+  [ok  ] falls when its window closes  — fall
+  [ok  ] recovers afterwards  — attached:rest on screen:0
+  [ok  ] long fall: takes to its dragline  — 8 of 8
+  [ok  ] long fall: takes hold well clear of the floor  — lowest catch 219 px up  (248, 234, 219, 289, 303, 293, 300, 248)
+  [ok  ] long fall: settles somewhere afterwards  — 8 of 8
+  [ok  ] long fall: no climbing and dropping again
+  [ok  ] long fall: never lands where it cannot be seen  — 0
+  [ok  ] dropped or tossed from the top: catches itself on a line  — 6 of 6
+  [ok  ] dropped from the top: well above the floor  — catches at 421, 404, 435, 416, 790, 441 px up
+  [ok  ] flung hard: no line, it flies  — 0 of 2 took a line
+  [ok  ] window closes under it: falls and lands, no line  — landed first 4 of 4, took a line 0
+  [ok  ] covered, only way is down: drops  — attached > fall > swinging > attached
+  [ok  ] covered, only way is down: no line fastened under the window  — 0 frames
+  [ok  ] covered, only way is down: does not climb back under the window  — attached > fall > swinging > attached
+  [ok  ] covered, only way is down: ends up standing in the open  — attached:idle on win:41
+  [ok  ] covered with the open shelf near: gets off the shelf  — out in 0.8s  attached:rest on win:31 > attached:shoot on win:31 > dangling > attached:idle on menu:0 > attached:wiggle on menu:0
+  [ok  ] covered with the open shelf near: never walks along it under the window  — 0 frames
+  [ok  ] covered with the open shelf near: stays out  — 0 frames back under it
+  [ok  ] covered on a window's side: never walks down it under the window  — 0 of 20
+  [ok  ] covered on a window's side: never holds the hidden part  — 0 of 20
+  [ok  ] petting makes it happy  — happy 1.00
+  [ok  ] takes aim  — attached:shoot on screen:0
+  [ok  ] swings on the line  — attached,jump,swinging
+  [ok  ] lets go or grabs on  — attached,jump,swinging
+  [ok  ] stays on the desktop while swinging  — off 0
+  [ok  ] goes to a corner and spins a hammock  — 65s, nesting, corner right
+  [ok  ] hammock is in a top corner under the menu bar  — (1322.0, 819.0, 190.0, 130.0)
+  [ok  ] naps in the hammock  — 0s, nesting
+  [ok  ] asleep in it  — sleep 1.00
+  [ok  ] wiping the pointer across it clears it  — 44 wipes, now fall
+  [ok  ] tumbles out and recovers  — attached:idle on win:2
+  [ok  ] cinema: gets cosy and stays put  — moving 0%, away from its seat 0%
+  [ok  ] cinema: no leaping, swinging or silk  — wild frames 0  attached:watch 85%, attached:walk 7%, attached:idle 4%, attached:turn 1%, attached:look 1%
+  [ok  ] cinema: stays on the floor or ceiling  — 91%  attached:watch 85%, attached:walk 7%, attached:idle 4%, attached:turn 1%, attached:look 1%
+  [ok  ] cinema: mostly sits and watches  — attached:watch 85%, attached:walk 7%, attached:idle 4%, attached:turn 1%, attached:look 1%
+  [ok  ] cinema: does not nod off  — attached:watch 85%, attached:walk 7%, attached:idle 4%, attached:turn 1%, attached:look 1%
+  [ok  ] cinema: unbothered by the pointer  — attached:watch on screen:0
+  [ok  ] cinema: well inside the screen  — V2(x: 39.70819062251468, y: 17.09153466149114)
+  [ok  ] cinema: watches from a corner  — 39 px from the side
+  [ok  ] cinema: head tipped up at the picture  — tilt 0.7199999999999999 in attached:watch on screen:0
+  [ok  ] resumes when the video ends  — 1s, attached:turn on screen:0
+  [ok  ] cinema: does not teleport when the film starts  — moved 0 px, attached:idle on screen:0
+  [ok  ] cinema: every step is a small one  — biggest step 1.0 px
+  [ok  ] cinema: crawls to a corner from the wall  — attached:watch on screen:0 at V2(x: 26.7434866822983, y: 947.7289510185387), watched 20s of the last 30
+  [ok  ] cinema: does not teleport when the film ends  — moved 0 px, attached:rest on screen:0
+
+--- personalities (150s each) ---
+  [ok  ] Friendly                       walk 29%, look 15%, swinging 9%, drum 5%, turn 5%  off=0 stuck=2s
+  [ok  ] Shy                            walk 21%, look 15%, swinging 10%, idle 8%, groom 8%  off=0 stuck=4s
+  [ok  ] Hyper                          walk 36%, look 12%, turn 7%, drum 6%, sneak 4%  off=0 stuck=3s
+  [ok  ] Lazy                           nesting 34%, rest 11%, walk 11%, idle 11%, fasten 5%  off=0 stuck=6s
+  [ok  ] Curious                        walk 38%, look 15%, stare 9%, turn 6%, groom 5%  off=0 stuck=6s
+  [ok  ] Show-off                       walk 29%, look 11%, drum 7%, turn 7%, sneak 4%  off=0 stuck=5s
+  [ok  ] Chill                          rest 20%, walk 17%, idle 12%, look 11%, groom 8%  off=0 stuck=7s
+  [ok  ] Grumpy                         walk 31%, nesting 13%, rest 7%, fasten 7%, turn 7%  off=0 stuck=3s
+  [ok  ] random0 long/mixed             walk 35%, look 9%, stare 8%, turn 7%, drum 6%  off=0 stuck=6s
+  [ok  ] random1 chunky/mixed           idle 43%, walk 16%, rest 11%, look 5%, swinging 5%  off=0 stuck=7s
+  [ok  ] random2 banded/scurry          nesting 40%, walk 20%, fasten 5%, turn 4%, rest 4%  off=0 stuck=4s
+  [ok  ] random3 striped/tiptoe         walk 22%, rest 18%, idle 8%, look 7%, stare 7%  off=0 stuck=7s
+  [ok  ] every personality stays on the desktop
+  [ok  ] lost-top: it is on a line to begin with  — dangling
+  [ok  ] lost-top: it swings off rather than hanging at the top  — ["attached", "dangling", "jump", "swinging"]
+  [ok  ] lost-top: not stuck under the new window  — 0s at the top
+  [ok  ] lost-top: it ends up holding something  — attached:idle on win:1
+  [ok  ] habits: dialled to never, it never does those  — []
+  [ok  ] habits: dialled all the way up, it drums  — ["drum"]
+  [ok  ] notification on top of a window: it jumps up  — 6/6, rises [46, 49, 44, 40, 50, 46]
+  [ok  ] notification on top of a window: it lands back on it  — 6/6
+  [ok  ] notification on top of a window: then it stares  — 6/6
+  [ok  ] notification on a window's side: it starts, no jump  — attached:look on win:31
+  [ok  ] notification on a window's side: then it stares  — attached:look on win:31
+  [ok  ] notification on a window's underneath: it starts, no jump  — attached:look on win:31
+  [ok  ] notification on a window's underneath: then it stares  — attached:look on win:31
+  [ok  ] volume change: only a look  — attached:look on win:31
+
+--- memory ---
+  [ok  ] no memory: its personality is the Studio's
+  loved shy spider after a fortnight: energy +0.000 curiosity +0.084 bravery +0.105 play +0.000 affection +0.127 lazy +0.016 prowess +0.000 roaming -0.071
+  [ok  ] gentle attention: warmer and bolder  — energy +0.000 curiosity +0.084 bravery +0.105 play +0.000 affection +0.127 lazy +0.016 prowess +0.000 roaming -0.071
+  [ok  ] gentle attention: bounded
+  [ok  ] gentle attention: still a shy spider  — bravery 0.15 -> 0.25
+  [ok  ] with memory: the design it hands the Studio is untouched
+  [ok  ] with memory: the personality it acts on is shifted
+  [ok  ] endless reinforcement stays bounded  — energy +0.190 curiosity +0.095 bravery +0.200 play +0.200 affection +0.200 lazy -0.080 prowess +0.200 roaming -0.095
+  frights: bravery -0.145 at once, -0.019 two hours on
+  [ok  ] frights: warier for a while
+  [ok  ] unkept memories fade back to the Studio's personality  — energy +0.000 curiosity +0.000 bravery +0.000 play +0.000 affection +0.000 lazy +0.000 prowess +0.000 roaming -0.000
+  [ok  ] thrown: a show-off takes it as play, a shy spider as a fright  — bold energy +0.050 curiosity +0.000 bravery -0.021 play +0.109 affection +0.000 lazy +0.000 prowess +0.000 roaming +0.000 | shy energy +0.000 curiosity +0.000 bravery -0.095 play +0.021 affection -0.046 lazy +0.000 prowess +0.000 roaming +0.024
+  [ok  ] left alone: more independent, no less affectionate  — energy +0.039 curiosity +0.074 bravery +0.000 play +0.000 affection +0.000 lazy +0.000 prowess +0.000 roaming +0.140
+  [ok  ] good hunts: more sure of itself  — energy +0.026 curiosity +0.000 bravery +0.062 play +0.000 affection +0.044 lazy +0.065 prowess +0.179 roaming +0.000
+  [ok  ] a favourite snack
+  [ok  ] places: likes where it settles, less where it was frightened  — top 1.18 floor 0.70
+  [ok  ] remembered across launches  — energy +0.026 curiosity +0.000 bravery +0.062 play +0.000 affection +0.044 lazy +0.065 prowess +0.179 roaming +0.000
+  shy, pointer resting, 4×300s: plain 40% of the time near it, 30 social of 705 starts; loved 29%, 34 of 703
+  (loved shift energy +0.033 curiosity +0.107 bravery +0.147 play +0.063 affection +0.169 lazy -0.009 prowess +0.000 roaming -0.103)
+  3000 clicks each: shy 42.3% warm / 17.4% startled, loved shy 49.2% / 14.8%; middling 46.4% / 11.3%, just frightened 45.0% / 13.5%
+  [ok  ] loved: takes a click more warmly, and starts less
+  [ok  ] just frightened: starts at a click more, for now
+  [ok  ] with memories it stays on the desktop and never gets stuck
+
+--- toys ---
+  [ok  ] toy Ball: lands and settles  — 1.9s on win:1
+  [ok  ] toy Ball: batted about, stays on the desktop and comes to rest  — off 0, at rest 6/6
+  [ok  ] toy Feather: lands and settles  — 4.5s on win:1
+  [ok  ] toy Feather: batted about, stays on the desktop and comes to rest  — off 0, at rest 6/6
+  [ok  ] toy Bell: lands and settles  — 0.6s on win:2
+  [ok  ] toy Bell: batted about, stays on the desktop and comes to rest  — off 0, at rest 6/6
+  [ok  ] toy Wind-up Bug: lands and settles  — 0.4s on win:1
+  [ok  ] toy Wind-up Bug: batted about, stays on the desktop and comes to rest  — off 0, at rest 6/6
+  [ok  ] ball: rolls along a window top and tips off the end  — on win:1, fell at x 181 (edge 180)
+  [ok  ] ball: lands on something below  — screen:0
+  [ok  ] wind-up bug: walks off when wound, and runs down  — 1214 px, ran down at 16s
+  [ok  ] feather: drifts down slowly  — 8.6s
+  [ok  ] feather: dangles on its string below the pointer  — 99 px
+  [ok  ] toy Ball: a spider finds it, plays, and tires of it  — first bat 2s, bored at 35s, off 0
+  [ok  ] toy Feather: a spider finds it, plays, and tires of it  — first bat 3s, bored at 38s, off 0
+  [ok  ] toy Bell: a spider finds it, plays, and tires of it  — first bat 4s, bored at 30s, off 0
+  [ok  ] toy Wind-up Bug: a spider finds it, plays, and tires of it  — first bat 20s, bored at 46s, off 0
+  [ok  ] toys: a lively spider gets to playing sooner than a lazy one  — hyper 7s, lazy 33s
+  [ok  ] toys: only a timid one backs away  — shy 1, hyper 0
+  [ok  ] thrown Ball: goes straight for it  — after 0.7s, there at 1.6s — jump
+  [ok  ] thrown Bell: goes straight for it  — after 0.6s, there at 3.2s — attached:scurry on win:1
+  [ok  ] thrown Wind-up Bug: goes straight for it  — after 0.1s, there at 1.2s — jump
+  [ok  ] dangled feather: leaps at it, again and again  — 17 leaps, pulled it off: true
+  [ok  ] dangled feather: never tires of it while you play  — play #1 bats 12 bored 0.70 drive 0.36

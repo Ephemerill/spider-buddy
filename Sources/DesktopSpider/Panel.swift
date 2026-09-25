@@ -6,8 +6,10 @@ import AppKit
 /// so the panel can be brought back in step with the spider at any time
 /// (see `PanelController.refresh`).
 enum PanelRow {
-    /// A setting that is on or off, with a switch. `help` shows on hover.
-    case toggle(String, help: String?, get: () -> Bool, set: (Bool) -> Void, enabled: () -> Bool)
+    /// A setting that is on or off, with a switch. `help` shows on hover;
+    /// `info`, if given, is a longer explanation behind a little ⓘ after
+    /// the name.
+    case toggle(String, help: String?, info: String? = nil, get: () -> Bool, set: (Bool) -> Void, enabled: () -> Bool)
     case slider(String, low: String, high: String, get: () -> CGFloat, set: (CGFloat) -> Void, enabled: () -> Bool)
     case choice(options: [String], get: () -> Int, set: (Int) -> Void)
     /// Buttons, two to a row.
@@ -15,8 +17,8 @@ enum PanelRow {
     /// Small grey words, which may change (how many visitors are about).
     case status(() -> String)
 
-    static func toggle(_ title: String, help: String? = nil, get: @escaping () -> Bool, set: @escaping (Bool) -> Void) -> PanelRow {
-        .toggle(title, help: help, get: get, set: set, enabled: { true })
+    static func toggle(_ title: String, help: String? = nil, info: String? = nil, get: @escaping () -> Bool, set: @escaping (Bool) -> Void) -> PanelRow {
+        .toggle(title, help: help, info: info, get: get, set: set, enabled: { true })
     }
     static func slider(_ title: String, low: String, high: String, get: @escaping () -> CGFloat, set: @escaping (CGFloat) -> Void) -> PanelRow {
         .slider(title, low: low, high: high, get: get, set: set, enabled: { true })
@@ -30,18 +32,21 @@ struct PanelButton {
     var action: () -> Void
     var enabled: () -> Bool = { true }
     var shown: () -> Bool = { true }
+    /// Picked: one of a set of buttons that is the one in use, shown lit.
+    var selected: () -> Bool = { false }
 
     init(_ title: String, symbol: String, enabled: @escaping () -> Bool = { true }, shown: @escaping () -> Bool = { true },
-         action: @escaping () -> Void) {
-        self.init(title: { title }, symbol: { symbol }, enabled: enabled, shown: shown, action: action)
+         selected: @escaping () -> Bool = { false }, action: @escaping () -> Void) {
+        self.init(title: { title }, symbol: { symbol }, enabled: enabled, shown: shown, selected: selected, action: action)
     }
     init(title: @escaping () -> String, symbol: @escaping () -> String, enabled: @escaping () -> Bool = { true },
-         shown: @escaping () -> Bool = { true }, action: @escaping () -> Void) {
+         shown: @escaping () -> Bool = { true }, selected: @escaping () -> Bool = { false }, action: @escaping () -> Void) {
         self.title = title
         self.symbol = symbol
         self.action = action
         self.enabled = enabled
         self.shown = shown
+        self.selected = selected
     }
 }
 
@@ -85,6 +90,8 @@ final class PanelController: NSObject, NSPopoverDelegate {
     private var syncers: [[() -> Void]] = []
     private var footerSyncers: [() -> Void] = []
     private var actions: [ObjectIdentifier: (NSControl) -> Void] = [:]
+    /// The explanation an ⓘ opens, over the panel.
+    private let infoPopover = NSPopover()
 
     init(pages: [PanelPage], footer: [PanelButton], design: @escaping () -> SpiderDesign) {
         self.pages = pages
@@ -305,7 +312,7 @@ final class PanelController: NSObject, NSPopoverDelegate {
 
     private func view(for row: PanelRow, width w: CGFloat, syncers: inout [() -> Void]) -> NSView {
         switch row {
-        case .toggle(let title, let help, let get, let set, let enabled):
+        case .toggle(let title, let help, let info, let get, let set, let enabled):
             let l = NSTextField(labelWithString: title)
             l.font = .systemFont(ofSize: 13)
             let sw = NSSwitch()
@@ -313,7 +320,20 @@ final class PanelController: NSObject, NSPopoverDelegate {
             wire(sw) { set(($0 as? NSSwitch)?.state == .on) }
             let spacer = NSView()
             spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            let r = NSStackView(views: [l, spacer, sw])
+            var parts: [NSView] = [l]
+            if let info {
+                let b = NSButton()
+                b.isBordered = false
+                b.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "About \(title)")?
+                    .withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
+                b.imagePosition = .imageOnly
+                b.contentTintColor = .secondaryLabelColor
+                b.toolTip = "How this works"
+                wire(b) { [weak self] in self?.explain(info, title: title, from: $0) }
+                parts.append(b)
+            }
+            let r = NSStackView(views: parts + [spacer, sw])
+            r.setCustomSpacing(4, after: l)
             r.translatesAutoresizingMaskIntoConstraints = false
             r.widthAnchor.constraint(equalToConstant: w).isActive = true
             r.toolTip = help
@@ -414,6 +434,42 @@ final class PanelController: NSObject, NSPopoverDelegate {
         }
     }
 
+    /// A little popover off an ⓘ: the setting's name, and what it does.
+    /// Clicked again, it goes away.
+    private func explain(_ text: String, title: String, from anchor: NSView) {
+        if infoPopover.isShown {
+            infoPopover.performClose(nil)
+            return
+        }
+        let width: CGFloat = 290, pad: CGFloat = 14
+        let heading = NSTextField(labelWithString: title)
+        heading.font = .systemFont(ofSize: 13, weight: .semibold)
+        let body = NSTextField(wrappingLabelWithString: text)
+        body.font = .systemFont(ofSize: 12)
+        body.textColor = .secondaryLabelColor
+        body.preferredMaxLayoutWidth = width - pad * 2
+        let col = NSStackView(views: [heading, body])
+        col.orientation = .vertical
+        col.alignment = .leading
+        col.spacing = 6
+        col.edgeInsets = NSEdgeInsets(top: pad, left: pad, bottom: pad, right: pad)
+        col.translatesAutoresizingMaskIntoConstraints = false
+        col.widthAnchor.constraint(equalToConstant: width).isActive = true
+        let vc = NSViewController()
+        vc.view = col
+        col.layoutSubtreeIfNeeded()
+        infoPopover.contentViewController = vc
+        infoPopover.contentSize = CGSize(width: width, height: col.fittingSize.height)
+        infoPopover.behavior = .transient
+        infoPopover.animates = true
+        infoPopover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxX)
+    }
+
+    /// The panel going takes any explanation open over it along.
+    func popoverWillClose(_ notification: Notification) {
+        if infoPopover.isShown { infoPopover.close() }
+    }
+
     private func button(_ spec: PanelButton, height: CGFloat, syncers: inout [() -> Void]) -> NSView {
         let b = PanelActionButton()
         b.translatesAutoresizingMaskIntoConstraints = false
@@ -423,8 +479,10 @@ final class PanelController: NSObject, NSPopoverDelegate {
             guard let b else { return }
             b.set(title: spec.title(), symbol: spec.symbol())
             b.isEnabled = spec.enabled()
+            b.lit = spec.selected()
         }
         b.set(title: spec.title(), symbol: spec.symbol())
+        b.lit = spec.selected()
         return b
     }
 }
@@ -483,6 +541,14 @@ final class PanelActionButton: NSButton {
     private var shownTitle = ""
     private var shownSymbol = ""
     private var pressed = false { didSet { needsDisplay = true } }
+    /// The one picked of a set: on an accent tile, in the accent colour.
+    var lit = false {
+        didSet {
+            guard lit != oldValue else { return }
+            needsDisplay = true
+            contentTintColor = lit ? .controlAccentColor : .labelColor
+        }
+    }
 
     init() {
         super.init(frame: .zero)
@@ -514,9 +580,10 @@ final class PanelActionButton: NSButton {
 
     override func draw(_ dirtyRect: NSRect) {
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 9, yRadius: 9)
-        NSColor.labelColor.withAlphaComponent(pressed ? 0.16 : 0.08).setFill()
+        (lit ? NSColor.controlAccentColor.withAlphaComponent(pressed ? 0.28 : 0.18)
+             : NSColor.labelColor.withAlphaComponent(pressed ? 0.16 : 0.08)).setFill()
         path.fill()
-        NSColor.labelColor.withAlphaComponent(0.1).setStroke()
+        (lit ? NSColor.controlAccentColor.withAlphaComponent(0.5) : NSColor.labelColor.withAlphaComponent(0.1)).setStroke()
         path.stroke()
         super.draw(dirtyRect)
     }

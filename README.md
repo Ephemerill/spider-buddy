@@ -292,7 +292,8 @@ is, it leaps off to find one first.
 
 ## Feeding it
 
-**Feed** in the menu releases a cricket, a worm, or a fruit fly onto the
+**Feed** in the menu releases a cricket, a worm, a fruit fly, a moth, a
+beetle, an ant, a mosquito or a ladybug onto the
 desktop. Ground creatures drop in onto a ledge some way off — the cricket
 sits, twitching its antennae, and hops away when the spider closes in; the
 worm inches along, and a little faster when something big is near. The fly
@@ -309,6 +310,48 @@ way and only grabs on once it is at its mark or has flown past it. Stalking
 works the way it does in life: a creature notices something big moving fast
 nearby at once, but something creeping up slowly not until it is very close
 — and a frightened cricket as often freezes as hops.
+
+The rest of **Feed** each get about their own way, and each is hunted its
+own way:
+
+- **Moth** — slow and floppy, and drawn to the pointer like a lamp: it
+  circles it until it tires, then rests a long while on a wall with its
+  wings folded back like a roof. Dozy — slow to notice anything coming.
+- **Beetle** — plods along, and never runs. Something walking right at it
+  makes it shut itself up in its shell, and fangs just skid off that. So
+  the spider creeps up on one from well off, or, if it has clammed up,
+  keeps quite still beside it until it comes out. Knocked about enough, it
+  opens its wing cases and blunders off to another ledge.
+- **Ant** — quick, tireless, and climbs anything: round corners, up the
+  sides of windows, underneath them. It hardly sees, but it feels anything
+  big walking on its window and turns tail. Chasing one is hopeless, so the
+  spider lies in wait in its path and snaps it up as it walks into its
+  jaws, or leaps on ahead of it and waits there.
+- **Mosquito** — hangs in the air with a wobble, then darts off dead
+  straight, and likes to pester the pointer. It is only to be caught while
+  it hangs still, so the spider watches, and strikes then.
+- **Ladybug** — always climbing: up any wall to the top of things, where it
+  opens its shell and flies. It tastes horrible. The first one is caught,
+  tasted and spat out (none the worse for it) — and with **Learn From
+  Experience** on, the spider remembers, and after that only watches them.
+
+### Wildlife
+
+**Let Creatures Wander In** (Settings ▸ Feed, or Feed ▸ in the right-click
+menu; off to begin with) lets small creatures turn up by themselves, rarely:
+a slider goes from about one every hour and a half to one every ten minutes
+or so, never on the dot. What comes depends on the hour and the weather —
+moths and mosquitoes at night, ladybugs by day, worms when it rains (with
+Notice the Weather on) — and ants come in a little line. Fliers come in
+through the side of the screen; walkers come out of a crack somewhere.
+
+The spider has to spot them first: sooner if they are close and moving,
+hardly at all in its sleep. Until it does they go about their business, so
+you may well see one before it does. They don't stay: after a few minutes
+anything not caught flies off the side of the screen or slips away into a
+crack. Nothing wanders in while nobody is at the Mac, while the spider is in
+the habitat, or while a full-screen app has the desktop, and never more than
+a few at once.
 
 You can pick the creatures up and move them, the same way as the spider:
 drag one somewhere else (or flick it) and it drops onto whatever is below,
@@ -422,6 +465,28 @@ Under **Your Mac** in the menu bar panel:
 Under **Visitors**, now and then another spider can drop by to play, then
 head off again.
 
+## Growing up
+
+It remembers how things go — being stroked and said hello to, company and
+time on its own, being carried or flung, frights, games, meals, good hunts
+and misses, and the spots where it settles — and its personality drifts a
+little with them. A shy spider stroked every day slowly grows easier about
+the pointer while staying shy; a run of frights leaves it warier for an hour
+or so; good hunts make it surer of itself; hours on its own make it a bit
+more of a wanderer; favourite spots pull it back. Every memory has a feeling
+that passes within the hour and a lesson that builds slowly and fades over
+days, and none of it moves any trait more than a fifth of the way from what
+the Studio says — which it never changes. None of it is a rule: it nudges
+the same personality sliders every choice it makes already reads.
+
+Nothing is needed of you, and nothing goes wrong if you leave it be. It is
+on by default; **Learn From Experience** under **Growing Up** in the
+panel's Behavior page turns it off (it is then exactly as the Studio made
+it, and what it remembers is kept for if you turn it back on), and the page
+says in a line how it has been shaped lately. **Forget It All** starts it
+afresh. Memories are saved in the app's defaults; time with the app closed
+counts toward forgetting, but only up to three days of it.
+
 ## Keeping it in a box
 
 **Behavior ▸ Keep *name* in a Box…** dims the desktop and lets you drag out
@@ -473,15 +538,44 @@ wording). Tick any mix, and add your own lines underneath, one per line —
 they go into the same hat. **Think something now** tries one in the
 preview. Long lines wrap into a bigger bubble.
 
-## Laser pointer
+## Laser & toys
 
-**Behavior ▸ Laser Pointer** turns the pointer into a laser: click
-anywhere and a red dot appears there; hold and drag and it moves. The
-spider drops whatever it is doing and races for it — along its own edge at
-a scurry, or with a leap to whatever is nearest the dot — and when it gets
-there it pounces and pats at it; when the dot goes out (a couple of seconds
-after you let go) it looks about for it, puzzled. Clicks on the spider or
-a creature still pick them up as usual.
+**Play ▸ Laser & Toys** (or **Toys ▸** on the right-click menu) is what
+the pointer plays with, one at a time: the **Laser Pointer**, a **Ball**, a
+**Feather**, a **Bell** or a **Wind-up Bug**. **Put Away** puts it away.
+
+- **Laser** — the red dot sits right on your pointer for as long as it is
+  picked. It drops whatever it is doing and races after it — along its own
+  edge at a scurry, or with a leap to whatever is nearest the dot — and
+  pounces and pats at it; put away, it looks about for it, puzzled.
+- **Feather** — dangles on its string from your pointer the whole time,
+  like a wand toy, trailing behind as you move. It leaps at it, and now and
+  then gets hold of it and hauls it down on the string. Clicks go through
+  to whatever is underneath as usual.
+- **Ball, Bell, Wind-up Bug** — picked, it comes in your hand, riding on
+  the pointer (it waits under it, eyes on it). Take it where you want it
+  and click to put it down there, or drag and flick to throw it; the bug is
+  set down wound up and scuttles off. That click is taken by the toy, not
+  passed to what is underneath, so there is no selection box on the
+  desktop. Once it's down, drag it to throw it again, click it to poke it,
+  or press its button again to pick it back up. The bell jingles when
+  knocked or shaken — out loud too, quietly, unless **Bell Sound** is off.
+
+While you are playing with one it goes
+for it like the dot — the playful at once, the lazy when they get round
+to it — and never tires of it while you play; a timid one looks a new toy
+over from a safe distance first, and jumps out of the way of one rolled at
+it (a bold one traps it with its legs). Left lying about, a toy still gets
+batted about and chased now and then as the mood takes it, until it tires
+of it. Clicks on the spider or a creature still pick them up as usual;
+visitors join in. Playing is something it remembers, and with learning on
+it comes to have a favourite toy.
+
+Every toy is the same object with simple physics — it falls, bounces off
+and lands on the same window edges, Dock and screen rim the spider walks,
+rolls or slides along them, tips off the end of a window and bounces back
+off a wall — and a kind of toy is only a set of numbers on it (see
+`Toys.swift`).
 
 ## Spider Studio
 
@@ -574,12 +668,14 @@ DisplayServices.
 | `HabitatAtmosphere.swift` | what moves in the tank's air, per biome, as Core Animation layers and emitters |
 | `HabitatScene.swift` | the inside of the tank: its layers, the spider and creatures drawn in it, the mouse, decorating |
 | `HabitatWindow.swift` | the tank's window: frame, toolbar buttons, the decorating panel, undo |
-| `Prey.swift` | the creatures: their behaviour, drawing, and the click-through window they live in |
+| `Prey.swift` | the creatures: their behaviour, drawing, and the click-through window they (and the toys) live in |
+| `Toys.swift` | the toys: kinds as data, one physics body for all of them, the toy box, and their drawing |
 | `WindowTracker.swift` | polls window rectangles — 30 Hz while any window is moving, 10 Hz when the desktop is still — and spots notification banners coming up |
 | `SystemSense.swift` | the Mac it lives on: Low Power Mode, the charger, the weather, the volume and the brightness |
 | `Visitors.swift` | spiders from elsewhere dropping by to play |
 | `Panel.swift` | the menu bar panel: its pages, switches, sliders and buttons |
 | `Spider.swift` | state machine, physics, gait, decisions |
+| `Memory.swift` | what it remembers — experiences, places, prey — and the small shifts to its personality they add up to |
 | `SpiderRenderer.swift` | all the drawing, in body-local coordinates, parametrised by the look |
 | `SpiderDesign.swift` | every part, colourway, personality and gait option; the saved design |
 | `Skin.swift` | how the coat is painted: flat, gradient, custom and living coats, and the palette the renderer draws with |
@@ -624,6 +720,7 @@ Publishing needs the `gh` CLI (`brew install gh`), logged in or with
 | `SPIDER_STUDIO_SHOT=dir ./spiders.app/Contents/MacOS/DesktopSpider` | writes a PNG of each studio tab to `dir` and quits |
 | `./tools/bench.sh` | times one rendered frame |
 | `SPIDER_STATS=1 ./spiders.app/Contents/MacOS/DesktopSpider` | prints fps and a per-frame budget once a second |
+| `SPIDER_TOY_TEST=secs ./spiders.app/Contents/MacOS/DesktopSpider` | picks each toy in turn (memory off), throws it now and then as if by you, prints what the spider and the toy are up to every two seconds, and quits |
 
 ## Performance
 

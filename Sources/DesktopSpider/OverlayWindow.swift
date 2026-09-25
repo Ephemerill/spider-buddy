@@ -700,3 +700,29 @@ final class LaserView: NSView {
         ctx.fillEllipse(in: CGRect(x: p.x - 1.6, y: p.y - 1.2, width: 3.2, height: 3.2))
     }
 }
+
+// MARK: - A toy in hand
+
+/// Rides along under the pointer while a toy is in your hand, so the click
+/// that puts it down (or the drag that throws it) comes to us — and not to
+/// whatever is underneath, which would start a selection box on the desktop.
+/// All but invisible.
+final class HandCatchView: NSView {
+    var onDown: ((NSEvent) -> Void)?
+    var onDrag: ((NSEvent) -> Void)?
+    var onUp: ((NSEvent) -> Void)?
+    override var isFlipped: Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { frame.contains(point) ? self : nil }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) { onDown?(event) }
+    override func mouseDragged(with event: NSEvent) { onDrag?(event) }
+    override func mouseUp(with event: NSEvent) { onUp?(event) }
+    override func rightMouseDown(with event: NSEvent) {
+        NotificationCenter.default.post(name: .spiderContextMenu, object: event)
+    }
+    override func draw(_ dirty: NSRect) {
+        // Not quite clear: a window shows through where it is fully clear.
+        NSColor(white: 0, alpha: 0.004).setFill()
+        bounds.fill()
+    }
+}

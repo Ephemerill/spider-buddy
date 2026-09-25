@@ -16,12 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var cinemaScreens: [CGRect] = []
     private var cinemaClearPolls = 0
     private var boxDrawWindow: BoxDrawWindow?
-    private var laserOn = false
     private var laserWindow: OverlayWindow!
     private var laserView: LaserView!
-    private var laserMonitors: [Any] = []
-    private var laserOffAt: CFTimeInterval = 0
-    private var laserHeld = false
     private var boxWindow: OverlayWindow!
     private var boxOutline: BoxOutlineView!
     private var hammockShown = false
@@ -30,6 +26,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastWipeCursor = V2(-9999, -9999)
     private let map = SurfaceMap()
     private var spider: Spider!
+    /// Toys out on the desktop, for it (and any visitors) to play with.
+    private lazy var toyBox: ToyBox = {
+        let box = ToyBox(map: map)
+        box.onJingle = { [weak self] _, loud in self?.jingle(loud) }
+        return box
+    }()
+    /// The bell jingles out loud (quietly), not just to look at.
+    private var toySounds = true
+    private var lastJingleAt: CFTimeInterval = 0
     /// Other spiders dropping by, if they are let (see `visitorsOn`).
     private var visitors: [Visitor] = []
     private var visitorsOn = false
@@ -44,6 +49,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Seconds a visitor stays: a minute up to a quarter of an hour.
     private var visitLength: CFTimeInterval { Double(60 * pow(900.0 / 60, visitStay) * randRange(0.7, 1.3)) }
     private let playground = Playground()
+    /// Small creatures finding their own way in now and then, if they are
+    /// let — rarely, and never on the dot.
+    private var wildOn = false
+    private var nextWildAt: CFTimeInterval = 0
+    /// The slider, 0...1: from rarely to now and then.
+    private var wildFrequency: CGFloat = 0.35
+    /// Seconds to the next: about an hour and a half apart at the rare end,
+    /// ten minutes or so at the other, and anywhere from half to half as
+    /// much again of that.
+    private var wildGap: CFTimeInterval { Double(5400 * pow(600.0 / 5400, wildFrequency) * randRange(0.5, 1.5)) }
     private var allSpiders: [Spider] { [spider] + visitors.map(\.spider) }
     private let tracker = WindowTracker()
     private var statusItem: NSStatusItem!
@@ -67,6 +82,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var calm = false
     private var calmSkip = 0
     private var calmFrames = 0
+    /// Creatures are moving about, so the calm clock only halves the rate.
+    private var critterPace = false
     private var lastCursor = V2(-9999, -9999)
     // SPIDER_STATS=1 prints a frame budget breakdown once a second.
     private let stats = ProcessInfo.processInfo.environment["SPIDER_STATS"] == "1"
@@ -93,6 +110,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var showsRain = true
     /// Jumps at a notification; looks up at the volume or brightness changing.
     private var feelsCommotion = true
+    /// It remembers what happens to it and grows a little with it.
+    private var learns = true
+    /// What it has been through (nil with learning off).
+    private var memory: SpiderMemory?
     private var rainWindow: OverlayWindow!
     private var rainView: RainView!
     private var rainOffAt: CFTimeInterval = 0
@@ -104,8 +125,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spider = Spider(map: map)
         spider.apply(design: SpiderDesign.load())
         loadSettings()
+        if learns { memory = SpiderMemory.load(); spider.memory = memory }
         map.standoff = AppDelegate.standoff(for: spider.config.scale)
         map.rebuild(windows: [])
+        toyBox.scale = spider.config.scale
+        spider.toys = toyBox
 
         buildWindow()
         buildStatusItem()
@@ -246,6 +270,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if secs > 0 { openHabitat(restoring: true) }
             DispatchQueue.main.asyncAfter(deadline: .now() + abs(secs)) { self.finishHabitatTest(restore) }
         }
+        // SPIDER_WILD_TEST=secs lets something wander in every few seconds
+        // for that long (the setting itself is left alone), reports on
+        // what is about every two seconds, and quits.
+        if let secs = ProcessInfo.processInfo.environment["SPIDER_WILD_TEST"].flatMap(Double.init) {
+            // Nothing that happens in the test goes into what it remembers.
+            memory = nil
+            spider.memory = nil
+            let start = CACurrentMediaTime()
+            var next = start + 2
+            Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
+                guard let self else { return }
+                let now = CACurrentMediaTime()
+                if now >= next, now - start < secs - 20, self.spider.prey.filter({ $0.state == .loose }).count < 3 {
+                    next = now + 12
+                    let hour = Calendar.current.component(.hour, from: Date())
+                    _ = self.spider.releaseWild(night: hour >= 20 || hour < 6, raining: false)
+                }
+                let about = self.spider.prey.map { p in
+                    "\(p.kind.label)\(p.noticed ? "" : "(unseen)")\(p.leaving ? "(leaving)" : "") \(p.state) \(Int(p.pos.x)),\(Int(p.pos.y))"
+                }
+                print(String(format: "wild test %3.0fs: %@ | %@ | calm %@", now - start, self.spider.debugState,
+                             about.joined(separator: "; "), self.calm ? "yes" : "no"))
+                fflush(stdout)
+                if now - start > secs { timer.invalidate(); NSApp.terminate(nil) }
+            }
+        }
+        // SPIDER_TOY_TEST=secs picks each toy in turn (memory off, the Bell
+        // Sound setting untouched), throws it now and then as if by you,
+        // reports what it and the toy are up to every two seconds, and quits.
+        if let secs = ProcessInfo.processInfo.environment["SPIDER_TOY_TEST"].flatMap(Double.init) {
+            memory = nil
+            spider.memory = nil
+            let start = CACurrentMediaTime()
+            let kinds = ToyKind.allCases
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.choose(.toy(kinds[0])) }
+            Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
+                guard let self else { return }
+                let now = CACurrentMediaTime()
+                let about = self.toyBox.toys.map { t in
+                    "\(t.kind.label) \(Int(t.pos.x)),\(Int(t.pos.y)) \(t.onSurface ? "on" : "air")\(t.walking ? " walking" : "")"
+                }
+                print(String(format: "toy test %3.0fs: %@ | %@ | %@ | calm %@", now - start, self.spider.debugState, self.spider.debugToy,
+                             about.joined(separator: "; "), self.calm ? "yes" : "no"))
+                fflush(stdout)
+                // A fresh toy every so often, thrown in from above it as if by you.
+                let step = Int(now - start) / 2
+                if step % 12 == 11 { self.choose(.toy(kinds[(step / 12 + 1) % kinds.count])) }
+                if step % 12 == 5, let toy = self.toyBox.toys.first, !toy.dangling {
+                    // Put down (or, once down, picked up and thrown) near it.
+                    if !self.holdingToy { self.takeInHand(toy) }
+                    self.putDown(toy, at: self.spider.worldPos + V2(randRange(-200, 200), 160), fling: V2(randRange(-300, 300), 100))
+                }
+                if now - start > secs { timer.invalidate(); NSApp.terminate(nil) }
+            }
+        }
         // SPIDER_VISITORS_TEST=1 lets visitors in (no alert), brings three,
         // starts a game of tag, reports what they get up to, sends them
         // home, and quits.
@@ -334,6 +413,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         UserDefaults.standard.set(inHabitat, forKey: "inHabitat")
+        memory?.save()
         tracker.stop()
         fallbackTimer?.invalidate()
     }
@@ -366,6 +446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preyView = PreyView(frame: CGRect(origin: .zero, size: frame.size))
         preyView.worldOrigin = frame.origin
         preyView.spider = spider
+        preyView.toyBox = toyBox
         preyWindow.contentView = preyView
         preyWindow.ignoresMouseEvents = true
         silkWindow = OverlayWindow(frame: frame)
@@ -448,6 +529,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var tickCount = 0
     @objc private func tick() {
         tickCount += 1
+        if tickCount % 3600 == 0, let m = memory, m.dirty { m.save() }
         if tickCount % 30 == 0 {
             updateRain(now: CACurrentMediaTime())
             // Never left asleep for good by an unlock that went unheard.
@@ -469,20 +551,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Likewise for the creatures: clicks reach their window only while
         // the pointer is over one (or one is on the pointer).
-        let preyHeld = spider.prey.contains { $0.held }
-        let wantsPreyMouse = interactive && preyShown && (preyHeld || (!wantsMouseNow && spider.preyHit(cursorNow) != nil))
+        // (Not the toy on your pointer: that goes where the pointer goes,
+        // clicks and all, and a drag on a toy is the view's until it ends.)
+        let preyHeld = spider.prey.contains { $0.held } || preyView.busy
+        let wantsPreyMouse = interactive && preyShown
+            && (preyHeld || (!wantsMouseNow && (spider.preyHit(cursorNow) != nil || toyBox.hit(cursorNow) != nil)))
         if preyWindow.ignoresMouseEvents == wantsPreyMouse {
             preyWindow.ignoresMouseEvents = !wantsPreyMouse
         }
 
+        // Something on the pointer goes where it goes, at the full rate.
+        if handToy != nil, cursorNow.distance(to: lastCursor) > 0.4 {
+            calm = false
+            calmFrames = 0
+        }
         // The calm throttle skips whole frames; the active rate is the link's.
         if calm {
             calmSkip += 1
-            guard calmSkip % (lowPowerClock ? 2 : 3) == 0 else { return }
+            guard calmSkip % (lowPowerClock || critterPace ? 2 : 3) == 0 else { return }
         }
         lastFrame = now
         let dt = CGFloat(min(max(now - lastTime, 1.0 / 240.0), 1.0 / 20.0))
         lastTime = now
+        if !toyBox.isEmpty { toyBox.update(dt: dt) }
 
         let cursor = V2(NSEvent.mouseLocation)
         if cursor.distance(to: lastCursor) > 0.4 {
@@ -502,7 +593,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let b = CACurrentMediaTime()
             let pose = spider.pose()
             let moved = show(pose)
-            settle(moved: updateVisitors(dt: dt, now: a) || moved)
+            settle(moved: updateVisitors(dt: dt, now: a) || moved || toyBox.astir, critters: spider.preyAstir)
             let c = CACurrentMediaTime()
             let d = CACurrentMediaTime()
             statUpdate += b - a
@@ -528,13 +619,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 applyWindowSize()
             }
             let moved = show(pose)
-            settle(moved: updateVisitors(dt: dt, now: now) || moved)
+            settle(moved: updateVisitors(dt: dt, now: now) || moved || toyBox.astir, critters: spider.preyAstir)
         }
         if !inHabitat { updateHammock(dt: dt) }
         updateCarrying()
         updateTankEntry(now: now)
+        updateWildlife(now: now)
         updatePrey()
-        updateLaser()
+        updateHand()
         updateSurroundings(now: now)
 
         // Only swallow clicks when the pointer is actually on the spider.
@@ -573,7 +665,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// stays smooth instead of stepping.
     /// Throttles the clock once the picture stops changing, and snaps straight
     /// back to full rate the moment it does.
-    private func settle(moved: Bool) {
+    /// Only creatures on the move (the spider itself sitting still): half
+    /// rate is plenty for them.
+    private func settle(moved: Bool, critters: Bool = false) {
         if moved || view.didRedraw || spider.isHeld {
             calmFrames = 0
             calm = false
@@ -581,6 +675,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             calmFrames += 1
             if calmFrames > 45 { calm = true }
         }
+        critterPace = critters
     }
 
     /// The spider lives below the menu bar and the Dock — but the menu bar
@@ -676,6 +771,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let used = Set(visitors.map(\.slot))
         let slot = (1...Visitor.most).first { !used.contains($0) } ?? visitors.count + 1
         let v = Visitor(map: map, slot: slot, scale: spider.config.scale, stay: visitLength)
+        v.spider.toys = toyBox
         visitors.append(v)
         syncVisitors()
         v.spider.fullScreenApp = !cinemaScreens.isEmpty
@@ -1068,9 +1164,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updatePrey() {
-        // In the tank, they are drawn in there with it.
+        // In the tank, they are drawn in there with it. The toys stay out on
+        // the desktop.
         let prey = inHabitat ? [] : spider.prey
-        if prey.isEmpty {
+        if prey.isEmpty, toyBox.isEmpty {
             if preyShown {
                 preyShown = false
                 preyView.prey = []
@@ -1087,6 +1184,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: Wildlife
+
+    /// Now and then, if it is let, something finds its own way in — though
+    /// not while nobody is about to see it, it is busy in the tank, or a
+    /// full-screen app has the desktop. Then it tries again a while later.
+    private func updateWildlife(now: CFTimeInterval) {
+        guard wildOn, now >= nextWildAt else { return }
+        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+        let loose = spider.prey.filter { $0.state == .loose }.count
+        guard !inHabitat, !tankOpen, !awaitingEntrance, !spider.config.paused, !spider.dormant, !away,
+              cinemaScreens.isEmpty, idle < 300, loose < 2 else {
+            nextWildAt = now + Double(randRange(120, 300))
+            return
+        }
+        nextWildAt = now + wildGap
+        let hour = Calendar.current.component(.hour, from: Date())
+        if spider.releaseWild(night: hour >= 20 || hour < 6, raining: feelsWeather && sense.raining).isEmpty {
+            nextWildAt = now + Double(randRange(120, 300))
+        }
+    }
+
+    @objc private func toggleWildlife() {
+        wildOn.toggle()
+        // The first comes a little sooner, so you see what it is like.
+        if wildOn { nextWildAt = CACurrentMediaTime() + min(wildGap, Double(randRange(90, 300))) }
+        saveSettings()
+        refreshMenu()
+    }
+
+    private func setWildFrequency(_ v: CGFloat) {
+        wildFrequency = v
+        nextWildAt = min(nextWildAt, CACurrentMediaTime() + wildGap)
+        UserDefaults.standard.set(Double(v), forKey: "wildFrequency")
+    }
+
     @objc private func feed(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? Int, let kind = PreyKind(rawValue: raw) else { return }
         release(kind)
@@ -1101,6 +1233,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         calmFrames = 0
         calm = false
         refreshMenu()
+    }
+
+    // MARK: Toys
+
+    @objc private func chooseToyItem(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? Int else { return }
+        choose(raw < 0 ? .laser : ToyKind(rawValue: raw).map { .toy($0) })
+    }
+
+    /// The bell, out loud: a quiet tink, never more than a few a second.
+    private func jingle(_ loud: CGFloat) {
+        guard toySounds, !hidden else { return }
+        let now = CACurrentMediaTime()
+        guard now - lastJingleAt > 0.22, let sound = NSSound(named: "Tink")?.copy() as? NSSound else { return }
+        lastJingleAt = now
+        sound.volume = Float(0.06 + 0.2 * min(loud, 1))
+        sound.play()
     }
 
     // MARK: Status item + menu
@@ -1140,9 +1289,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.representedObject = kind.rawValue
             feedMenu.addItem(item)
         }
+        feedMenu.addItem(.separator())
+        let wild = NSMenuItem(title: "Let Creatures Wander In", action: #selector(toggleWildlife), keyEquivalent: "")
+        wild.target = self
+        wild.state = wildOn ? .on : .off
+        feedMenu.addItem(wild)
         let feedItem = NSMenuItem(title: "Feed", action: nil, keyEquivalent: "")
         feedItem.submenu = feedMenu
         menu.addItem(feedItem)
+
+        // What the pointer plays with: the laser and the toys, one at a time.
+        let toyMenu = NSMenu()
+        toyMenu.autoenablesItems = false
+        for (title, raw, pick) in [("Laser Pointer", -1, HandToy.laser)] + ToyKind.allCases.map({ ($0.label, $0.rawValue, HandToy.toy($0)) }) {
+            let item = NSMenuItem(title: title, action: #selector(chooseToyItem(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = raw
+            item.state = handToy == pick ? .on : .off
+            toyMenu.addItem(item)
+        }
+        toyMenu.addItem(.separator())
+        let away = NSMenuItem(title: "Put Away", action: #selector(putAway), keyEquivalent: "")
+        away.target = self
+        away.isEnabled = handToy != nil
+        toyMenu.addItem(away)
+        let toyItem = NSMenuItem(title: "Toys", action: nil, keyEquivalent: "")
+        toyItem.submenu = toyMenu
+        menu.addItem(toyItem)
 
         let size = NSMenu()
         for (name, s) in AppDelegate.sizes {
@@ -1215,7 +1388,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ])
         let feed = PanelPage(title: "Feed", symbol: "fork.knife", sections: [
             PanelSection(title: "Let Something Loose", rows: [
-                .note("It hunts down whatever you let go on the desktop — and you can pick them up and move them about yourself."),
+                .note("It hunts down whatever you let go on the desktop, each its own way — and you can pick them up and move them about yourself."),
                 .buttons(PreyKind.allCases.map { kind in
                     PanelButton("A \(kind.label)", symbol: AppDelegate.preySymbol(kind),
                                 enabled: { [unowned self] in canFeed }) { [unowned self] in release(kind) }
@@ -1223,6 +1396,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .status { [unowned self] in
                     let loose = spider.prey.filter { $0.state == .loose }.count
                     return loose >= 4 ? "That's plenty loose for now." : loose == 0 ? "Nothing loose right now." : loose == 1 ? "One on the loose." : "\(loose) on the loose."
+                },
+            ]),
+            PanelSection(title: "Wildlife", rows: [
+                .toggle("Let Creatures Wander In",
+                        help: "Once in a while, unasked, something finds its way onto the desktop: a moth, a beetle, a little line of ants. It has to spot them before it can hunt them, and they don't stay forever.",
+                        get: { [unowned self] in wildOn }, set: { [unowned self] on in if on != wildOn { toggleWildlife() } }),
+                .slider("How Often They Come", low: "Rarely", high: "Now and Then",
+                        get: { [unowned self] in wildFrequency }, set: { [unowned self] v in setWildFrequency(v) },
+                        enabled: { [unowned self] in wildOn }),
+                .status { [unowned self] in
+                    guard wildOn else { return "Only what you let loose." }
+                    let n = spider.prey.filter { $0.wild && $0.state == .loose }.count
+                    let mins = Int(5400 * pow(600.0 / 5400, wildFrequency) / 60)
+                    return n > 0 ? "Something has wandered in." : "About one every \(mins) minutes or so. Moths come out at night, worms in the rain."
                 },
             ]),
             PanelSection(title: "Appetite", rows: [
@@ -1235,7 +1422,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             PanelSection(title: "Energy", rows: [
                 .choice(options: AppDelegate.energyLevels.map(\.0),
                         get: { [unowned self] in
-                            let l = spider.personality.liveliness
+                            let l = spider.basePersonality.liveliness
                             return AppDelegate.energyLevels.indices.min { abs(AppDelegate.energyLevels[$0].1 - l) < abs(AppDelegate.energyLevels[$1].1 - l) } ?? 2
                         },
                         set: { [unowned self] i in setEnergy(level: AppDelegate.energyLevels[i].1) }),
@@ -1272,6 +1459,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return said.isEmpty ? "Nothing to report." : said
                 },
             ]),
+            PanelSection(title: "Growing Up", rows: [
+                .toggle("Learn From Experience", help: "It remembers how things go — petting, play, frights, good hunts, time on its own — and its personality drifts a little with them, always close to what you set in the Studio. Nothing is needed of you. Off, it's exactly as the Studio made it.",
+                        info: """
+                            It remembers how things go: being stroked and said hello to, your company and its time alone, being carried or flung, frights, games, meals and hunts, and the spots where it settles.
+
+                            Each memory has a feeling that passes within the hour, and a lesson that builds slowly over days and fades unless it happens again.
+
+                            Together they nudge its personality a little — never more than a fifth of the way from what you set in the Studio, which stays just as you left it. A shy spider stroked often grows easier with you but stays shy. A run of frights leaves it warier for a while. Good hunts make it surer of itself, time on its own makes it more of an explorer, and favourite spots draw it back.
+
+                            Nothing is needed of you: left be, it never sulks or suffers — it just grows a bit more independent. Turn this off and it's exactly as the Studio made it; what it remembers is kept for if you turn it back on. Forget It All starts it afresh.
+                            """,
+                        get: { [unowned self] in learns }, set: { [unowned self] _ in toggleLearning() }),
+                .status { [unowned self] in
+                    guard learns, let m = memory else { return "\(name) is just as the Studio made it." }
+                    return m.summary(name: name, base: spider.basePersonality)
+                },
+                .buttons([
+                    PanelButton("Forget It All", symbol: "arrow.uturn.backward", shown: { [unowned self] in learns }) { [unowned self] in forgetExperiences() },
+                ]),
+            ]),
             PanelSection(title: nil, rows: [
                 .toggle("Pause", help: "It stays just where it is until you unpause it.",
                         get: { [unowned self] in spider.config.paused }, set: { [unowned self] _ in togglePause() }),
@@ -1294,9 +1501,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     PanelButton("Peek-a-boo", symbol: "eyes") { [unowned self] in peekaboo() },
                 ]),
             ]),
-            PanelSection(title: "Laser Pointer", rows: [
-                .toggle("Laser Pointer", help: "While it is on, click or drag anywhere on the screen and it races for the red dot.",
-                        get: { [unowned self] in laserOn }, set: { [unowned self] _ in toggleLaser() }),
+            PanelSection(title: "Laser & Toys", rows: [
+                .buttons([PanelButton("Laser Pointer", symbol: "smallcircle.filled.circle",
+                                      selected: { [unowned self] in handToy == .laser }) { [unowned self] in choose(.laser) }]
+                         + ToyKind.allCases.map { kind in
+                    PanelButton(kind.label, symbol: kind.symbol,
+                                selected: { [unowned self] in handToy == .toy(kind) }) { [unowned self] in choose(.toy(kind)) }
+                }),
+                .status { [unowned self] in
+                    switch handToy {
+                    case nil: return "Pick one to play with it."
+                    case .laser?: return "The red dot is on your pointer: it chases it wherever you take it."
+                    case .toy(.feather)?: return "The feather dangles on its string from your pointer: wave it about for it to leap at."
+                    case .toy(let kind)? where holdingToy:
+                        return "The \(kind.label.lowercased()) is in your hand: take it where you want it and click to put it down, or drag and flick to throw it."
+                    case .toy(let kind)?:
+                        return "Drag the \(kind.label.lowercased()) to throw it again or click it to poke it, or press its button to pick it back up."
+                    }
+                },
+                .buttons([
+                    PanelButton("Put Away", symbol: "tray.and.arrow.down", shown: { [unowned self] in handToy != nil }) { [unowned self] in putAway() },
+                ]),
+                .toggle("Bell Sound", help: "The bell tinkles out loud — quietly — when it's knocked or shaken. Off, you only see it jingle.",
+                        get: { [unowned self] in toySounds }, set: { [unowned self] on in toySounds = on; saveSettings() }),
             ]),
             PanelSection(title: "Hammock", rows: [
                 .status { [unowned self] in
@@ -1351,9 +1578,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static func preySymbol(_ k: PreyKind) -> String {
         switch k {
-        case .cricket: return "ant"
+        case .cricket: return "hare"
         case .worm: return "scribble"
-        case .fruitFly: return "ladybug"
+        case .fruitFly: return "circle.dotted"
+        case .moth: return "moon.stars"
+        case .beetle: return "shield"
+        case .ant: return "ant"
+        case .mosquito: return "wind"
+        case .ladybug: return "ladybug"
         }
     }
 
@@ -1387,6 +1619,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             silkWindow.orderOut(nil)
             silkVisible = false
             hammockWindow.orderOut(nil)
+            // The creatures go with it (and come back with it); the toys are
+            // put away.
+            putAway()
+            preyWindow.orderOut(nil)
+            preyShown = false
             // Visitors don't hang about while it is away.
             for v in visitors { v.window.orderOut(nil); silkView.clear(slot: v.slot) }
             visitors = []
@@ -1960,75 +2197,160 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: Laser pointer
+    // MARK: Toys and the laser
+    //
+    // What the pointer plays with, one at a time: the laser, or a toy. The
+    // laser's dot sits right on the pointer, and the feather dangles from it
+    // on its string, for as long as they are picked. The ball, the bell and
+    // the bug come in your hand, riding along with the pointer: take it
+    // where you want it and click to put it down there (or drag and flick
+    // to throw it). Put down, a toy stays where it ends up — to be dragged
+    // and thrown again, poked, or picked back up with its button — and still
+    // gets played with now and then. Put Away puts it away.
 
-    /// With the laser on, any click anywhere puts the dot down and the
-    /// spider goes for it; dragging moves it; letting go leaves it a moment.
-    @objc private func toggleLaser() {
-        laserOn.toggle()
-        if laserOn {
-            let down: (NSEvent) -> Void = { [weak self] e in self?.laserDown(at: NSEvent.mouseLocation) }
-            let drag: (NSEvent) -> Void = { [weak self] e in self?.laserMove(to: NSEvent.mouseLocation) }
-            let up: (NSEvent) -> Void = { [weak self] _ in self?.laserUp() }
-            if let m = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown, handler: down) { laserMonitors.append(m) }
-            if let m = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged, handler: drag) { laserMonitors.append(m) }
-            if let m = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp, handler: up) { laserMonitors.append(m) }
-            // Clicks on our own windows come through the local monitor instead.
-            if let m = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp], handler: { [weak self] e in
-                guard let self else { return e }
-                // Not when picking a spider or a creature up.
-                if e.window === self.window || e.window === self.preyWindow { return e }
-                if self.visitors.contains(where: { $0.window === e.window }) { return e }
-                switch e.type {
-                case .leftMouseDown: self.laserDown(at: NSEvent.mouseLocation)
-                case .leftMouseDragged: self.laserMove(to: NSEvent.mouseLocation)
-                default: self.laserUp()
-                }
-                return e
-            }) { laserMonitors.append(m) }
-        } else {
-            for m in laserMonitors { NSEvent.removeMonitor(m) }
-            laserMonitors = []
-            laserHeld = false
-            laserOffAt = 0
-            for s in allSpiders { s.laser = nil }
-            laserWindow.orderOut(nil)
+    private enum HandToy: Equatable { case laser, toy(ToyKind) }
+    private var handToy: HandToy?
+    private var laserOn: Bool { handToy == .laser }
+    /// A ball, bell or bug is in your hand, waiting to be put down.
+    private var holdingToy = false
+    private var toyDrag: [(p: V2, t: TimeInterval)] = []
+    /// Rides under the pointer while a toy is in hand, to take the click.
+    private lazy var handWindow: OverlayWindow = {
+        let w = OverlayWindow(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
+        w.level = NSWindow.Level(rawValue: window.level.rawValue + 1)
+        let v = HandCatchView(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
+        v.onDown = { [weak self] e in self?.handDown(e) }
+        v.onDrag = { [weak self] e in self?.handDrag(e) }
+        v.onUp = { [weak self] e in self?.handUp(e) }
+        w.contentView = v
+        w.ignoresMouseEvents = false
+        return w
+    }()
+
+    @objc private func toggleLaser() { choose(laserOn ? nil : .laser) }
+
+    /// Picks what the pointer plays with. Picking what is already picked
+    /// takes a toy that has been put down back in hand; otherwise it puts
+    /// it away.
+    private func choose(_ h: HandToy?) {
+        if let h, h == handToy {
+            if case .toy(let kind) = h, kind.tether == 0, let toy = toyBox.toys.first, !toy.held {
+                takeInHand(toy)
+            } else {
+                putAway()
+            }
+            return
         }
+        putAway()
+        guard let h, !hidden else { return }
+        handToy = h
+        switch h {
+        case .laser:
+            break
+        case .toy(let kind):
+            let p = V2(NSEvent.mouseLocation)
+            let toy = toyBox.place(kind, at: p)
+            for s in allSpiders { s.seeToy(toy) }
+            if kind.tether > 0 { toy.grab(at: p) } else { takeInHand(toy) }
+        }
+        updateHand()
+        calmFrames = 0
+        calm = false
         refreshMenu()
     }
 
-    private func laserDown(at p: CGPoint) {
-        laserHeld = true
-        laserMove(to: p)
-        laserWindow.orderFrontRegardless()
+    @objc private func putAway() {
+        if laserOn {
+            for s in allSpiders { s.laser = nil }
+            laserWindow.orderOut(nil)
+        }
+        toyBox.removeAll()
+        holdingToy = false
+        toyDrag = []
+        handWindow.orderOut(nil)
+        handToy = nil
+        refreshMenu()
     }
 
-    private func laserMove(to p: CGPoint) {
-        guard laserOn else { return }
-        laserWindow.setFrameOrigin(CGPoint(x: p.x - 18, y: p.y - 18))
-        // Visitors go for the dot too — except one on its way out.
-        spider.laser = V2(p)
-        for v in visitors where !v.leaving { v.spider.laser = V2(p) }
+    private func takeInHand(_ toy: Toy) {
+        toy.grab(at: V2(NSEvent.mouseLocation))
+        holdingToy = true
+        toyDrag = []
+        refreshMenu()
+    }
+
+    /// Every frame: the dot and the toy with the pointer, and the catcher
+    /// under it while a toy is in hand.
+    private func updateHand() {
+        let p = V2(NSEvent.mouseLocation)
+        switch handToy {
+        case .laser?:
+            // Not in the tank: the dot is a desktop game.
+            guard !inHabitat else {
+                if spider.laser != nil { spider.laser = nil; laserWindow.orderOut(nil) }
+                return
+            }
+            laserWindow.setFrameOrigin(CGPoint(x: p.x - 18, y: p.y - 18))
+            if !laserWindow.isVisible { laserWindow.orderFrontRegardless() }
+            laserView.phase += 0.016
+            // Visitors go for the dot too — except one on its way out.
+            spider.laser = p
+            for v in visitors where !v.leaving { v.spider.laser = p }
+        case .toy?:
+            guard let toy = toyBox.toys.first else { return }
+            if toy.dangling {
+                toy.drag(to: p)
+            } else if toy.kind.tether > 0 {
+                // The feather is always on its string.
+                toy.grab(at: p)
+            } else if holdingToy {
+                toy.drag(to: p)
+            }
+        case nil:
+            break
+        }
+        if holdingToy {
+            handWindow.setFrameOrigin(CGPoint(x: p.x - 80, y: p.y - 80))
+            if !handWindow.isVisible { handWindow.orderFrontRegardless() }
+        } else if handWindow.isVisible {
+            handWindow.orderOut(nil)
+        }
+    }
+
+    private func handDown(_ e: NSEvent) {
+        toyDrag = [(V2(NSEvent.mouseLocation), e.timestamp)]
+    }
+
+    private func handDrag(_ e: NSEvent) {
+        let p = V2(NSEvent.mouseLocation)
+        toyBox.toys.first?.drag(to: p)
+        handWindow.setFrameOrigin(CGPoint(x: p.x - 80, y: p.y - 80))
+        toyDrag.append((p, e.timestamp))
+        if toyDrag.count > 8 { toyDrag.removeFirst(toyDrag.count - 8) }
+    }
+
+    /// Put down: dropped just where it is with a click, thrown with a flick;
+    /// the bug wound up.
+    private func handUp(_ e: NSEvent) {
+        guard holdingToy, let toy = toyBox.toys.first else { return }
+        let p = V2(NSEvent.mouseLocation)
+        var v = V2.zero
+        if let recent = toyDrag.last(where: { e.timestamp - $0.t > 0.04 }) {
+            v = (p - recent.p) / CGFloat(max(e.timestamp - recent.t, 0.008))
+        }
+        putDown(toy, at: p, fling: v.length < 120 ? .zero : v)
+    }
+
+    private func putDown(_ toy: Toy, at p: V2, fling: V2) {
+        toy.drag(to: p)
+        toy.release(fling: fling)
+        toy.wind()
+        holdingToy = false
+        toyDrag = []
+        handWindow.orderOut(nil)
         calmFrames = 0
         calm = false
-    }
-
-    private func laserUp() {
-        guard laserHeld else { return }
-        laserHeld = false
-        // The dot lingers a little after you let go.
-        laserOffAt = CACurrentMediaTime() + 2.5
-    }
-
-    private func updateLaser() {
-        guard laserOn else { return }
-        if spider.laser != nil {
-            laserView.phase += 0.016
-            if !laserHeld, CACurrentMediaTime() > laserOffAt {
-                for s in allSpiders { s.laser = nil }
-                laserWindow.orderOut(nil)
-            }
-        }
+        refreshMenu()
     }
 
     // MARK: The box
@@ -2118,9 +2440,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spider.config = config
         spider.config.paused = false
         spider.apply(design: design)
+        spider.memory = memory
         map.standoff = AppDelegate.standoff(for: spider.config.scale)
         map.rebuild(windows: [])
         view.spider = spider
+        spider.toys = toyBox
         preyView.spider = spider
         preyView.prey = []
         preyView.refresh()
@@ -2158,6 +2482,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setScale(_ s: CGFloat) {
         spider.config.scale = s
+        toyBox.scale = s
         applyWindowSize()
         saveSettings()
         refreshMenu()
@@ -2184,6 +2509,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spider.apply(design: d)
         d.save()
         saveSettings()
+        refreshMenu()
+    }
+
+    /// Learning off: it goes back to just who the Studio says it is, and
+    /// what it remembers is kept, untouched, for if you turn it on again.
+    @objc private func toggleLearning() {
+        learns.toggle()
+        if learns {
+            memory = SpiderMemory.load()
+        } else {
+            memory?.save()
+            memory = nil
+        }
+        spider.memory = memory
+        saveSettings()
+        refreshMenu()
+    }
+
+    private func forgetExperiences() {
+        memory?.forget()
+        memory?.save()
+        spider.memory = memory
         refreshMenu()
     }
 
@@ -2344,7 +2691,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !away else { return }
         away = true
         guard !hidden, !awaitingEntrance, !inHabitat, !spider.config.paused else { return }
-        if laserOn { toggleLaser() }
+        if handToy != nil { putAway() }
         // The visitors have gone home by the time you are back.
         for v in visitors { removeVisitor(v) }
         tracker.pollNow()
@@ -2530,6 +2877,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         d.set(feelsWeather, forKey: "feelWeather")
         d.set(showsRain, forKey: "showRain")
         d.set(feelsCommotion, forKey: "feelCommotion")
+        d.set(learns, forKey: "learns")
+        d.set(wildOn, forKey: "wildlife")
+        d.set(toySounds, forKey: "toySounds")
     }
 
     private func loadSettings() {
@@ -2539,15 +2889,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "webs": true, "hammocks": true, "paused": false, "interactive": true, "hidden": false,
             "visitors": false, "visitFrequency": 0.5, "visitStay": 0.5,
             "feelPower": true, "feelWeather": true, "showRain": true, "feelCommotion": true,
+            "learns": true, "wildlife": false, "wildFrequency": 0.35, "toySounds": true,
         ])
+        toySounds = d.bool(forKey: "toySounds")
         feelsPower = d.bool(forKey: "feelPower")
         feelsWeather = d.bool(forKey: "feelWeather")
         showsRain = d.bool(forKey: "showRain")
         feelsCommotion = d.bool(forKey: "feelCommotion")
+        learns = d.bool(forKey: "learns")
         visitorsOn = d.bool(forKey: "visitors")
         visitFrequency = CGFloat(d.double(forKey: "visitFrequency"))
         visitStay = CGFloat(d.double(forKey: "visitStay"))
         nextVisitAt = CACurrentMediaTime() + visitGap / 2
+        wildOn = d.bool(forKey: "wildlife")
+        wildFrequency = CGFloat(d.double(forKey: "wildFrequency"))
+        nextWildAt = CACurrentMediaTime() + wildGap / 2
         spider.config.scale = CGFloat(d.double(forKey: "scale"))
         spider.config.followCursor = d.bool(forKey: "followCursor")
         spider.config.pounceOnCursor = d.bool(forKey: "pounceOnCursor")

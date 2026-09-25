@@ -396,9 +396,25 @@ final class Spider {
         guard mode == .attached, let loop = map.loop(anchor.loopID) else { return false }
         return loop.kind == .windowEdge
     }
-    var personality = Personality() {
+    /// Who it is: the Studio's personality, shifted a little by what it has
+    /// been through (see Memory.swift). Everything it decides reads this.
+    private(set) var personality = Personality() {
         didSet { config.liveliness = personality.liveliness }
     }
+    /// The Studio's personality, which nothing it learns ever changes.
+    private(set) var basePersonality = Personality()
+    /// What it has been through. Nil — a visitor, the Studio's preview, the
+    /// tools, or with learning turned off — and it is just as the Studio
+    /// made it.
+    var memory: SpiderMemory? {
+        didSet {
+            memory?.settle(base: basePersonality)
+            refreshTemperament()
+        }
+    }
+    /// The shift its memories make right now: zero without any.
+    private(set) var learned = TraitShift.zero
+    private var memoryDue: CGFloat = 0
     var gait = Gait()
     var habits = Habits()
     /// 0…1: how run down it feels, up while the Mac is in Low Power Mode. It
@@ -960,6 +976,8 @@ final class Spider {
     private var prevCursor = V2.zero
     private var pettingScore: CGFloat = 0
     private var lastPetSign: CGFloat = 0
+    /// The pointer has come dashing over it, and not yet gone off it.
+    private var rushed = false
 
     // The pointer as prey
     /// How taken it is with the pointer, 0..1: builds while the pointer
@@ -1115,6 +1133,7 @@ final class Spider {
         isHeld = false
         grabOffset = .zero
         let speedV = v.clampedLength(2700)
+        remember(speedV.length < Spider.hardThrow ? .carried : .thrown)
         if webActive {
             // Slingshot on the thread instead of flying free.
             mode = .dangling
@@ -1156,6 +1175,7 @@ final class Spider {
     func poke() {
         wake()
         lastUserActivity = t
+        remember(.greeted)
         // Who it is decides how it takes being prodded.
         let love = lerp(0.3, 1.6, personality.affection)
         let jumpy = lerp(1.6, 0.25, personality.bravery)
@@ -1296,6 +1316,7 @@ final class Spider {
 
     func celebrate() {
         wake()
+        remember(.greeted)
         happy.velocity = 10
         setEmote(.hearts, 1.3)
         if mode == .dangling, webStyle == .hang {
@@ -1362,7 +1383,7 @@ final class Spider {
             // Somewhere it will be seen: the middle of things rather
             // than off in a corner.
             let off = abs(spot.point.x - screen.midX) / max(screen.width / 2, 1)
-            let score = (spot.loop.kind == .windowEdge ? 1.3 : 1) * (1.2 - off * 0.7) * randRange(0.8, 1.2)
+            let score = (spot.loop.kind == .windowEdge ? 1.3 : 1) * (1.2 - off * 0.7) * appeal(spot.point, on: spot.loop.kind) * randRange(0.8, 1.2)
             if best == nil || score > best!.score { best = (score, spot.point) }
         }
         let bed = best?.point ?? V2(screen.midX, screen.minY + map.standoff)
@@ -1413,6 +1434,7 @@ final class Spider {
         guard dormant else { return }
         dormant = false
         greetOnWaking = true
+        remember(.greeted, 0.5)
         if mode == .nesting {
             nestDur = 0   // up and out along the silk; a stretch on the wall
             return
@@ -1485,6 +1507,7 @@ final class Spider {
         }
         startled.velocity = 11 * jumpy
         setEmote(.surprise, 0.8)
+        remember(.startled)
         guard settled else { return }
         wake()
         queued = nil
@@ -1566,7 +1589,8 @@ final class Spider {
         let legsChanged = d.look.legs != look.legs
         look = d.look
         name = d.name
-        personality = d.personality
+        basePersonality = d.personality
+        refreshTemperament(force: true)
         gait = d.gait
         habits = d.habits
         packs = d.packs
@@ -1582,7 +1606,61 @@ final class Spider {
     }
 
     var design: SpiderDesign {
-        SpiderDesign(name: name, look: look, personality: personality, gait: gait, habits: habits, packs: packs, customPhrases: customPhrases)
+        SpiderDesign(name: name, look: look, personality: basePersonality, gait: gait, habits: habits, packs: packs, customPhrases: customPhrases)
+    }
+
+    // MARK: Memory
+
+    /// The Studio's personality, as its memories shift it.
+    private func refreshTemperament(force: Bool = false) {
+        learned = memory?.shift ?? .zero
+        let p = basePersonality.shifted(by: learned)
+        if force || p != personality { personality = p }
+    }
+
+    /// Something worth remembering happened, here.
+    private func remember(_ e: Experience, _ amount: CGFloat = 1) {
+        memory?.record(e, amount, at: placeHere())
+    }
+
+    /// Where it is, as its memory thinks of places; nil in mid-air.
+    private func placeHere() -> Place? {
+        switch mode {
+        case .attached:
+            guard let loop = map.loop(anchor.loopID) else { return nil }
+            return place(pos, on: loop.kind)
+        case .nesting: return place(pos, on: .screenBorder)
+        default: return nil
+        }
+    }
+
+    private func place(_ p: V2, on kind: SurfaceKind) -> Place {
+        Place(at: p, in: map.screenFrame(containing: p), on: kind, habitat: inHabitat)
+    }
+
+    /// How much its memories make it like a spot, as a multiplier (1 with
+    /// no memory, or nowhere it has feelings about).
+    private func appeal(_ p: V2, on kind: SurfaceKind) -> CGFloat {
+        memory?.appeal(of: place(p, on: kind)) ?? 1
+    }
+
+    /// A second or so of its life, as its memory sees it.
+    private func liveMemory(dt: CGFloat) {
+        guard let m = memory else { return }
+        memoryDue += dt
+        guard memoryDue >= 1 else { return }
+        var now = Moment()
+        let idle = t - lastUserActivity
+        now.company = !dormant && !isHeld && idle < 20 && cursor.distance(to: pos) < 300 * config.scale && cursorVel.length < 600
+        now.alone = !dormant && idle > 180
+        // (Put to bed while the Mac is locked is not settling on a spot:
+        // a night of it would make wherever it was tucked in a favourite.)
+        now.calm = !dormant && ((mode == .attached && [.rest, .sleep, .groom, .eat, .watch, .stare].contains(activity))
+            || (mode == .nesting && nestPhase == .sleeping))
+        now.place = placeHere()
+        m.live(for: TimeInterval(memoryDue), now, base: basePersonality)
+        memoryDue = 0
+        refreshTemperament()
     }
 
     // MARK: - Frame update
@@ -1598,6 +1676,7 @@ final class Spider {
         updateInterest(dt: dt)
         updateEmote(dt: dt)
         updateBlink(dt: dt)
+        liveMemory(dt: dt)
 
         if mode != .airborne { landing = nil; landingReach = 0 }
         if mode != .attached { runNose = approach(runNose, 0, 8, dt); surfacePrev = nil }
@@ -1629,6 +1708,7 @@ final class Spider {
         headTilt.step(to: mode == .attached && activity == .watch ? 0.72 : (mode == .attached ? interestNose.value * 0.6 : 0), dt: dt)
         updateWeb(dt: dt)
         updatePrey(dt: dt)
+        updateToys(dt: dt)
         tidyAbandonedHammock()
         if var h = hammock, h.tickDrape(dt: dt) { hammock = h }
         rockHammock(dt: dt)
@@ -1682,6 +1762,7 @@ final class Spider {
     var laser: V2? {
         didSet {
             if laser != nil, oldValue == nil {
+                endToyPlay(bored: false)
                 wake()
                 lastUserActivity = t
                 if mode == .attached { queued = nil; decisionIn = min(decisionIn, 0.15) }
@@ -1710,6 +1791,7 @@ final class Spider {
             // Got it! Pats at it, then pounces on the spot.
             if t - lastLaserPounce > 1.2 {
                 lastLaserPounce = t
+                remember(.played, 0.25)
                 beginActivity(chance(0.5) ? .hop : .peer, dur: chance(0.5) ? 0.42 : 0.8)
                 if chance(0.4) { setEmote(.sparkle, 0.7) }
             } else {
@@ -1766,6 +1848,7 @@ final class Spider {
     private var fleeCornered = false
 
     private func startPlaying() {
+        endToyPlay(bored: false)
         wake()
         if mode == .attached { queued = nil; walkThen = nil; decisionIn = min(decisionIn, 0.15) }
     }
@@ -1827,6 +1910,7 @@ final class Spider {
         walkThen = nil
         let dir: CGFloat = (p - pos).dot(loop.segs[anchor.segIdx].dir) >= 0 ? 1 : -1
         turnTo(dir, then: .greet, for: randRange(1.8, 2.4))
+        remember(.played, 0.2)
         happy.velocity = 6
         setEmote(chance(0.6) ? .hearts : .sparkle, 1.1)
         decisionIn = max(decisionIn, 3)
@@ -1839,6 +1923,7 @@ final class Spider {
         queued = nil
         beginActivity(chance(0.6) ? .dance : .drum, dur: randRange(1.6, 2.6))
         setEmote(.note, 1.4)
+        remember(.played, 0.3)
         decisionIn = max(decisionIn, 2.5)
     }
 
@@ -1867,6 +1952,7 @@ final class Spider {
         beginActivity(chance(0.5) ? .armsUp : .wiggle, dur: 0.9)
         happy.velocity = 7
         setEmote(.sparkle, 0.9)
+        remember(.played, 0.3)
     }
 
     // MARK: Going home
@@ -1901,6 +1987,7 @@ final class Spider {
         friendFlee = nil
         homing = nil
         huntTarget = nil
+        endToyPlay(bored: false)
         cursorHunt = .none
         wake()
         queued = nil
@@ -1955,7 +2042,7 @@ final class Spider {
     /// hunt, a chase, a job, a film, sleep, or a move already under way.
     private var preoccupied: Bool {
         guard mode == .attached, !inCinema, laser == nil, departing == nil, huntTarget == nil, caught == nil,
-              homing == nil, build == nil, peek == nil, t > escapeUntil, t >= bedBoundUntil,
+              homing == nil, build == nil, peek == nil, toyPlay == nil, t > escapeUntil, t >= bedBoundUntil,
               !(confined && !inBox), !hangOnly else { return true }
         if [.sleep, .eat, .watch, .peekaboo, .roll, .spin, .crouch, .shoot, .fasten, .scurry,
             .startle, .stretch, .shake, .bounce, .dance, .drum].contains(activity) { return true }
@@ -2187,6 +2274,8 @@ final class Spider {
 
     /// Got it! It hangs off the pointer by its front legs.
     private func catchCursor() {
+        remember(.played)
+        remember(.huntWon, 0.5)
         cursorHunt = .clinging
         mode = .clinging
         huntPounce = false
@@ -2283,6 +2372,7 @@ final class Spider {
         launchLoop = ""
         legMode = .free
         if flung {
+            remember(.thrown, 0.6)
             vel = (cursorVel.clampedLength(1500) * 0.7 + V2(0, 120)).clampedLength(1600)
             startled.velocity = 10
             setEmote(.surprise, 0.7)
@@ -2440,6 +2530,7 @@ final class Spider {
         peek = Peek(edgeT: e.t, into: e.into, wanted: Int.random(in: 2...4))
         beginActivity(.peekaboo, dur: 60)
         queued = nil
+        remember(.played, 0.5)
         return true
     }
 
@@ -2979,7 +3070,7 @@ final class Spider {
         if let l = laser { laser = l + d }
         if webActive { webAnchor += d; rope.clear() }
         // Whatever is loose in there goes along with the scenery too.
-        for p in prey { p.pos += d }
+        for p in prey { p.shift(by: d) }
     }
 
     /// The map it is on was rebuilt under it (the habitat window was
@@ -3115,6 +3206,7 @@ final class Spider {
         p.home = confine
         nextPreyID += 1
         prey.append(p)
+        memory?.meet(kind.memoryName)
         wake()
         if mode == .attached, [.rest, .sleep, .idle, .look].contains(activity) {
             decisionIn = min(decisionIn, 0.3)
@@ -3123,6 +3215,56 @@ final class Spider {
         return p
     }
 
+    /// Something finding its own way in, unasked: through the side of the
+    /// screen if it flies, out of a crack somewhere if it walks — ants in a
+    /// little line. It has to be noticed before it is hunted, and it goes
+    /// again after a while if it is not caught. Nothing, if there is
+    /// nowhere for it.
+    @discardableResult
+    func releaseWild(night: Bool, raining: Bool) -> [Prey] {
+        guard !inCinema else { return [] }
+        let kind = PreyKind.wanderingIn(night: night, raining: raining)
+        let screen = confine ?? map.screenFrame(containing: pos)
+        var out: [Prey] = []
+        func make(at p: V2) -> Prey {
+            let c = Prey(kind: kind, id: nextPreyID, at: p, scale: config.scale)
+            nextPreyID += 1
+            c.home = confine
+            c.wild = true
+            c.noticed = false
+            c.leaveAge = randRange(100, 240)
+            out.append(c)
+            return c
+        }
+        if kind.flies {
+            if confine == nil {
+                let fromLeft = chance(0.5)
+                let p = make(at: V2(fromLeft ? screen.minX - 20 : screen.maxX + 20,
+                                    randRange(screen.minY + screen.height * 0.35, screen.maxY - 80)))
+                p.vel = V2(fromLeft ? 120 : -120, randRange(-20, 20))
+            } else {
+                make(at: V2(randRange(screen.minX + 40, screen.maxX - 40), randRange(screen.midY, screen.maxY - 40))).alpha = 0
+            }
+        } else {
+            let spots = map.sampleSpots(spacing: 50).filter {
+                ($0.seg.facing == .up || (kind.climbs && $0.seg.facing != .down)) && screen.contains($0.point.point)
+                    && $0.point.distance(to: pos) > 260 * config.scale && $0.seg.isOpen(at: $0.anchor.t)
+            }
+            guard let spot = spots.randomElement() else { return [] }
+            let dir: CGFloat = chance(0.5) ? 1 : -1
+            for i in 0..<(kind == .ant ? Int.random(in: 2...3) : 1) {
+                var a = spot.anchor
+                a.t = clamp(a.t - dir * CGFloat(i) * 24 * config.scale, 10, max(spot.seg.len - 10, 10))
+                make(at: spot.point).emerge(on: a, dir: dir, map: map)
+            }
+        }
+        prey += out
+        return out
+    }
+
+    /// Whether anything loose moved this frame.
+    var preyAstir: Bool { prey.contains { $0.astir } }
+
     /// The creature under the pointer, if any, for picking up.
     func preyHit(_ p: V2) -> Prey? {
         prey.first { $0.state == .loose && $0.pos.distance(to: p) < 22 * $0.scale + 6 }
@@ -3130,6 +3272,7 @@ final class Spider {
 
     func beginPreyGrab(_ p: Prey, at point: V2) {
         p.held = true
+        p.noticed = true
         p.vel = .zero
         p.pos = point
         lastUserActivity = t
@@ -3154,16 +3297,30 @@ final class Spider {
     /// Whatever it is after: the nearest thing still loose.
     private func quarry() -> Prey? {
         guard t > huntPauseUntil, !inCinema else { return nil }
-        if let id = huntTarget, let p = prey.first(where: { $0.id == id && $0.state == .loose }) { return p }
-        let loose = prey.filter { $0.state == .loose }
-        guard let nearest = loose.min(by: { $0.pos.distance(to: pos) < $1.pos.distance(to: pos) }) else { return nil }
+        if let id = huntTarget, let p = prey.first(where: { $0.id == id && $0.state == .loose && !$0.spurned && !$0.gone }) { return p }
+        // Only what it has spotted, and not what it knows tastes horrible.
+        let loose = prey.filter {
+            $0.state == .loose && $0.noticed && !$0.spurned && $0.alpha > 0.4
+                && !($0.kind.bitter && (memory?.fondness(of: $0.kind.memoryName) ?? 0) < -0.15)
+        }
+        // The nearest — though what it has come to like best looks nearer.
+        func far(_ p: Prey) -> CGFloat { p.pos.distance(to: pos) / (1 + 0.5 * max(memory?.fondness(of: p.kind.memoryName) ?? 0, 0)) }
+        guard let nearest = loose.min(by: { far($0) < far($1) }) else { return nil }
         huntTarget = nearest.id
         huntSince = t
         return nearest
     }
 
     private func updatePrey(dt: CGFloat) {
-        for p in prey { p.update(dt: dt, t: t, map: map, spider: pos) }
+        let onLoop = mode == .attached ? anchor.loopID : nil
+        for p in prey { p.update(dt: dt, t: t, map: map, spider: pos, spiderLoop: onLoop, cursor: cursor) }
+        spotNewcomers(dt: dt)
+        // Lying in wait for an ant, or creeping after one: it walks right
+        // into its jaws.
+        if caught == nil, mode == .attached, pendingJump == nil, [.crouch, .idle, .look, .turn, .sneak, .shake].contains(activity),
+           let id = huntTarget, prey.contains(where: { $0.id == id && $0.kind == .ant }) {
+            snapAtPrey(reach: 10)
+        }
         if let c = caught {
             // Held under the fangs, between the front legs, and turned over
             // as it is eaten.
@@ -3176,12 +3333,30 @@ final class Spider {
             c.heading = heading + sin(t * 9) * 0.15
             c.facing = facing
         }
-        prey.removeAll { $0.state == .eaten && $0.alpha <= 0 }
+        prey.removeAll { ($0.state == .eaten && $0.alpha <= 0) || $0.gone }
         fed = max(0, fed - dt / 900)
         // Lost track of it for too long: leave it be for a while.
         if huntTarget != nil, t - huntSince > 150 {
             huntTarget = nil
             huntPauseUntil = t + 12
+        }
+    }
+
+    /// Something that wandered in catches its eye: sooner the nearer it is
+    /// and if it moves, and hardly at all in its sleep. Then the hunt is on.
+    private func spotNewcomers(dt: CGFloat) {
+        for p in prey where p.state == .loose && !p.noticed && p.alpha > 0.5 {
+            let asleep = activity == .sleep || dormant || inHammock
+            let sight = (asleep ? 90 : 340) * config.scale
+            let d = p.pos.distance(to: pos)
+            guard d < sight, !inCinema else { continue }
+            let rate = (p.astir ? 0.9 : 0.2) * remap(d, 0, sight, 3, 0.4) * (asleep ? 0.3 : 1)
+            guard chance(rate * dt) else { continue }
+            p.noticed = true
+            memory?.meet(p.kind.memoryName)
+            if activity == .sleep, mode == .attached { wake() }
+            setEmote(.exclaim, 0.9)
+            if mode == .attached, caught == nil { decisionIn = min(decisionIn, 0.4) }
         }
     }
 
@@ -3202,12 +3377,16 @@ final class Spider {
         let along = d.dot(seg.dir)
         let off = abs(d.dot(seg.normal))
         let facingIt = along * walkDir >= 0
+        // A spider sure of itself springs from further off.
+        let reach = 75 * sc * (1 + learned.prowess)
 
-        if p.kind.flies, !p.onSurface {
+        if (p.kind.flies && !p.onSurface) || p.aloft {
             // In the air: snatch it if it comes near enough, otherwise keep
-            // under it, watching.
-            let lead = p.pos + p.vel * 0.22
-            if dist < 230 * sc, t - lastPounceAt > 1.2, ballistic(from: pos, to: lead) != nil {
+            // under it, watching. A mosquito darts far too fast for that:
+            // only while it hangs still, and right where it hangs.
+            let snatchable = p.kind != .mosquito || p.hovering
+            let lead = p.kind == .mosquito ? p.pos : p.pos + p.vel * 0.22
+            if snatchable, dist < 230 * sc, t - lastPounceAt > 1.2, ballistic(from: pos, to: lead) != nil {
                 pounce(at: lead)
             } else if abs(along) > 80 {
                 turnTo(along >= 0 ? 1 : -1, then: .walk, for: clamp(abs(along) / max(config.walkSpeed, 1), 0.4, 2.0))
@@ -3217,22 +3396,57 @@ final class Spider {
             return
         }
 
+        // An ant feels it coming and is off, and is too quick to chase down:
+        // lie in wait in its path instead, or leap on ahead of it.
+        if p.kind == .ant, let pa = p.anchor {
+            if dist < 14 * sc { catchPrey(p); return }
+            let coming = pa.loopID == anchor.loopID && p.travel.dot(pos - p.pos) > 0 && dist < 450 * sc
+            if coming {
+                // (It is snapped up as it walks into reach: see `updatePrey`.)
+                if !facingIt, abs(along) > 10 {
+                    turnTo(along >= 0 ? 1 : -1, then: .crouch, for: randRange(0.4, 0.7))
+                } else {
+                    beginActivity(.crouch, dur: randRange(0.3, 0.5))
+                    pendingJump = nil
+                }
+                return
+            }
+            if !stalled, let ahead = spotAhead(of: p) {
+                startJump(to: ahead)
+                huntStalls = 0
+                return
+            }
+            if p.anchor?.segIdx == anchor.segIdx, pa.loopID == anchor.loopID {
+                // Nowhere to get ahead to: creep after it — walking would
+                // only give it away.
+                let dir: CGFloat = along >= 0 ? 1 : -1
+                turnTo(dir, then: .sneak, for: clamp(abs(along) / max(config.walkSpeed * 0.42, 1) * 0.8, 0.4, 3.0))
+                return
+            }
+        }
+
         let sameEdge = p.anchor?.loopID == anchor.loopID && p.anchor?.segIdx == anchor.segIdx
         if sameEdge || (off < 30 * sc && abs(along) < 140 * sc) {
             let settled = p.onSurface && p.vel.length < 20
             if dist < 14 * sc {
                 catchPrey(p)
-            } else if abs(along) < 75 * sc, facingIt, settled, t - lastPounceAt > 1.2 {
+            } else if p.tucked, abs(along) < reach * 1.4 {
+                // Shut up in its shell: nothing for it but to keep quite
+                // still beside it, and wait for it to come out.
+                beginActivity(.crouch, dur: randRange(0.6, 1.0))
+                pendingJump = nil
+            } else if abs(along) < reach, facingIt, settled, t - lastPounceAt > 1.2 {
                 // Close, facing it, and it is sitting still: pounce.
                 pounce(at: p.mouthPoint)
-            } else if abs(along) < 75 * sc, facingIt {
+            } else if abs(along) < reach, facingIt {
                 // It is on the move: wait, poised, for it to settle.
                 beginActivity(.crouch, dur: randRange(0.3, 0.6))
                 pendingJump = nil
             } else {
                 // Close in: a sneak for the last stretch, a walk before that.
                 let dir: CGFloat = along >= 0 ? 1 : -1
-                let style: Activity = abs(along) < 230 * sc ? .sneak : .walk
+                // (A beetle shuts up at anything walking at it: creep from further off.)
+                let style: Activity = abs(along) < (p.kind.armoured ? 380 : 230) * sc ? .sneak : .walk
                 let speed = style == .sneak ? config.walkSpeed * 0.42 : config.walkSpeed
                 turnTo(dir, then: style, for: clamp(abs(along) / max(speed, 1) * 0.8, 0.4, 3.0))
             }
@@ -3265,7 +3479,7 @@ final class Spider {
             if spot.loop.id == anchor.loopID { score *= 1.5 }
             if best == nil || score < best!.score { best = (score, spot.point) }
         }
-        if let b = best, stalled || abs(along) < 260 * sc || chance(0.5) {
+        if let b = best, stalled || abs(along) < 260 * sc || chance(0.5 + learned.prowess) {
             startJump(to: b.point)
             huntStalls = 0
         } else {
@@ -3290,6 +3504,22 @@ final class Spider {
         return forward >= 0 ? 1 : -1
     }
 
+    /// A spot to leap to on the ant's own window, a little way ahead of it
+    /// along its path, to wait for it there.
+    private func spotAhead(of p: Prey) -> V2? {
+        guard let pa = p.anchor else { return nil }
+        let sc = config.scale
+        let want = p.pos + p.travel * 170 * sc
+        var best: (d: CGFloat, point: V2)?
+        for spot in map.sampleSpots(spacing: 30) where spot.loop.id == pa.loopID {
+            let d = spot.point.distance(to: want)
+            guard d < 140 * sc, spot.point.distance(to: pos) > 50, (spot.point - p.pos).dot(p.travel) > 60 * sc,
+                  let launch = ballistic(from: pos, to: spot.point), launch.normalized.dot(surfaceNormal) > -0.15 else { continue }
+            if best == nil || d < best!.d { best = (d, spot.point) }
+        }
+        return best?.point
+    }
+
     private func pounce(at point: V2) {
         lastPounceAt = t
         huntPounce = true
@@ -3300,8 +3530,19 @@ final class Spider {
 
     private func catchPrey(_ p: Prey) {
         guard p.state == .loose else { return }
+        if p.kind.armoured, p.tucked {
+            // Fangs on a shell: they skid off it, and the beetle clamps up
+            // all the tighter.
+            guard p.age - p.lastKnockAge > 1 else { return }
+            p.knock()
+            huntPounce = false
+            remember(.huntMissed, 0.4)
+            setEmote(.question, 0.9)
+            return
+        }
         p.state = .caught
         caught = p
+        remember(.huntWon)
         huntTarget = nil
         huntPounce = false
         happy.velocity = 6
@@ -3327,13 +3568,682 @@ final class Spider {
 
     private func finishMeal() {
         guard let c = caught else { return }
+        if c.kind.bitter {
+            // Horrible. Out it comes, none the worse for it — and that is a
+            // lesson learnt.
+            caught = nil
+            c.spatOut(map: map, awayFrom: pos)
+            memory?.warm(to: c.kind.memoryName, by: -0.4)
+            think(.text("Yuck!"), for: 2.4)
+            queue(.shake, 0.6)
+            return
+        }
         c.state = .eaten
         c.eaten = 1
         caught = nil
         fed = min(1, fed + c.kind.nourishment)
+        remember(.fed)
+        memory?.warm(to: c.kind.memoryName, by: 0.15)
         happy.velocity = 9
         setEmote(.hearts, 1.6)
         queue(.wiggle, randRange(0.8, 1.3))
+    }
+
+    // MARK: Toys
+    //
+    // Toys (see Toys.swift), played with the pointer much as the laser is:
+    // while you have one going — dangling, thrown, dropped, wound — it
+    // drops what it is doing and goes for it, the playful at once, the lazy
+    // in their own time. A timid one gives a new toy a look from a safe
+    // distance first, and backs off if it comes at it. Then it plays: bats
+    // it along and chases after it, pounces on it, leaps at the feather.
+    // Left lying about, a toy still gets played with now and then, as the
+    // mood takes it; it tires of it after a while (the playful take longer),
+    // though never while you are playing with it.
+
+    /// The toys out on the desktop, shared with any visitors. Only played
+    /// with on the desktop they are on, not from inside the habitat.
+    var toys: ToyBox?
+    private enum ToyStage { case investigate, play, retreat }
+    private struct ToyPlay {
+        var id: Int
+        var stage: ToyStage
+        var since: CGFloat
+        var stageSince: CGFloat
+        /// Seconds spent sizing it up from close by.
+        var studied: CGFloat = 0
+        /// 0…1: at 1 it has had enough.
+        var boredom: CGFloat = 0
+        var bats = 0
+        var stalls = 0
+        var lastPos = V2.zero
+    }
+    private var toyPlay: ToyPlay?
+    /// How much it feels like playing, 0…1: it builds while it has not
+    /// played for a while, and is spent in playing.
+    private(set) var playDrive: CGFloat = 0.5
+    private var toysSeen: Set<Int> = []
+    /// How used to each toy it is by now, 0 (new) … 1 (old news); it wears
+    /// off over a quarter of an hour or so.
+    private var toyFamiliar: [Int: CGFloat] = [:]
+    /// Toys it has had enough of for now, and until when.
+    private var toyRestUntil: [Int: CGFloat] = [:]
+    private var toyKnocksHeard: [Int: Int] = [:]
+    /// A pat under way: the front legs are up, and come down on it then.
+    private var pendingBat: (id: Int, at: CGFloat, dir: V2, power: CGFloat)?
+    /// The toy a leap is at, and whether it is in the air on it yet.
+    private var toyPounce: Int?
+    private var toyPounceFlying = false
+    private var lastToyLeap: CGFloat = -9
+    private var lastToyFright: CGFloat = -99
+    private var toyTouchedAt: [Int: CGFloat] = [:]
+    private var toyContactPos: V2?
+
+    /// The toys here with it: on its desktop and (in a box) in the box.
+    private var toysHere: [Toy] {
+        guard let box = toys, box.map === map, !inHabitat else { return [] }
+        return box.toys.filter { inBoxOrFree($0.pos) }
+    }
+
+    private func toy(_ id: Int) -> Toy? { toysHere.first { $0.id == id } }
+
+    /// Free to go and play: on something, awake, and nothing more pressing.
+    private var canPlayWithToys: Bool {
+        mode == .attached && !config.paused && !dormant && !inCinema && laser == nil && departing == nil
+            && homing == nil && build == nil && peek == nil && cursorHunt == .none && caught == nil
+            && friendChase == nil && friendFlee == nil && !(confined && !inBox) && !hangOnly && t > escapeUntil
+    }
+
+    /// How fast it comes to feel like playing again.
+    private var playDriveRate: CGFloat {
+        let P = personality
+        return lerp(0.004, 0.018, P.playfulness) * lerp(0.7, 1.3, P.energy) * lerp(1.2, 0.6, P.laziness) * lerp(1, 0.4, drowsy)
+    }
+
+    /// You put a toy out: it sees it arrive.
+    func seeToy(_ toy: Toy) {
+        toysSeen.insert(toy.id)
+        memory?.meet(toy.kind.memoryName)
+        guard !dormant, !inHabitat, !config.paused else { return }
+        wake()
+        // Something new: that is always worth a look.
+        playDrive = max(playDrive, 0.6)
+        toyFamiliar[toy.id] = 0
+        setEmote(.question, 0.8)
+        if mode == .attached, toyPlay == nil, [.rest, .idle, .look, .groom, .fidget].contains(activity) {
+            decisionIn = min(decisionIn, 0.6)
+        }
+    }
+
+    private func updateToys(dt: CGFloat) {
+        let here = toysHere
+        let vNow = (toyContactPos.map { dt > 0 ? (pos - $0) / dt : .zero } ?? .zero).clampedLength(1200)
+        toyContactPos = pos
+        playDrive = clamp(playDrive + dt * (toyPlay == nil ? playDriveRate : -0.004), 0, 1)
+        for (k, v) in toyFamiliar { toyFamiliar[k] = v * exp(-dt / 900) }
+        guard let box = toys, !here.isEmpty else {
+            toyPlay = nil
+            pendingBat = nil
+            toyPounce = nil
+            return
+        }
+        let sc = config.scale
+        let P = personality
+
+        // Whatever it runs into, lands on or is flung through gets knocked;
+        // one that rolls into it sitting still comes off its legs.
+        for toy in here where !toy.held || toy.dangling {
+            let d = toy.pos - pos
+            // (A feather is all fluff: easier to get a leg to.)
+            guard d.length < toy.radius + (toy.kind.flutters ? 19 : 13) * sc else { continue }
+            if toy.dangling {
+                // A leg on the feather on the end of your string: as often as
+                // not it gets hold of it and hauls it down with it on the
+                // string; otherwise a swat that sets it swinging.
+                guard t - (toyTouchedAt[toy.id] ?? -9) > 0.4 else { continue }
+                toyTouchedAt[toy.id] = t
+                if mode == .airborne, chance(0.45 + learned.prowess) {
+                    toy.bat(vel * 0.8 + V2(0, -250), map: box.map)
+                    caughtToy(toy)
+                } else if mode == .airborne {
+                    toy.bat(d.normalized * 160 + vNow * 0.3, map: box.map)
+                    battedToy(toy)
+                } else {
+                    toy.bat(d.normalized * 90 + vNow * 0.3, map: box.map)
+                }
+                continue
+            }
+            if mode == .airborne, toyPounce == toy.id {
+                toy.pin(for: 1.4)
+                caughtToy(toy)
+                continue
+            }
+            guard toy.pinnedFor <= 0 else { continue }
+            if vNow.length > 20, d.dot(vNow) > 0 {
+                if mode == .attached {
+                    // Walking into it pushes it along ahead.
+                    toy.shove(vNow * 1.15, map: box.map)
+                } else if t - (toyTouchedAt[toy.id] ?? -9) > 0.3 {
+                    toyTouchedAt[toy.id] = t
+                    toy.bat(vNow * 0.55 + d.normalized * 60, map: box.map)
+                }
+            } else if vNow.length <= 20 {
+                toy.bump(d.normalized, map: box.map)
+            }
+        }
+
+        // The front legs coming down on it.
+        if let b = pendingBat, t >= b.at {
+            pendingBat = nil
+            if let toy = toy(b.id), !toy.held || toy.dangling, toy.pos.distance(to: pos) < toy.radius + 40 * sc {
+                toy.bat(b.dir * b.power, map: box.map)
+                battedToy(toy)
+            } else if chance(0.4) {
+                setEmote(.question, 0.7)
+            }
+        }
+
+        // Gathering for a leap at something in the air: the aim follows it
+        // until the moment it goes.
+        if let id = toyPounce, mode == .attached, activity == .crouch, pendingJump != nil, let toy = toy(id),
+           toy.dangling || toy.airborne {
+            let aim = toy.pos + toy.vel * 0.3
+            if ballistic(from: pos, to: aim) != nil { pendingJump = aim }
+        }
+
+        // A leap at a toy, over: on it, or not.
+        if toyPounce != nil {
+            if mode == .airborne { toyPounceFlying = true }
+            else if mode == .attached, toyPounceFlying || (pendingJump == nil && ![.crouch, .turn].contains(activity)) {
+                if toyPounceFlying, let id = toyPounce, let toy = toy(id), toy.pinnedFor <= 0,
+                   toy.pos.distance(to: pos) < toy.radius + 26 * sc, !toy.held {
+                    toy.pin(for: 1.2)
+                    caughtToy(toy)
+                } else if toyPounceFlying, toyPounce.flatMap({ toy($0) })?.held != true {
+                    toyPlay?.boredom += 0.04
+                }
+                toyPounce = nil
+                toyPounceFlying = false
+            } else if mode != .attached {
+                toyPounce = nil
+                toyPounceFlying = false
+            }
+        }
+
+        // Spotting them: at once if it is moving or ringing and near.
+        let asleep = activity == .sleep || dormant || inHammock
+        for toy in here where !toysSeen.contains(toy.id) && toy.alpha > 0.5 {
+            let sight = (asleep ? 90 : 360) * sc
+            let dd = toy.pos.distance(to: pos)
+            let lively = toy.speed > 15 || toy.ring > 0.1 || toy.dangling || toy.walking
+            guard dd < sight, !inCinema else { continue }
+            let rate = (lively ? 1.6 : 0.35) * remap(dd, 0, sight, 3, 0.4) * (asleep ? 0.3 : 1) * lerp(0.6, 1.4, P.curiosity)
+            guard chance(rate * dt) else { continue }
+            toysSeen.insert(toy.id)
+            memory?.meet(toy.kind.memoryName)
+            if mode == .attached, toyPlay == nil, !asleep {
+                setEmote(lively ? .exclaim : .question, 0.9)
+                decisionIn = min(decisionIn, 0.5)
+            }
+        }
+
+        // A jingle: it looks round to see — right up close and loud, a
+        // nervous one jumps.
+        for toy in here where toy.knocks != toyKnocksHeard[toy.id] ?? 0 {
+            toyKnocksHeard[toy.id] = toy.knocks
+            let dd = toy.pos.distance(to: pos)
+            guard dd < 700 * sc, toy.lastKnock > 0.2, !dormant else { continue }
+            toysSeen.insert(toy.id)
+            // Its own doing: no surprise.
+            if toyPlay?.id == toy.id, toyPlay?.stage == .play { continue }
+            if dd < 150 * sc, toy.lastKnock > 0.5, t - lastToyFright > 4, chance(lerp(0.7, 0.05, P.bravery)) {
+                toyFright(from: toy)
+            } else if toyPlay == nil {
+                noticeCommotion(at: toy.pos, fright: false)
+            }
+        }
+
+        // Something rolling or flying straight at it: a jump out of the way
+        // for a timid one, a trap with the front legs for a bold one.
+        if mode == .attached, !isHeld, ![.crouch, .turn, .shoot, .eat, .startle].contains(activity), pendingJump == nil,
+           t - lastToyFright > 2.5 {
+            for toy in here where !toy.held && toy.pinnedFor <= 0 {
+                let rel = pos - toy.pos
+                let closing = toy.vel.dot(rel.normalized)
+                guard closing > 110 * sc, rel.length < 85 * sc, rel.length > 18 * sc else { continue }
+                toysSeen.insert(toy.id)
+                if chance(lerp(0.85, 0.12, (P.bravery + P.playfulness) / 2)) {
+                    toyFright(from: toy)
+                } else {
+                    lastToyFright = t
+                    wake()
+                    queued = nil
+                    walkThen = nil
+                    beginActivity(.curious, dur: randRange(0.5, 0.7))
+                    if toyPlay == nil { startToyPlay(toy) }
+                }
+                break
+            }
+        }
+
+        // You are playing with one: it goes for it, like the dot — the
+        // playful straight away, the lazy when they get round to it, and
+        // one that has only just had enough of it, less keenly.
+        if let toy = here.first(where: { $0.inPlay }), toyPlay?.id != toy.id, canPlayWithToys,
+           ![.crouch, .turn, .shoot, .eat].contains(activity) {
+            toysSeen.insert(toy.id)
+            let rested = t >= toyRestUntil[toy.id] ?? 0 || toy.dangling
+            let eager = lerp(1, 6, P.playfulness) * lerp(1, 0.45, P.laziness) * lerp(1, 0.4, drowsy) * (rested ? 1 : 0.25)
+            if chance(eager * dt) {
+                // (A leap only goes from a crouch: any other left over is stale.)
+                pendingJump = nil
+                wake()
+                startToyPlay(toy)
+                if mode == .attached { decisionIn = min(decisionIn, 0.15) }
+            }
+        }
+
+        // What it is playing with: still there, and how tired of it it is.
+        if let play = toyPlay {
+            guard let toy = toy(play.id) else {
+                // Gone: a look round for it.
+                endToyPlay(bored: false)
+                if mode == .attached, activity == .idle || activity == .look { beginActivity(.look, dur: randRange(0.8, 1.4)) }
+                return
+            }
+            if dormant || inCinema || departing != nil || laser != nil { endToyPlay(bored: false); return }
+            let fam = toyFamiliar[toy.id] ?? 0
+            let lively = toy.speed > 40 * sc || toy.dangling || toy.walking || toy.ring > 0.2
+            // Never tired of it while you have hold of it, and hardly while
+            // you are throwing it about.
+            if play.stage != .retreat, !toy.held {
+                toyPlay!.boredom += dt * lerp(0.03, 0.009, P.playfulness) * (lively ? 0.35 : 1) * lerp(0.7, 1.4, fam) * lerp(1, 1.6, drowsy)
+                    * (toy.inPlay ? 0.3 : 1)
+            }
+            if play.stage == .investigate, mode == .attached {
+                let comfort = toyComfort(fam)
+                if toy.pos.distance(to: pos) < comfort + 60 * sc { toyPlay!.studied += dt }
+            }
+        }
+    }
+
+    /// How close it will come to something it does not know yet.
+    private func toyComfort(_ fam: CGFloat) -> CGFloat {
+        lerp(95, 40, personality.bravery) * lerp(1, 0.6, fam) * config.scale
+    }
+
+    /// A jump at a toy coming at it, or jingling right by it.
+    private func toyFright(from toy: Toy) {
+        lastToyFright = t
+        guard mode == .attached, !isHeld else { return }
+        wake()
+        queued = nil
+        walkThen = nil
+        pendingBat = nil
+        startled.velocity = 9 * lerp(1.3, 0.7, personality.bravery)
+        setEmote(.exclaim, 0.7)
+        if surfaceNormal.y > 0.85 {
+            startleHop(awayFrom: toy.pos)
+        } else {
+            beginActivity(.startle, dur: 0.55)
+        }
+        // A timid one keeps its distance for a while after that.
+        if personality.bravery < 0.5 {
+            if toyPlay == nil || toyPlay?.id == toy.id {
+                toyPlay = ToyPlay(id: toy.id, stage: .retreat, since: toyPlay?.since ?? t, stageSince: t)
+            }
+        }
+    }
+
+    private func startToyPlay(_ toy: Toy) {
+        let fam = max(toyFamiliar[toy.id] ?? 0, min((memory?.familiarity(with: toy.kind.memoryName).times ?? 0) / 8, 1))
+        // Straight in — unless it is a timid one, and this is new to it: then
+        // it looks it over first.
+        let straightIn = personality.bravery >= 0.4 || fam > 0.3 || toy.dangling
+        toyPlay = ToyPlay(id: toy.id, stage: straightIn ? .play : .investigate, since: t, stageSince: t, lastPos: pos)
+        toysSeen.insert(toy.id)
+        queued = nil
+        walkThen = nil
+    }
+
+    /// Picks a toy to go and play with, if it feels like it: the likelier
+    /// the more it wants to play, the more the toy draws it — new, on the
+    /// move, jingling, dangled for it, a favourite — and the nearer it is.
+    private func pickToy() -> Bool {
+        guard canPlayWithToys else { return false }
+        let sc = config.scale
+        var best: (score: CGFloat, toy: Toy)?
+        for toy in toysHere where toysSeen.contains(toy.id) && (!toy.held || toy.dangling) && t >= toyRestUntil[toy.id] ?? 0 {
+            let d = toy.pos.distance(to: pos)
+            guard d < 900 * sc else { continue }
+            let fam = toyFamiliar[toy.id] ?? 0
+            let fond = memory?.fondness(of: toy.kind.memoryName) ?? 0
+            let astir = toy.dangling ? 2.5 : min(toy.speed / (120 * sc), 1.5) + toy.ring + (toy.walking ? 1 : 0)
+            let score = toy.kind.lure * (1 + astir) * lerp(1.4, 0.55, fam) * (1 + fond * 0.6) / (1 + d / (350 * sc))
+            if best == nil || score > best!.score { best = (score, toy) }
+        }
+        guard let b = best else { return false }
+        let P = personality
+        let want = playDrive * lerp(0.3, 1.2, P.playfulness) * lerp(0.7, 1.2, P.curiosity) * b.score * lerp(1, 0.35, drowsy) * 0.7
+            + (b.toy.dangling ? 0.35 : 0)
+        guard chance(min(0.85, want)) else { return false }
+        startToyPlay(b.toy)
+        return true
+    }
+
+    /// Had enough (or had it taken away).
+    private func endToyPlay(bored: Bool) {
+        guard let play = toyPlay else { return }
+        toyPlay = nil
+        pendingBat = nil
+        guard bored else { return }
+        let P = personality
+        let fam = min(1, (toyFamiliar[play.id] ?? 0) + 0.3)
+        toyFamiliar[play.id] = fam
+        toyRestUntil[play.id] = t + lerp(40, 15, P.playfulness) * (1 + fam)
+        playDrive *= lerp(0.2, 0.5, P.playfulness)
+        guard mode == .attached else { return }
+        queued = nil
+        walkThen = nil
+        // A good game leaves it pleased with itself; a dull one, it just
+        // wanders off.
+        if play.bats >= 3, chance(0.5) {
+            beginActivity(.wiggle, dur: 0.8)
+            setEmote(chance(0.5) ? .note : .hearts, 1.1)
+        } else if chance(lerp(0.2, 0.6, P.laziness)) {
+            beginActivity(.rest, dur: randRange(3, 7))
+        } else if chance(0.5) {
+            beginActivity(.groom, dur: randRange(1.4, 2.4))
+        } else {
+            turnTo(-walkDir, then: .walk, for: randRange(1.2, 2.6))
+        }
+        decisionIn = max(decisionIn, 2)
+    }
+
+    /// A pat that landed.
+    private func battedToy(_ toy: Toy) {
+        remember(.played, 0.1)
+        memory?.warm(to: toy.kind.memoryName, by: 0.02)
+        happy.velocity = max(happy.velocity, 3)
+        if chance(0.2) { setEmote(chance(0.5) ? .sparkle : .note, 0.7) }
+        guard toyPlay?.id == toy.id else { return }
+        toyPlay!.bats += 1
+        toyPlay!.boredom += 0.06 * (0.6 + (toyFamiliar[toy.id] ?? 0))
+    }
+
+    /// Got it: pinned under it, or the feather on your string.
+    private func caughtToy(_ toy: Toy) {
+        let fromYou = toy.dangling
+        remember(.played, fromYou ? 0.5 : 0.25)
+        memory?.warm(to: toy.kind.memoryName, by: 0.04)
+        happy.velocity = 6
+        setEmote(.sparkle, 0.8)
+        toyPounce = nil
+        toyPounceFlying = false
+        if toy.kind.windsUp, (memory?.familiarity(with: toy.kind.memoryName).times ?? 0) < 4 || chance(0.15) {
+            // It looked like a bug.
+            think(.text(chance(0.5) ? "crunchy…?" : "tin?"), for: 2)
+        }
+        if toyPlay?.id == toy.id {
+            toyPlay!.bats += 1
+            toyPlay!.boredom += 0.08
+        } else if toyPlay == nil, canPlayWithToys || mode == .airborne {
+            startToyPlay(toy)
+        }
+        queue(chance(0.5) ? .peer : .wiggle, randRange(0.7, 1.1))
+    }
+
+    /// One decision's worth of playing.
+    private func playWithToy() {
+        guard let play = toyPlay, let toy = toy(play.id) else {
+            endToyPlay(bored: false)
+            return
+        }
+        // Held up a moment (getting out from under a window, say): the game
+        // is still on once that is done.
+        guard canPlayWithToys else { return }
+        let P = personality
+        let sc = config.scale
+        decisionIn = toy.inPlay ? randRange(0.15, 0.35) : randRange(0.25, 0.6)
+        if play.boredom >= 1 || (!toy.inPlay && t - play.since > lerp(45, 120, P.playfulness)) {
+            endToyPlay(bored: true)
+            return
+        }
+        // Getting nowhere (a covered stretch in the way, say): it tires of
+        // it all the quicker.
+        if pos.distance(to: play.lastPos) < 6 * sc, [.walk, .sneak, .scurry].contains(activity) || activity == .idle {
+            toyPlay!.stalls += 1
+            if toyPlay!.stalls > 5, !toy.held { toyPlay!.boredom += 0.1 }
+        } else {
+            toyPlay!.stalls = 0
+        }
+        toyPlay!.lastPos = pos
+        let d = toy.pos - pos
+        let dist = d.length
+        let fam = toyFamiliar[toy.id] ?? 0
+        switch play.stage {
+        case .retreat:
+            // Keeping its distance, watching; then back for another look,
+            // or it leaves the thing be.
+            if t - play.stageSince > lerp(7, 2.5, P.bravery) {
+                if chance(lerp(0.3, 0.9, P.curiosity)) {
+                    toyPlay!.stage = .investigate
+                    toyPlay!.stageSince = t
+                    beginActivity(.look, dur: randRange(0.6, 1.2))
+                } else {
+                    endToyPlay(bored: true)
+                }
+            } else if dist < lerp(160, 80, P.bravery) * sc, let dir = alongEdge(to: toy.pos) {
+                turnTo(-dir, then: .scurry, for: randRange(0.4, 0.8))
+            } else {
+                beginActivity(.look, dur: randRange(0.6, 1.2))
+            }
+        case .investigate:
+            let comfort = toyComfort(fam)
+            if dist > comfort + 40 * sc {
+                if !approachToy(toy.pos, style: P.bravery < 0.4 ? .sneak : .walk, stop: comfort) {
+                    beginActivity(.look, dur: randRange(0.6, 1.0))
+                }
+                return
+            }
+            let need = lerp(2.5, 0.8, P.curiosity) * lerp(1, 0.4, fam)
+            if play.studied > need {
+                // It has the measure of it now.
+                toyPlay!.stage = .play
+                toyPlay!.stageSince = t
+                toyFamiliar[toy.id] = max(fam, 0.2)
+                setEmote(chance(0.5) ? .sparkle : .note, 0.8)
+                beginActivity(chance(0.5) ? .wiggle : .bounce, dur: randRange(0.6, 0.9))
+                return
+            }
+            // Sizing it up: face it, and a good look — nose down to it, or
+            // a front leg out to feel.
+            if let dir = alongEdge(to: toy.pos), dir != walkDir {
+                turnTo(dir, then: .look, for: randRange(0.5, 0.9))
+                return
+            }
+            let r = CGFloat.random(in: 0...1)
+            if r < 0.35 {
+                beginActivity(.peer, dur: randRange(1.0, 1.6))
+            } else if r < 0.65 {
+                beginActivity(.curious, dur: randRange(0.9, 1.5))
+                if chance(0.4) { setEmote(.question, 1.0) }
+            } else if dist > toy.radius + 30 * sc, chance(lerp(0.2, 0.7, P.bravery)) {
+                // A step closer.
+                approachToy(toy.pos, style: .sneak, stop: toy.radius + 24 * sc)
+            } else {
+                beginActivity(.look, dur: randRange(0.7, 1.3))
+            }
+        case .play:
+            playMove(toy, dist: dist)
+        }
+    }
+
+    /// Playing proper: after it, at it, and batting it about.
+    private func playMove(_ toy: Toy, dist: CGFloat) {
+        guard let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return }
+        let P = personality
+        let sc = config.scale
+        let seg = loop.segs[anchor.segIdx]
+        let d = toy.pos - pos
+        let along = d.dot(seg.dir)
+        let off = abs(d.dot(seg.normal))
+        let pounceKeen = lerp(0.2, 0.75, (P.playfulness + P.bravery + P.energy) / 3)
+
+        // In your hand: waiting for the throw — under it if it is near,
+        // eyes on it, up on its toes and wiggling.
+        if toy.held, !toy.dangling {
+            if abs(along) > 60 * sc, dist < 500 * sc {
+                approachToy(pos + seg.dir * along, style: .scurry, stop: 30 * sc, leap: false)
+            } else {
+                let r = CGFloat.random(in: 0...1)
+                beginActivity(r < 0.45 ? .curious : r < 0.7 ? .look : r < 0.85 ? .hop : .wiggle, dur: randRange(0.4, 0.8))
+            }
+            return
+        }
+
+        // Up in the air — on your string, drifting down, bouncing: under
+        // it, and a leap at it when it is low enough to reach.
+        if toy.dangling || (toy.airborne && toy.speed > 10) {
+            let aim = toy.pos + toy.vel * 0.25
+            if dist < 230 * sc, dist > 40 * sc, t - lastToyLeap > 1.3, chance(pounceKeen + (toy.dangling ? 0.2 : 0)),
+               ballistic(from: pos, to: aim) != nil, (aim - pos).normalized.dot(surfaceNormal) > 0.1 {
+                pounceToy(toy, at: aim)
+            } else if abs(along) > 45 * sc {
+                approachToy(pos + seg.dir * along, style: .scurry, stop: 20 * sc, leap: false)
+            } else if chance(0.5) {
+                beginActivity(.hop, dur: 0.45)
+            } else {
+                beginActivity(.curious, dur: randRange(0.5, 0.9))
+            }
+            return
+        }
+
+        let reach = toy.radius + 30 * sc
+        let lively = toy.speed > 45 * sc || toy.walking
+        // Held down under it just now: a closer look before the next go.
+        if toy.pinnedFor > 0, dist < reach {
+            beginActivity(chance(0.6) ? .peer : .curious, dur: randRange(0.6, 1.0))
+            return
+        }
+        // Right by it: a pat to send it off — or, if it is scuttling
+        // about, a pounce to stop it.
+        if abs(along) < reach, off < 32 * sc {
+            let dir: CGFloat = along >= 0 ? 1 : -1
+            if dir != walkDir {
+                turnTo(dir, then: .look, for: 0.2)
+                return
+            }
+            let loft = CGFloat.random(in: toy.kind.batLoft)
+            let push = (seg.dir * dir * cos(loft) + seg.normal * sin(loft)).normalized
+            let power = lerp(150, 330, (P.energy + P.playfulness) / 2) * randRange(0.8, 1.2) * sc.squareRoot()
+            beginActivity(.curious, dur: randRange(0.5, 0.65))
+            pendingBat = (toy.id, t + 0.28, push, power)
+            return
+        }
+        // Off it goes: after it, and a pounce when it is in range.
+        if lively {
+            let aim = toy.pos + toy.vel * 0.35
+            if dist < 150 * sc, dist > 45 * sc, t - lastToyLeap > 1.2, toy.onSurface, chance(pounceKeen),
+               let spot = map.nearestSpot(to: aim, within: 40 * sc), ballistic(from: pos, to: spot.point) != nil {
+                pounceToy(toy, at: spot.point)
+            } else {
+                approachToy(aim, style: .scurry, stop: 10 * sc)
+            }
+            return
+        }
+        // Sitting still some way off: over to it — now and then with a
+        // pounce from a little way off, just for the fun of it.
+        if dist < 130 * sc, dist > 50 * sc, t - lastToyLeap > 2, chance(pounceKeen * 0.4), toy.onSurface,
+           let spot = map.nearestSpot(to: toy.pos, within: 40 * sc), ballistic(from: pos, to: spot.point) != nil {
+            pounceToy(toy, at: spot.point)
+            return
+        }
+        let hurry = toy.inPlay || chance(lerp(0.2, 0.7, P.energy))
+        if !approachToy(toy.pos, style: hurry ? .scurry : .walk, stop: toy.radius + 16 * sc) {
+            beginActivity(.look, dur: randRange(0.4, 0.8))
+        }
+    }
+
+    private func pounceToy(_ toy: Toy, at point: V2) {
+        toyPounce = toy.id
+        toyPounceFlying = false
+        lastToyLeap = t
+        queued = nil
+        walkThen = nil
+        if let dir = alongEdge(to: point), dir != walkDir {
+            startJump(to: point)
+        } else {
+            pendingJump = point
+            beginActivity(.crouch, dur: randRange(0.28, 0.42))
+        }
+    }
+
+    /// Which way along its edge `p` is, if it is standing on one.
+    private func alongEdge(to p: V2) -> CGFloat? {
+        guard mode == .attached, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return nil }
+        return (p - pos).dot(loop.segs[anchor.segIdx].dir) >= 0 ? 1 : -1
+    }
+
+    /// Toward `p` at `style`, stopping `stop` short: along its edge if that
+    /// is the way, round its window if it is on the same one, and otherwise
+    /// a leap to wherever gets it nearest. False if it is there already.
+    @discardableResult
+    private func approachToy(_ p: V2, style: Activity, stop: CGFloat, leap: Bool = true) -> Bool {
+        guard mode == .attached, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return false }
+        let sc = config.scale
+        let seg = loop.segs[anchor.segIdx]
+        let d = p - pos
+        let along = d.dot(seg.dir)
+        let off = abs(d.dot(seg.normal))
+        let pace = config.walkSpeed * (style == .scurry ? 2.6 : style == .sneak ? 0.42 : 1)
+        if off < 45 * sc || (abs(along) > off * 2 && abs(along) < 260 * sc) || !leap {
+            guard abs(along) > stop else { return false }
+            let dir: CGFloat = along >= 0 ? 1 : -1
+            turnTo(dir, then: style, for: clamp((abs(along) - stop) / max(pace, 1), 0.3, 2.2))
+            return true
+        }
+        // Round its own window to it, when it is on the same one.
+        if let spot = map.nearestSpot(to: p, within: 50 * sc), spot.loop.id == anchor.loopID, spot.anchor.segIdx != anchor.segIdx {
+            var way: (d: CGFloat, dir: CGFloat)?
+            for dir in [CGFloat(1), -1] {
+                if let dd = loopDistance(loop, to: spot.anchor, dir: dir), way == nil || dd < way!.d { way = (dd, dir) }
+            }
+            if let w = way, w.d < 900 * sc {
+                turnTo(w.dir, then: style == .sneak ? .walk : style, for: clamp(w.d / max(pace, 1), 0.6, 3.0))
+                return true
+            }
+        }
+        var best: (d: CGFloat, point: V2)?
+        for spot in map.sampleSpots(spacing: 40) where inBoxOrFree(spot.point) {
+            let dd = spot.point.distance(to: p)
+            guard dd < d.length - 20, spot.point.distance(to: pos) > 40 * sc else { continue }
+            guard let launch = ballistic(from: pos, to: spot.point), launch.normalized.dot(surfaceNormal) > -0.15 else { continue }
+            if best == nil || dd < best!.d { best = (dd, spot.point) }
+        }
+        if let b = best {
+            startJump(to: b.point)
+        } else {
+            walkToward(p)
+        }
+        return true
+    }
+
+    /// Tools only: what it is up to with the toys.
+    var debugToy: String {
+        guard let p = toyPlay else { return String(format: "- drive %.2f", Double(playDrive)) }
+        return String(format: "%@ #%d bats %d bored %.2f drive %.2f", "\(p.stage)", p.id, p.bats, Double(p.boredom), Double(playDrive))
+    }
+    var debugToysSeen: Int { toysSeen.count }
+    /// Tools only: whatever is keeping it from playing right now.
+    var debugToyBlock: String {
+        let checks: [(Bool, String)] = [
+            (mode != .attached, "mode"), (dormant, "dormant"), (inCinema, "cinema"), (laser != nil, "laser"),
+            (departing != nil, "departing"), (homing != nil, "homing"), (build != nil, "build"), (peek != nil, "peek"),
+            (cursorHunt != .none, "cursorHunt"), (caught != nil, "caught"), (friendChase != nil || friendFlee != nil, "friend"),
+            (confined && !inBox, "outOfBox"), (hangOnly, "hangOnly"), (t <= escapeUntil, "escaping"),
+        ]
+        return checks.filter(\.0).map(\.1).joined(separator: ",")
     }
 
     // MARK: Silk line
@@ -3711,8 +4621,16 @@ final class Spider {
             }
         }
         pettingScore = max(0, pettingScore - dt * 0.55)
+        // A pointer whipped right over it, over and over, is being chased
+        // about — which a playful spider may take as a game, a timid one not.
+        if !near { rushed = false } else if !rushed, cursorVel.length > 1400 * config.scale, !isHeld, mode != .clinging,
+                  cursorHunt == .none, laser == nil, pettingScore < 0.4 {
+            rushed = true
+            remember(.chased, 0.2)
+        }
         // (Not while it has the pointer marked as prey: that is not a pet.)
         if pettingScore > 0.85, cursorHunt == .none {
+            remember(.petted, dt / 6)
             happy.value = max(happy.value, 0.85)
             if emote == .none { setEmote(.hearts, 1.0) }
             if mode == .attached, gestureReady, activity != .wiggle, activity != .dance, chance(dt * 1.5) {
@@ -3782,6 +4700,15 @@ final class Spider {
             let hunting: Set<Activity> = [.walk, .sneak, .scurry, .look, .turn, .crouch, .idle, .startle, .shake]
             if !hunting.contains(activity) { queued = nil; finishActivity() }
             else if [.walk, .sneak, .scurry].contains(activity), activityTime > 1.0 { activityDur = min(activityDur, activityTime) }
+        }
+        // Playing: no settling down to anything else, and a chase is
+        // re-aimed as the toy goes.
+        if let play = toyPlay, !inCinema {
+            let elsewhere: Set<Activity> = [.rest, .sleep, .watch, .groom, .drum, .dance, .roll, .spin, .pushup,
+                                             .legStretch, .scratch, .wave, .greet, .glance, .fidget, .stare]
+            if elsewhere.contains(activity), activityTime > 0.3 { queued = nil; finishActivity() }
+            else if play.stage == .play, [.walk, .sneak, .scurry].contains(activity),
+                    activityTime > (toy(play.id)?.inPlay == true ? 0.45 : 0.8) { activityDur = min(activityDur, activityTime) }
         }
         // Stalking the pointer: the same, with the creep re-aimed often.
         if cursorHunt == .stalking {
@@ -4246,7 +5173,7 @@ final class Spider {
             progressPeekaboo(dt: dt)
         case .eat:
             let u = clamp(activityTime / max(activityDur, 0.1), 0, 1)
-            caught?.eaten = easeInOutSine(u) * 0.9
+            caught?.eaten = easeInOutSine(u) * (caught?.kind.bitter == true ? 0.08 : 0.9)
             if let c = caught, c.state != .caught { caught = nil; activity = .idle }
         case .roll:
             // The ball turns with the ground it rolls over, so it never
@@ -4301,6 +5228,7 @@ final class Spider {
                 beginActivity(.startle, dur: 0.6)
                 startled.velocity = 10
                 setEmote(.surprise, 0.7)
+                remember(.startled, 0.6)
             }
         default:
             break
@@ -4534,7 +5462,7 @@ final class Spider {
     // MARK: Cursor reactions
 
     private func reactToCursor(dt: CGFloat) {
-        guard config.followCursor, !inCinema, cursorHunt == .none else { return }
+        guard config.followCursor, !inCinema, cursorHunt == .none, toyPlay == nil else { return }
         let d = cursor.distance(to: pos)
         let busy = [.startle, .crouch, .turn, .sleep, .curious, .stretch, .shake, .roll, .spin, .armsUp, .shoot].contains(activity)
 
@@ -4694,8 +5622,14 @@ final class Spider {
         }
         // Something to eat about: everything else can wait.
         if caught == nil, !inCinema, let q = quarry() {
-            decisionIn = randRange(0.25, 0.7) / max(config.liveliness, 0.25)
+            decisionIn = randRange(0.25, 0.7) / max(config.liveliness, 0.25) / (1 + learned.prowess * 2)
+            endToyPlay(bored: false)
             hunt(q)
+            return
+        }
+        // A toy it is playing with, or one it feels like playing with.
+        if toyPlay != nil || pickToy() {
+            playWithToy()
             return
         }
 
@@ -4891,7 +5825,8 @@ final class Spider {
     }
 
     /// The multiplier one of its habit dials puts on a weight.
-    private func hw(_ habit: KeyPath<Habits, CGFloat>) -> CGFloat { Habits.weight(habits[keyPath: habit]) }
+    /// (And whatever lean its memories give it: see `TraitShift.lean`.)
+    private func hw(_ habit: KeyPath<Habits, CGFloat>) -> CGFloat { Habits.weight(habits[keyPath: habit]) * learned.lean(habit) }
 
     /// One weighted draw from what it could do. Things dialled down to
     /// never are not in the hat at all; with nothing left in it, it just
@@ -5118,7 +6053,7 @@ final class Spider {
             // that is how it gets off the underside of a low window.
             let below = s.point.y < p.y - 20 && abs(s.point.x - p.x) < 60
             guard d > (below ? 28 : 70), d < 680 else { continue }
-            var score = s.loop.kind.appeal
+            var score = s.loop.kind.appeal * appeal(s.point, on: s.loop.kind)
             score *= remap(d, 70, 680, 1.25, 0.45)
             if let box = confine, !box.contains(s.point.point) { score *= 0.03 }
             if s.loop.id == exclude { score *= 0.18 }
@@ -5475,11 +6410,15 @@ final class Spider {
             huntPounce = false
             pounceMark = nil
             snapAtPrey(reach: 14)
-            if caught == nil { decisionIn = 0.15 }
+            if caught == nil {
+                decisionIn = 0.15
+                if cursorHunt != .pouncing { remember(.huntMissed) }
+            }
         }
         if cursorHunt == .pouncing {
             // Missed the pointer: a look about for where it went, and it
             // may try again soon.
+            remember(.huntMissed, 0.3)
             endCursorHunt(nextIn: randRange(6, 14))
             beginActivity(.look, dur: randRange(0.9, 1.6))
             setEmote(.question, 1.1)
@@ -7023,6 +7962,8 @@ final class Spider {
             target = (centre - pos).normalized * 0.75
         } else if huntTarget != nil || caught != nil, let q = caught ?? prey.first(where: { $0.id == huntTarget }) {
             target = (q.pos - pos).normalized * (caught != nil ? 0.5 : 1)
+        } else if let id = toyPlay?.id, let toy = toy(id) {
+            target = (toy.pos - pos).normalized
         } else if mode == .clinging || cursorHunt != .none || interest > 0.05 {
             // Eyes locked on the pointer.
             target = (cursor - pos).normalized

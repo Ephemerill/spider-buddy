@@ -1039,7 +1039,7 @@ final class PreyLayer: CALayer {
     override func draw(in ctx: CGContext) {
         guard let p = prey else { return }
         ctx.translateBy(x: bounds.midX, y: bounds.midY)
-        if p.onSurface, p.state == .loose {
+        if p.castsShadow {
             ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.14 * p.alpha))
             ctx.fillEllipse(in: CGRect(x: -9 * p.drawScale, y: -p.kind.clearance * p.drawScale - 2, width: 18 * p.drawScale, height: 3.5 * p.drawScale))
         }
