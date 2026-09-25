@@ -591,8 +591,8 @@ DisplayServices.
 ### Releasing
 
 ```bash
-echo 1.1.0 > VERSION          # bump; the tag will be v1.1.0
-tools/release.sh --publish    # build, package build/DesktopSpider-1.1.0.dmg, create the GitHub release
+echo 0.6.0 > VERSION          # bump; the tag will be v0.6.0
+tools/release.sh --publish    # build, package build/SpiderBuddy-0.6.0.dmg, create the GitHub release
 ```
 
 `build.sh` stamps `VERSION` into the app's `Info.plist`; the updater compares
