@@ -39,6 +39,15 @@ struct Paint {
         /// Web lines spun out from the middle of each body part, and a
         /// little spider emblem on the abdomen.
         case webbing(RGB)
+        /// Bone: a spine and ribs on the abdomen with the dark between
+        /// them, and a cracked skull for the head.
+        case ribcage(RGB)
+        /// Rotting patches that creep about, stitched scars, and a torn
+        /// hole in the abdomen with ribs showing through.
+        case rot([RGB], stitch: RGB, bone: RGB, drift: CGFloat)
+        /// Steel plates: seams, rivets, a vent, and a strip of lights on
+        /// the abdomen with one lit dot sweeping to and fro.
+        case plating(seam: RGB, light: RGB, t: CGFloat)
     }
 
     // The body spans roughly x -32…26, y -22…18; the axis maps that onto 0…1.
@@ -112,7 +121,15 @@ struct Paint {
             }
         }
         drawTexture(in: ctx)
-        if case .webbing(let ink) = texture { drawWebbing(ink, over: path.boundingBox, head: head, in: ctx) }
+        let box = path.boundingBox
+        switch texture {
+        case .webbing(let ink): drawWebbing(ink, over: box, head: head, in: ctx)
+        case .ribcage(let gap): drawRibcage(gap, over: box, head: head, in: ctx)
+        case .rot(let tones, let stitch, let bone, let drift):
+            drawRot(tones, stitch: stitch, bone: bone, drift: drift, over: box, head: head, in: ctx)
+        case .plating(let seam, let light, let t): drawPlating(seam, light: light, t: t, over: box, head: head, in: ctx)
+        default: break
+        }
         ctx.restoreGState()
     }
 
@@ -170,7 +187,7 @@ struct Paint {
                     ctx.strokePath()
                 }
             }
-        case .webbing:
+        case .webbing, .ribcage, .rot, .plating:
             // Drawn per part, from its outline, in `fill`.
             break
         case .bolt(let a):
@@ -244,6 +261,219 @@ extension Paint {
         }
         ctx.strokePath()
     }
+
+    /// A spine along the abdomen with ribs sweeping back from it, the dark
+    /// of the inside between them; the head is a skull with a crack in its
+    /// crown.
+    fileprivate func drawRibcage(_ gap: RGB, over box: CGRect, head: Bool, in ctx: CGContext) {
+        let c = CGPoint(x: box.midX, y: box.midY)
+        let hw = box.width / 2, hh = box.height / 2
+        ctx.setLineCap(.round)
+        ctx.setLineJoin(.round)
+        if head {
+            ctx.setStrokeColor(gap.alpha(0.6))
+            ctx.setLineWidth(0.8)
+            ctx.beginPath()
+            ctx.move(to: CGPoint(x: c.x - hw * 0.12, y: c.y + hh))
+            ctx.addLine(to: CGPoint(x: c.x - hw * 0.02, y: c.y + hh * 0.84))
+            ctx.addLine(to: CGPoint(x: c.x - hw * 0.16, y: c.y + hh * 0.74))
+            ctx.addLine(to: CGPoint(x: c.x - hw * 0.08, y: c.y + hh * 0.64))
+            ctx.move(to: CGPoint(x: c.x - hw * 0.02, y: c.y + hh * 0.84))
+            ctx.addLine(to: CGPoint(x: c.x + hw * 0.16, y: c.y + hh * 0.8))
+            ctx.strokePath()
+            return
+        }
+        // Four gaps, three ribs between them each side of the spine, all
+        // curving back toward the tail; the ends of the gaps run off the
+        // outline.
+        let spine = hh * 0.15
+        let gaps = 4
+        let span = hw * 1.5
+        let w = span / CGFloat(gaps - 1) * 0.5
+        ctx.setStrokeColor(gap.cg)
+        ctx.setLineWidth(w)
+        for i in 0..<gaps {
+            let x = c.x + (CGFloat(i) / CGFloat(gaps - 1) - 0.5) * span
+            for side: CGFloat in [1, -1] {
+                ctx.beginPath()
+                ctx.move(to: CGPoint(x: x, y: c.y + side * (spine + w * 0.5)))
+                ctx.addQuadCurve(to: CGPoint(x: x - hw * 0.3, y: c.y + side * hh * 1.1),
+                                 control: CGPoint(x: x + hw * 0.08, y: c.y + side * hh * 0.7))
+                ctx.strokePath()
+            }
+        }
+        // The joins between the vertebrae, one where each rib leaves the spine.
+        ctx.setStrokeColor(gap.alpha(0.55))
+        ctx.setLineWidth(0.8)
+        ctx.beginPath()
+        for i in 0..<gaps {
+            let x = c.x + (CGFloat(i) / CGFloat(gaps - 1) - 0.5) * span
+            ctx.move(to: CGPoint(x: x, y: c.y - spine * 0.8))
+            ctx.addLine(to: CGPoint(x: x, y: c.y + spine * 0.8))
+        }
+        ctx.strokePath()
+    }
+
+    /// Patches of rot that creep about, a stitched scar on each part, and
+    /// a torn hole in the abdomen with two ribs showing through.
+    fileprivate func drawRot(_ tones: [RGB], stitch: RGB, bone: RGB, drift: CGFloat,
+                             over box: CGRect, head: Bool, in ctx: CGContext) {
+        let c = CGPoint(x: box.midX, y: box.midY)
+        let hw = box.width / 2, hh = box.height / 2
+        if !tones.isEmpty {
+            for (i, s) in Paint.spots.enumerated() where i % 3 != 2 {
+                let k = CGFloat(i)
+                let tone = tones[i % tones.count]
+                let dx = sin(drift + k * 1.7) * 1.6
+                let dy = cos(drift * 0.8 + k * 2.3) * 1.2
+                let r = s.r * 0.8
+                ctx.setFillColor(tone.alpha(0.8))
+                ctx.fillEllipse(in: CGRect(x: s.x + dx - r * 1.2, y: s.y + dy - r * 0.8, width: r * 2.4, height: r * 1.6))
+                ctx.fillEllipse(in: CGRect(x: s.x + dx + r * 0.2, y: s.y + dy - r * 0.2, width: r * 1.4, height: r * 1.3))
+            }
+        }
+
+        func stitches(from a: CGPoint, to b: CGPoint, control: CGPoint, count: Int) {
+            ctx.setStrokeColor(stitch.cg)
+            ctx.setLineCap(.round)
+            ctx.setLineWidth(0.8)
+            ctx.beginPath()
+            ctx.move(to: a)
+            ctx.addQuadCurve(to: b, control: control)
+            for k in 1...count {
+                let u = CGFloat(k) / CGFloat(count + 1)
+                let p = V2(lerp(lerp(a.x, control.x, u), lerp(control.x, b.x, u), u),
+                           lerp(lerp(a.y, control.y, u), lerp(control.y, b.y, u), u))
+                let tangent = V2(lerp(control.x - a.x, b.x - control.x, u), lerp(control.y - a.y, b.y - control.y, u)).normalized
+                let across = tangent.perp * 1.7
+                ctx.move(to: (p - across).point)
+                ctx.addLine(to: (p + across).point)
+            }
+            ctx.strokePath()
+        }
+
+        if head {
+            // Across the crown, above the eyes.
+            stitches(from: CGPoint(x: c.x - hw * 0.6, y: c.y + hh * 0.7),
+                     to: CGPoint(x: c.x + hw * 0.45, y: c.y + hh * 0.82),
+                     control: CGPoint(x: c.x, y: c.y + hh * 0.9), count: 4)
+            return
+        }
+
+        // The hole, ragged at its rim, toward the tail.
+        let hc = CGPoint(x: c.x - hw * 0.4, y: c.y + hh * 0.06)
+        let hole = CGMutablePath()
+        let jags: [CGFloat] = [1, 0.7, 0.95, 0.62, 1.05, 0.8, 0.66, 1, 0.74, 0.9, 0.64]
+        for (i, jag) in jags.enumerated() {
+            let a = CGFloat(i) / CGFloat(jags.count) * 2 * .pi
+            let p = CGPoint(x: hc.x + cos(a) * hw * 0.36 * jag, y: hc.y + sin(a) * hh * 0.38 * jag)
+            if i == 0 { hole.move(to: p) } else { hole.addLine(to: p) }
+        }
+        hole.closeSubpath()
+        ctx.saveGState()
+        ctx.addPath(hole)
+        ctx.clip()
+        ctx.setFillColor(RGB(0.24, 0.10, 0.10).cg)
+        ctx.fill(box)
+        ctx.setStrokeColor(bone.cg)
+        ctx.setLineWidth(hw * 0.12)
+        ctx.beginPath()
+        for dx: CGFloat in [-0.12, 0.12] {
+            ctx.move(to: CGPoint(x: hc.x + hw * dx + hw * 0.08, y: hc.y + hh * 0.5))
+            ctx.addQuadCurve(to: CGPoint(x: hc.x + hw * dx - hw * 0.06, y: hc.y - hh * 0.5),
+                             control: CGPoint(x: hc.x + hw * dx + hw * 0.14, y: hc.y))
+        }
+        ctx.strokePath()
+        ctx.restoreGState()
+        ctx.addPath(hole)
+        ctx.setStrokeColor((tones.first ?? stitch).darker(0.35).cg)
+        ctx.setLineWidth(1.1)
+        ctx.setLineJoin(.round)
+        ctx.strokePath()
+
+        // A long scar from the waist up over its back.
+        stitches(from: CGPoint(x: c.x + hw * 0.6, y: c.y - hh * 0.2),
+                 to: CGPoint(x: c.x - hw * 0.1, y: c.y + hh * 0.72),
+                 control: CGPoint(x: c.x + hw * 0.4, y: c.y + hh * 0.45), count: 5)
+    }
+
+    /// Steel plates: seams with rivets along them, a vent at the back, and
+    /// a strip of lights on the abdomen with one lit dot sweeping to and
+    /// fro; the head has a seam over the crown and one under the jaw.
+    fileprivate func drawPlating(_ seam: RGB, light: RGB, t: CGFloat, over box: CGRect, head: Bool, in ctx: CGContext) {
+        let c = CGPoint(x: box.midX, y: box.midY)
+        let hw = box.width / 2, hh = box.height / 2
+        func rivet(_ x: CGFloat, _ y: CGFloat) {
+            let r: CGFloat = 0.95
+            ctx.setFillColor(seam.cg)
+            ctx.fillEllipse(in: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
+            ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.7))
+            ctx.fillEllipse(in: CGRect(x: x - r * 0.6, y: y, width: r * 0.7, height: r * 0.7))
+        }
+        ctx.setStrokeColor(seam.alpha(0.85))
+        ctx.setLineWidth(0.9)
+        ctx.setLineCap(.round)
+        if head {
+            ctx.beginPath()
+            ctx.move(to: CGPoint(x: c.x - hw, y: c.y + hh * 0.62))
+            ctx.addQuadCurve(to: CGPoint(x: c.x + hw, y: c.y + hh * 0.62), control: CGPoint(x: c.x, y: c.y + hh * 0.9))
+            ctx.move(to: CGPoint(x: c.x - hw, y: c.y - hh * 0.5))
+            ctx.addQuadCurve(to: CGPoint(x: c.x + hw, y: c.y - hh * 0.5), control: CGPoint(x: c.x, y: c.y - hh * 0.78))
+            ctx.strokePath()
+            rivet(c.x - hw * 0.62, c.y + hh * 0.74)
+            rivet(c.x + hw * 0.62, c.y + hh * 0.74)
+            rivet(c.x - hw * 0.55, c.y - hh * 0.66)
+            rivet(c.x + hw * 0.55, c.y - hh * 0.66)
+            return
+        }
+
+        // Two seams across, bowed with the roundness of the abdomen.
+        let seams: [CGFloat] = [0.22, -0.45]
+        ctx.beginPath()
+        for sx in seams {
+            ctx.move(to: CGPoint(x: c.x + hw * sx, y: c.y + hh * 1.1))
+            ctx.addQuadCurve(to: CGPoint(x: c.x + hw * sx, y: c.y - hh * 1.1),
+                             control: CGPoint(x: c.x + hw * (sx + (sx > 0 ? 0.18 : -0.14)), y: c.y))
+        }
+        ctx.strokePath()
+        for sx in seams {
+            let bow = sx > 0 ? 0.18 : -0.14 as CGFloat
+            for sy: CGFloat in [0.6, 0, -0.6] {
+                // Where the seam is at this height, and just to one side of it.
+                let u = (1 - sy / 1.1) / 2
+                rivet(c.x + hw * (sx + 2 * u * (1 - u) * bow + 0.1), c.y + hh * sy)
+            }
+        }
+
+        // The vent, at the back.
+        ctx.setStrokeColor(seam.cg)
+        ctx.setLineWidth(1.2)
+        ctx.beginPath()
+        for sy: CGFloat in [-0.1, -0.32, -0.54] {
+            ctx.move(to: CGPoint(x: c.x - hw * 0.9, y: c.y + hh * sy))
+            ctx.addLine(to: CGPoint(x: c.x - hw * 0.62, y: c.y + hh * sy))
+        }
+        ctx.strokePath()
+
+        // The strip of lights, in the middle plate.
+        let strip = CGRect(x: c.x - hw * 0.4, y: c.y + hh * 0.16, width: hw * 0.6, height: hh * 0.32)
+        ctx.setFillColor(RGB(0.10, 0.11, 0.14).cg)
+        ctx.addPath(CGPath(roundedRect: strip, cornerWidth: strip.height / 2, cornerHeight: strip.height / 2, transform: nil))
+        ctx.fillPath()
+        let leds = 4
+        let lit = (sin(t * 2.4) + 1) / 2 * CGFloat(leds - 1)
+        let lr = min(strip.height * 0.3, strip.width / CGFloat(leds) * 0.32)
+        for k in 0..<leds {
+            let x = strip.minX + strip.width * (CGFloat(k) + 0.5) / CGFloat(leds)
+            let on = clamp(1.4 - abs(CGFloat(k) - lit), 0, 1)
+            if on > 0.3 {
+                ctx.setFillColor(light.alpha(0.3 * on))
+                ctx.fillEllipse(in: CGRect(x: x - lr * 2.2, y: strip.midY - lr * 2.2, width: lr * 4.4, height: lr * 4.4))
+            }
+            ctx.setFillColor(light.mix(RGB(0.10, 0.20, 0.24), 1 - on).cg)
+            ctx.fillEllipse(in: CGRect(x: x - lr, y: strip.midY - lr, width: lr * 2, height: lr * 2))
+        }
+    }
 }
 
 // MARK: - Palette
@@ -272,6 +502,21 @@ struct Palette {
     /// touch darker, always, rather than whichever way contrasts more —
     /// which, as the colour behind it drifts, would flip back and forth.
     var quietAccent = false
+    /// What the legs are made of, for coats that are not flesh all the way
+    /// through.
+    var limbs: Limbs = .flesh
+    /// A ring of light in each eye, for coats that are lit from within.
+    var eyeGlow: RGB?
+
+    enum Limbs {
+        case flesh
+        /// Two bones a leg, knuckled at each end.
+        case bones
+        /// Flesh, with a stitched cut on some legs and a bandage on others.
+        case stitched(RGB, bandage: RGB)
+        /// Plated steel with a piston down each segment and lit joints.
+        case machine(joint: RGB, glow: RGB)
+    }
 
     /// A second shade of the accent that stands out from it: darker on a
     /// light accent, lighter on a dark one.
@@ -514,6 +759,40 @@ extension LivingCoat {
             pal.outline = RGB(0.10, 0.04, 0.05).cg
             pal.outlineFar = RGB(0.07, 0.03, 0.04).cg
             pal.eyeDark = RGB(0.06, 0.04, 0.05).cg
+            return pal
+        case .skeleton:
+            let bone = RGB(0.93, 0.90, 0.82)
+            var p = Paint(stops: [bone.lighter(0.3), bone, RGB(0.80, 0.76, 0.66)], direction: .down)
+            p.texture = .ribcage(RGB(0.13, 0.11, 0.12))
+            var pal = Palette.painted(p, accent: accent, legTones: [bone], sheen: 0.5)
+            pal.outline = RGB(0.30, 0.27, 0.24).cg
+            pal.outlineFar = RGB(0.22, 0.20, 0.18).cg
+            pal.eyeDark = RGB(0.07, 0.06, 0.07).cg
+            pal.limbs = .bones
+            return pal
+        case .zombie:
+            var p = Paint(stops: [RGB(0.60, 0.70, 0.50), RGB(0.54, 0.64, 0.44), RGB(0.40, 0.50, 0.34)], direction: .down)
+            p.texture = .rot([RGB(0.40, 0.47, 0.30), RGB(0.47, 0.40, 0.42), RGB(0.34, 0.42, 0.27)],
+                             stitch: RGB(0.14, 0.10, 0.09), bone: RGB(0.92, 0.88, 0.78), drift: t * 0.25)
+            var pal = Palette.painted(p, accent: accent, legTones: [RGB(0.48, 0.58, 0.40), RGB(0.42, 0.52, 0.35)], sheen: 0.25)
+            pal.outline = RGB(0.18, 0.22, 0.14).cg
+            pal.outlineFar = RGB(0.13, 0.16, 0.10).cg
+            pal.eyeDark = RGB(0.12, 0.10, 0.10).cg
+            pal.limbs = .stitched(RGB(0.14, 0.10, 0.09), bandage: RGB(0.84, 0.80, 0.66))
+            return pal
+        case .robot:
+            // The joints and eyes breathe a little; the lights on its back
+            // sweep to and fro.
+            let pulse = 0.5 + 0.5 * sin(t * 2.6)
+            let glow = RGB(0.30, 0.88, 1.0)
+            var p = Paint(stops: [RGB(0.86, 0.88, 0.92), RGB(0.66, 0.69, 0.74), RGB(0.50, 0.53, 0.58)], direction: .diagonal)
+            p.texture = .plating(seam: RGB(0.24, 0.26, 0.30), light: glow, t: t)
+            var pal = Palette.painted(p, accent: accent, legTones: [RGB(0.72, 0.74, 0.79), RGB(0.62, 0.65, 0.70)], sheen: 0.55)
+            pal.outline = RGB(0.18, 0.19, 0.22).cg
+            pal.outlineFar = RGB(0.13, 0.14, 0.16).cg
+            pal.eyeDark = RGB(0.05, 0.07, 0.10).cg
+            pal.eyeGlow = glow.lighter(pulse * 0.3)
+            pal.limbs = .machine(joint: RGB(0.26, 0.28, 0.33), glow: glow.lighter(pulse * 0.3))
             return pal
         }
     }

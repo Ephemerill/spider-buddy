@@ -76,8 +76,15 @@ struct SpiderPose {
     var webPoints: [V2] = []
     /// The stretch of line it is holding, in sprite units, drawn between the
     /// far legs and the body so the legs read as gripping it from both sides.
-    /// `tail` is how much loose silk trails out behind the spinnerets.
+    /// `tail` is how much of the silk it has hauled in hangs gathered below.
     var thread: (a: V2, b: V2, tail: CGFloat, alpha: CGFloat)?
+    /// Where the line comes out of it, when that is not where the held
+    /// stretch starts: climbing, the silk runs from the spinnerets to the
+    /// line along its belly.
+    var threadFrom: V2?
+    /// Rolling over on a line, where the silk from the spinnerets comes in
+    /// against the belly, to run along it to where the held stretch starts.
+    var threadVia: V2?
     var time: CGFloat = 0
     var grabbed: CGFloat = 0
     /// How it is dressed.
@@ -710,6 +717,12 @@ final class Spider {
     /// at once, and fast — however it came in, it has all eight down by the
     /// time the body has stopped.
     private var absorbingLanding: Bool { mode == .attached && t - landedAt < Spider.landHold }
+    /// The last landing was the top of a climb: it stepped up onto the
+    /// ledge off its line rather than coming down on it.
+    private var climbedOnto = false
+    /// How much faster than a step a foot or knee may pick up speed taking
+    /// a landing: a fall is taken all at once; a climber steps up.
+    private var landingJolt: CGFloat { absorbingLanding && !climbedOnto ? 3 : 1 }
     /// How much of the impact speed the body keeps once the legs have it.
     private static let landAbsorb: CGFloat = 0.35
     /// The lowest the body can sink toward the ledge, in points: its
@@ -739,6 +752,8 @@ final class Spider {
     /// their place in the world to cancel out.
     private var legOverFeet = V2.zero
     private var legDTheta: CGFloat = 0
+    /// How fast the body is turning in the world, radians a second.
+    private var bodySpin: CGFloat = 0
     /// How far the surface under it moved this frame, in world points.
     private var legSurfaceWorld = V2.zero
     /// Where the anchor point on the surface was last frame, to tell the
@@ -783,11 +798,30 @@ final class Spider {
     private var lingerUntil: CGFloat = -1
     private var lingerNext: CGFloat = 0
     private var floorWait: CGFloat = -1
-    /// Body centre relative to the point on the line the spinnerets hold,
-    /// eased so a change of side never jumps it.
+    /// Body centre relative to the point on the line the spinnerets hold.
     private var hangOff: V2 = .zero
-    private var hangTwistPhase: CGFloat = 0
     private var hangOffFresh = true
+    /// Just taken to a line fastened beside or below it, and still falling
+    /// round under it.
+    private var fallingRound = false
+    /// Stepped off the top of something on its dragline to go down it: when
+    /// the line takes its weight, it carries on down.
+    private var rappelAfterCatch = false
+    /// Told which way to go by the scroll wheel (see `scroll`). Told to go
+    /// up, it goes all the way up and off the top; told to go down its
+    /// line, all the way down to the next thing below it can stand on; told
+    /// to go down off a ledge (`drop`), half way down to whatever is below,
+    /// and it hangs there. None of it does it change its mind about part
+    /// way; the drop, once it is hanging there, is done with.
+    private enum LineOrder { case up, down, drop }
+    private var lineOrder: LineOrder?
+    private var orderedAt: CGFloat = -99
+    /// The scroll gesture under way: how far it has gone, when the last of
+    /// it came, and the way it has already sent it (±1, 0 none yet). One
+    /// swipe — however long it runs on for — is one order.
+    private var scrollSum: CGFloat = 0
+    private var scrollLast: CGFloat = -99
+    private var scrollGave: CGFloat = 0
     private var swingReleaseAfter = 1
     private var lastSwingVelSign: CGFloat = 0
     private var swingFromLoop = ""
@@ -803,19 +837,63 @@ final class Spider {
     private var swingPumpUntil: CGFloat = 0
     /// Elastic give in the line: a bounce on the end of it.
     private var bungee = Spring(0, stiffness: 34, damping: 2.6)
-    private var twirlUntil: CGFloat = 0
-    /// Hand-over-hand on the line: the feet stay fixed on the thread while
-    /// the body moves along it, so this advances with distance climbed.
-    private var climbTravel: CGFloat = 0
-    private var climbDir: CGFloat = 0
+    /// Pleased on a line: a bounce on the end of it and a happy kick of the
+    /// legs hanging free, until then.
+    private var lineJoyUntil: CGFloat = 0
     private var prevHangLen: CGFloat = 0
-    /// How far it moved along the line this frame, px, + = away from the
-    /// anchor (descending); and the climbing gait's phase, in strides.
+    /// How far it moved along the line this frame by paying silk out or
+    /// hauling it in, px, + = away from the anchor (descending). A bounce
+    /// on the end of the line does not count: that stretch is the silk's,
+    /// and whatever the legs hold of it goes with the body.
     private var hangDelta: CGFloat = 0
+    /// The climbing gait's phase, in strides, run on distance hauled in;
+    /// and the hind legs' stroke feeding silk out, run on time.
     private var climbPhase: CGFloat = 0
+    private var feedPhase: CGFloat = 0
     /// Head up the line only while it is hauling itself up; otherwise it
     /// hangs head down, the way a spider on a dragline does.
     private var hangHeadUp = false
+    /// How far round it has come to face up the line: 0 hanging head down,
+    /// 1 head up, and in between while it turns end for end.
+    private var upness: CGFloat = 0
+    /// Which way it is turning end for end on the line, ±1, while it does.
+    private var flipSign: CGFloat = 0
+    /// Turning end for end, it first takes the line in to its middle — the
+    /// hind legs draw it in against the belly — and turns about that, its
+    /// weight under its own grip, rather than swinging its body round the
+    /// tip of its abdomen: 0 held where it hangs (or climbs) from, 1 drawn
+    /// in to its middle (see `turnPivot`).
+    private var lineGrip: CGFloat = 0
+    /// Where the line was fastened to the body last frame, in sprite units.
+    /// When that moves — drawn in to turn, let back out after — the line is
+    /// measured again from there, so the body stays where it is.
+    private var attachWas: V2?
+    /// How much longer the line reads, measured to where it is fastened to
+    /// the body now, than it did hanging from the spinnerets: lengths it
+    /// means to go to are in those terms (see `reattach`).
+    private var lineRef: CGFloat = 0
+    /// Taking hold of the line or letting go of it to turn, the way each
+    /// foot is going round its hip (see `roundHip`).
+    private var gripTurn: [CGFloat?] = []
+    /// Where each foot holding the line has hold of it: sprite units along
+    /// it from the spinnerets toward the anchor. A foot keeps its place on
+    /// the silk while the body goes past it, so this changes only with how
+    /// far the body has moved along the line.
+    private var lineS: [CGFloat] = Array(repeating: 0, count: SpiderRenderer.legCount)
+    private var lineSwingFrom: [CGFloat] = Array(repeating: 0, count: SpiderRenderer.legCount)
+    /// A leg hanging free on the line is a weight on the end of a limb:
+    /// where its foot is in the world, and how fast it is going, so it
+    /// swings with the body rather than being carried rigidly with it.
+    private var freeFoot: [V2] = []
+    private var freeFootVel: [V2] = []
+    /// Hanging still, a hind foot shifts its hold now and then.
+    private var regripIn: CGFloat = 2
+    private var regripLeg = -1
+    private var regripT: CGFloat = 0
+    /// The line where it meets the body, in sprite space, pointing toward
+    /// the anchor: what the feet hold, and what the held stretch is drawn
+    /// along.
+    private var lineDirLocal = V2(-1, 0)
     private var stillFor: CGFloat = 0
     private var shotTarget: V2 = .zero
     private var shotProgress: CGFloat = 0
@@ -1047,11 +1125,6 @@ final class Spider {
     private var swayWobble = Wobble(seed: 9, freq: 1.3)
 
     private let gravity = V2(0, -1950)
-    /// World distance the body moves along the line per hand-over-hand cycle.
-    static let climbStride: CGFloat = 18
-    /// One stride of the climbing gait, in px at scale 1: how far the body
-    /// travels along the line per cycle of the legs.
-    static let climbStridePx: CGFloat = 30
     /// Body units travelled per gait cycle.
     private static let strideLength: CGFloat = 28
     /// Fraction of the cycle a leg spends in the air.
@@ -1108,6 +1181,8 @@ final class Spider {
 
     func beginGrab(at p: V2) {
         tumbleVel = 0
+        rappelAfterCatch = false
+        lineOrder = nil
         pendingMap = nil
         climbArrival = nil
         abandonBuild()
@@ -1162,15 +1237,69 @@ final class Spider {
         legMode = .free
     }
 
-    func scroll(_ dy: CGFloat) {
+    /// Scrolled over: up is up its line, down is down it — or, on a ledge,
+    /// down off it on a line. One swipe (a trackpad's, momentum and all, or
+    /// a quick run of wheel clicks) is one order, however long it runs on
+    /// for: `startsGesture` says whether this is the first of a new one,
+    /// where the device can tell; otherwise a pause says so. `precise`: a
+    /// trackpad's points rather than a wheel's lines, so an order takes a
+    /// deliberate little swipe, not a brush of the fingers.
+    func scroll(_ dy: CGFloat, precise: Bool = true, startsGesture: Bool? = nil) {
         lastUserActivity = t
-        if mode == .dangling || (mode == .held && webActive) {
-            webLenTarget = clamp(webLenTarget - dy * 3.2, 26, 900)
-            // Being reeled about by hand: it does as it is told for a while
-            // rather than deciding to jump off mid-climb.
-            if webStyle == .hang { decisionIn = max(decisionIn, 3.5) }
-        } else if mode == .attached, config.webs, dy < -0.5, canRappel(userAsked: true) {
+        if startsGesture ?? (t - scrollLast > 0.35) {
+            scrollSum = 0
+            scrollGave = 0
+        }
+        scrollLast = t
+        scrollSum += dy
+        guard abs(scrollSum) >= (precise ? 4 : 0.5) else { return }
+        let way: CGFloat = scrollSum > 0 ? 1 : -1
+        // (Swiped back the other way before letting go: that is an order too.)
+        guard way != scrollGave else { return }
+        scrollGave = way
+        obey(up: way > 0)
+    }
+
+    /// Does as the scroll wheel says (see `LineOrder`).
+    private func obey(up: Bool) {
+        switch mode {
+        case .attached:
+            // Down off the ledge on a line. (Up from a ledge is nowhere.)
+            guard !up, config.webs, canRappel(userAsked: true) else { return }
+            lineOrder = .drop
+            orderedAt = t
             dropOnWeb()
+        case .airborne where draglineCatchY != nil && webActive:
+            // Stepping off on its dragline: once the line has its weight,
+            // on down it goes, or back up, as told.
+            lineOrder = up ? .up : .down
+            orderedAt = t
+        case .dangling:
+            guard webActive, climbArrival == nil, !inCinema, mantle == nil else { return }
+            if hangOnly, let box = confine {
+                // Hanging in its box there is nowhere to go but up and down
+                // the line: as far as it goes, and there it stays a while.
+                webLenTarget = up ? 30 : max(30, box.height - 60)
+                decisionIn = max(decisionIn, 12)
+                return
+            }
+            if webStyle == .swing {
+                // Mid-swing: it stops working the swing and does as it is
+                // told, the swing dying away under it.
+                webStyle = .hang
+                swingPumping = false
+                prevHangLen = webLen
+            }
+            lineOrder = up ? .up : .down
+            orderedAt = t
+            webPlan = [up ? .climbHome : .toFloor]
+            lingerUntil = -1
+            lineJoyUntil = 0
+            floorWait = -1
+            decisionIn = 0
+            webLenTarget = up ? lineTop - 4 * config.scale : floorLen
+        default:
+            break
         }
     }
 
@@ -1525,8 +1654,10 @@ final class Spider {
         happy.velocity = 10
         setEmote(.hearts, 1.3)
         if mode == .dangling, webStyle == .hang {
-            // Pleased, on a line: a twirl.
-            twirlUntil = t + randRange(1.2, 1.8)
+            // Pleased, on a line: a bounce on the end of it, and a happy
+            // kick of the legs hanging free.
+            lineJoyUntil = t + randRange(1.2, 1.8)
+            bungee.velocity = randRange(140, 200)
             setEmote(.sparkle, 1.2)
         }
         if mode == .attached {
@@ -1935,6 +2066,9 @@ final class Spider {
 
         if mode != .airborne { landing = nil; landingReach = 0 }
         if mode != .attached { runNose = approach(runNose, 0, 8, dt); surfacePrev = nil }
+        // (Going over the top is something done on its line: picked up off
+        // it, say, that is the end of it.)
+        if mode != .dangling { mantle = nil }
         keepHung(dt: dt)
         if pendingDemo != nil { runPendingDemo() }
         switch mode {
@@ -1968,6 +2102,11 @@ final class Spider {
         if var h = hammock, h.tickDrape(dt: dt) { hammock = h }
         rockHammock(dt: dt)
         updateLook(dt: dt)
+        // On a line the feet hold the silk where it really lies this frame,
+        // so the line goes first. (It is always side on there, so nothing
+        // later this frame moves its spinnerets.)
+        let ropeFirst = onLine
+        if ropeFirst { updateRope(dt: dt) }
         updateLegs(dt: dt)
 
         // Rest the pointer on it for a moment and it tells you its name.
@@ -2007,7 +2146,7 @@ final class Spider {
         let s = stretch.value
         fatten.value = lerp(fatten.value, curled ? 1.0 : 1 / max(0.6, s), 0.35)
 
-        updateRope(dt: dt)
+        if !ropeFirst { updateRope(dt: dt) }
         updateKnees(dt: dt)
         syncTraces(dt: dt)
     }
@@ -3169,14 +3308,16 @@ final class Spider {
         isHeld = false
         pendingJump = nil
         queued = nil
-        pos = a + V2(0, -18 * config.scale)
+        // Head down, its spinnerets a little way under the icon.
         vel = .zero
-        heading = -.pi / 2
+        heading = -.pi / 2 + (facing < 0 ? .pi : 0)
         headingTarget = heading
         headingVel = 0
+        yaw = facing
+        pos = a + V2(0, -20) - (toWorld(spinnerets) - pos)
         attachWeb(at: a)
         webStyle = .hang
-        webLen = 18 * config.scale
+        webLen = 20
         webLenTarget = webLen
         bungee.reset(0)
         prevHangLen = webLen
@@ -4928,17 +5069,105 @@ final class Spider {
     /// it hangs in line with the thread, the top of the abdomen when it is
     /// slung under a swing.
     private func silkAttachLocal() -> V2 {
-        let ab = SpiderRenderer.abdomen(for: look)
-        // On a line, or shooting one in mid-air with its rear brought
-        // round to the mark: the spinnerets at the tip of the abdomen.
-        if mode == .dangling || (mode == .airborne && (airShot != nil || draglineCatchY != nil)) {
-            return V2(ab.c.x - ab.rx + 3, ab.c.y)
+        // On a line: hanging, from the spinnerets; climbing, it hugs the
+        // line, the silk along its belly with its feet holding it, and holds
+        // it there (see `climbHold`); turning end for end between the two,
+        // drawn in to its middle (see `turnPivot`). Shooting a line in
+        // mid-air, with its rear brought round to the mark: the spinnerets.
+        if mode == .dangling {
+            let g = smoothstep(lineGrip)
+            return g > 0 ? V2.lerp(lineStance, turnPivot, g) : lineStance
         }
+        if mode == .airborne && (airShot != nil || draglineCatchY != nil) { return spinnerets }
+        let ab = SpiderRenderer.abdomen(for: look)
         return V2(ab.c.x, ab.c.y + ab.ry - 2)
+    }
+
+    /// The spinnerets, in sprite units: the tip of the abdomen.
+    private var spinnerets: V2 {
+        let ab = SpiderRenderer.abdomen(for: look)
+        return V2(ab.c.x - ab.rx + 3, ab.c.y)
+    }
+
+    /// Climbing, it hugs the line: the silk runs along its belly, tucked in
+    /// against the underside of its abdomen — as near its middle as a line
+    /// along the outside of it can be — with its legs reaching up and down
+    /// it. This is where the line comes up past the lowest of its feet, and
+    /// where it meets the silk it has hauled in, looping back from its
+    /// spinnerets.
+    private var climbHold: V2 { bellyLine(spinnerets.x - 25) }
+
+    /// The line the silk runs along climbing, at `x` along the body: just
+    /// inside the belly's outline under the middle of the abdomen, and from
+    /// there on, leaning back with the body (`lineTilt`).
+    private func bellyLine(_ x: CGFloat) -> V2 {
+        let ab = SpiderRenderer.abdomen(for: look)
+        return V2(x, ab.c.y - ab.ry + 2 + (ab.c.x - x) * tan(Spider.climbLean))
+    }
+
+    /// Turning end for end on a line, what it turns about: its middle, at
+    /// the waist, where its legs gather the line in against its belly —
+    /// its weight all but under its own grip, so it rolls over in its
+    /// place rather than swinging round on the end of its abdomen.
+    private var turnPivot: V2 {
+        let ab = SpiderRenderer.abdomen(for: look)
+        return bellyLine(ab.c.x + ab.rx * 0.75)
+    }
+
+    /// Where the line leaves the body on it, but for drawing it in to turn:
+    /// hanging, the spinnerets; climbing, its hold along the belly.
+    private var lineStance: V2 {
+        climbLayout > 0 ? V2.lerp(spinnerets, climbHold, climbLayout) : spinnerets
+    }
+
+    /// Hanging on a line, or dropping on its dragline: its legs have the
+    /// line either way.
+    private var onLine: Bool { mode == .dangling || (mode == .airborne && draglineCatchY != nil && webActive) }
+
+    /// How far into its climbing stance it is on a line, 0…1. It turns into
+    /// it as it comes round head up to climb, and out of it as it goes back
+    /// round to hang — never merely because it happens to be lying across
+    /// the line (taken to it sideways, or swinging hard).
+    private var climbLayout: CGFloat = 0
+
+    /// How long the line is with it at the top: climbing head up, its head
+    /// is just under whatever the line hangs from; hanging head down, its
+    /// spinnerets are. (By how far round it really is, so a climb decided
+    /// on close under the top does not count it there before it has turned.)
+    private var lineTop: CGFloat {
+        let h = SpiderRenderer.head(for: look)
+        return lerp(26, h.c.x + h.r - climbHold.x + 5, climbLayout) * config.scale
     }
 
     private func silkAttachWorld() -> V2 {
         toWorld(silkAttachLocal())
+    }
+
+    /// On a line, where it is fastened to the body has moved since last
+    /// frame — drawn in to its middle to turn, or let back out after: the
+    /// line is measured again to there, as the body is now, so the body
+    /// stays where it is and only the line's end moves — taken in or let
+    /// out a little, and swinging gently to hang under it. Whatever length
+    /// it was making for, it still makes for, in the same terms — and one
+    /// that would take it to the top still takes it all the way up.
+    private func reattach() {
+        let a = silkAttachLocal()
+        defer { attachWas = a }
+        guard let was = attachWas, a.distance(to: was) > 0.0001 else { return }
+        var d = a - was
+        d.x *= mirrorSign
+        let len = max(webLen + bungee.value, 20)
+        let end = webAnchor + V2(sin(webAngle), -cos(webAngle)) * len + d.rotated(by: heading) * config.scale
+        let r = end - webAnchor
+        guard r.length > 20 else { return }
+        let change = r.length - len
+        webLen += change
+        webAngle = atan2(r.x, -r.y)
+        if webLenTarget >= lineTop + 8 * config.scale { webLenTarget += change }
+        prevHangLen += change
+        lineRef += change
+        // (Back where it hangs from, the terms are that again.)
+        if lineGrip <= 0, climbLayout <= 0 { lineRef = 0 }
     }
 
     /// Runs the line's own physics: pinned to the anchor and the spinnerets
@@ -5008,21 +5237,12 @@ final class Spider {
                 walkDir = pendingDir
                 turned = true
             }
-        } else if mode == .dangling && webStyle == .swing {
-            yaw = approach(yaw, facing, 9, dt)
         } else if mode == .dangling {
-            if t < twirlUntil {
-                // A twirl whips it right round, several times.
-                yaw = approach(yaw, cos(t * 4.5), 14, dt)
-                facing = yaw >= 0 ? 1 : -1
-            } else {
-                // Turning slowly on the line: it comes part-way round to
-                // show its face, and drifts back — never right round to
-                // the other side, which on a thread is a roll of the whole
-                // body and reads as a spin for no reason.
-                let toward = 0.58 + 0.42 * cos(t * 0.45 + hangTwistPhase)
-                yaw = approach(yaw, facing * toward, 3, dt)
-            }
+            // On a line it is seen side on the whole time: head straight
+            // down under the rest of it (or straight up, climbing), as a
+            // spider hanging from its spinnerets is. Turned toward you, the
+            // face-on layout would put its head beside its abdomen.
+            yaw = approach(yaw, facing, 9, dt)
         } else if mode == .nesting {
             yaw = approach(yaw, facing, 6, dt)
         } else if mode == .airborne, airShot != nil || draglineCatchY != nil {
@@ -5093,6 +5313,18 @@ final class Spider {
                     let (ki, kj) = (kneeShape[i], kneeShape[j])
                     kneeShape[i] = V2(kj.x, -kj.y)
                     kneeShape[j] = V2(ki.x, -ki.y)
+                }
+                if kneeShapeVel.count == legs.count {
+                    let (vi, vj) = (kneeShapeVel[i], kneeShapeVel[j])
+                    kneeShapeVel[i] = V2(vj.x, -vj.y)
+                    kneeShapeVel[j] = V2(vi.x, -vi.y)
+                }
+                // (On a line likewise: the side of its leg a knee is on.)
+                if lineSide.count == legs.count {
+                    (lineSide[i], lineSide[j]) = (-lineSide[j], -lineSide[i])
+                    (lineSideAim[i], lineSideAim[j]) = (-lineSideAim[j], -lineSideAim[i])
+                    (lineSideVel[i], lineSideVel[j]) = (-lineSideVel[j], -lineSideVel[i])
+                    lineBoneLen.swapAt(i, j)
                 }
             }
         }
@@ -6908,7 +7140,10 @@ final class Spider {
         // the arc, but never roll past 50 degrees or it reads as tumbling.
         var flightHeading: CGFloat?
         if vel.length > 60 {
-            facing = vel.x >= 0 ? 1 : -1
+            // (Dropping on a line, or shooting one, it keeps the side it
+            // shows you: turned face on there, its head would be beside its
+            // abdomen.)
+            if airShot == nil, draglineCatchY == nil { facing = vel.x >= 0 ? 1 : -1 }
             let pitchAngle = angleDelta(0, vel.angle + (vel.x < 0 ? .pi : 0))
             flightHeading = clamp(pitchAngle, -0.85, 0.85)
             if air == .thrown { flightHeading! += sin(t * 9) * 0.18 }
@@ -7023,6 +7258,7 @@ final class Spider {
                 webActive = true
                 webLen = max(20, pos.distance(to: webAnchor))
                 webLenTarget = webLen
+                prevHangLen = webLen
                 draglineCatchY = shot.catchY
                 airShot = nil
                 stretch.velocity = 2
@@ -7035,6 +7271,13 @@ final class Spider {
         if let catchY = draglineCatchY {
             webLen = max(webLen, pos.distance(to: webAnchor))
             webLenTarget = webLen
+            // Its legs are on the line already, paying it out as it drops
+            // (see `updateLineLegs`), head down, however it is turned yet.
+            hangDelta = clamp(webLen - prevHangLen, 0, 40 * config.scale)
+            prevHangLen = webLen
+            upness = 0
+            climbLayout = 0
+            lineGrip = 0
             // Where it meant to, or sooner if it is about to hit the side
             // of the screen: it takes the line up before it smacks in.
             let screen = map.screenFrame(containing: pos)
@@ -7126,10 +7369,25 @@ final class Spider {
 
     private func land(on a: Anchor, seg: Seg) {
         tumbleVel = 0
+        // Up a line to the top: it climbs onto what the line hangs from,
+        // its front feet already on it, rather than landing there.
+        let climbedUp = mode == .dangling && hangHeadUp
+        // Off any line it was on: the next starts afresh, hanging head down.
+        rappelAfterCatch = false
+        lineOrder = nil
+        mantle = nil
+        hangHeadUp = false
+        flipSign = 0
+        climbLayout = 0
+        lineGrip = 0
+        lineRef = 0
+        attachWas = nil
+        fallingRound = false
         let impact = min(vel.length, 1400)
         // Down off a line — a hang, a dragline paying out, a swing — onto
         // something: the line may be left where it is, from up there to here.
         let offALine = webActive && rope.live
+        let fromLine = mode == .dangling
         hurrying = false
         mode = .attached
         anchor = a
@@ -7138,7 +7396,15 @@ final class Spider {
         // Coming straight down onto it, it keeps facing the way it already
         // does rather than flipping round as it lands.
         if abs(vel.dot(seg.dir)) < 20 {
-            let forward = V2.angle(heading) * facing
+            var forward = V2.angle(heading) * facing
+            // Off a line — at the top of a climb, say, nose up against what
+            // it is climbing onto — it goes the way its body comes round as
+            // it brings its belly (and its feet) onto the surface, rather
+            // than whichever way it happens to lean.
+            if fromLine {
+                let belly = V2(0, -1).rotated(by: heading)
+                forward = forward.rotated(by: angleDelta(belly.angle, (-seg.normal).angle))
+            }
             walkDir = forward.dot(seg.dir) >= 0 ? 1 : -1
         }
         // The feet take the ledge now, and the body carries on the way it
@@ -7172,6 +7438,9 @@ final class Spider {
             anchorPos = pos
             landDrop = false
         }
+        // (A climber steps up onto it; nothing lands hard.)
+        if climbedUp { landStep = 0.16 }
+        climbedOnto = climbedUp
         legFramePos = pos
         legFrameHeading = heading
         vel = .zero
@@ -7199,7 +7468,13 @@ final class Spider {
             let foot = toWorld(legs[i].foot)
             let through = map.snapToEdge(foot, loopID: a.loopID).map { (foot - $0).dot(normal) < 1 } ?? false
             if through {
-                legs[i].foot = spot
+                // (Climbing up onto it, a foot that has hold of it already
+                // keeps that hold, and steps to its spot from there.)
+                if climbedUp, let touch = map.snapToEdge(foot, loopID: a.loopID) {
+                    legs[i].foot = toLocal(touch)
+                } else {
+                    legs[i].foot = spot
+                }
                 legs[i].settle = -1
             } else {
                 legs[i].settle = 0
@@ -7310,6 +7585,7 @@ final class Spider {
     private func planFall(from ledge: (point: V2, depth: Int)?, lineUp: Bool = false) {
         draglineCatchY = nil
         airShot = nil
+        rappelAfterCatch = false
         guard config.webs, !inCinema, !hangOnly else { return }
         let screen = map.screenFrame(containing: pos)
         let lowest = (confine.map { max($0.minY, screen.minY) } ?? screen.minY) + 30 * config.scale
@@ -7327,6 +7603,7 @@ final class Spider {
             webPlan = []
             webLen = max(20, pos.distance(to: a.point))
             webLenTarget = webLen
+            prevHangLen = webLen
             rope.clear()
             return
         }
@@ -7359,7 +7636,10 @@ final class Spider {
         let anchor = webAnchor, depth = webFromDepth
         let fallSpeed = max(0, -vel.y)
         let speed = vel.length
+        // (An order given on the way down still stands.)
+        let order = lineOrder
         attachWeb(at: anchor)
+        lineOrder = order
         webFromDepth = depth
         draglineCatchY = nil
         webStyle = .hang
@@ -7370,6 +7650,24 @@ final class Spider {
         stretch.velocity = 3
         webGrace = 0.6
         decisionIn = randRange(1.2, 2.4)
+        if rappelAfterCatch || order != nil {
+            // Stepped off the top of something to go down its line: on down.
+            // It meant to, with its feet on the line braking, so the catch
+            // is taken without much of a swing. (Told to, down or up.)
+            rappelAfterCatch = false
+            webAngleVel *= 0.3
+            switch order {
+            case .up?: webPlan = [.climbHome]
+            case .down?: webPlan = [.toFloor]
+            case .drop?: planDrop()
+            case nil:
+                let screen = map.screenFrame(containing: webAnchor)
+                planWeb(maxLen: max(40, webAnchor.y - (screen.minY + 30 * config.scale)))
+            }
+            if case .descend(let l)? = webPlan.first { webLenTarget = max(l, webLen) }
+            decisionIn = order == nil ? randRange(0.3, 0.8) : 0
+            return
+        }
         planWeb(afterFall: true)
         // Taut at an angle and moving: that is a swing, not a stop — it
         // rides the arc and lets go near the top, or grabs what it passes.
@@ -7399,6 +7697,12 @@ final class Spider {
         // not from the body's middle — so nothing jumps as the pendulum
         // takes over.
         if hangOffFresh {
+            // (Newly on a line it hangs from its spinnerets, whatever it
+            // was doing on the last one.)
+            climbLayout = 0
+            lineGrip = 0
+            lineRef = 0
+            attachWas = spinnerets
             var off = silkAttachLocal()
             off.x *= mirrorSign
             hangOff = -off.rotated(by: heading) * config.scale
@@ -7408,33 +7712,62 @@ final class Spider {
                 webLen = max(20, r.length - bungee.value)
                 webAngle = atan2(r.x, -r.y)
             }
-            prevHangLen = webLen + bungee.value
+            prevHangLen = webLen
+            fallingRound = abs(webAngle) > 1.5
+            mantle = nil
         }
+        // Going over the top, or stepping down off its line onto something:
+        // that has it.
+        if mantle != nil {
+            updateMantle(dt: dt)
+            return
+        }
+        // How far round it is to face up the line: its nose toward the
+        // anchor is 1, away from it (hanging head down) 0.
+        let nose = V2(mirrorSign, 0).rotated(by: heading)
+        upness = clamp((nose.dot((webAnchor - pos).normalized) + 1) / 2, 0, 1)
+        // (Coming round it takes up the stance early, and rides round into
+        // it; going back to hang, it lets go of the line as it turns away.)
+        climbLayout = hangHeadUp ? smoothstep(clamp((upness - 0.35) / 0.4, 0, 1))
+            : min(climbLayout, smoothstep(clamp((upness - 0.6) / 0.35, 0, 1)))
+        // Turning end for end, it draws the line in to its middle before it
+        // goes round, and turns about that; once round, it lets it back out
+        // to where it hangs or climbs from. (Not falling round under a line
+        // fastened beside it, nor swinging: then it hangs from its
+        // spinnerets like a weight on a string.)
+        let gripWant: CGFloat = flipSign != 0 && webStyle == .hang && !fallingRound ? 1 : 0
+        lineGrip = clamp(lineGrip + clamp(gripWant - lineGrip, -dt / 0.3, dt / 0.22), 0, 1)
+        reattach()
 
         // Keep the pendulum on the display: never pay out more thread than
         // there is room below the anchor, and never swing so wide it leaves
-        // the sides.
+        // the sides. (Measured as it would be hanging from its spinnerets:
+        // see `lineRef`.)
         let screen = map.screenFrame(containing: webAnchor)
         let margin = 30 * config.scale
         var maxLen = max(40, webAnchor.y - (screen.minY + margin))
         if hangOnly, let box = confine { maxLen = min(maxLen, max(40, webAnchor.y - (box.minY + margin))) }
-        webLenTarget = min(webLenTarget, maxLen)
+        webLenTarget = min(webLenTarget, maxLen + lineRef)
         let swinging = webStyle == .swing
         if swinging {
             // A swing from low down starts on a line longer than the anchor
             // is high; it is what keeps the body off the floor *at this
             // angle* that bounds it, so the line is hauled in gradually as
             // it comes down through the arc, never snapped short.
-            webLen = min(webLen, maxLen / max(cos(webAngle), 0.25))
+            webLen = min(webLen, maxLen / max(cos(webAngle), 0.25) + lineRef)
         } else {
-            webLen = min(webLen, maxLen)
+            webLen = min(webLen, maxLen + lineRef)
         }
 
         let maxSwing: CGFloat = swinging ? 1.5 : 1.1
         // Past the widest it can swing, it is eased back rather than
-        // bounced: a hard reversal here is what a jolt looks like.
+        // bounced: a hard reversal here is what a jolt looks like. (Just
+        // taken to a line fastened beside or below it — stepping off the
+        // top of a window — it first falls round under it, head over
+        // heels, rather than being snapped round there.)
+        if fallingRound, abs(webAngle) < maxSwing { fallingRound = false }
         var limitAcc: CGFloat = 0
-        if abs(webAngle) > maxSwing {
+        if abs(webAngle) > maxSwing, !fallingRound {
             let over = abs(webAngle) - maxSwing
             limitAcc = -(webAngle > 0 ? 1 : -1) * over * 60 - webAngleVel * 3
             webAngle = clamp(webAngle, -(maxSwing + 0.35), maxSwing + 0.35)
@@ -7445,9 +7778,24 @@ final class Spider {
             webLen = approach(webLen, webLenTarget, 1.8, dt)
         } else {
             // Steady paces: it hauls itself up at a climbing speed and pays
-            // out silk a little faster, easing off as it gets there.
+            // out silk a little faster, easing off as it gets there — once
+            // it is the right way up for it: turned head up to climb (a
+            // small adjustment it makes as it hangs), head down to go down.
             let diff = webLenTarget - webLen
-            let maxRate = (diff < 0 ? (hurrying ? 140 : 70) : 125) * config.scale
+            var maxRate: CGFloat = diff < 0 ? (hurrying ? 110 : 62) : 125
+            // (Nor any line paid out while it is still falling round under
+            // where it is fastened: that would lift it. Nor either, turning
+            // end for end, until it has the line back where it goes: its
+            // feet are gathered round it at its middle till then.)
+            let turning = fallingRound || lineGrip > 0 || (diff < 0 ? hangHeadUp && upness < 0.8 : upness > 0.3)
+            if turning {
+                maxRate = 0
+            } else if diff < 0, upness > 0.5 {
+                // Hand over hand it goes up in pulls: a surge as each front
+                // leg heaves, easing as it reaches up for the next hold.
+                maxRate *= 1 + 0.25 * sin((climbPhase - 0.3) * 4 * .pi)
+            }
+            maxRate *= config.scale
             webLen += clamp(diff * 4 * dt, -maxRate * dt, maxRate * dt)
         }
         // Paying out silk: a faint bob as each bit is let go.
@@ -7458,7 +7806,7 @@ final class Spider {
         // Just taken to its line in the box, it settles fast rather than
         // swinging in from wherever it was.
         let settling = hangOnly && t - hungSince < 4
-        let damping: CGFloat = swinging ? 0.22 : (settling ? 6.0 : 1.6)
+        let damping: CGFloat = swinging ? 0.22 : (settling || fallingRound ? 6.0 : 1.6)
         let len = max(webLen + bungee.value, 20)
         let acc = -(g / len) * sin(webAngle) - webAngleVel * damping + limitAcc
         webAngleVel += acc * dt
@@ -7467,20 +7815,15 @@ final class Spider {
         stretch.value += bungee.velocity * 0.00025
 
         let dir = V2(sin(webAngle), -cos(webAngle))
-        // The line ends at the spinnerets, not the body's middle: the body
-        // hangs off that point, so the thread runs exactly along the line
-        // through the grips whichever way up it is.
+        // The line ends where it is fastened to the body, not the body's
+        // middle: hanging, the spinnerets; climbing, along its belly — so
+        // the thread runs exactly along the line through the grips
+        // whichever way up it is. The body hangs off that point and turns
+        // about it; end for end, that is its middle (see `lineGrip`). (It
+        // is always seen side on here, so the spinnerets never swap sides.)
         var attachOff = silkAttachLocal()
         attachOff.x *= mirrorSign
-        // Where the body sits relative to that point follows the heading —
-        // but eased. Twisting on the line it shows its other side every so
-        // often, and at that instant the spinnerets swap sides in sprite
-        // space while the heading takes a moment to come round: taken
-        // literally, the body would jump the width of its abdomen and wobble
-        // back. So the offset slides there instead, and the line, pinned to
-        // the real spinnerets, bends a touch until it has.
-        let wantOff = -attachOff.rotated(by: heading) * config.scale
-        hangOff = approach(hangOff, wantOff, 9, dt)
+        hangOff = -attachOff.rotated(by: heading) * config.scale
         let newPos = webAnchor + dir * len + hangOff
         if dt > 0 { vel = (newPos - pos) / dt }
         pos = newPos
@@ -7509,34 +7852,68 @@ final class Spider {
         lid.step(to: 0, dt: dt)
         activityTime += dt
 
-        // Hangs holding the line: body along the thread, hind legs gripping
-        // it above the abdomen. Climbing and descending are hand over hand —
-        // the feet stay put on the thread while the body moves past them.
+        // Hangs holding the line: body along the thread, the hind legs
+        // holding it above the spinnerets and the front ones hanging free.
+        // Climbing is hand over hand — the feet stay put on the thread while
+        // the body moves past them (see `updateLineLegs`).
         let alongThread = webAngle - .pi / 2                // direction from anchor to spider
-        let moved = len - prevHangLen                       // + = descending
-        prevHangLen = len
-        hangDelta = abs(moved) < 40 ? moved : 0
-        if abs(moved) < 40 {
-            climbTravel += abs(moved) / (Spider.climbStride * config.scale)
-            climbPhase += abs(moved) / (Spider.climbStridePx * config.scale)
-            climbDir = approach(climbDir, clamp(-moved / dt / 60, -1, 1), 8, dt)
-        }
+        let moved = webLen - prevHangLen                    // + = descending
+        prevHangLen = webLen
+        hangDelta = abs(moved) < 40 * config.scale ? moved : 0
 
         if swinging {
             hangHeadUp = false
+            flipSign = 0
             updateSwing(dt: dt, alongThread: alongThread, len: len)
             return
         }
-        // Climbing, it turns to face up the line and hauls; once it stops it
-        // lets itself back round to hang head down.
-        // A real climb — a good stretch of line to haul in — it turns to
-        // face up the thread for; a small adjustment it makes as it hangs.
+        // Climbing, it turns to face up the line and hauls; once it has
+        // stopped a while, or sets off back down, it lets itself back round
+        // to hang head down. A real climb — a good stretch of line to haul
+        // in — it turns to face up the thread for; a small adjustment it
+        // makes as it hangs.
         let hauling = webLenTarget < webLen - 3
+        let payingOut = webLenTarget > webLen + 3
         stillFor = hauling ? 0 : stillFor + dt
-        if hauling, webLen - webLenTarget > 45 * config.scale { hangHeadUp = true } else if stillFor > 0.5 { hangHeadUp = false }
-        let headDir = hangHeadUp ? alongThread + .pi : alongThread
-        headingTarget = headDir + (facing < 0 ? .pi : 0) + sin(t * 1.3) * 0.03
-        wag.step(to: t < twirlUntil ? 0.8 : 0, dt: dt)
+        let wasUp = hangHeadUp
+        // (Up to the top of something it hangs down the face of — a window
+        // it stepped off the top of — however short the way: it has to
+        // climb over the lip there, head first.)
+        if hauling, webLen - webLenTarget > 45 * config.scale
+            || !hangHeadUp && webLenTarget < lineTop + 8 * config.scale && lipSpot() != nil {
+            hangHeadUp = true
+        } else if payingOut || stillFor > 1.6 {
+            hangHeadUp = false
+        }
+        // End for end: head first round by its belly — the side its legs
+        // hold the line on — to climb, and back the way it came to hang
+        // again. Never the short way over its back, whichever is shorter.
+        if hangHeadUp != wasUp { flipSign = hangHeadUp ? -facing : facing }
+        // (Falling round under the line from above it, off the top of
+        // something, it tips over head first, straight for hanging head
+        // down, rather than following the line up and over.)
+        let headDir = hangHeadUp ? alongThread + .pi : (fallingRound ? -.pi / 2 : alongThread)
+        var target = headDir + (facing < 0 ? .pi : 0) + lineTilt + sin(t * 1.3) * 0.03
+        if flipSign != 0 {
+            // The heading's spring is led round a little ahead of the body
+            // at a time — the long way, if the short way is the wrong way —
+            // so it comes round at a steady, deliberate pace.
+            var err = angleDelta(heading, target)
+            if err * flipSign < 0, abs(err) > 1 { err += flipSign * 2 * .pi }
+            if abs(err) < 0.3 {
+                flipSign = 0
+            } else if lineGrip < 0.5 {
+                // It gathers the line in to its middle before it goes
+                // round: until then it stays as it is.
+                let up = upness > 0.5
+                target = (up ? alongThread + .pi : alongThread) + (facing < 0 ? .pi : 0)
+                    + (up ? facing * Spider.climbLean : -facing * 0.1) + sin(t * 1.3) * 0.03
+            } else {
+                target = heading + clamp(err, -Spider.turnLead, Spider.turnLead)
+            }
+        }
+        headingTarget = target
+        wag.step(to: t < lineJoyUntil ? 0.8 : 0, dt: dt)
 
         // A window has come over it on the line: straight up and out. Only
         // a window in front of the one it hung from counts — hanging down
@@ -7545,22 +7922,27 @@ final class Spider {
         // nothing up there to climb out onto: it swings off instead.
         if !map.isVisible(pos, depth: webFromDepth) {
             if homeIsOpen {
-                webLenTarget = 26
+                webLenTarget = lineTop - 4 * config.scale
                 webPlan = [.climbHome]
                 lingerUntil = -1
-                twirlUntil = 0
+                lineJoyUntil = 0
+                // (Whatever it was told: it is getting out of there.)
+                if lineOrder != .up { lineOrder = nil }
             } else if !leavingLostLine {
                 leaveLostLine()
             }
         }
 
         // Curious about a pointer below it: pays out line to come and see.
+        // (Not just after it was told where to go: the pointer is what told
+        // it, and it stays where it was put.)
         var lingering = false
         if case .linger? = webPlan.first { lingering = true }
-        if climbArrival == nil, lingering, config.followCursor, cursorVel.length < 40, cursor.y < webAnchor.y - 60,
+        if climbArrival == nil, lingering, lineOrder == nil, t - orderedAt > 12,
+           config.followCursor, cursorVel.length < 40, cursor.y < webAnchor.y - 60,
            abs(cursor.x - webAnchor.x) < 120 * config.scale, t - lastUserActivity < 6 {
             let want = clamp(webAnchor.y - cursor.y - 48 * config.scale, 30, maxLen)
-            webLenTarget = approach(webLenTarget, want, 1.5, dt)
+            webLenTarget = approach(webLenTarget, want + lineRef, 1.5, dt)
         }
 
         if hangOnly {
@@ -7577,7 +7959,7 @@ final class Spider {
         } else if inCinema {
             // Caught on a line during the film: no antics, just down to
             // the floor and settle.
-            webLenTarget = maxLen
+            webLenTarget = maxLen + lineRef
             webStyle = .hang
             swingPumping = false
             decisionIn = 99
@@ -7588,10 +7970,12 @@ final class Spider {
             if decisionIn <= 0 { thinkOnWeb() }
         }
 
-        guard webGrace <= 0, !hangOnly else { return }
+        // (Not half-way through turning end for end, the line drawn in to
+        // its middle: that is no way to take hold of anything.)
+        guard webGrace <= 0, !hangOnly, lineGrip <= 0 else { return }
 
         // Climbing up and out (into the habitat): at the top, it is there.
-        if let arrive = climbArrival, hangHeadUp || webLenTarget < 30, webLen < 40 {
+        if let arrive = climbArrival, hangHeadUp || webLenTarget < 30, webLen < lineTop + 2 * config.scale {
             climbArrival = nil
             arrive()
             return
@@ -7600,23 +7984,455 @@ final class Spider {
         // On its way up and out, nothing on the way distracts it.
         guard climbArrival == nil else { return }
 
-        // Reached the top: climb on. The line may be fastened to the lip
-        // of a shelf it fell off, in which case the last bit is a pull-up
-        // over the edge.
-        if webLen < 34, let spot = map.nearestSpot(to: pos, within: 40 + map.standoff)
-            ?? map.nearestSpot(to: webAnchor, within: 40 * config.scale + map.standoff) {
-            land(on: spot.anchor, seg: spot.seg)
-            return
+        // Reached the top: climb on.
+        if webLen < lineTop + 8 * config.scale {
+            // The line may be fastened to the lip of a shelf it stepped or
+            // fell off: then the last bit is a pull-up over the edge, head
+            // first — and hanging head down there, it comes round to climb
+            // first, if it means to go up at all.
+            if let lip = lipSpot() {
+                if climbReady {
+                    if beginMantle(onto: lip) { return }
+                } else {
+                    if !hangHeadUp, webLenTarget < lineTop + 8 * config.scale {
+                        hangHeadUp = true
+                        flipSign = -facing
+                        stillFor = 0
+                    }
+                    return
+                }
+            }
+            if let spot = map.nearestSpot(to: pos, within: 40 + map.standoff)
+                ?? map.nearestSpot(to: webAnchor, within: 40 * config.scale + map.standoff) {
+                land(on: spot.anchor, seg: spot.seg)
+                return
+            }
         }
         // Touched down on something below while barely swinging. Not while
         // it is hauling itself up: on its way somewhere it does not grab at
-        // whatever it happens to pass.
+        // whatever it happens to pass. Nor the underside of anything: going
+        // down, that is the bottom of a window it hangs in front of, and it
+        // is no more touching that than the front. (Sent down, only a ledge
+        // — something to stand on — will do.)
         if !hauling, abs(webAngleVel) < 0.7, abs(bungee.velocity) < 40,
            let spot = map.nearestSpot(to: pos, within: 22 * config.scale),
-           spot.point.y < pos.y + 6 {
+           spot.point.y < pos.y + 6, spot.seg.facing != .down,
+           lineOrder != .down || spot.seg.facing == .up {
+            // Head down onto the top of something: it steps down onto it.
+            if spot.seg.facing == .up, upness < 0.25, lineGrip <= 0, webStyle == .hang, !fallingRound,
+               beginMantle(onto: (spot.anchor, spot.seg), down: true) { return }
             land(on: spot.anchor, seg: spot.seg)
             return
         }
+    }
+
+    /// Hauling itself up and round to face up the line, all but done:
+    /// ready to go over the top.
+    private var climbReady: Bool {
+        hangHeadUp && flipSign == 0 && lineGrip <= 0 && climbLayout > 0.95 && upness > 0.85 && webStyle == .hang
+    }
+
+    /// Where its line is fastened, if that is the top of something it is
+    /// down the face of — a window it stepped off the top of, a shelf it fell
+    /// from — rather than under: the spot on top it will have to climb over
+    /// the lip onto.
+    private func lipSpot() -> (anchor: Anchor, seg: Seg)? {
+        guard let spot = map.nearestSpot(to: webAnchor, within: 40 * config.scale + map.standoff),
+              spot.seg.facing == .up, (pos - spot.point).dot(spot.seg.normal) < -map.standoff * 0.5 else { return nil }
+        return (spot.anchor, spot.seg)
+    }
+
+    // MARK: Over the top, and down onto it
+
+    /// Up its line to the top of something it hangs from — a window it
+    /// stepped off the top of, say — the line comes up over the lip, so it
+    /// cannot simply arrive there. Its front legs reach over onto the top
+    /// and pull it up until its waist is at the lip; it tips forward over
+    /// the lip, belly first, as its hind legs, which have been pushing on the
+    /// silk, come up over after it; and it stands up. All of it is laid out
+    /// as it begins, so it goes from the climb to standing in one movement,
+    /// and hands over to standing without a jolt.
+    ///
+    /// Coming down its line head first onto the top of something (`down`)
+    /// is the same the other way about: its front legs, reaching down, take
+    /// the ledge; it comes on down onto them, the rest of it pitching over
+    /// belly first onto the ledge behind them; and its hind legs let go of
+    /// the silk last and step down.
+    private struct Mantle {
+        let down: Bool
+        let dur: CGFloat
+        /// Where it will stand, and where that was as it began: a window
+        /// moving under it carries the whole of it along.
+        let spot: Anchor
+        let spotAt: V2
+        /// Where the line comes over the edge (going down, the edge under
+        /// it); along the edge the way it goes (its nose's way, once it
+        /// stands); and up off the edge.
+        let lip: V2
+        let fwd: V2
+        let up: V2
+        /// Its heading as it began, and how far round it tips.
+        let h0: CGFloat
+        let turn: CGFloat
+        /// What it tips about, in sprite units (`mantleHinge`,
+        /// `stepDownHinge`), and where that starts, comes up to at the lip,
+        /// and ends up standing.
+        let hinge: V2
+        let hinge0: V2
+        let hingeLip: V2
+        let hingeEnd: V2
+        /// How fast it was coming up the line (or down it), as the slope the
+        /// rise (or the fall) starts at.
+        let pace: CGFloat
+        var t: CGFloat = 0
+        var legs: [MantleLeg] = []
+    }
+
+    /// Somewhere a foot holds on going over the top: a spot in the world (on
+    /// the top, or on the silk under the lip), or on the body (the silk
+    /// along its belly, which comes round with it), or on the line, `silk`
+    /// sprite units up it from where it leaves the body (which goes round
+    /// with the line as the body pitches over under it). Off the top, the
+    /// way the knee bends there, in sprite units.
+    private struct MantleHold {
+        var at: V2
+        var onBody = false
+        var onTop = false
+        var silk: CGFloat?
+        var bend = V2(0, -1)
+    }
+
+    /// A leg's part in it: its holds in turn, and when it goes from each to
+    /// the next, as shares of the way through.
+    private struct MantleLeg {
+        var holds: [MantleHold]
+        var moves: [(from: CGFloat, to: CGFloat)] = []
+        /// The way round its hip it is going, on the way (see `roundHip`).
+        var turn: CGFloat?
+    }
+
+    private var mantle: Mantle?
+    /// The belly under its waist, between the hips, in sprite units: what it
+    /// pulls up to the lip and tips over.
+    private static let mantleHinge = V2(-3, -10)
+    /// Stepping down, what it comes down onto its front legs about: the
+    /// front of its belly, under the head.
+    private static let stepDownHinge = V2(6, -10)
+    /// How far past the lip it stands at the end, along the top, sprite units.
+    private static let mantleAhead: CGFloat = 10
+    /// How long going over the top takes, seconds; and stepping down.
+    private static let mantleTime: CGFloat = 1.0
+    private static let stepDownTime: CGFloat = 0.8
+
+    /// Where it is `u` of the way over, as things stood when it began. The
+    /// belly under its waist comes on up the line to the lip — at the pace
+    /// it was climbing, easing to a stop there — and later rises off it as
+    /// it stands up; meanwhile it tips forward about it, over the lip.
+    /// Stepping down, the front of its belly comes on down to where it will
+    /// stand — at the pace it was going down, easing to a stop — as the rest
+    /// of it pitches over about it.
+    private func mantleBody(_ m: Mantle, _ u: CGFloat) -> (pos: V2, heading: CGFloat) {
+        func eased(_ r: CGFloat) -> CGFloat { m.pace * (r * r * r - 2 * r * r + r) + r * r * (3 - 2 * r) }
+        let heading: CGFloat
+        let hinge: V2
+        if m.down {
+            heading = m.h0 + m.turn * smoothstep(clamp((u - 0.05) / 0.8, 0, 1))
+            hinge = m.hinge0 + (m.hingeEnd - m.hinge0) * eased(clamp(u / 0.8, 0, 1))
+        } else {
+            let stand = smoothstep(clamp((u - 0.5) / 0.5, 0, 1))
+            heading = m.h0 + m.turn * smoothstep(clamp((u - 0.18) / 0.64, 0, 1))
+            hinge = m.hinge0 + (m.hingeLip - m.hinge0) * eased(clamp(u / 0.45, 0, 1)) + (m.hingeEnd - m.hingeLip) * stand
+        }
+        return (hinge - bodyOffset(m.hinge, heading), heading)
+    }
+
+    /// A point on the sprite as an offset from its middle in the world, the
+    /// body turned to `heading`.
+    private func bodyOffset(_ l: V2, _ heading: CGFloat) -> V2 {
+        V2(l.x * mirrorSign, l.y).rotated(by: heading) * config.scale
+    }
+
+    /// At the top of its line, under the top of what it hangs from: over the
+    /// lip it goes. (`down`: at the bottom of its line, head down onto the
+    /// top of something: down onto it it steps.) False if it cannot (not
+    /// the right way round for it).
+    private func beginMantle(onto lip: (anchor: Anchor, seg: Seg), down: Bool = false) -> Bool {
+        let sc = config.scale
+        let seg = lip.seg
+        // Over the lip the way its belly faces — which, once it is standing
+        // on top, is the way its nose points. (Down, head first, its belly
+        // is the other way: it pitches over onto it.)
+        let fwd = seg.dir * facing
+        let belly = V2(0, -1).rotated(by: heading).dot(fwd)
+        guard down ? belly < -0.3 : belly > 0.3 else { return false }
+        let hl = down ? Spider.stepDownHinge : Spider.mantleHinge
+        let hinge0 = toWorld(hl)
+        // Up: a little way past the lip. Down: with the front of its belly
+        // where it comes down, straight under it.
+        let endT = down ? clamp(projectOnSegment(hinge0, seg.a, seg.b).t - facing * hl.x * sc, 0, seg.len)
+            : clamp(lip.anchor.t + facing * Spider.mantleAhead * sc, 0, seg.len)
+        let spot = Anchor(loopID: lip.anchor.loopID, segIdx: lip.anchor.segIdx, t: endT)
+        guard let end = map.resolve(spot, cornerRadius: Spider.cornerRadius * sc) else { return false }
+        let edge = seg.point(at: down ? endT : lip.anchor.t) - seg.normal * map.standoff
+        // (Its belly comes up to just over the lip, never down on it.)
+        let hingeLip = edge + fwd * (3 * sc) + seg.normal * (5 * sc)
+        let h1 = end.tangent.angle
+        let hingeEnd = end.pos + bodyOffset(hl, h1)
+        let dur = down ? Spider.stepDownTime : Spider.mantleTime
+        // (The pace it comes up — or down — at, as a slope of the ease.)
+        let pace = down ? max(0, -vel.dot(seg.normal)) * 0.8 * dur / max(hinge0.distance(to: hingeEnd), 1)
+            : max(0, vel.dot(seg.normal)) * 0.45 * dur / max(hinge0.distance(to: hingeLip), 1)
+        var m = Mantle(down: down, dur: dur, spot: spot, spotAt: end.pos, lip: edge, fwd: fwd, up: seg.normal,
+                       h0: heading, turn: angleDelta(heading, h1),
+                       hinge: hl, hinge0: hinge0, hingeLip: down ? hingeEnd : hingeLip, hingeEnd: hingeEnd,
+                       pace: clamp(pace, 0, 2.5))
+        m.legs = planMantleLegs(m)
+        mantle = m
+        bungee.reset(0)
+        webAngleVel = 0
+        lineJoyUntil = 0
+        regripLeg = -1
+        return true
+    }
+
+    /// Each leg's part (see `MantleLeg`). The front legs reach over onto the
+    /// top, out toward where they will stand — as far as they comfortably
+    /// reach from where they will be — and on to it later. The
+    /// hind legs push on the silk under the lip as it rises, until they can
+    /// reach no further; take a fresh hold up by the belly, and come round
+    /// with it as it tips over; and step up onto the top last. Stepping
+    /// down, the front legs take the ledge the same way, first; the hind
+    /// legs keep hold of the silk by the spinnerets until the body is most
+    /// of the way over, and step down last.
+    private func planMantleLegs(_ m: Mantle) -> [MantleLeg] {
+        let sc = config.scale
+        let step: CGFloat = 0.02
+        let path = stride(from: CGFloat(0), through: 1.0001, by: step).map { mantleBody(m, $0) }
+        func body(_ u: CGFloat) -> (pos: V2, heading: CGFloat) { path[min(Int((u / step).rounded()), path.count - 1)] }
+        func world(_ l: V2, _ b: (pos: V2, heading: CGFloat)) -> V2 { b.pos + bodyOffset(l, b.heading) }
+        func along(_ p: V2) -> CGFloat { (p - m.lip).dot(m.fwd) }
+        // On the edge itself — near a window's corner, on the curve of it,
+        // or round onto the next side — as standing puts its feet.
+        let loop = map.loop(m.spot.loopID)
+        func onEdge(_ p: V2) -> V2 { loop.map { footOnEdge(p, $0).point } ?? p }
+        func onTop(_ x: CGFloat) -> V2 { onEdge(m.lip + m.fwd * x) }
+        let done = body(1)
+        // The order the front legs go over (or down) in, and the hind legs
+        // step up (or down).
+        let over: [Int: CGFloat] = m.down ? [0: 0, 4: 0.04, 1: 0.08, 5: 0.12] : [0: 0.02, 5: 0.06, 4: 0.1, 1: 0.14]
+        let up: [Int: CGFloat] = m.down ? [2: 0.46, 6: 0.52, 3: 0.58, 7: 0.64] : [2: 0.44, 6: 0.5, 3: 0.57, 7: 0.64]
+        var out: [MantleLeg] = []
+        var letGo: [Int: CGFloat] = [:]
+        for i in legs.indices {
+            let hip = legs[i].hip
+            let reach = lineReach(i) * sc
+            let now = toWorld(legs[i].foot)
+            let stand = onEdge(world(SpiderRenderer.rig(i, profile: 1, look: look).foot, done))
+            // (Each knee bent as it was, to begin with.)
+            let bend = legBend[i] ?? V2(0, -1)
+            var leg = MantleLeg(holds: [MantleHold(at: now, bend: bend)])
+            if m.down, over[i] == nil {
+                // Holding the line just over the spinnerets, as it hung: it
+                // keeps hold of it there as it pitches over, until it lets
+                // go and steps down.
+                let from = silkAttachWorld()
+                let line = (webAnchor - from).length > 0.001 ? (webAnchor - from).normalized : m.up
+                let s = max((now - from).dot(line) / sc, 2)
+                leg.holds = [MantleHold(at: now, silk: s, bend: bend), MantleHold(at: stand, onTop: true)]
+                leg.moves = [(up[i]!, up[i]! + 0.2)]
+                out.append(leg)
+                continue
+            }
+            // How far a spot is out of the leg's comfortable reach — knee
+            // well bent, not folded right up — at worst, over a stretch of
+            // the way: 0 if it never is.
+            func strain(_ p: V2, from: CGFloat, to: CGFloat) -> CGFloat {
+                var worst: CGFloat = 0
+                for u in stride(from: from, through: to, by: 0.05) {
+                    let d = world(hip, body(u)).distance(to: p)
+                    worst = max(worst, d - reach * 0.75, reach * 0.3 - d)
+                }
+                return worst
+            }
+            if var a = over[i] {
+                // (Sooner, if the body is about to come up past its hold and
+                // crowd it: a foot never goes in through its own hip.)
+                for u in stride(from: CGFloat(0), through: a, by: step)
+                where world(hip, body(u)).distance(to: now) < reach * 0.45 {
+                    a = max(0, u - 0.04)
+                    break
+                }
+                // Well out over the top, toward where it will stand, so the
+                // body comes up and over between them — but no further than
+                // it comfortably reaches from where it is going to be.
+                let b = a + 0.18
+                var best = (x: along(stand) * 0.85, strain: CGFloat.greatestFiniteMagnitude)
+                var x = best.x
+                while x > -12 * sc {
+                    let s = strain(onTop(x), from: (a + b) / 2, to: 1)
+                    if s < best.strain - 0.01 { best = (x, s) }
+                    if s <= 0 { break }
+                    x -= sc
+                }
+                leg.holds.append(MantleHold(at: onTop(best.x), onTop: true))
+                leg.moves.append((a, b))
+                if abs(best.x - along(stand)) > 2 * sc {
+                    let a2 = m.down ? 0.56 + a : 0.62 + (a - 0.03) * 0.8
+                    leg.holds.append(MantleHold(at: stand, onTop: true))
+                    leg.moves.append((a2, a2 + 0.16))
+                }
+            } else if let a2 = up[i] {
+                // Pushing on the silk until the leg is at full stretch — or
+                // until the end of the silk, drawn up along its belly, gets
+                // to its foot.
+                var go: CGFloat = 0.3
+                for u in stride(from: CGFloat(0), through: 0.3, by: step) {
+                    let b = body(u)
+                    if world(hip, b).distance(to: now) > reach * 0.8
+                        || world(climbHold, b).distance(to: m.lip) < now.distance(to: m.lip) + 3 * sc {
+                        go = u
+                        break
+                    }
+                }
+                letGo[i] = go
+                leg.holds.append(MantleHold(at: bellyLine(Spider.lineClimb[i] + 5), onBody: true))
+                leg.moves.append((0, 0))
+                leg.holds.append(MantleHold(at: stand, onTop: true))
+                leg.moves.append((a2, a2 + 0.2))
+            }
+            out.append(leg)
+        }
+        // A fresh hold on the silk just before each would be at full stretch
+        // — never two hind legs letting go of it at once.
+        var last: CGFloat = -1
+        for (i, go) in letGo.sorted(by: { $0.value < $1.value }) {
+            let a = max(clamp(go - 0.08, 0.01, 0.3), last + 0.04)
+            out[i].moves[0] = (a, a + 0.13)
+            last = a
+        }
+        return out
+    }
+
+    /// Going over the top, each frame: the body where the pull-up has it,
+    /// and the line taut from the lip to it.
+    private func updateMantle(dt: CGFloat) {
+        guard var m = mantle else { return }
+        // Whatever it is getting onto is still there (moved, maybe): on with
+        // it. Gone: back to hanging on its line.
+        guard webActive, let here = map.resolve(m.spot, cornerRadius: Spider.cornerRadius * config.scale) else {
+            mantle = nil
+            hangOffFresh = true
+            return
+        }
+        m.t += dt
+        mantle = m
+        let u = clamp(m.t / m.dur, 0, 1)
+        let b = mantleBody(m, u)
+        let now = b.pos + (here.pos - m.spotAt)
+        if dt > 0 { vel = (now - pos) / dt }
+        pos = now
+        heading = b.heading
+        headingTarget = heading
+        headingVel = 0
+        swingVel = approach(swingVel, vel, 12, dt)
+        // Its hind legs off the silk along its belly, it lets that go back
+        // to its spinnerets, taking up the last of what it had hauled in.
+        if !m.down { climbLayout = 1 - smoothstep(clamp((u - 0.7) / 0.3, 0, 1)) }
+        let attach = silkAttachWorld()
+        webLen = max(attach.distance(to: webAnchor), 1)
+        webLenTarget = webLen
+        prevHangLen = webLen
+        hangDelta = 0
+        let d = toLocalDir(webAnchor - attach)
+        lineDirLocal = d.length > 0.001 ? d.normalized : V2(1, 0)
+        legMode = .free
+        crouch.step(to: 0, dt: dt)
+        lift.step(to: 0, dt: dt)
+        pitch.step(to: 0, dt: dt)
+        lid.step(to: 0, dt: dt)
+        wag.step(to: 0, dt: dt)
+        activityTime += dt
+        if u >= 1 { finishMantle() }
+    }
+
+    /// Over the top (or down off its line) and on its feet: it is standing
+    /// there now.
+    private func finishMantle() {
+        guard let m = mantle, let seg = map.seg(m.spot) else { mantle = nil; return }
+        mantle = nil
+        vel = .zero
+        land(on: m.spot, seg: seg)
+        // It stepped on; it did not come down on it: none of a landing's
+        // give, and the knees come over to standing as they do off a climb.
+        climbedOnto = true
+        lift.value = 0
+        lift.velocity = 0
+        landDrop = false
+        skid.value = 0
+        skid.velocity = 0
+        stretch.velocity = 0.6
+        crouch.velocity = 0.8
+    }
+
+    /// The legs going over the top (see `planMantleLegs`): each foot at its
+    /// hold, or on its way round its hip from one to the next, lifted clear
+    /// — up over the lip onto the top, out off the silk.
+    private func updateMantleLegs() {
+        guard var m = mantle, m.legs.count == legs.count else { return }
+        let u = clamp(m.t / m.dur, 0, 1)
+        let shift = map.resolve(m.spot, cornerRadius: Spider.cornerRadius * config.scale).map { $0.pos - m.spotAt } ?? .zero
+        let upLocal = toLocalDir(m.up)
+        let from = silkAttachWorld()
+        let line = (webAnchor - from).length > 0.001 ? (webAnchor - from).normalized : m.up
+        func local(_ h: MantleHold) -> V2 {
+            if let s = h.silk { return toLocal(from + line * (s * config.scale)) }
+            return h.onBody ? h.at : toLocal(h.at + shift)
+        }
+        // A knee on top is up off it; on the silk, bent out from it, as
+        // climbing or hanging — until, tipping over, that would put it down
+        // through the edge: then up, as on top.
+        let tipped = smoothstep(clamp((u - 0.3) / 0.25, 0, 1))
+        func bend(_ h: MantleHold) -> V2 {
+            h.onTop ? upLocal : h.onBody || h.silk != nil ? h.bend * (1 - tipped) + upLocal * tipped : h.bend
+        }
+        for i in legs.indices {
+            var plan = m.legs[i]
+            var stage = 0
+            for (j, mv) in plan.moves.enumerated() where u >= mv.to { stage = j + 1 }
+            var foot: V2
+            var knee: V2
+            var lift: CGFloat = 0
+            let hip = legs[i].hip
+            if stage < plan.moves.count, u > plan.moves[stage].from {
+                let mv = plan.moves[stage]
+                let e = clamp((u - mv.from) / max(mv.to - mv.from, 0.01), 0, 1)
+                let s = easeInOutSine(e)
+                let a = plan.holds[stage], b = plan.holds[stage + 1]
+                foot = Spider.roundHip(local(a), local(b), hip: hip, s, turn: &plan.turn, fold: 0.35)
+                lift = sin(e * .pi)
+                foot = foot + (b.onTop ? upLocal * 4 : V2(0, -3)) * lift
+                knee = bend(a) * (1 - s) + bend(b) * s
+            } else {
+                plan.turn = nil
+                foot = local(plan.holds[min(stage, plan.holds.count - 1)])
+                knee = bend(plan.holds[min(stage, plan.holds.count - 1)])
+            }
+            // (Never out past what the leg reaches — nor, on its way, folded
+            // right up in by the hip, where the knee has nowhere to go.)
+            let most = lineReach(i) * 0.98, least = lineReach(i) * (lift > 0 ? 0.35 : 0)
+            let off = foot - hip
+            if off.length > most { foot = hip + off.normalized * most }
+            if off.length < least, off.length > 0.001 { foot = hip + off.normalized * least }
+            legs[i].foot = foot
+            legs[i].footVel = .zero
+            legs[i].lift = lift
+            legs[i].swinging = lift > 0
+            legs[i].settle = -1
+            legBend[i] = knee.length > 0.01 ? knee.normalized : upLocal
+            legBones[i] = Spider.lineBones(i)
+            m.legs[i] = plan
+        }
+        mantle = m
     }
 
     /// The swing proper: the body flies along the arc, and it lets go on the
@@ -7635,7 +8451,7 @@ final class Spider {
         // thread is a half-roll of the body, and doing that at every end of
         // the arc is what made a swing look like a tumble.
         let lag = clamp(-webAngleVel * 0.08, -0.2, 0.2)
-        headingTarget = alongThread + lag + (facing < 0 ? .pi : 0)
+        headingTarget = alongThread + lag + (facing < 0 ? .pi : 0) + lineTilt
         wag.step(to: 0.3, dt: dt)
 
         // Working the swing up: nothing comes from nowhere. Each pass it
@@ -7680,7 +8496,7 @@ final class Spider {
         if swingHalfSwings > 7 || dead || (swingHalfSwings >= 2 && abs(webAngleVel) < 0.35 && abs(webAngle) < 0.15) {
             webStyle = .hang
             webLenTarget = webLen
-            prevHangLen = webLen + bungee.value
+            prevHangLen = webLen
             decisionIn = randRange(0.6, 1.4)
         }
     }
@@ -7800,6 +8616,8 @@ final class Spider {
         swingReleaseAt = randRange(0.55, 0.9)
         mode = .dangling
         hangOffFresh = true
+        hangHeadUp = false
+        flipSign = 0
         legMode = .free
         anchorValid = false
         activity = .idle
@@ -7878,13 +8696,15 @@ final class Spider {
         let screen = map.screenFrame(containing: webAnchor)
         let maxLen = max(40, webAnchor.y - (screen.minY + 30 * config.scale))
         if maxLen >= 120, !confined {
-            let len = clamp(max(webLen, 170 * config.scale), 110, min(maxLen, 420))
+            let len = clamp(max(webLen - lineRef, 170 * config.scale), 110, min(maxLen, 420))
             webPlan = [.swingOff(len)]
         } else {
             webPlan = [.toFloor]
         }
+        // (Nothing up there to be told to climb to any more.)
+        lineOrder = nil
         lingerUntil = -1
-        twirlUntil = 0
+        lineJoyUntil = 0
         decisionIn = 0
     }
 
@@ -7899,8 +8719,15 @@ final class Spider {
         guard let step = webPlan.first else { return }
         switch step {
         case .descend(let l):
-            webLenTarget = l
-            if abs(webLen - l) < 4 { webPlan.removeFirst(); lingerUntil = -1 }
+            // (The plan's lengths are as it hangs from its spinnerets; see
+            // `lineRef`.)
+            webLenTarget = l + lineRef
+            if abs(webLen - webLenTarget) < 4 {
+                webPlan.removeFirst()
+                lingerUntil = -1
+                // (Told to go down off its ledge: it has; the hang is its own.)
+                if lineOrder == .drop { lineOrder = nil }
+            }
         case .linger(let d):
             if lingerUntil < 0 {
                 lingerUntil = t + d
@@ -7925,20 +8752,22 @@ final class Spider {
                 lingerUntil = -1
             }
         case .climbHome:
-            webLenTarget = 26
+            webLenTarget = lineTop - 4 * config.scale
             // Reached the top: the landing check below takes it from here —
             // unless there is nothing there to take hold of any more (the
             // window has gone, or something has come over it): then down
             // it goes instead, rather than hanging under nothing.
-            if webLen < 34, !homeIsOpen { leaveLostLine() }
+            if webLen < lineTop + 8 * config.scale, !homeIsOpen { leaveLostLine() }
         case .toFloor:
-            let screen = map.screenFrame(containing: webAnchor)
-            let floorLen = max(40, webAnchor.y - (screen.minY + 30 * config.scale))
             webLenTarget = floorLen
             // Down as far as the line goes and nothing to step onto: back up.
+            // (Told to go down, it waits there longer before it gives up.)
             if webLen > floorLen - 3, abs(webAngleVel) < 0.3 {
                 if floorWait < 0 { floorWait = t }
-                if t - floorWait > 2.5 { webPlan = [.climbHome] }
+                if t - floorWait > (lineOrder == .down ? 6 : 2.5) {
+                    webPlan = [.climbHome]
+                    lineOrder = nil
+                }
             } else {
                 floorWait = -1
             }
@@ -7946,8 +8775,8 @@ final class Spider {
             webPlan.removeFirst()
             if webLen > 90, !confined { workUpSwing() } else { webPlan = [.climbHome] }
         case .swingOff(let l):
-            webLenTarget = l
-            if abs(webLen - l) < 4 {
+            webLenTarget = l + lineRef
+            if abs(webLen - webLenTarget) < 4 {
                 webPlan.removeFirst()
                 if webLen > 90, !confined { workUpSwing() } else { webPlan = [.toFloor] }
             }
@@ -7970,12 +8799,17 @@ final class Spider {
         tumbleVel = 0
         draglineCatchY = nil
         airShot = nil
+        lineOrder = nil
         webAnchor = p
         webActive = true
         webFromDepth = map.occluders.filter { $0.rect.insetBy(dx: -4, dy: -4).contains(p.point) }.map(\.depth).min() ?? Int.max
         webPlan = []
         lingerUntil = -1
-        let r = pos - p
+        // The pendulum is the line to its spinnerets, where it hangs from —
+        // measured there from the start, so the swing it is caught into is
+        // the one it goes on to have. (Measured from the body's middle, a
+        // line fastened off to one side would set it swinging hard.)
+        let r = toWorld(spinnerets) - p
         webLen = max(28, r.length)
         webLenTarget = min(webLen + randRange(0, 120), 780)
         webAngle = atan2(r.x, -r.y)
@@ -7989,8 +8823,8 @@ final class Spider {
         webGrace = 0.5
         bungee.reset(0)
         prevHangLen = webLen
-        climbTravel = 0
         hangHeadUp = false
+        flipSign = 0
         stillFor = 0
         // Caught at speed, the line becomes a swing rather than a stop —
         // except in its box, where it just hangs.
@@ -8027,6 +8861,7 @@ final class Spider {
         hurrying = false
         draglineCatchY = nil
         airShot = nil
+        lineOrder = nil
         if webActive && fade {
             // A slow fade, so the let-go line can be seen drifting down.
             webAlpha = Spring(0.7, stiffness: 14, damping: 7.6)
@@ -8036,15 +8871,45 @@ final class Spider {
 
     private func dropOnWeb() {
         guard config.webs else { return }
-        // Anchor the thread on the edge it is gripping, not in mid-air.
+        // Anchor the thread on the edge it is gripping, not in mid-air: the
+        // spinnerets dabbed on it right where they are, so it lets go and
+        // swings down head first about them.
         var a = pos
         webFromDepth = Int.max
+        var onTop = false
         if let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count {
-            a = pos - loop.segs[anchor.segIdx].normal * map.standoff
+            let seg = loop.segs[anchor.segIdx]
+            let along = clamp((toWorld(spinnerets) - seg.a).dot(seg.dir), 0, seg.len)
+            a = seg.point(at: along) - seg.normal * map.standoff
             webFromDepth = loop.depth
+            onTop = seg.facing == .up
         }
         webAnchor = a
         webActive = true
+        if onTop {
+            // Standing on top of something there is nothing over the drop to
+            // hang from: it steps off the edge on its dragline, fastened
+            // where it stood, and lets the line take it a short way down;
+            // then on down it goes, as from under a ledge.
+            let screen = map.screenFrame(containing: pos)
+            let room = pos.y - (screen.minY + 30 * config.scale)
+            mode = .airborne
+            air = .fall
+            airTime = 0
+            noAttachFor = 0.3
+            launchLoop = anchor.loopID
+            vel = V2.angle(heading) * facing * 25 + V2(0, 60)
+            legMode = .free
+            queued = nil
+            webPlan = []
+            webLen = max(20, pos.distance(to: a))
+            webLenTarget = webLen
+            prevHangLen = webLen
+            rope.clear()
+            draglineCatchY = pos.y - clamp(room * 0.4, 30 * config.scale, 80 * config.scale)
+            rappelAfterCatch = true
+            return
+        }
         webLen = 22
         webLenTarget = randRange(150, 430)
         webAngle = 0
@@ -8052,19 +8917,47 @@ final class Spider {
         webStyle = .hang
         bungee.reset(0)
         prevHangLen = webLen
-        climbTravel = 0
         hangHeadUp = false
+        flipSign = 0
         stillFor = 0
         mode = .dangling
         hangOffFresh = true
-        hangTwistPhase = -t * 0.45
         legMode = .free
         queued = nil
         decisionIn = randRange(0.3, 0.8)
         webGrace = 0.9
         let screen = map.screenFrame(containing: a)
-        planWeb(maxLen: max(40, a.y - (screen.minY + 30 * config.scale)))
+        if lineOrder == .drop {
+            planDrop()
+        } else {
+            planWeb(maxLen: max(40, a.y - (screen.minY + 30 * config.scale)))
+        }
         if case .descend(let l)? = webPlan.first { webLenTarget = l }
+    }
+
+    /// Told to go down off its ledge: half way down to whatever is below it
+    /// — the next thing it could stand on, or the floor — and there it
+    /// hangs a good while before it goes about its own business again.
+    private func planDrop() {
+        let screen = map.screenFrame(containing: webAnchor)
+        let maxLen = max(40, webAnchor.y - (screen.minY + 30 * config.scale))
+        planWeb(maxLen: maxLen)
+        let then = webPlan.last ?? .climbHome
+        // (What is below, as the height of its edge; hanging head down its
+        // middle is a body's length under the line's end, the spinnerets.)
+        let below = map.landingBelow(webAnchor - V2(0, 30 * config.scale), halfWidth: 24 * config.scale)
+            .map { $0 - map.standoff } ?? screen.minY
+        let half = (webAnchor.y - below) / 2 + spinnerets.x * config.scale
+        webPlan = [.descend(clamp(half, 40 * config.scale, maxLen)), .linger(randRange(10, 16)), then]
+        lingerUntil = -1
+    }
+
+    /// As far down its line as it can go: its spinnerets just clear of the
+    /// bottom of the screen (as it would read hanging from them; see
+    /// `lineRef`).
+    private var floorLen: CGFloat {
+        let screen = map.screenFrame(containing: webAnchor)
+        return max(40, webAnchor.y - (screen.minY + 30 * config.scale)) + lineRef
     }
 
     // MARK: Hammock
@@ -8861,30 +9754,6 @@ final class Spider {
 
     // MARK: - Legs
 
-    /// A foot on the line: `at` units along `dir` from `origin`, offset a
-    /// touch to `side` so the pad sits on the line's flank — pulled back
-    /// along the line to the nearest point this leg can actually reach, so
-    /// a short leg holds the line close to the body rather than straining
-    /// past it.
-    private func grip(on origin: V2, dir: V2, at: CGFloat, side: V2, leg i: Int) -> V2 {
-        let profile = SpiderRenderer.profileAmount(yaw: yaw)
-        let r = SpiderRenderer.rig(i, profile: profile, look: look)
-        let reach = ((r.knee - r.hip).length + (r.foot - r.knee).length) * 0.97
-        let pad: CGFloat = 1.6
-        // Points on the line, as seen from the hip: p + dir * s.
-        let p = origin + side * pad - r.hip
-        let mid = -p.dot(dir)
-        let disc = reach * reach - (p.lengthSquared - mid * mid)
-        var s = at
-        if disc <= 0 {
-            s = mid                                   // out of reach: the nearest point
-        } else {
-            let half = disc.squareRoot()
-            s = clamp(at, mid - half, mid + half)
-        }
-        return origin + side * pad + dir * s
-    }
-
     private func poseTarget(_ i: Int) -> V2 {
         let leg = legs[i]
         let rest = leg.rest
@@ -8938,79 +9807,6 @@ final class Spider {
             }
             let out: CGFloat = k == 0 ? 8 : 0
             return rest + V2(out + sin(ph) * 3, 4 + cos(ph) * 3.5)
-        case (.dangling, _):
-            if t < twirlUntil {
-                // Tucked in for the twirl.
-                return leg.hip + reach * 0.5 + V2(2, 2)
-            }
-            // The thread leaves the spinnerets and the body hangs in line
-            // with it, so "on the line" is a point along that direction from
-            // the spinnerets. Near-side legs hook it from underneath and
-            // far-side legs from over the top, knees bent outward, so the
-            // line runs between them. Head down, the hind pairs hold the
-            // line above the abdomen and the front pairs fold; head up, the
-            // front pairs haul on the line above the head and the hind pairs
-            // work the loose silk trailing below. Each gripping leg takes a
-            // stroke of line: through its stance the foot holds still in the
-            // world, sliding through the sprite frame as the body moves
-            // past; then it opens, reaches on and closes again.
-            let spin = silkAttachLocal()
-            let lineDir = (toLocal(webAnchor) - spin).normalized
-            let ventral = V2(0, -1)
-            let side = near ? ventral : -ventral
-            var hold: (lo: CGFloat, hi: CGFloat, phase: CGFloat)?
-            if hangHeadUp {
-                switch k {
-                case 0: hold = (54, 68, near ? 0 : 0.5)
-                case 1: hold = (38, 50, near ? 0.25 : 0.75)
-                case 2: hold = (5, 15, near ? 0.55 : 0.05)
-                case 3: hold = (-15, -3, near ? 0.8 : 0.3)
-                default: hold = nil
-                }
-            } else {
-                switch k {
-                case 3: hold = (1, 11, near ? 0 : 0.5)
-                case 2: hold = (-2, 2, near ? 0.25 : 0.75)
-                default: hold = nil
-                }
-            }
-            guard let h = hold else {
-                let drift = V2(leg.wobble.value(t * 0.9) * 2, leg.wobble.value(t * 0.7 + 3) * 2)
-                if webStyle == .swing {
-                    // Swinging, the front legs hang loose toward the ground,
-                    // trailing the motion — and kick with it while it is
-                    // pumping the swing up.
-                    let down = toLocalDir(V2(0, -1))
-                    let kick = toLocalDir(swingVel).clampedLength(1) * (swingPumping ? 9 : 3)
-                    return leg.hip + down * (16 + (k == 0 ? 3 : 0) + (near ? 0 : 2)) + kick + drift
-                }
-                // Head down: the front legs fold in toward the face, half
-                // curled, and stir now and then.
-                let curl: CGFloat = k == 0 ? 15 : 9
-                return V2(leg.hip.x + curl, -10 - CGFloat(k) * 2 + (near ? 0 : 1.5)) + drift
-            }
-            legBend[i] = side
-            let stance: CGFloat = 0.7
-            // Moving head first along the line (climbing head up, or
-            // descending head down) a held foot slides from hi to lo through
-            // the sprite frame; tail first, the other way. Between moves it
-            // just holds on.
-            let headFirst = hangHeadUp ? climbDir >= 0 : climbDir <= 0
-            var u = (climbTravel + h.phase).truncatingRemainder(dividingBy: 1)
-            if u < 0 { u += 1 }
-            let start = headFirst ? h.hi : h.lo
-            let finish = headFirst ? h.lo : h.hi
-            var along: CGFloat
-            var open: CGFloat = 0
-            if u < stance {
-                along = lerp(start, finish, u / stance)
-            } else {
-                let w = smoothstep((u - stance) / (1 - stance))
-                along = lerp(finish, start, w)
-                open = sin(w * .pi) * 5 * min(abs(climbDir) * 3, 1)   // opens off the line to reach
-            }
-            if abs(climbDir) < 0.05 { along += leg.wobble.value(t * 0.6) * 0.8 }
-            return grip(on: spin, dir: lineDir, at: along, side: side, leg: i) + side * open
         case (.airborne, _):
             if air == .jump && airTime < 0.16 {
                 // The push-off: everything driven back and down behind it.
@@ -9276,6 +10072,8 @@ final class Spider {
     /// teleported there in a frame.
     private var handoffFrom: [V2] = []
     private var handoffT: CGFloat = 1
+    /// Onto a line, the way each foot is going round its hip (see `roundHip`).
+    private var handoffTurn: [CGFloat?] = []
     private var modeBeforeLegs: Mode = .attached
     private static let handoffTime: CGFloat = 0.26
     /// Tools only: the hand-offs and the jolt limits, off, to compare.
@@ -9302,10 +10100,11 @@ final class Spider {
             // Eased only from one way of standing to another, or onto a
             // line. Picked up, launched, falling, the feet go with the body
             // at once; landing, the landing has them (see `absorbingLanding`).
-            let eased = (onSurface && modeBeforeLegs == mode && !absorbingLanding) || mode == .dangling
+            let eased = (onSurface && modeBeforeLegs == mode && !absorbingLanding) || onLine
             if eased, !Spider.debugRawLegs {
                 handoffFrom = before
                 handoffT = 0
+                handoffTurn = []
             } else {
                 handoffT = 1
             }
@@ -9313,15 +10112,22 @@ final class Spider {
         modeBeforeLegs = mode
         // (Nor in a hop, which is all over before a hand-off would be: the
         // hop's own poses take the feet off the ledge and back onto it.)
-        if mode == .held || mode == .airborne || absorbingLanding || activity == .hop { handoffT = 1 }
+        if mode == .held || (mode == .airborne && !onLine) || absorbingLanding || activity == .hop { handoffT = 1 }
         guard handoffT < 1, handoffFrom.count == legs.count else { return }
         handoffT = min(1, handoffT + dt / Spider.handoffTime)
         let e = smoothstep(handoffT)
         for i in legs.indices {
             // On a surface the start point stays on the ground while the
-            // body moves; on a line it goes with the body.
+            // body moves; on a line it goes with the body, and the foot
+            // swings round the hip to where the line has it — at arm's
+            // length, not in through the hip, however the body spins.
             if onSurface { handoffFrom[i] = handoffFrom[i].rotated(by: -legDTheta) - legOverFeet }
-            legs[i].foot = V2.lerp(handoffFrom[i], legs[i].foot, e)
+            if onLine {
+                if handoffTurn.count != legs.count { handoffTurn = Array(repeating: nil, count: legs.count) }
+                legs[i].foot = Spider.roundHip(handoffFrom[i], legs[i].foot, hip: legs[i].hip, e, turn: &handoffTurn[i])
+            } else {
+                legs[i].foot = V2.lerp(handoffFrom[i], legs[i].foot, e)
+            }
         }
     }
 
@@ -9353,7 +10159,7 @@ final class Spider {
             footWorld = world
             return
         }
-        let cap = Spider.footJolt * config.scale * (absorbingLanding ? 3 : 1)
+        let cap = Spider.footJolt * config.scale * landingJolt
         for i in legs.indices {
             var w = world[i]
             if Spider.limitJolt(&w, last: &footWorld[i], vel: &footWorldVel[i], cap: cap, dt: dt) {
@@ -9409,6 +10215,7 @@ final class Spider {
         // un-mirroring.
         let m = mirrorSign
         let dTheta = angleDelta(legFrameHeading, heading) * m
+        bodySpin = dt > 0 ? clamp(angleDelta(legFrameHeading, heading) / dt, -15, 15) : 0
         var deltaLocal = ((pos - legFramePos) / scale).rotated(by: -heading)
         deltaLocal.x *= m
         legFramePos = pos
@@ -9471,10 +10278,12 @@ final class Spider {
             return
         }
 
-        // On a line, the legs climb it hand over hand.
-        if mode == .dangling, webStyle == .hang, t >= twirlUntil {
+        // On a line: the hind legs hold it and the front ones hang free, or
+        // all eight climb it hand over hand.
+        if onLine {
+            if legController != .hang { startLineLegs() }
             legController = .hang
-            updateHangLegs(dt: dt)
+            if mantle != nil { updateMantleLegs() } else { updateLineLegs(dt: dt) }
             return
         }
 
@@ -9647,103 +10456,516 @@ final class Spider {
         }
     }
 
-    // MARK: - Climbing a line
+    // MARK: - On a line
 
-    /// The legs on the line work like the walking legs on a ledge, only the
-    /// "ledge" is the thread running along the body's own axis. Each
-    /// gripping leg has a natural spot on the line; in its stance the foot
-    /// holds still in the world (so it slides through the sprite frame as
-    /// the body climbs or descends past it), and in its swing it lets go,
-    /// lifts off the line to its own side — over the legs still holding —
-    /// and reaches on to its next grip, a stride ahead. Near-side legs hook
-    /// the line from one side, far-side legs from the other. Head down,
-    /// only the hind two pairs hold (the front pairs fold in); head up,
-    /// climbing, every pair hauls.
-    private func updateHangLegs(dt: CGFloat) {
+    /// Where each leg takes hold of the line climbing, in sprite units along
+    /// the body: the front pairs reaching up it past the head, the hind
+    /// pairs down it past the abdomen — spread along it, so they each have
+    /// a stretch of it to themselves.
+    private static let lineClimb: [CGFloat] = [40, 29, -22, -36, 36, 27, -25, -34]
+
+    /// How the body sits on the line, turned from lying along it: hanging
+    /// head down, a touch belly up toward the silk its hind legs hold;
+    /// climbing, leaning back a little off it from the abdomen up, as it
+    /// hangs from its front legs with its weight under them.
+    private var lineTilt: CGFloat { hangHeadUp ? facing * Spider.climbLean : -facing * 0.1 }
+    private static let climbLean: CGFloat = 0.1
+    /// Turning end for end, how far ahead of the body its heading's spring
+    /// is led round, radians: what sets how fast it rolls over.
+    private static let turnLead: CGFloat = 1.0
+
+    /// Where each hind leg holds the line hanging head down, in sprite units
+    /// along it above the spinnerets: the third pair out to the side and in
+    /// to the silk just over the tip of the abdomen, the fourth reaching up
+    /// along the abdomen to hold it higher. The front pairs hang free.
+    private static let lineHang: [CGFloat?] = [nil, nil, 4, 16, nil, nil, 2, 12]
+    /// Rolling over end for end about its middle, where each hind foot
+    /// keeps the silk in against the belly, in sprite units along the body:
+    /// the fourth pair at the tip of the abdomen, where it comes out of
+    /// the spinnerets, the third pair half-way along.
+    private static let lineTuck: [CGFloat] = [0, 0, -17, -27, 0, 0, -19, -29]
+    /// How far the body goes along the line per cycle of the climbing gait,
+    /// in sprite units, and the share of it each foot spends reaching on.
+    private static let lineStride: CGFloat = 28
+    private static let lineDuty: CGFloat = 0.34
+
+    /// How much of the line, in sprite units from where it meets the body,
+    /// is drawn in the sprite (see `SpiderPose.thread`): hanging, past the
+    /// hind feet holding it over the spinnerets; climbing, past the front
+    /// feet up over the head. The world's line takes over beyond.
+    private var heldStretch: CGFloat { lerp(28, 110, climbLayout) }
+
+    /// Whose proportions a leg is drawn with hanging on a line. Standing,
+    /// the near legs splay out toward you and are seen foreshortened; held
+    /// along the body — reaching up the silk, or hanging straight down — a
+    /// leg is seen its whole length, which is its far twin's.
+    private static func lineBones(_ i: Int) -> Int { i < 4 ? i + 4 : i }
+
+    /// How far leg `i` reaches hanging on a line, hip to foot, in sprite units.
+    private func lineReach(_ i: Int) -> CGFloat {
+        let r = SpiderRenderer.rig(Spider.lineBones(i), profile: 1, look: look)
+        return (r.knee - r.hip).length + (r.foot - r.knee).length
+    }
+
+    /// The line where it leaves the body, in sprite space, toward the
+    /// anchor: along the silk as it really lies there, `reach` sprite units
+    /// out — a line that is swinging or paying out bows a little — so the
+    /// feet holding it, and the stretch drawn over it, sit right on it.
+    private func threadDirection(reach: CGFloat) -> V2 {
+        let spin = silkAttachWorld()
+        var toward = webAnchor
+        if rope.live {
+            for p in rope.points.reversed() where p.distance(to: spin) >= reach * config.scale {
+                toward = p
+                break
+            }
+        }
+        let d = toLocalDir(toward - spin)
+        return d.length > 0.001 ? d.normalized : V2(-1, 0)
+    }
+
+    /// A foot on the line, `at` units along it from `origin`, its pad on
+    /// the flank of the line facing the leg — pulled back along the line to
+    /// the nearest spot the leg can really reach, never stretched past it.
+    /// Where, and how far along that is.
+    private func grip(on origin: V2, dir: V2, at: CGFloat, side: V2, hip: V2, reach: CGFloat) -> (V2, CGFloat) {
+        let base = origin + side * 1.6
+        // Points on the line, as seen from the hip: p + dir * s.
+        let p = base - hip
+        let mid = -p.dot(dir)
+        let r = reach * 0.97
+        let disc = r * r - (p.lengthSquared - mid * mid)
+        var s = at
+        if disc <= 0 {
+            s = mid                                   // out of reach: the nearest point
+        } else {
+            let half = disc.squareRoot()
+            s = clamp(at, mid - half, mid + half)
+        }
+        return (base + dir * s, s)
+    }
+
+    /// Where a foot takes hold of the line running out from `origin` along
+    /// `dir`: as near `at` along it as the leg comfortably reaches from
+    /// `hip` (`reach`), never back past `origin`; with the line not yet in
+    /// its reach, as far toward it as the leg goes.
+    private func reachOnLine(from origin: V2, dir: V2, at: CGFloat, hip: V2, reach: CGFloat) -> V2 {
+        let p = origin - hip
+        let mid = -p.dot(dir)
+        let disc = reach * reach - (p.lengthSquared - mid * mid)
+        var s = mid
+        if disc > 0 {
+            let half = disc.squareRoot()
+            s = clamp(at, mid - half, mid + half)
+        }
+        let f = origin + dir * max(s, 0)
+        let off = f - hip
+        return off.length > reach ? hip + off.normalized * reach : f
+    }
+
+    /// Onto a line: the legs take it up from wherever they were.
+    private func startLineLegs() {
+        freeFoot = legs.map { toWorld($0.foot) }
+        // (Going as the body carries them: along with it, and round with it.)
+        freeFootVel = freeFoot.map { vel + ($0 - pos).perp * bodySpin }
+        let spin = lineStance
+        let dir = threadDirection(reach: heldStretch)
+        for i in legs.indices {
+            lineS[i] = (legs[i].foot - spin).dot(dir)
+            legs[i].swinging = false
+        }
+        regripLeg = -1
+        lineAligned = Spider.alignment(dir)
+        lineAlignedVel = 0
+        frontHoldsWas = climbLayout
+        lineHoldWas = legs.indices.map { Spider.lineHang[$0] != nil ? 1 : climbLayout }
+        gripTurn = Array(repeating: nil, count: legs.count)
+    }
+
+    /// How nearly the body lies along the line, by the silk where it meets
+    /// the belly, 0…1. (The anchor as seen from the body's middle, off to
+    /// the side of the line, is further round.)
+    private static func alignment(_ dir: V2) -> CGFloat {
+        smoothstep(clamp((dir.x - 0.9) / 0.07, 0, 1))
+    }
+    /// Climbing, how far the feet hold the silk itself rather than going
+    /// with the body (see `updateLineLegs`), and how fast that is changing.
+    private var lineAligned: CGFloat = 0
+    private var lineAlignedVel: CGFloat = 0
+    /// How much the front legs had hold of the line last frame, and each
+    /// leg of its own.
+    private var frontHoldsWas: CGFloat = 0
+    private var lineHoldWas: [CGFloat] = []
+    /// Rolling over to climb, how far each front foot has got reaching for
+    /// the line, 0…1.
+    private var lineCatch: [CGFloat] = []
+    /// Taking hold of the line or letting go, the way each foot is going
+    /// round its hip (see `roundHip`).
+    private var holdTurn: [CGFloat?] = []
+
+    /// The legs on a line. Hanging head down, the hind two pairs hold the
+    /// silk just above the spinnerets — feeding it out between them, a
+    /// stroke at a time, as it goes down — and the front two pairs hang
+    /// free under their own weight, swinging with the body; swinging on the
+    /// line, they kick with it to pump it up. To climb, it rolls over head
+    /// up about its middle: the hind pairs draw the silk in against its
+    /// belly and keep it there, the front pairs fold in and reach up for the
+    /// line as it comes round. Climbing, it hugs the line: the silk runs
+    /// along its belly, against the abdomen, the front pairs reaching up it
+    /// and the hind pairs down it, and it goes up it hand over hand —
+    /// through its stance a foot keeps its hold on the silk while the body
+    /// goes past it, then lets go, lifts off and reaches on up for the next
+    /// hold.
+    private func updateLineLegs(dt: CGFloat) {
         let sc = max(config.scale, 0.05)
-        for i in legs.indices { legs[i].settle = -1 }
-        let spin = silkAttachLocal()
-        let lineDir = (toLocal(webAnchor) - spin).normalized
-        let ventral = V2(0, -1)
-        let moving = abs(climbDir) > 0.05 && abs(hangDelta) > 0.0001
-        // Through a stance the foot drifts: toward the anchor when the body
-        // is descending past it, away from it when climbing.
-        let stanceDir = hangDelta >= 0 ? lineDir : -lineDir
-        let drift = abs(hangDelta) / sc                    // sprite units this frame
-        let duty: CGFloat = 0.32
-        let stride = Spider.climbStridePx                  // sprite units (px at scale 1)
-        let landAhead = stride * (1 - duty) * 0.5
+        // Where the line leaves the body as it hangs or climbs, which the
+        // feet hold it from; and, turning end for end, the middle it is
+        // drawn in to and turned about (see `lineGrip`).
+        let spin = lineStance
+        let pivot = turnPivot
+        let gripW = smoothstep(lineGrip)
+        let up = upness
+        let climbing = climbLayout
+        let dir = threadDirection(reach: heldStretch)
+        lineDirLocal = dir
+        // Travel along the line this frame, sprite units, + = toward the anchor.
+        let toward = -hangDelta / sc
+        let hauling = toward > 0.001
+        let feeding = toward < -0.001 && up < 0.5
+        let stride = Spider.lineStride, duty = Spider.lineDuty
+        let stroke = stride * (1 - duty)
+        if hauling { climbPhase += toward / stride }
+        if feeding { feedPhase += dt * clamp(-toward / max(dt, 0.001) / 30, 0.8, 2.2) }
+        // Hanging still, a hind foot shifts its hold now and then.
+        if !hauling, !feeding, up < 0.2, webStyle == .hang, lineGrip <= 0, regripLeg < 0 {
+            regripIn -= dt
+            if regripIn <= 0 {
+                regripLeg = [2, 3, 6, 7].randomElement() ?? 3
+                regripT = 0
+                regripIn = randRange(2.5, 6)
+            }
+        }
+        if regripLeg >= 0 {
+            regripT += dt / 0.3
+            if regripT >= 1 || hauling || feeding { regripLeg = -1 }
+        }
+        // Hanging free, a leg goes down in the world, and out to the side
+        // the legs are on.
+        let g = toLocalDir(V2(0, -1))
+        var out = V2(0, -1) - g * g.dot(V2(0, -1))
+        out = out.length > 0.2 ? out.normalized : V2(g.y, -g.x)
+        // Holding the line hanging, a knee bends out on the belly side of it
+        // — the side the legs are on — and a foot letting go lifts off it
+        // that way. (Half-way round end for end the line runs off the belly
+        // itself: then it is whichever side the hip is.)
+        let belly = V2(0, -1) - dir * dir.dot(V2(0, -1))
+        // Climbing, the feet hold the silk once the body lies along it; the
+        // body swinging round off it, they go with the body — going over
+        // from one to the other on a spring, however fast it swings round,
+        // since a foot far up the line has a long way to go: quickly onto
+        // the silk as the body comes into line, gently off it.
+        let alignNow = Spider.alignment(dir)
+        let (ak, ac): (CGFloat, CGFloat) = alignNow > lineAligned ? (625, 50) : (100, 20)
+        lineAlignedVel += ((alignNow - lineAligned) * ak - lineAlignedVel * ac) * dt
+        lineAligned = clamp(lineAligned + lineAlignedVel * dt, 0, 1)
+        let aligned = lineAligned
+        // The front legs take hold of the line as the body comes round to
+        // climb; setting off back round to hang, they let go of it as the
+        // body starts round and fall away free, as it rolls back over
+        // about its middle.
+        let frontHolds: CGFloat = hangHeadUp ? climbing : (climbing >= 1 && alignNow >= 1 ? 1 : 0)
+        frontHoldsWas = frontHolds
+        if lineHoldWas.count != legs.count { lineHoldWas = Array(repeating: 1, count: legs.count) }
+        if gripTurn.count != legs.count { gripTurn = Array(repeating: nil, count: legs.count) }
+        // How far up the line it is fastened, from where the climbing
+        // stance meets it.
+        let lineTopS = (toLocal(webAnchor) - climbHold).length
+        // Pumping a swing, the free legs kick with it, reaching the way it
+        // is going.
+        let kick = webStyle == .swing && swingPumping ? clamp(swingVel.x / (360 * sc), -1, 1) * 0.8 : 0
 
         for i in legs.indices {
             var leg = legs[i]
-            let near = i < 4
-            let k = i % 4
-            let side = near ? ventral : -ventral
-            // Its natural grip along the line, and its place in the cycle.
-            var rest: CGFloat?
-            var phase: CGFloat = 0
-            if hangHeadUp {
-                switch k {
-                case 0: rest = 56; phase = near ? 0 : 0.5
-                case 1: rest = 42; phase = near ? 0.25 : 0.75
-                case 2: rest = 8; phase = near ? 0.5 : 0
-                default: rest = -10; phase = near ? 0.75 : 0.25
-                }
-            } else {
-                switch k {
-                case 3: rest = 6; phase = near ? 0 : 0.5
-                case 2: rest = -1; phase = near ? 0.5 : 0
-                default: rest = nil
-                }
-            }
-            guard let r = rest else {
-                // Folded in toward the face, stirring now and then.
-                let wob = V2(leg.wobble.value(t * 0.9) * 2, leg.wobble.value(t * 0.7 + 3) * 2)
-                let curl: CGFloat = k == 0 ? 15 : 9
-                let target = V2(leg.hip.x + curl, -10 - CGFloat(k) * 2 + (near ? 0 : 1.5)) + wob
-                leg.foot = approach(leg.foot, target, 7, maxSpeed: 220, dt)
-                leg.lift = approach(leg.lift, 0, 8, dt)
-                leg.swinging = false
-                legBend[i] = nil
-                legs[i] = leg
-                continue
-            }
-            legBend[i] = side
-            let ph = (climbPhase + phase).truncatingRemainder(dividingBy: 1)
-            if moving, ph < duty {
-                // Let go and reach on: an arc off the line to its own side
-                // — paced from wherever in its window the reach began.
-                if !leg.swinging {
-                    leg.swinging = true
-                    leg.swingFrom = leg.foot
-                    leg.swingPh0 = min(ph, duty * 0.6)
-                }
-                let u = clamp((ph - leg.swingPh0) / max(duty - leg.swingPh0, 0.01), 0, 1)
-                let target = grip(on: spin, dir: lineDir, at: r - (stanceDir.dot(lineDir)) * landAhead, side: side, leg: i)
-                let base = V2.lerp(leg.swingFrom, target, easeInOutSine(u))
-                leg.lift = sin(u * .pi)
-                leg.foot = base + side * (leg.lift * 5.5)
-            } else if moving {
-                // Holding on: the foot stays put in the world as the body
-                // moves past it — never past what the leg can reach.
-                leg.swinging = false
-                leg.lift = approach(leg.lift, 0, 14, dt)
-                let along = (leg.foot - spin).dot(lineDir) + stanceDir.dot(lineDir) * drift
-                let limited = clamp(along, r - stride * 0.8, r + stride * 0.8)
-                let hold = grip(on: spin, dir: lineDir, at: limited, side: side, leg: i)
-                // A foot not yet on the line (it has only just taken to it)
-                // reaches for its grip rather than appearing there.
-                leg.foot = leg.foot.distance(to: hold) > 6 ? approach(leg.foot, hold, 10, maxSpeed: 260, dt) : hold
-            } else {
-                // Hanging still: settles onto its grip, with the odd shift.
-                leg.swinging = false
-                leg.lift = approach(leg.lift, 0, 8, dt)
-                let target = grip(on: spin, dir: lineDir, at: r + leg.wobble.value(t * 0.6) * 1.2, side: side, leg: i)
-                leg.foot = approach(leg.foot, target, 7, maxSpeed: 220, dt)
-            }
+            leg.settle = -1
             leg.footVel = .zero
+            let hip = leg.hip
+            let reach = lineReach(i)
+            var side = belly
+            if side.length < 0.35 {
+                let rel = hip - spin
+                side = rel - dir * rel.dot(dir)
+            }
+            side = side.length > 0.01 ? side.normalized : out
+            // Where it takes hold climbing, along the silk.
+            let climbAt = Spider.lineClimb[i] - climbHold.x
+            let hangAt = Spider.lineHang[i]
+            // How much it has hold of the line: the hind pairs always, the
+            // front pairs once it has come round head up to climb — rolling
+            // over to climb, as the line comes round within their reach,
+            // the second pair a moment before the first. (Letting go part
+            // way round, a foot falls from where it is.)
+            var holds: CGFloat = hangAt != nil ? 1 : frontHolds
+            if hangAt == nil {
+                // (A reach that takes the leg its own time, however fast
+                // the body is coming round.)
+                if lineCatch.count != legs.count { lineCatch = Array(repeating: 0, count: legs.count) }
+                let from: CGFloat = i % 4 == 1 ? 0.1 : 0.16
+                if hangHeadUp, gripW > 0 {
+                    if up > from { lineCatch[i] = min(1, lineCatch[i] + dt / 0.4) }
+                } else {
+                    lineCatch[i] = 0
+                }
+                holds = max(holds, smoothstep(lineCatch[i]) * gripW)
+            }
+            let dropping = holds <= 0 && lineHoldWas[i] > 0 && lineHoldWas[i] < 1
+            lineHoldWas[i] = holds
+
+            var held = leg.foot
+            if holds > 0 {
+                let centre = lerp(hangAt ?? climbAt, climbAt, climbing)
+                let hi = centre + stroke / 2
+                // Hauling in: head up every leg climbs; head down — a small
+                // adjustment — the hind pairs do it. (Swinging, it just
+                // holds on.)
+                let gait = hauling && webStyle == .hang && (hangAt != nil || climbing > 0.9)
+                var ph = (climbPhase + leg.phase).truncatingRemainder(dividingBy: 1)
+                if ph < 0 { ph += 1 }
+                if gait, ph < duty {
+                    // Let go, and reach on up the line for the next hold —
+                    // from where it held the silk to the spot on it that
+                    // will be at the top of its stroke as it takes hold, so
+                    // it leaves and arrives at rest on the silk, as a foot
+                    // steps from ground to ground walking.
+                    if !leg.swinging {
+                        leg.swinging = true
+                        leg.swingPh0 = min(ph, duty * 0.6)
+                        lineSwingFrom[i] = lineS[i]
+                    } else {
+                        lineSwingFrom[i] -= toward
+                    }
+                    let u = clamp((ph - leg.swingPh0) / max(duty - leg.swingPh0, 0.01), 0, 1)
+                    lineS[i] = lerp(lineSwingFrom[i], hi + (duty - ph) * stride, easeInOutSine(u))
+                    leg.lift = pow(sin(u * .pi), 1.5)
+                } else if gait {
+                    // Holding on: its hold on the silk stays put while the
+                    // body goes past it.
+                    leg.swinging = false
+                    lineS[i] -= toward
+                    leg.lift = approach(leg.lift, 0, 20, dt)
+                } else if feeding, i % 4 == 3 {
+                    // Paying out: the hind feet take turns drawing silk from
+                    // the spinnerets — up the line with it, then back down
+                    // for more.
+                    leg.swinging = false
+                    var fp = (feedPhase + (i < 4 ? 0 : 0.5)).truncatingRemainder(dividingBy: 1)
+                    if fp < 0 { fp += 1 }
+                    let s0 = centre - 2.5, s1 = centre + 3.5
+                    var want = lerp(s0, s1, fp / 0.7)
+                    var lift: CGFloat = 0
+                    if fp >= 0.7 {
+                        let u = (fp - 0.7) / 0.3
+                        want = lerp(s1, s0, easeInOutSine(u))
+                        lift = sin(u * .pi) * 0.8
+                    }
+                    lineS[i] = approach(lineS[i], want, 30, dt)
+                    leg.lift = approach(leg.lift, lift, 30, dt)
+                } else {
+                    // Holding still: settles onto its hold, with the odd
+                    // shift. Coming round to climb, the feet take up their
+                    // holds for it as the body comes round, ready to go;
+                    // stopped part way up, each keeps the hold it has.
+                    leg.swinging = false
+                    var want = centre + leg.wobble.value(t * 0.5) * 0.7
+                    var lift: CGFloat = 0
+                    if regripLeg == i {
+                        lift = sin(regripT * .pi) * 0.9
+                        want += sin(regripT * .pi) * 3
+                    }
+                    leg.lift = approach(leg.lift, lift, 18, dt)
+                    if climbing >= 1 {
+                        // (Still holding it as the body moves along the
+                        // line — paying out before it turns to go down.)
+                        lineS[i] -= toward
+                    } else {
+                        lineS[i] = approach(lineS[i], want, climbing > 0 ? 30 : 7, dt)
+                    }
+                }
+                // Hanging, the foot is where the leg can reach the silk;
+                // climbing, it is on the silk along its belly. (The front
+                // legs never hold it hanging: they go from hanging free
+                // straight to their holds for climbing — not by way of
+                // wherever the line happens to pass them as the body
+                // swings round, which may be right by the hip.)
+                var hang = held
+                if climbing < 1, hangAt != nil {
+                    let (p, s) = grip(on: spin, dir: dir, at: lineS[i], side: side, hip: hip, reach: reach)
+                    if climbing <= 0 { lineS[i] = s }
+                    hang = p + side * (leg.lift * 4.5)
+                }
+                var walk = held
+                if climbing > 0 {
+                    // Along its own stance line, which comes round onto the
+                    // silk as the body does: turning, the feet go with the
+                    // body rather than out to wherever the line is. A foot
+                    // letting go lifts off it outward, away from the body.
+                    lineS[i] = clamp(lineS[i], centre - stroke, centre + stroke)
+                    // (Nearly at the top, a foot reaching up takes hold
+                    // where the line is fastened, not past it.)
+                    lineS[i] = min(lineS[i], max(lineTopS - 1.5, 0))
+                    let along = (V2(1, 0) + (dir - V2(1, 0)) * aligned).normalized
+                    let off = V2(along.y, -along.x)
+                    walk = climbHold + along * lineS[i] + off * (leg.lift * 5)
+                }
+                held = hangAt != nil ? V2.lerp(hang, walk, climbing) : walk
+                // Rolling over end for end about its middle: the hind feet
+                // keep the silk in against the belly, where it runs from the
+                // spinnerets in under the abdomen to its middle; the front
+                // feet hold the line where it leaves its middle for the
+                // anchor — as far up it, toward where they will hold it
+                // climbing, as they comfortably reach.
+                if gripW > 0 {
+                    let turnAt = hangAt != nil ? bellyLine(Spider.lineTuck[i])
+                        : reachOnLine(from: pivot, dir: dir, at: Spider.lineClimb[i] - pivot.x, hip: hip, reach: reach * 0.78)
+                    if gripW >= 1 {
+                        gripTurn[i] = nil
+                        held = turnAt
+                    } else {
+                        held = Spider.roundHip(held, turnAt, hip: hip, gripW, turn: &gripTurn[i], fold: 0.2)
+                    }
+                } else {
+                    gripTurn[i] = nil
+                }
+            } else {
+                leg.swinging = false
+                leg.lift = approach(leg.lift, 0, 10, dt)
+                gripTurn[i] = nil
+            }
+
+            var free = held
+            if dropping, hangAt == nil, freeFoot.count == legs.count {
+                freeFoot[i] = toWorld(leg.foot)
+                freeFootVel[i] = vel
+            }
+            if holds < 1 {
+                // (Rolling over to climb, the front legs are drawn in, ready
+                // to reach up for the line.)
+                free = freeLegFoot(i, hip: hip, reach: reach, down: g, out: out, kick: kick,
+                                   tuck: hangHeadUp ? gripW : 0, dt: dt)
+                // Not holding on at all: ready to take hold nearest where it is.
+                if holds <= 0 { lineS[i] = (free - spin).dot(dir) }
+            } else if freeFoot.count == legs.count {
+                // Holding on, its free self goes with the foot, ready to let
+                // go from there, going as the foot was.
+                let w = toWorld(held)
+                let moving = dt > 0 ? (w - freeFoot[i]) / dt : vel
+                freeFootVel[i] = vel + (moving - vel).clampedLength(600 * sc)
+                freeFoot[i] = w
+            }
+            // Taking hold or letting go, the foot swings round between the
+            // two at arm's length, rather than straight across through the
+            // hip.
+            if holdTurn.count != legs.count { holdTurn = Array(repeating: nil, count: legs.count) }
+            if holds >= 1 || holds <= 0 {
+                holdTurn[i] = nil
+                leg.foot = holds >= 1 ? held : free
+            } else {
+                leg.foot = Spider.roundHip(free, held, hip: hip, holds, turn: &holdTurn[i], fold: 0.5)
+            }
+            // (Holding the line hanging, a fourth leg's knee is over the
+            // abdomen it reaches up along; a third leg's is out to the side,
+            // the line's. Climbing, the knees bend out from the silk.)
+            let arch: CGFloat = i % 4 == 3 ? -1 : 1
+            let hangBend = side * (holds * arch) + out * (1 - holds)
+            let climbBend = V2(0, -1)
+            var bend = hangBend * (1 - climbing) + climbBend * climbing
+            // (Rolling over, as climbing: out from the silk it holds — for a
+            // front foot up the line, square to the line, on the side it
+            // bends to climbing, as the line comes round, so the knee never
+            // has to go over from one side of the leg to the other.)
+            if gripW > 0 {
+                let holdBend = hangAt != nil ? climbBend : V2(dir.y, -dir.x)
+                bend = bend * (1 - gripW) + (holdBend * holds + out * (1 - holds)) * gripW
+            }
+            legBend[i] = bend.length > 0.01 ? bend.normalized : side
+            legBones[i] = Spider.lineBones(i)
             legs[i] = leg
         }
+    }
+
+    /// A leg hanging free on a line: its foot is a weight on the end of the
+    /// limb, drawn toward where the leg holds it and swinging with the
+    /// body's own motion — loosely, so it lags a touch behind whatever the
+    /// body does and swings back through, though a live leg, not a limp
+    /// one. It hangs down from the hip, knee a little bent, the four fanned
+    /// out to its side of the body — the first pair furthest down, the
+    /// second further out — each drifting on its own; going down, the first
+    /// pair reach for whatever is below; pleased, they all paddle; pumping
+    /// a swing, they kick with it (`kick`, a turn in the world); about to
+    /// reach for something, drawn in (`tuck`, 0…1).
+    private func freeLegFoot(_ i: Int, hip: V2, reach: CGFloat, down g: V2, out: V2, kick: CGFloat,
+                             tuck: CGFloat = 0, dt: CGFloat) -> V2 {
+        let sc = max(config.scale, 0.05)
+        if freeFoot.count != legs.count {
+            freeFoot = legs.map { toWorld($0.foot) }
+            freeFootVel = Array(repeating: vel, count: legs.count)
+        }
+        let k = i % 4, near = i < 4
+        // How far down and how far out the foot hangs, as shares of the leg.
+        let (down, o): (CGFloat, CGFloat) = k == 0 ? (near ? (0.74, 0.2) : (0.8, -0.06)) : (near ? (0.6, 0.42) : (0.68, 0.22))
+        let w = legs[i].wobble
+        var d = down + w.value(t * 0.7 + 5) * 0.07
+        if k == 0, hangDelta > 0.3 * sc { d = min(d + 0.07, 0.96) }
+        var turn = w.value(t * 0.9 + CGFloat(i) * 1.3) * 0.22 + kick
+        if t < lineJoyUntil { turn += sin(t * 13 + CGFloat(i) * 1.9) * 0.4 }
+        let hipW = toWorld(hip)
+        var want = toWorld(hip + (g * d + out * o) * reach)
+        if abs(turn) > 0.0001 { want = hipW + (want - hipW).rotated(by: turn) }
+        // (Drawn in: folded forward under the head, on the belly side,
+        // wherever the ground is — ready to reach out that way.)
+        if tuck > 0 {
+            let ready = toWorld(hip + V2(k == 0 ? 0.3 : 0.18, -0.5) * reach)
+            want = V2.lerp(want, ready, tuck)
+        }
+        // (Held toward its place by the leg, and slowed a little by the air
+        // as the body carries it about.)
+        let a = (want - freeFoot[i]) * 120 - (freeFootVel[i] - vel) * 9 - freeFootVel[i] * 1.5
+        freeFootVel[i] += a * dt
+        freeFoot[i] += freeFootVel[i] * dt
+        // Never further from the hip than the leg reaches, nor folded up
+        // in under it: turned about quickly, a foot left behind goes round
+        // the hip, not through it.
+        let most = reach * 0.97 * sc, least = reach * 0.45 * sc
+        let off = freeFoot[i] - hipW
+        if off.length > most { freeFoot[i] = hipW + off.normalized * most }
+        if off.length < least, off.length > 0.001 {
+            let n = off.normalized
+            freeFoot[i] = hipW + n * least
+            let inward = (freeFootVel[i] - vel).dot(n)
+            if inward < 0 { freeFootVel[i] -= n * inward }
+        }
+        return toLocal(freeFoot[i])
+    }
+
+    /// Part way from one place for a foot to another by an arc round the
+    /// hip, at arm's length, rather than straight across — which could
+    /// take it in through the hip and fold the leg up double. The way
+    /// round (`turn`, kept from one frame to the next) goes on as it began:
+    /// an end moving on round past the far side of the hip takes the arc
+    /// on round with it, rather than flipping it over to the other side.
+    /// (`fold`: a leg brought a long way round draws its foot in part way,
+    /// bending at the knee as it goes, rather than sweeping round held out
+    /// straight.)
+    private static func roundHip(_ a: V2, _ b: V2, hip: V2, _ u: CGFloat, turn: inout CGFloat?, fold: CGFloat = 0) -> V2 {
+        let ra = a - hip, rb = b - hip
+        guard ra.length > 1, rb.length > 1 else { turn = nil; return V2.lerp(a, b, u) }
+        var d = angleDelta(ra.angle, rb.angle)
+        if let was = turn {
+            while d - was > .pi { d -= 2 * .pi }
+            while d - was < -.pi { d += 2 * .pi }
+        }
+        turn = d
+        let drawnIn = 1 - fold * sin(u * .pi) * min(abs(d) / 1.5, 1)
+        return hip + V2.angle(ra.angle + d * u) * (lerp(ra.length, rb.length, u) * drawnIn)
     }
 
     // MARK: - Debug
@@ -9784,9 +11006,65 @@ final class Spider {
     /// Tools only: the pendulum's state.
     var debugSwing: (angle: CGFloat, angVel: CGFloat) { (webAngle, webAngleVel) }
 
+    /// Tools only: pays out or hauls in the line to `length` (as it would
+    /// read hanging from the spinnerets; short enough to reach the top, all
+    /// the way up).
+    func debugLineTo(_ length: CGFloat) {
+        guard mode == .dangling else { return }
+        webLenTarget = length + (length < lineTop + 8 * config.scale ? 0 : lineRef)
+        if webStyle == .hang { decisionIn = max(decisionIn, 3.5) }
+    }
+
+    /// Tools only: turning end for end on a line — how far the line is
+    /// drawn in to its middle, how far round it is, and into its climbing
+    /// stance.
+    var debugTurn: (grip: CGFloat, upness: CGFloat, climb: CGFloat, ref: CGFloat) {
+        (lineGrip, upness, climbLayout, lineRef)
+    }
+
+    /// Tools only: on a line, each foot in the world, whether it has hold
+    /// of the silk (and is not reaching on), and how far round it is to
+    /// face up the line.
+    var debugLineFeet: (feet: [(world: V2, holding: Bool)], upness: CGFloat) {
+        guard mode == .dangling else { return ([], 0) }
+        let feet = legs.indices.map { i -> (world: V2, holding: Bool) in
+            let holds = Spider.lineHang[i] != nil || frontHoldsWas >= 1
+            return (toWorld(legs[i].foot), holds && !legs[i].swinging && legs[i].lift < 0.05)
+        }
+        return (feet, upness)
+    }
+
+    /// Tools only: the held stretch of line as drawn, in the world — and,
+    /// rolling over, where the silk comes in along the belly to it.
+    var debugThread: (a: V2, b: V2)? {
+        guard let th = pose().thread else { return nil }
+        let (sx, sy) = bodySquash()
+        let g = SpiderRenderer.ground
+        func drawn(_ v: V2) -> V2 { toWorld(V2(v.x * sx, g + (v.y - g) * sy)) }
+        return (drawn(th.a), drawn(th.b))
+    }
+    var debugThreadVia: V2? {
+        guard let via = pose().threadVia else { return nil }
+        let (sx, sy) = bodySquash()
+        let g = SpiderRenderer.ground
+        return toWorld(V2(via.x * sx, g + (via.y - g) * sy))
+    }
+
     /// Tools only: the line's length and where it is heading.
     var debugLine: (len: CGFloat, target: CGFloat, style: String, pumping: Bool) {
         (webLen, webLenTarget, webStyle == .swing ? "swing" : "hang", swingPumping)
+    }
+
+    /// Tools only: going over the top of what its line hangs from (or down
+    /// off its line onto something), and how far through that it is (0…1),
+    /// if it is.
+    var debugMantle: CGFloat? { mantle.map { clamp($0.t / $0.dur, 0, 1) } }
+
+    /// Tools only: what it has been told to do on its line, if anything,
+    /// and the plan it is working through.
+    var debugOrder: String {
+        let order = lineOrder.map { "\($0)" } ?? "-"
+        return order + " " + webPlan.map { "\($0)" }.joined(separator: ",")
     }
 
     /// Tools only: is the pointer where a hanging spider would go to look at it?
@@ -9991,13 +11269,14 @@ final class Spider {
     /// the air) about the pivot; the squash and stretch scales the whole
     /// sprite about its ground line, and the feet are taken out of it, so a
     /// splat or a crouch does not shove a planted foot along the ledge (or,
-    /// tilted, into it).
+    /// tilted, into it) — nor, on a line, a foot off the silk it holds, or a
+    /// hanging one out of where it hangs, as it bounces on the end of it.
     private func modelLeg(_ i: Int, profile: CGFloat) -> (hip: V2, foot: V2, knee: V2) {
         let bp = bodyPitchNow
         let shift = V2(-bp * 8, bp * 2)
         let pivot = SpiderRenderer.leanPivot
         func leaned(_ v: V2) -> V2 { pivot + (v - pivot).rotated(by: bp) + shift }
-        let onSurface = mode == .attached || mode == .nesting
+        let feetPlaced = mode == .attached || mode == .nesting || onLine
         let g = SpiderRenderer.ground
         let leg = legs[i]
         var hip = SpiderRenderer.rig(i, profile: profile, look: look).hip
@@ -10014,14 +11293,15 @@ final class Spider {
         // renderer draws the legs in, like the foot.
         let sq = bodySquash()
         let drawnHip = V2(hip.x * sq.stretch, g + (hip.y - g) * sq.fatten)
-        let drawnFoot = onSurface ? foot : V2(foot.x * sq.stretch, g + (foot.y - g) * sq.fatten)
+        let drawnFoot = feetPlaced ? foot : V2(foot.x * sq.stretch, g + (foot.y - g) * sq.fatten)
         let drawnKnee: V2
         if let bend = legBend[i] {
             let own = SpiderRenderer.kneeIK(leg: i, hip: drawnHip, foot: drawnFoot, away: bend, profile: profile, look: look)
             if let other = legBones[i] {
                 // Borrowed proportions come in as the foot rises off the
-                // ledge, not all at once at the start of the gesture.
-                let w = smoothstep(clamp((leg.foot.y - leg.rest.y) / 22, 0, 1))
+                // ledge, not all at once at the start of the gesture. (On
+                // a line they are the leg's own; see `lineBones`.)
+                let w = onLine ? 1 : smoothstep(clamp((leg.foot.y - leg.rest.y) / 22, 0, 1))
                 let borrowed = SpiderRenderer.kneeIK(leg: other, hip: drawnHip, foot: drawnFoot, away: bend, profile: profile, look: look)
                 drawnKnee = V2.lerp(own, borrowed, w)
             } else {
@@ -10030,7 +11310,7 @@ final class Spider {
         } else {
             drawnKnee = SpiderRenderer.knee(leg: i, hip: drawnHip, foot: drawnFoot, lift: leg.lift, profile: profile, look: look)
         }
-        if onSurface { foot = V2(foot.x / sq.stretch, g + (foot.y - g) / sq.fatten) }
+        if feetPlaced { foot = V2(foot.x / sq.stretch, g + (foot.y - g) / sq.fatten) }
         let knee = V2(drawnKnee.x / sq.stretch, g + (drawnKnee.y - g) / sq.fatten)
         return (hip, foot, knee)
     }
@@ -10065,7 +11345,9 @@ final class Spider {
         let profile = SpiderRenderer.profileAmount(yaw: yaw)
         let fresh = kneeShape.count != legs.count
         if fresh { kneeShape = Array(repeating: .zero, count: legs.count) }
+        if kneeShapeVel.count != legs.count { kneeShapeVel = Array(repeating: .zero, count: legs.count) }
         let k = 1 - exp(-dt * 24)
+        let line = onLine
         // On a surface the knees come under the same limit as the feet: a
         // knee riding a hip-to-foot line that swings round fast (a foot
         // passing close under the hip) is held to a movement too.
@@ -10075,14 +11357,38 @@ final class Spider {
         kneeLimitPos = pos
         if kneeWorld.count != legs.count { kneeWorld = Array(repeating: .zero, count: legs.count) }
         if kneeWorldVel.count != legs.count { kneeWorldVel = Array(repeating: .zero, count: legs.count) }
+        if lineSide.count != legs.count {
+            lineSide = Array(repeating: 1, count: legs.count)
+            lineSideAim = Array(repeating: 1, count: legs.count)
+            lineSideVel = Array(repeating: 0, count: legs.count)
+            lineBoneLen = Array(repeating: V2(20, 25), count: legs.count)
+        }
+        // Just up off a line onto a ledge, the knees come over to standing
+        // as they go over on a line, not all at once: the feet are still
+        // stepping up off the silk.
+        let offLine = climbedOnto && mode == .attached && t - landedAt < 0.45 && lineKneesLive
+        defer { lineKneesLive = (line || offLine) && !fresh }
         kneeLocal = legs.indices.map { i in
             let j = modelLeg(i, profile: profile)
             let want = Spider.kneeShape(hip: j.hip, foot: j.foot, knee: j.knee)
-            kneeShape[i] = fresh ? want : kneeShape[i] + (want - kneeShape[i]) * k
-            let local = Spider.knee(from: kneeShape[i], hip: j.hip, foot: j.foot)
+            var local: V2
+            if fresh {
+                kneeShape[i] = want
+                local = Spider.knee(from: kneeShape[i], hip: j.hip, foot: j.foot)
+            } else if line && legBend[i] != nil || offLine {
+                local = lineKnee(i, hip: j.hip, foot: j.foot, bend: legBend[i] ?? .zero, model: line ? nil : j.knee,
+                                 profile: profile, from: Spider.knee(from: kneeShape[i], hip: j.hip, foot: j.foot), dt: dt)
+                // (Kept up, for whatever has the legs next.)
+                kneeShape[i] = Spider.kneeShape(hip: j.hip, foot: j.foot, knee: local)
+                kneeShapeVel[i] = .zero
+            } else {
+                kneeShape[i] = kneeShape[i] + (want - kneeShape[i]) * k
+                kneeShapeVel[i] = .zero
+                local = Spider.knee(from: kneeShape[i], hip: j.hip, foot: j.foot)
+            }
             var w = kneeWorldPoint(local)
             if limit {
-                if Spider.limitJolt(&w, last: &kneeWorld[i], vel: &kneeWorldVel[i], cap: Spider.footJolt * config.scale * (absorbingLanding ? 3 : 1), dt: dt) {
+                if Spider.limitJolt(&w, last: &kneeWorld[i], vel: &kneeWorldVel[i], cap: Spider.footJolt * config.scale * landingJolt, dt: dt) {
                     return kneeLocalPoint(w)
                 }
             } else {
@@ -10093,6 +11399,67 @@ final class Spider {
         }
     }
     private var kneeLimitPos: V2 = .zero
+    /// How fast each knee's shape is changing (see `updateKnees`).
+    private var kneeShapeVel: [V2] = []
+
+    /// On a line, a knee is where the leg's own bones put it between hip
+    /// and foot — so a leg is never drawn out longer than it is, or folded
+    /// up shorter, however fast the foot goes — on the side of the leg it
+    /// is bent to. That side goes round with the leg: a foot swinging
+    /// round the hip carries its knee round with it, as a real one does,
+    /// rather than flipping it over whenever the leg passes the way it
+    /// means to bend (`legBend`). It goes over to the other side only once
+    /// that is plainly the way to bend, and then on a spring, through the
+    /// leg held straight out. Taking up a line, it starts from the knee as
+    /// it was, and grows into the leg's proportions on a line
+    /// (`lineBones`). (Stepping off it, it goes over to the side the
+    /// standing leg's knee is on, `model`.)
+    private func lineKnee(_ i: Int, hip: V2, foot: V2, bend: V2, model: V2? = nil, profile: CGFloat, from start: V2, dt: CGFloat) -> V2 {
+        // Worked out where the leg is drawn, as `modelLeg` does.
+        let sq = bodySquash()
+        let g = SpiderRenderer.ground
+        func drawn(_ v: V2) -> V2 { V2(v.x * sq.stretch, g + (v.y - g) * sq.fatten) }
+        let dh = drawn(hip), df = drawn(foot)
+        var d = df - dh
+        var dist = d.length
+        if dist < 0.01 { d = V2(1, 0); dist = 1 }
+        let u = d / dist
+        let across = u.perp
+        if !lineKneesLive {
+            let k = drawn(start) - dh
+            lineBoneLen[i] = V2(max(k.length, 1), max(df.distance(to: drawn(start)), 1))
+            lineSide[i] = k.dot(across) >= 0 ? 1 : -1
+            lineSideAim[i] = lineSide[i]
+            lineSideVel[i] = 0
+        }
+        let plain = bend.length > 0.01 ? across.dot(bend.normalized) : 0
+        if abs(plain) >= 0.35 { lineSideAim[i] = plain > 0 ? 1 : -1 }
+        if let m = model {
+            let out = (drawn(m) - dh).dot(across)
+            if abs(out) > 0.5 { lineSideAim[i] = out > 0 ? 1 : -1 }
+        }
+        // (Quicker stepping off, with every leg coming over at once.)
+        let (k, c): (CGFloat, CGFloat) = model == nil ? (81, 18) : (256, 32)
+        lineSideVel[i] += ((lineSideAim[i] - lineSide[i]) * k - lineSideVel[i] * c) * dt
+        lineSide[i] = clamp(lineSide[i] + lineSideVel[i] * dt, -1, 1)
+        let r = SpiderRenderer.rig(legBones[i] ?? i, profile: profile, look: look)
+        let bones = V2(max((r.knee - r.hip).length, 1), max((r.foot - r.knee).length, 1))
+        lineBoneLen[i] = lineBoneLen[i] + (bones - lineBoneLen[i]) * (1 - exp(-dt * 14))
+        let a = lineBoneLen[i].x, b = lineBoneLen[i].y
+        let reach = clamp(dist, abs(a - b) + 0.5, a + b - 0.5)
+        let x = (a * a - b * b + reach * reach) / (2 * reach)
+        let h = max(a * a - x * x, 0).squareRoot()
+        let dk = dh + u * x + across * (h * lineSide[i])
+        return V2(dk.x / sq.stretch, g + (dk.y - g) / sq.fatten)
+    }
+    /// Which side of its leg each knee is on, on a line (+1 or -1, and in
+    /// between going over), the side it is going to, how fast it is going
+    /// over; and the femur and tibia it is drawn with.
+    private var lineSide: [CGFloat] = []
+    private var lineSideAim: [CGFloat] = []
+    private var lineSideVel: [CGFloat] = []
+    private var lineBoneLen: [V2] = []
+    private var lineKneesLive = false
 
     /// A drawn leg point (as `pose()` lays it out, with the squash and
     /// stretch) to the world, and back.
@@ -10185,13 +11552,34 @@ final class Spider {
             p.web = (tip, 0.9, 0)
         }
         if p.web != nil, rope.live { p.webPoints = rope.points }
-        if mode == .dangling, webActive, let web = p.web {
-            // The held stretch of line, in sprite units, plus the loose silk
-            // trailing behind the spinnerets while it hauls itself up.
+        if onLine, webActive, let web = p.web {
+            // The held stretch of line, in sprite units — along the silk as
+            // it lies there, out past the highest foot on it — plus, climbing,
+            // the silk it has hauled in, gathered below the spinnerets.
+            // (Taken out of the body's squash and stretch, which the sprite
+            // is drawn with, so it lies on the line itself as the body
+            // bounces on the end of it — as the feet holding it do.)
+            let (sx, sy) = bodySquash()
+            let g = SpiderRenderer.ground
+            func unsquashed(_ v: V2) -> V2 { V2(v.x / sx, g + (v.y - g) / sy) }
             let a = silkAttachLocal()
-            let dir = (toLocal(webAnchor) - a).normalized
-            let tail: CGFloat = webStyle == .hang && hangHeadUp ? 1 : 0
-            p.thread = (a, a + dir * 80, tail, web.alpha)
+            var len = min(heldStretch, (toLocal(webAnchor) - a).length)
+            // (Never out past what the sprite can draw — turning round, the
+            // line runs off to the side — the world's line has it beyond.)
+            let most = SpiderRenderer.drawRadius - 8
+            let ad = a.dot(lineDirLocal)
+            let room = ad * ad - (a.lengthSquared - most * most)
+            len = min(len, room > 0 ? max(-ad + room.squareRoot(), 0) : 0)
+            p.thread = (unsquashed(a), unsquashed(a + lineDirLocal * len), climbLayout, web.alpha)
+            if a.distance(to: spinnerets) > 0.5 { p.threadFrom = spinnerets }
+            // Rolling over, drawn in to its middle, the silk from the
+            // spinnerets runs in along its belly — under the hind feet
+            // that keep it there — to where it leaves for the anchor.
+            let drawnIn = smoothstep(lineGrip)
+            if mode == .dangling, drawnIn > 0 {
+                let via = V2.lerp(lineStance, bellyLine(Spider.lineTuck[7]), drawnIn)
+                if via.distance(to: a) > 0.5 { p.threadVia = unsquashed(via) }
+            }
         }
         return p
     }

@@ -66,9 +66,11 @@ it clings with its feet on the window; under the menu bar it hangs upside down.
   whatever it is about to hit and does the same. It lands with a squash,
   takes a beat to get its feet under it, then carries on
 - Falls, bounces off screen edges, and fires a rescue line if it drops too far
-- Rappels head-down on a dragline from its spinnerets, hangs almost still,
-  turning part-way round on the line to show its face and drifting back;
-  climbs back up hand over hand, facing up the thread
+- Rappels head-down on a dragline from its spinnerets, seen side on with its
+  head straight below the rest of it: the back four legs hold the silk above
+  its abdomen and the front four hang free, swinging with it; to climb back
+  up it turns end for end, hugs the silk tight along its belly and goes up
+  it hand over hand
 - Walks a proper alternating-tetrapod gait, driven by distance travelled rather
   than a timer: four legs swing while four stay planted, and planted feet hold
   still on the ledge while the body moves over them, so it never skates. The
@@ -162,7 +164,12 @@ with context:
   momentum. Throw it hard enough and it will catch itself on a web.
 - **Click** it for a wave, arms up, a startle, a curious look, or a glance
 - **Double-click** for a bounce-and-wiggle or a dance with arms up
-- **Scroll** over it while it's dangling to raise and lower it on its thread
+- **Scroll** over it to send it up or down: on a ledge, scroll down and it
+  rappels half way down to whatever is below and hangs there; on a line,
+  scroll up and it climbs all the way up and over onto what it hangs from,
+  scroll down and it goes all the way down to the next thing it can stand
+  on. One swipe is one order, and it keeps to it — it does not turn back
+  part way of its own accord
 - **Stroke it** — move the pointer back and forth over it and it squints,
   blushes, wiggles and puffs hearts
 - **Right-click** it for the menu
@@ -202,22 +209,48 @@ Its silk:
   swing too, so a bad leap can chain into another. **Swing!** is in the
   menu.
 - **Hanging.** On a dragline it hangs head down, the way a spider does,
-  hind legs hooked round the thread above its abdomen — the near legs from
-  one side, the far legs from the other, so the line runs between them —
-  and front legs folded in; descending, it pays out line through those hind
-  feet. To climb it rolls head-up and hauls itself up hand over hand with
-  all eight legs: the front pairs grip above the head, the hind pairs work
-  the line along the body. The legs on the line move the way the legs on a
-  ledge do, only along the thread: each has its natural spot, in its stance
-  the foot holds still in the world and slides through the body's frame as
-  the body climbs or descends past it, and in its swing it lets go, lifts
-  off the line to its own side — over the legs still holding — and reaches
-  on to its next grip a stride ahead, near legs hooking from one side and
-  far legs from the other. The line itself ends at the spinnerets, so it
-  runs exactly through the grips whichever way up it is. Once it stops it
-  lets itself back round to hang.
-  Swinging, the same hind legs hold the line above the abdomen and the
-  front legs hang loose toward the ground.
+  always side on, its head straight below its abdomen and the line running
+  up from its spinnerets. The back four legs hold the silk above the
+  abdomen — the third pair out to the side and in to it just over the tip,
+  the fourth reaching up along the abdomen to hold it higher — and the
+  front four hang free under their own weight, splayed a little: each foot
+  is a weight on the end of its leg, so they swing with the body, trail
+  when it moves and settle when it stops, and stir now and then. Going
+  down, it pays the line out through its hind feet, which take turns
+  drawing the silk from the spinnerets, while the first pair reach down for
+  whatever is below. It lets go of a ledge to drop by dabbing the line down
+  right by its spinnerets and swinging down head first about them; off the
+  top of something, where there is nothing over the drop, it steps off the
+  edge on its dragline and lets the line take it a short way down first.
+  To climb it turns end for end — head first, round by its belly — and
+  hugs the line: the silk runs right along its belly, tucked in under the
+  edge of its abdomen, as close to its middle as a line on the outside of
+  a spider can be, and the body hangs back a touch from its front legs
+  with its weight under them. The front two pairs reach up the silk past
+  its head and the hind two pairs down it past its abdomen, knees bent out
+  from the thread. It goes up hand over hand, the body rising in pulls as
+  each front leg heaves. Every foot on the line keeps its hold on the
+  silk while the body goes past it, then lets go, lifts off and reaches on
+  up for the next hold, so no foot ever slides along the silk, and every
+  leg keeps its length however quickly it reaches. The silk it hauls in
+  hangs in a loop from its spinnerets to the line below its feet. At the
+  top its front feet take hold of whatever the line hangs from, and it
+  climbs up onto it and steps its other feet across, rather than landing
+  there. Come up the face of something it stepped off the top of, the
+  line runs up over the lip, and it pulls itself up and over: the front
+  legs reach out over the top, it pulls up until its waist is at the lip,
+  tips forward over it belly first between them, and the hind legs, which
+  have been pushing on the silk, come up over last before it stands up.
+  Coming down its line onto the top of something is the same the other
+  way about: the front legs, reaching down, take the ledge first, the body
+  comes down onto them and pitches over belly first, and the hind legs let
+  go of the silk last and step down. Once it stops a while, or sets off back down, it lets go with its
+  front legs and swings back round about the hind legs' hold to hang. A
+  leg swinging round a hip goes round at arm's length with its knee
+  turning over as a real one does, never folding in through the hip.
+  Swinging, the hind legs hold on and the front legs kick with the swing
+  to pump it up. The feet hold the line where it really lies, and stay on
+  it as the body bounces on the end of it.
 - **A line means something.** Dropping onto a thread it decides then and
   there what the thread is for, and works through it: down to a chosen
   height, a while hanging there (a bounce on arrival if it is that sort, the
@@ -227,11 +260,14 @@ Its silk:
   one way off it — hauling back up to whatever it hung from, all the way
   down to the floor, working up a swing, or springing off to something
   near. It does not change its mind every few seconds, and it does not turn
-  right round on the line: turning to the other side on a thread is a roll
-  of the whole body, and it only does that on purpose — to face up the line
-  for a real climb, or in a twirl when it is pleased. A window sliding in
-  front of it, a meal or the red dot turning up, or being reeled about by
-  hand all cut the plan short, and it picks up a fresh one after.
+  round on the line to show its other side or its face: on a thread that
+  would put its head beside its abdomen, so it turns end for end only on
+  purpose, to face up the line for a real climb. Pleased on a line, it
+  bounces on the end of it and kicks its free legs. A window sliding in
+  front of it, a meal or the red dot turning up, or being sent up or down
+  it with the scroll wheel all cut the plan short. Sent, it goes all the
+  way, and the pointer that sent it does not draw it back; it picks up a
+  fresh plan of its own after.
 - **The line is a string, not a rod.** Every thread is a short chain of
   points under gravity, tied to the anchor at one end and the spinnerets at
   the other: it sags when it goes slack, lags and whips when it is fired or

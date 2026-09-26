@@ -512,7 +512,7 @@ final class HabitatSceneView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         guard !editing, let spider, spider.inHabitat else { return }
-        spider.scroll(event.scrollingDeltaY)
+        spider.scroll(event.scrollingDeltaY, precise: event.hasPreciseScrollingDeltas, startsGesture: event.startsScrollGesture)
     }
 
     override func rightMouseDown(with event: NSEvent) {

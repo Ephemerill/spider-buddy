@@ -184,11 +184,22 @@ final class SpiderView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        spider?.scroll(event.scrollingDeltaY)
+        spider?.scroll(event.scrollingDeltaY, precise: event.hasPreciseScrollingDeltas, startsGesture: event.startsScrollGesture)
     }
 
     override func rightMouseDown(with event: NSEvent) {
         NotificationCenter.default.post(name: .spiderContextMenu, object: event)
+    }
+}
+
+extension NSEvent {
+    /// For the spider, which takes one swipe as one order: true for the
+    /// first scroll event of a swipe, false for the rest of it (its momentum
+    /// included), nil where the device does not say (a plain wheel).
+    var startsScrollGesture: Bool? {
+        if phase.contains(.began) || phase.contains(.mayBegin) { return true }
+        if !phase.isEmpty || !momentumPhase.isEmpty { return false }
+        return nil
     }
 }
 

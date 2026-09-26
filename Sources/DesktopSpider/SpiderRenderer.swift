@@ -261,23 +261,45 @@ enum SpiderRenderer {
         guard let th = pose.thread, th.alpha > 0.01 else { return }
         let w = 1.1 / max(pose.scale, 0.2)
         ctx.setLineCap(.round)
-        ctx.setStrokeColor(CGColor(red: 0, green: 0, blue: 0, alpha: Double(0.28 * th.alpha)))
-        ctx.setLineWidth(w * 2.4)
-        ctx.beginPath(); ctx.move(to: th.a.point); ctx.addLine(to: th.b.point); ctx.strokePath()
-        ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: Double(0.62 * th.alpha)))
-        ctx.setLineWidth(w)
-        ctx.beginPath(); ctx.move(to: th.a.point); ctx.addLine(to: th.b.point); ctx.strokePath()
-        if th.tail > 0.01 {
-            // Gathered silk hanging on behind, wavering a little.
-            let back = (th.a - th.b).normalized
-            let side = back.perp
-            let t = pose.time
-            let len = 34 * th.tail
+        // Its far end runs on into the line drawn in the world, which has a
+        // shadow of its own: the dark edging stops a little short of it so
+        // the join does not show.
+        let back = (th.a - th.b).normalized
+        // Rolling over, the silk from the spinnerets comes in against the
+        // belly and runs along it to the held stretch: the loop from the
+        // spinnerets ends there, and hangs on from there.
+        let silkEnd = pose.threadVia ?? th.a
+        let endBack = pose.threadVia.map { ($0 - th.a).normalized } ?? back
+        func line(to end: V2) -> CGPath {
             let p = CGMutablePath()
             p.move(to: th.a.point)
-            let c1 = th.a + back * (len * 0.35) + side * (sin(t * 4.1) * 1.6)
-            let c2 = th.a + back * (len * 0.7) + side * (sin(t * 3.3 + 1.7) * 2.4)
-            let e = th.a + back * len + side * (sin(t * 2.6 + 0.9) * 3.0)
+            p.addLine(to: end.point)
+            if let from = pose.threadFrom {
+                // The silk it has hauled in: out of the tip of its abdomen,
+                // and round in a loop into the line under its feet.
+                p.move(to: from.point)
+                p.addQuadCurve(to: silkEnd.point, control: (from + endBack * max((silkEnd - from).dot(endBack), 4)).point)
+                if pose.threadVia != nil { p.addLine(to: th.a.point) }
+            }
+            return p
+        }
+        let full = th.a.distance(to: th.b)
+        ctx.setStrokeColor(CGColor(red: 0, green: 0, blue: 0, alpha: Double(0.28 * th.alpha)))
+        ctx.setLineWidth(w * 2.4)
+        ctx.addPath(line(to: th.b + back * min(5, full))); ctx.strokePath()
+        ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: Double(0.62 * th.alpha)))
+        ctx.setLineWidth(w)
+        ctx.addPath(line(to: th.b)); ctx.strokePath()
+        if th.tail > 0.01 {
+            // A wisp of the gathered silk hanging loose below, wavering.
+            let side = endBack.perp
+            let t = pose.time
+            let loose = 11 * th.tail
+            let p = CGMutablePath()
+            p.move(to: silkEnd.point)
+            let c1 = silkEnd + endBack * (loose * 0.35) + side * (sin(t * 4.1) * 1.2)
+            let c2 = silkEnd + endBack * (loose * 0.7) + side * (sin(t * 3.3 + 1.7) * 1.8)
+            let e = silkEnd + endBack * loose + side * (sin(t * 2.6 + 0.9) * 2.4)
             p.addCurve(to: e.point, control1: c1.point, control2: c2.point)
             ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: Double(0.45 * th.alpha * th.tail)))
             ctx.setLineWidth(w * 0.9)
@@ -473,7 +495,7 @@ enum SpiderRenderer {
         // Back legs first so the front pair sits on top.
         let order = far ? [7, 6, 5, 4] : [3, 2, 1, 0]
         for idx in order where idx < pose.legs.count {
-            drawLeg(pose.legs[idx], far: far, profile: profile, look: look, pal: pal, in: ctx)
+            drawLeg(pose.legs[idx], index: idx, far: far, profile: profile, look: look, pal: pal, in: ctx)
         }
     }
 
@@ -483,7 +505,7 @@ enum SpiderRenderer {
                        blue: lerp(ca[2], cb[2], t), alpha: 1)
     }
 
-    private static func drawLeg(_ leg: LegPose, far: Bool, profile: CGFloat,
+    private static func drawLeg(_ leg: LegPose, index: Int, far: Bool, profile: CGFloat,
                                 look: SpiderLook, pal: Palette, in ctx: CGContext) {
         let hip = leg.hip.point
         let knee = leg.knee.point
@@ -514,6 +536,21 @@ enum SpiderRenderer {
 
         ctx.setLineCap(.round)
         ctx.setLineJoin(.round)
+
+        // Coats that are not flesh all the way through draw their own legs.
+        switch pal.limbs {
+        case .bones:
+            drawBoneLeg(hip: leg.hip, knee: leg.knee, foot: leg.foot, femurW: femurW, tibiaW: tibiaW,
+                        rim: rim, fills: [femurFill, tibiaFill], in: ctx)
+            return
+        case .machine(let joint, let glow):
+            drawMachineLeg(hip: leg.hip, knee: leg.knee, foot: leg.foot, femurW: femurW, tibiaW: tibiaW,
+                           rim: rim, fills: [femurFill, tibiaFill], joint: joint.darker(shade * 0.3),
+                           glow: glow, shade: shade, in: ctx)
+            return
+        default:
+            break
+        }
 
         // Fuzzy legs: a fringe of short hairs along each segment, under the outline.
         if look.legs == .fuzzy || look.fuzz == 2 {
@@ -657,6 +694,117 @@ enum SpiderRenderer {
             ctx.fillEllipse(in: CGRect(x: foot.x - padR, y: foot.y - padR, width: padR * 2, height: padR * 2))
         default:
             break
+        }
+
+        if case .stitched(let thread, let bandage) = pal.limbs {
+            // The same legs always: a stitched cut up the thigh of one on
+            // each side, a bandage round the shin of another.
+            let h = V2(hip), k = V2(knee), ft = V2(foot)
+            if index % 4 == 1 {
+                let d = k - h
+                let across = d.normalized.perp * (femurW * 0.5)
+                ctx.setStrokeColor(thread.cg)
+                ctx.setLineWidth(0.7)
+                ctx.beginPath()
+                ctx.move(to: (h + d * 0.28).point); ctx.addLine(to: (h + d * 0.72).point)
+                for u: CGFloat in [0.36, 0.5, 0.64] {
+                    let p = h + d * u
+                    ctx.move(to: (p - across).point); ctx.addLine(to: (p + across).point)
+                }
+                ctx.strokePath()
+            } else if index % 4 == 2 {
+                let d = ft - k
+                let along = d.normalized, across = along.perp
+                let wrap = bandage.darker(shade * 0.3)
+                for u: CGFloat in [0.3, 0.44, 0.58] {
+                    let p = k + d * u
+                    let a = p - across * (tibiaW * 0.75) - along * (tibiaW * 0.35)
+                    let b = p + across * (tibiaW * 0.75) + along * (tibiaW * 0.35)
+                    ctx.setStrokeColor(rim)
+                    ctx.setLineWidth(tibiaW * 0.5 + 1.4)
+                    ctx.beginPath(); ctx.move(to: a.point); ctx.addLine(to: b.point); ctx.strokePath()
+                    ctx.setStrokeColor(wrap.cg)
+                    ctx.setLineWidth(tibiaW * 0.5)
+                    ctx.beginPath(); ctx.move(to: a.point); ctx.addLine(to: b.point); ctx.strokePath()
+                }
+            }
+        }
+    }
+
+    /// A leg of two bones, each a thin shaft with a pair of knuckles at
+    /// either end. The shin is drawn over the thigh, so the knee reads as
+    /// a joint between two bones.
+    private static func drawBoneLeg(hip: V2, knee: V2, foot: V2, femurW: CGFloat, tibiaW: CGFloat,
+                                    rim: CGColor, fills: [CGColor], in ctx: CGContext) {
+        let ow: CGFloat = 2.0
+        for (i, (a, b, w)) in [(hip, knee, femurW), (knee, foot, tibiaW)].enumerated() {
+            let d = b - a
+            let len = max(d.length, 0.01)
+            let along = d * (1 / len), across = along.perp
+            let r = w * 0.4
+            let inset = min(r * 0.8, len * 0.2)
+            var knuckles: [V2] = []
+            for (end, dir) in [(a, along), (b, along * -1)] {
+                let p = end + dir * inset
+                knuckles.append(p + across * (r * 0.72))
+                knuckles.append(p - across * (r * 0.72))
+            }
+            for (colour, grow) in [(rim, ow), (fills[i], 0)] {
+                ctx.setStrokeColor(colour)
+                ctx.setLineWidth(w * 0.52 + grow)
+                ctx.beginPath(); ctx.move(to: a.point); ctx.addLine(to: b.point); ctx.strokePath()
+                ctx.setFillColor(colour)
+                let rr = r + grow / 2
+                for k in knuckles {
+                    ctx.fillEllipse(in: CGRect(x: k.x - rr, y: k.y - rr, width: rr * 2, height: rr * 2))
+                }
+            }
+        }
+    }
+
+    /// A plated steel leg: a piston down each segment, a rubber foot, and a
+    /// disc at the hip and knee with a light in it.
+    private static func drawMachineLeg(hip: V2, knee: V2, foot: V2, femurW: CGFloat, tibiaW: CGFloat,
+                                       rim: CGColor, fills: [CGColor], joint: RGB, glow: RGB,
+                                       shade: CGFloat, in ctx: CGContext) {
+        let ow: CGFloat = 2.3
+        func disc(_ c: V2, _ r: CGFloat, _ colour: CGColor) {
+            ctx.setFillColor(colour)
+            ctx.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+        }
+        let segs = [(hip, knee, femurW), (knee, foot, tibiaW)]
+        for (a, b, w) in segs {
+            ctx.setStrokeColor(rim)
+            ctx.setLineWidth(w + ow)
+            ctx.beginPath(); ctx.move(to: a.point); ctx.addLine(to: b.point); ctx.strokePath()
+        }
+        disc(foot, tibiaW * 0.72 + ow / 2, rim)
+        for (i, (a, b, w)) in segs.enumerated() {
+            ctx.setStrokeColor(fills[i])
+            ctx.setLineWidth(w)
+            ctx.beginPath(); ctx.move(to: a.point); ctx.addLine(to: b.point); ctx.strokePath()
+            // The piston, with a collar at each end.
+            let d = b - a
+            let p0 = a + d * 0.24, p1 = a + d * 0.76
+            ctx.setStrokeColor(joint.cg)
+            ctx.setLineWidth(w * 0.34)
+            ctx.beginPath(); ctx.move(to: p0.point); ctx.addLine(to: p1.point); ctx.strokePath()
+            let across = d.normalized.perp * (w * 0.5)
+            ctx.setStrokeColor(rim)
+            ctx.setLineWidth(0.9)
+            ctx.beginPath()
+            for p in [p0, p1] {
+                ctx.move(to: (p - across).point); ctx.addLine(to: (p + across).point)
+            }
+            ctx.strokePath()
+        }
+        disc(foot, tibiaW * 0.72, joint.darker(0.45).cg)
+        let lit = glow.mix(joint, shade * 0.5)
+        for (c, r) in [(knee, femurW * 0.66), (hip, femurW * 0.54)] {
+            disc(c, r * 1.55, lit.alpha(0.16 * (1 - shade)))
+            disc(c, r + 1, rim)
+            disc(c, r, joint.cg)
+            disc(c, r * 0.46, lit.cg)
         }
     }
 
@@ -1535,6 +1683,16 @@ enum SpiderRenderer {
             }
             ctx.setFillColor(pal.eyeDark)
             ctx.fillEllipse(in: rect)
+            if let glow = pal.eyeGlow {
+                // Lit from within: a faint halo and a bright ring.
+                ctx.setFillColor(glow.alpha(0.18))
+                ctx.fillEllipse(in: rect.insetBy(dx: -1.6, dy: -1.6))
+                ctx.setFillColor(pal.eyeDark)
+                ctx.fillEllipse(in: rect)
+                ctx.setStrokeColor(glow.cg)
+                ctx.setLineWidth(max(r * 0.16, 0.7))
+                ctx.strokeEllipse(in: rect.insetBy(dx: r * 0.2, dy: ry * 0.2))
+            }
             if look.eyes == .dizzy {
                 // A spiral instead of a glint.
                 ctx.setStrokeColor(white)

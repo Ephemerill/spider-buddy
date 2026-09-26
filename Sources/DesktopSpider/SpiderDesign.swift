@@ -596,6 +596,7 @@ enum GradientCoat: String, Codable, CaseIterable {
 /// Coats that move: colours that shift, drift, pulse or match the world.
 enum LivingCoat: String, Codable, CaseIterable {
     case rainbow, lava, camo, galaxy, ocean, aurora, disco, fire, frost, toxic, pearl, candy, storm, chrome, webSlinger
+    case skeleton, zombie, robot
     var label: String {
         switch self {
         case .rainbow: return "Rainbow"
@@ -613,6 +614,9 @@ enum LivingCoat: String, Codable, CaseIterable {
         case .storm: return "Thunderstorm"
         case .chrome: return "Chrome"
         case .webSlinger: return "Web-Slinger"
+        case .skeleton: return "Skeleton"
+        case .zombie: return "Zombie"
+        case .robot: return "Robot"
         }
     }
     var blurb: String {
@@ -632,6 +636,9 @@ enum LivingCoat: String, Codable, CaseIterable {
         case .storm: return "Grey cloud, with lightning now and then."
         case .chrome: return "Polished metal with a sweeping shine."
         case .webSlinger: return "Red and blue, webbed all over, with the emblem on its back."
+        case .skeleton: return "Nothing but bones: a ribcage, a skull, and bony legs."
+        case .zombie: return "Green, rotting and stitched back together."
+        case .robot: return "Riveted steel plates, glowing joints and a scanning light."
         }
     }
 }
