@@ -64,9 +64,13 @@ struct PanelPage {
 
 // MARK: - The panel
 
-/// What drops down from the menu bar icon: the spider up top, a strip of
-/// icons for the pages, the page itself in rounded cards, and the Studio
-/// and Quit along the bottom.
+/// What drops down from the menu bar icon: the spider's name up top, a
+/// strip of icons for the pages, the page itself in rounded cards, and the
+/// Studio and Quit along the bottom.
+///
+/// Every page is laid out at once, one over another, and the panel is as
+/// tall as the tallest: picking a page only swaps which one shows, so the
+/// popover never resizes (or moves) under the pointer.
 final class PanelController: NSObject, NSPopoverDelegate {
     static let width: CGFloat = 340
     private static let inset: CGFloat = 14
@@ -80,7 +84,6 @@ final class PanelController: NSObject, NSPopoverDelegate {
     private var current = 0
 
     private let root = NSStackView()
-    private let portrait = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
     private var tabButtons: [NSButton] = []
     private let pageTitle = NSTextField(labelWithString: "")
@@ -108,6 +111,7 @@ final class PanelController: NSObject, NSPopoverDelegate {
     }
 
     var isShown: Bool { popover.isShown }
+    var pageCount: Int { pages.count }
 
     func toggle(from button: NSStatusBarButton) {
         if popover.isShown {
@@ -127,22 +131,26 @@ final class PanelController: NSObject, NSPopoverDelegate {
         let d = design()
         if d != shownDesign {
             shownDesign = d
-            portrait.image = SpiderRenderer.thumbnail(look: d.look, side: 64, front: true)
             nameLabel.stringValue = d.name.isEmpty ? "Your Spider" : d.name
         }
-        for s in syncers[current] { s() }
+        // Every page, not just the one showing: the hidden ones set how
+        // tall the panel is too.
+        for page in syncers { for s in page { s() } }
         for s in footerSyncers { s() }
         fit()
     }
 
     func show(page i: Int) {
-        guard i >= 0, i < pages.count else { return }
+        guard i >= 0, i < pages.count, i != current else { return }
         pageViews[current].isHidden = true
         current = i
         pageViews[i].isHidden = false
         pageTitle.stringValue = pages[i].title.uppercased()
         for (j, b) in tabButtons.enumerated() { (b as? PanelTabButton)?.selected = j == i }
-        refresh()
+    }
+
+    func show(pageTitled title: String) {
+        if let i = pages.firstIndex(where: { $0.title == title }) { show(page: i) }
     }
 
     /// Tools only: a page of the panel to a PNG, drawn in an ordinary
@@ -157,6 +165,7 @@ final class PanelController: NSObject, NSPopoverDelegate {
         root.removeFromSuperview()
         host.addSubview(root)
         show(page: page)
+        refresh()
         root.layoutSubtreeIfNeeded()
         let size = CGSize(width: PanelController.width, height: root.fittingSize.height)
         host.frame = CGRect(origin: .zero, size: size)
@@ -188,15 +197,10 @@ final class PanelController: NSObject, NSPopoverDelegate {
         root.translatesAutoresizingMaskIntoConstraints = false
         root.widthAnchor.constraint(equalToConstant: PanelController.width).isActive = true
 
-        // The spider, and its name.
-        portrait.imageScaling = .scaleProportionallyUpOrDown
-        portrait.translatesAutoresizingMaskIntoConstraints = false
-        portrait.widthAnchor.constraint(equalToConstant: 64).isActive = true
-        portrait.heightAnchor.constraint(equalToConstant: 64).isActive = true
+        // The spider's name, after a little badge of the menu bar icon.
         nameLabel.font = .systemFont(ofSize: 15, weight: .semibold)
-        let head = NSStackView(views: [portrait, nameLabel])
-        head.orientation = .vertical
-        head.spacing = 2
+        let head = NSStackView(views: [SpiderBadge(), nameLabel])
+        head.spacing = 8
         root.addArrangedSubview(head)
 
         // The strip of page icons.
@@ -233,20 +237,35 @@ final class PanelController: NSObject, NSPopoverDelegate {
         titleRow.widthAnchor.constraint(equalToConstant: inner).isActive = true
         root.addArrangedSubview(titleRow)
 
+        // The pages, one over another, in a deck as tall as the tallest.
+        let deck = NSView()
+        deck.translatesAutoresizingMaskIntoConstraints = false
+        deck.widthAnchor.constraint(equalToConstant: inner).isActive = true
+        let snug = deck.heightAnchor.constraint(equalToConstant: 0)
+        snug.priority = .init(1)
+        snug.isActive = true
         for page in pages {
             var pageSync: [() -> Void] = []
             let v = NSStackView()
             v.orientation = .vertical
             v.alignment = .leading
             v.spacing = 10
+            v.translatesAutoresizingMaskIntoConstraints = false
             for section in page.sections {
                 v.addArrangedSubview(card(section, syncers: &pageSync))
             }
             v.isHidden = true
-            root.addArrangedSubview(v)
+            deck.addSubview(v)
+            NSLayoutConstraint.activate([
+                v.topAnchor.constraint(equalTo: deck.topAnchor),
+                v.leadingAnchor.constraint(equalTo: deck.leadingAnchor),
+                v.trailingAnchor.constraint(equalTo: deck.trailingAnchor),
+                deck.bottomAnchor.constraint(greaterThanOrEqualTo: v.bottomAnchor),
+            ])
             pageViews.append(v)
             syncers.append(pageSync)
         }
+        root.addArrangedSubview(deck)
 
         // Along the bottom, on every page.
         let foot = NSStackView()
@@ -422,6 +441,7 @@ final class PanelController: NSObject, NSPopoverDelegate {
 
         case .status(let text):
             let n = NSTextField(wrappingLabelWithString: text())
+            n.preferredMaxLayoutWidth = w
             n.font = .systemFont(ofSize: 11)
             n.textColor = .secondaryLabelColor
             n.translatesAutoresizingMaskIntoConstraints = false
@@ -505,6 +525,32 @@ final class CardView: NSView {
         NSColor.labelColor.withAlphaComponent(0.09).setStroke()
         path.lineWidth = 1
         path.stroke()
+    }
+}
+
+/// The menu bar icon, white on a small accent-coloured disc.
+final class SpiderBadge: NSView {
+    private static let side: CGFloat = 24
+
+    init() {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        widthAnchor.constraint(equalToConstant: SpiderBadge.side).isActive = true
+        heightAnchor.constraint(equalToConstant: SpiderBadge.side).isActive = true
+        let icon = NSImageView(image: SpiderRenderer.statusItemImage(size: 17))
+        icon.contentTintColor = .white
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(icon)
+        NSLayoutConstraint.activate([
+            icon.centerXAnchor.constraint(equalTo: centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.controlAccentColor.setFill()
+        NSBezierPath(ovalIn: bounds).fill()
     }
 }
 

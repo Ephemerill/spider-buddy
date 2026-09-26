@@ -268,6 +268,42 @@ final class Toy {
         }
     }
 
+    /// On a line from something hauling it off (a spider towing it): never
+    /// further than `length` from `p`. On an edge it is dragged along after
+    /// it — rolling, or skidding — and a line going up steeply lifts it off;
+    /// in the air it swings on the line. How far past its length the line
+    /// was stretched, which is how hard it pulled.
+    @discardableResult
+    func haul(from p: V2, length: CGFloat, map: SurfaceMap) -> CGFloat {
+        guard !held else { return 0 }
+        let d = pos - p
+        let dist = d.length
+        guard dist > length, dist > 0.001 else { return 0 }
+        let excess = dist - length
+        let pull = -d / dist
+        pinnedFor = 0
+        if let a = anchor, let seg = map.seg(a) {
+            if pull.dot(seg.normal) > 0.8, excess > 4 * scale {
+                anchor = nil
+                vel = pull * min(excess * 12, 260)
+                return excess
+            }
+            // Taken up over about a tenth of a second, the heavier the slower.
+            let want = clamp(pull.dot(seg.dir) * excess * 10 / kind.mass.squareRoot(), -420, 420)
+            if want > 0 ? roll < want : roll > want {
+                if abs(want - roll) > 120 { jingle(abs(want - roll) / 600) }
+                roll = want
+                if walking { walkDir = want >= 0 ? 1 : -1 }
+            }
+        } else {
+            let n = d / dist
+            pos = p + n * length
+            let out = vel.dot(n)
+            if out > 0 { vel -= n * out }
+        }
+        return excess
+    }
+
     private func jingle(_ amount: CGFloat) {
         guard kind.chime > 0, amount > 0.05 else { return }
         let a = min(1, amount * kind.chime)

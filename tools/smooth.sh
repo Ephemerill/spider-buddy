@@ -8,5 +8,5 @@ mkdir -p build
 xcrun swiftc -O -swift-version 5 -framework AppKit -o build/Smooth \
   Sources/DesktopSpider/Math.swift Sources/DesktopSpider/Surfaces.swift \
   Sources/DesktopSpider/WindowTracker.swift Sources/DesktopSpider/Spider.swift Sources/DesktopSpider/Memory.swift \
-  Sources/DesktopSpider/SpiderRenderer.swift Sources/DesktopSpider/SpiderDesign.swift Sources/DesktopSpider/Skin.swift Sources/DesktopSpider/Prey.swift Sources/DesktopSpider/Toys.swift Sources/DesktopSpider/Habitat.swift Sources/DesktopSpider/Studio.swift tools/smooth/main.swift
+  Sources/DesktopSpider/SpiderRenderer.swift Sources/DesktopSpider/SpiderDesign.swift Sources/DesktopSpider/Skin.swift Sources/DesktopSpider/Prey.swift Sources/DesktopSpider/Toys.swift Sources/DesktopSpider/Traces.swift Sources/DesktopSpider/Habitat.swift Sources/DesktopSpider/Studio.swift tools/smooth/main.swift
 ./build/Smooth "$@"

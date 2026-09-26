@@ -290,6 +290,48 @@ and again, two to four times, finishing with a happy wiggle. **Behavior ▸
 Peek-a-boo** asks for a game: if there is no edge to hide behind where it
 is, it leaps off to find one first.
 
+## Traces
+
+It leaves its mark about the desktop, and it all fades away again on its
+own:
+
+- **Silk strands.** Now and then a leap trails a line from the ledge it
+  left, and it is stuck down where it lands; the line it rappelled down on
+  is often left where it stepped off; a swing it lets go of, or a line it
+  jumps off, is left hanging loose from where it was fastened. Strands are
+  pinned to the real edges they join and are the same rope physics as its
+  dragline: drag a window and the strand rides along with it, stretching or
+  sagging; pull the two apart and it snaps, each end left hanging; close
+  the window, or bring another in front across it, and it tears there.
+- **Little webs** in sheltered spots: a sheet of criss-crossed threads in a
+  corner where the floor meets a wall (or the side of the Dock), or a
+  tangle hung under a window it is hanging from. It walks over, backs up
+  to the spot and dabs the threads down.
+- **Meals carried off.** A catch is often taken to the end of its ledge
+  before it is eaten, and what is left — a pair of wings, the two halves of
+  a beetle's shell — is left lying there. Leftovers ride along with a
+  window they are on, fall when it goes, and land on whatever is below; it
+  kicks them along as it walks into them.
+- **Toys hauled off.** Instead of a pat, it sometimes turns its back on a
+  ball, bell or wind-up bug lying still beside it, dabs a line onto it and
+  walks off towing it; pulled over the end of a ledge, the toy swings on
+  the line — and a heavy one snaps it.
+
+Flies that blunder into any of the silk are stuck there struggling for a
+while, and the spider feels it (a caught fly wakes it) and comes for them.
+The pointer can brush through it all: a slow push bends a strand aside, a
+quick swipe snaps it, a sweep tears a web, and a flick knocks a husk off
+its ledge.
+
+It is only ever drawn — in a click-through window of its own, under the
+spider — and nothing on the real desktop is touched. It is off to begin
+with: **Behavior ▸ Leave Traces** in the menu bar panel turns it on (and
+off again, clearing whatever is out). **Most at Once** sets how many
+traces — strands, webs and leftovers together — may be out at a time,
+from 3 up to 60, the oldest fading as new ones come; at the very top it is
+**Unlimited**, and everything stays until it fades on its own. **Tidy Up**
+clears it all at once. Only your own spider leaves any, never a visitor.
+
 ## Feeding it
 
 **Feed** in the menu releases a cricket, a worm, a fruit fly, a moth, a
@@ -449,8 +491,16 @@ resized, and remembers its size.
 ## Your Mac
 
 Under **Your Mac** in the menu bar panel:
-- **Feel the Battery**: in Low Power Mode it gets sleepy and slow, and
-  draws fewer frames itself. Plugging in the charger perks it right up.
+- **Low Power Mode**: the spider's own. It gets sleepy and slow, and draws
+  half as many frames, so it uses less power itself. It follows the Mac's
+  Low Power Mode, but you can switch it on while the Mac isn't in it, or
+  off while the Mac is — that asks first, since it costs battery, and lasts
+  until the Mac leaves Low Power Mode.
+- **Feel the Battery**: when the Mac goes into Low Power Mode, so does the
+  spider. Plugging in the charger perks it right up: it crackles with
+  lightning, and on top of something it jumps for joy — a real leap, up
+  off its legs and down onto them again; on a wall or underneath a window
+  it keeps every foot where it is and bobs and wiggles on them.
 - **Notice the Weather**: when it rains where you are, rain is on its mind
   (checked every twenty minutes from Open-Meteo, going by roughly where
   your internet connection is). **Rain on the Screen** adds faint streaks
@@ -463,7 +513,7 @@ Under **Your Mac** in the menu bar panel:
   sees that a banner came up.
 
 Under **Visitors**, now and then another spider can drop by to play, then
-head off again.
+head off again. **Dismiss Visitors** sends everyone about on their way.
 
 ## Growing up
 
@@ -481,7 +531,7 @@ the same personality sliders every choice it makes already reads.
 
 Nothing is needed of you, and nothing goes wrong if you leave it be. It is
 on by default; **Learn From Experience** under **Growing Up** in the
-panel's Behavior page turns it off (it is then exactly as the Studio made
+panel's Spider page turns it off (it is then exactly as the Studio made
 it, and what it remembers is kept for if you turn it back on), and the page
 says in a line how it has been shaped lately. **Forget It All** starts it
 afresh. Memories are saved in the app's defaults; time with the app closed
@@ -538,11 +588,16 @@ wording). Tick any mix, and add your own lines underneath, one per line —
 they go into the same hat. **Think something now** tries one in the
 preview. Long lines wrap into a bigger bubble.
 
-## Laser & toys
+## Toys
 
-**Play ▸ Laser & Toys** (or **Toys ▸** on the right-click menu) is what
-the pointer plays with, one at a time: the **Laser Pointer**, a **Ball**, a
+**Play ▸ Toys** (or **Toys ▸** on the right-click menu) is what the
+pointer plays with, one at a time: the **Laser Pointer**, a **Ball**, a
 **Feather**, a **Bell** or a **Wind-up Bug**. **Put Away** puts it away.
+So does a **right-click** or **Esc** while the toy is on your pointer (the
+dot, the feather, a toy in your hand), or a right-click on a toy you have
+put down. While a toy is on your pointer, the pointer is for playing:
+clicks and scrolling don't reach the apps underneath (you can still pick
+up the spider) until you put the toy down or away.
 
 - **Laser** — the red dot sits right on your pointer for as long as it is
   picked. It drops whatever it is doing and races after it — along its own
@@ -550,8 +605,7 @@ the pointer plays with, one at a time: the **Laser Pointer**, a **Ball**, a
   pounces and pats at it; put away, it looks about for it, puzzled.
 - **Feather** — dangles on its string from your pointer the whole time,
   like a wand toy, trailing behind as you move. It leaps at it, and now and
-  then gets hold of it and hauls it down on the string. Clicks go through
-  to whatever is underneath as usual.
+  then gets hold of it and hauls it down on the string.
 - **Ball, Bell, Wind-up Bug** — picked, it comes in your hand, riding on
   the pointer (it waits under it, eyes on it). Take it where you want it
   and click to put it down there, or drag and flick to throw it; the bug is
@@ -670,6 +724,7 @@ DisplayServices.
 | `HabitatWindow.swift` | the tank's window: frame, toolbar buttons, the decorating panel, undo |
 | `Prey.swift` | the creatures: their behaviour, drawing, and the click-through window they (and the toys) live in |
 | `Toys.swift` | the toys: kinds as data, one physics body for all of them, the toy box, and their drawing |
+| `Traces.swift` | what it leaves about: silk pinned to real edges, little webs, meal leftovers, their physics and their window |
 | `WindowTracker.swift` | polls window rectangles — 30 Hz while any window is moving, 10 Hz when the desktop is still — and spots notification banners coming up |
 | `SystemSense.swift` | the Mac it lives on: Low Power Mode, the charger, the weather, the volume and the brightness |
 | `Visitors.swift` | spiders from elsewhere dropping by to play |
@@ -720,6 +775,7 @@ Publishing needs the `gh` CLI (`brew install gh`), logged in or with
 | `SPIDER_STUDIO_SHOT=dir ./spiders.app/Contents/MacOS/DesktopSpider` | writes a PNG of each studio tab to `dir` and quits |
 | `./tools/bench.sh` | times one rendered frame |
 | `SPIDER_STATS=1 ./spiders.app/Contents/MacOS/DesktopSpider` | prints fps and a per-frame budget once a second |
+| `SPIDER_TRACE_TEST=secs ./spiders.app/Contents/MacOS/DesktopSpider` | takes every chance to leave a trace (memory and hammocks off for the run, nothing saved), lays a few out to look at, lets a fly loose now and then, prints what is out and what the traces cost a frame every two seconds, turns traces off halfway to compare, and quits |
 | `SPIDER_TOY_TEST=secs ./spiders.app/Contents/MacOS/DesktopSpider` | picks each toy in turn (memory off), throws it now and then as if by you, prints what the spider and the toy are up to every two seconds, and quits |
 
 ## Performance

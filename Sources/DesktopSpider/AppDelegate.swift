@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import QuartzCore
 import ServiceManagement
 
@@ -34,6 +35,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }()
     /// The bell jingles out loud (quietly), not just to look at.
     private var toySounds = true
+    /// What it leaves about the desktop: silk, little webs, leftovers.
+    private lazy var traces: TraceKeeper = {
+        let k = TraceKeeper(map: map)
+        k.toyBox = toyBox
+        k.onTremble = { [weak self] p, strength in self?.spider.feelTremble(at: p, strength: strength) }
+        return k
+    }()
+    private var traceWindow: OverlayWindow!
+    private var traceView: TraceView!
+    private var tracesShown = false
+    /// Whether it leaves traces at all (the setting).
+    private var leavesTraces = false
+    /// The slider, 0...1: how many traces may be out at once, from a few
+    /// up to no limit at all at the very top.
+    private var traceLimitSetting: CGFloat = 0.45
+    /// The slider's number: 3 at the bottom, rising steeply to 60, and
+    /// then — the last notch — nil, for no limit.
+    static func traceLimit(for v: CGFloat) -> Int? {
+        v >= 0.95 ? nil : Int((3 * pow(20, v / 0.95)).rounded())
+    }
     private var lastJingleAt: CFTimeInterval = 0
     /// Other spiders dropping by, if they are let (see `visitorsOn`).
     private var visitors: [Visitor] = []
@@ -104,6 +125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let sense = SystemSense()
     /// Sleepy in Low Power Mode, excited when the charger goes in.
     private var feelsPower = true
+    /// Its own Low Power Mode, set by hand: true puts it in whatever the Mac
+    /// is doing, false keeps it at full speed through the Mac's Low Power
+    /// Mode (until that ends), nil goes along with the Mac.
+    private var powerOverride: Bool?
     /// Rain on its mind while it rains outside.
     private var feelsWeather = true
     /// A faint rain across the desktop while it rains, too.
@@ -130,6 +155,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         map.rebuild(windows: [])
         toyBox.scale = spider.config.scale
         spider.toys = toyBox
+        traces.enabled = leavesTraces
+        traces.limit = AppDelegate.traceLimit(for: traceLimitSetting)
+        spider.traces = traces
 
         buildWindow()
         buildStatusItem()
@@ -296,6 +324,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if now - start > secs { timer.invalidate(); NSApp.terminate(nil) }
             }
         }
+        // SPIDER_TRACE_TEST=secs takes every chance to leave a trace (memory
+        // off, and hammocks off for the run — no setting is saved), lays out
+        // a few to look at straight away — lines down from the menu bar, a
+        // web in the bottom-left corner, leftovers on the floor — lets a fly
+        // loose now and then, reports what is out every two seconds, and
+        // quits.
+        if let secs = ProcessInfo.processInfo.environment["SPIDER_TRACE_TEST"].flatMap(Double.init) {
+            memory = nil
+            spider.memory = nil
+            spider.config.hammocks = false
+            traces.enabled = true
+            Spider.debugTraceOdds = 1
+            traceTiming = true
+            let start = CACurrentMediaTime()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.layOutTestTraces() }
+            Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
+                guard let self else { return }
+                let now = CACurrentMediaTime()
+                if Int(now - start) % 16 < 2, self.spider.prey.filter({ $0.state == .loose }).count < 2 { self.release(.fruitFly) }
+                // The second half with traces off, to compare what they cost.
+                if now - start > secs / 2, self.traces.enabled {
+                    self.traces.enabled = false
+                    print("trace test: traces off from here")
+                }
+                let ms = self.traceTime.frames > 0 ? self.traceTime.total / Double(self.traceTime.frames) * 1000 : 0
+                print(String(format: "trace test %3.0fs: %@ | %@ | calm %@ | traces %.3f ms/frame over %d", now - start, self.spider.debugState,
+                             self.spider.debugTraces, self.calm ? "yes" : "no", ms, self.traceTime.frames))
+                self.traceTime = (0, 0, 0)
+                fflush(stdout)
+                if now - start > secs { timer.invalidate(); NSApp.terminate(nil) }
+            }
+        }
         // SPIDER_TOY_TEST=secs picks each toy in turn (memory off, the Bell
         // Sound setting untouched), throws it now and then as if by you,
         // reports what it and the toy are up to every two seconds, and quits.
@@ -358,7 +418,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
                 self?.togglePanel()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    for i in 0..<5 { self?.panel?.snapshot(to: "\(dir)/panel\(i).png", page: i, dark: true) }
+                    for i in 0..<(self?.panel?.pageCount ?? 0) { self?.panel?.snapshot(to: "\(dir)/panel\(i).png", page: i, dark: true) }
                     NSApp.terminate(nil)
                 }
             }
@@ -447,6 +507,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preyView.worldOrigin = frame.origin
         preyView.spider = spider
         preyView.toyBox = toyBox
+        preyView.onToyRightClick = { [weak self] in self?.putAway() }
         preyWindow.contentView = preyView
         preyWindow.ignoresMouseEvents = true
         silkWindow = OverlayWindow(frame: frame)
@@ -454,6 +515,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         silkView.worldOrigin = frame.origin
         silkWindow.contentView = silkView
         silkWindow.ignoresMouseEvents = true
+        // What it leaves about, under all of that: never takes a click.
+        traceWindow = OverlayWindow(frame: frame)
+        traceView = TraceView(frame: CGRect(origin: .zero, size: frame.size))
+        traceView.worldOrigin = frame.origin
+        traceWindow.contentView = traceView
+        traceWindow.ignoresMouseEvents = true
 
         // The laser dot.
         laserWindow = OverlayWindow(frame: CGRect(x: 0, y: 0, width: 36, height: 36))
@@ -497,6 +564,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         preyView.worldOrigin = frame.origin
         silkView.frame = CGRect(origin: .zero, size: frame.size)
         silkView.worldOrigin = frame.origin
+        traceWindow.setFrame(frame, display: false)
+        traceView.frame = CGRect(origin: .zero, size: frame.size)
+        traceView.worldOrigin = frame.origin
         rainWindow.setFrame(frame, display: false)
         rainView.frame = CGRect(origin: .zero, size: frame.size)
         map.rebuild(windows: [], cinema: cinemaScreens)
@@ -593,7 +663,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let b = CACurrentMediaTime()
             let pose = spider.pose()
             let moved = show(pose)
-            settle(moved: updateVisitors(dt: dt, now: a) || moved || toyBox.astir, critters: spider.preyAstir)
+            settle(moved: updateVisitors(dt: dt, now: a) || moved || toyBox.astir, critters: spider.preyAstir || traces.astir)
             let c = CACurrentMediaTime()
             let d = CACurrentMediaTime()
             statUpdate += b - a
@@ -619,13 +689,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 applyWindowSize()
             }
             let moved = show(pose)
-            settle(moved: updateVisitors(dt: dt, now: now) || moved || toyBox.astir, critters: spider.preyAstir)
+            settle(moved: updateVisitors(dt: dt, now: now) || moved || toyBox.astir, critters: spider.preyAstir || traces.astir)
         }
         if !inHabitat { updateHammock(dt: dt) }
         updateCarrying()
         updateTankEntry(now: now)
         updateWildlife(now: now)
         updatePrey()
+        updateTraces(dt: dt)
         updateHand()
         updateSurroundings(now: now)
 
@@ -865,6 +936,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func inviteVisitor() {
         nextVisitAt = 0
+    }
+
+    /// Sends everyone about on their way, and gives it a proper wait
+    /// before the next one drops by.
+    private func dismissVisitors() {
+        let now = CACurrentMediaTime()
+        for v in visitors where !v.leaving { startLeaving(v, now: now) }
+        nextVisitAt = now + visitGap
+        refreshMenu()
     }
 
     private func setVisitFrequency(_ v: CGFloat) {
@@ -1184,6 +1264,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: Traces
+
+    /// What it has left about: their physics, and the window they are
+    /// drawn in, up only while there is anything to show.
+    private func updateTraces(dt: CGFloat) {
+        if traces.isEmpty {
+            if tracesShown {
+                tracesShown = false
+                traceView.apply(traces)
+                traceWindow.orderOut(nil)
+            }
+            return
+        }
+        traces.scale = spider.config.scale
+        let began = traceTiming ? CACurrentMediaTime() : 0
+        defer {
+            if traceTiming {
+                traceTime.frames += 1
+                traceTime.total += CACurrentMediaTime() - began
+            }
+        }
+        let out = !inHabitat && !spider.isHeld
+        traces.update(dt: dt, cursor: V2(NSEvent.mouseLocation), prey: inHabitat ? [] : spider.prey,
+                      spider: out ? spider.worldPos : nil, spiderGrounded: out && spider.isStanding)
+        traceView.apply(traces)
+        if !tracesShown {
+            tracesShown = true
+            // Under the creatures, the lines and the spider.
+            if preyShown { traceWindow.order(.below, relativeTo: preyWindow.windowNumber) }
+            else if window.isVisible { traceWindow.order(.below, relativeTo: window.windowNumber) }
+            else { traceWindow.orderFrontRegardless() }
+        }
+    }
+
+    /// Tools only (SPIDER_TRACE_TEST): a few of each, to look at.
+    private func layOutTestTraces() {
+        guard let f = NSScreen.main?.frame else { return }
+        let top = map.menuBarBottom(for: f) ?? f.maxY
+        let a0 = V2(f.minX + 230, top), b0 = V2(f.minX + 290, f.minY)
+        if let a = SilkPin.at(a0, map: map), let b = SilkPin.at(b0, map: map) {
+            traces.leaveLine([a0, V2(f.minX + 250, f.midY), b0], from: a, to: b)
+        }
+        let c0 = V2(f.maxX - 320, top)
+        if let c = SilkPin.at(c0, map: map) { traces.leaveLine([c0, c0 - V2(-30, 220)], from: c, to: nil) }
+        if let id = traces.startWeb(corner: V2(f.minX, f.minY), a: V2(f.minX, f.minY + 58), b: V2(f.minX + 58, f.minY)) {
+            traces.spin(id, by: 1)
+        }
+        for (i, kind) in [PreyKind.moth, .beetle, .fruitFly, .cricket].enumerated() {
+            traces.leaveLeftover(of: kind, at: V2(f.minX + 120 + CGFloat(i) * 45, f.minY + 80), facing: 1)
+        }
+    }
+
+    /// Tools only: how long the traces take a frame (SPIDER_TRACE_TEST).
+    private var traceTiming = false
+    private var traceTime: (update: Double, total: Double, frames: Int) = (0, 0, 0)
+
+    private func setTraceLimit(_ v: CGFloat) {
+        traceLimitSetting = v
+        traces.limit = AppDelegate.traceLimit(for: v)
+        UserDefaults.standard.set(Double(v), forKey: "traceLimit")
+    }
+
+    private func setLeavesTraces(_ on: Bool) {
+        leavesTraces = on
+        traces.enabled = on
+        saveSettings()
+        refreshMenu()
+    }
+
     // MARK: Wildlife
 
     /// Now and then, if it is let, something finds its own way in — though
@@ -1361,7 +1510,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The panel opened at a given page (0 is the first).
     @objc private func openSettings() {
         if panel?.isShown != true { togglePanel() }
-        panel?.show(page: 2)
+        panel?.show(pageTitled: "Behavior")
     }
 
     private func panelPages() -> [PanelPage] {
@@ -1373,6 +1522,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                 symbol: { [unowned self] in hidden ? "eye" : "eye.slash" }) { [unowned self] in toggleHidden() },
                     PanelButton("To the Middle", symbol: "scope") { [unowned self] in teleportToMiddle() },
                 ]),
+                .toggle("Pause", help: "It stays just where it is until you unpause it.",
+                        get: { [unowned self] in spider.config.paused }, set: { [unowned self] _ in togglePause() }),
             ]),
             PanelSection(title: "Size", rows: [
                 .choice(options: AppDelegate.sizes.map(\.0),
@@ -1381,9 +1532,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         },
                         set: { [unowned self] i in setScale(AppDelegate.sizes[i].1) }),
             ]),
-            PanelSection(title: "Start Over", rows: [
-                .note("Lost it, or something looks stuck? This starts the app afresh. Its looks and settings are kept."),
-                .buttons([PanelButton("Reset Everything", symbol: "arrow.counterclockwise") { [unowned self] in resetEverything() }]),
+            PanelSection(title: "Energy", rows: [
+                .choice(options: AppDelegate.energyLevels.map(\.0),
+                        get: { [unowned self] in
+                            let l = spider.basePersonality.liveliness
+                            return AppDelegate.energyLevels.indices.min { abs(AppDelegate.energyLevels[$0].1 - l) < abs(AppDelegate.energyLevels[$1].1 - l) } ?? 2
+                        },
+                        set: { [unowned self] i in setEnergy(level: AppDelegate.energyLevels[i].1) }),
+            ]),
+            PanelSection(title: "Growing Up", rows: [
+                .toggle("Learn From Experience", help: "It remembers how things go — petting, play, frights, good hunts, time on its own — and its personality drifts a little with them, always close to what you set in the Studio. Nothing is needed of you. Off, it's exactly as the Studio made it.",
+                        info: """
+                            It remembers how things go: being stroked and said hello to, your company and its time alone, being carried or flung, frights, games, meals and hunts, and the spots where it settles.
+
+                            Each memory has a feeling that passes within the hour, and a lesson that builds slowly over days and fades unless it happens again.
+
+                            Together they nudge its personality a little — never more than a fifth of the way from what you set in the Studio, which stays just as you left it. A shy spider stroked often grows easier with you but stays shy. A run of frights leaves it warier for a while. Good hunts make it surer of itself, time on its own makes it more of an explorer, and favourite spots draw it back.
+
+                            Nothing is needed of you: left be, it never sulks or suffers — it just grows a bit more independent. Turn this off and it's exactly as the Studio made it; what it remembers is kept for if you turn it back on. Forget It All starts it afresh.
+                            """,
+                        get: { [unowned self] in learns }, set: { [unowned self] _ in toggleLearning() }),
+                .status { [unowned self] in
+                    guard learns, let m = memory else { return "\(name) is just as the Studio made it." }
+                    return m.summary(name: name, base: spider.basePersonality)
+                },
+                .buttons([
+                    PanelButton("Forget It All", symbol: "arrow.uturn.backward", shown: { [unowned self] in learns }) { [unowned self] in forgetExperiences() },
+                ]),
             ]),
         ])
         let feed = PanelPage(title: "Feed", symbol: "fork.knife", sections: [
@@ -1419,14 +1594,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ]),
         ])
         let behavior = PanelPage(title: "Behavior", symbol: "slider.horizontal.3", sections: [
-            PanelSection(title: "Energy", rows: [
-                .choice(options: AppDelegate.energyLevels.map(\.0),
-                        get: { [unowned self] in
-                            let l = spider.basePersonality.liveliness
-                            return AppDelegate.energyLevels.indices.min { abs(AppDelegate.energyLevels[$0].1 - l) < abs(AppDelegate.energyLevels[$1].1 - l) } ?? 2
-                        },
-                        set: { [unowned self] i in setEnergy(level: AppDelegate.energyLevels[i].1) }),
-            ]),
             PanelSection(title: "The Pointer", rows: [
                 .toggle("Follow the Cursor", help: "It notices the pointer, comes over to see it, and watches it.",
                         get: { [unowned self] in spider.config.followCursor }, set: { [unowned self] _ in toggleFollow() }),
@@ -1441,54 +1608,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         get: { [unowned self] in spider.config.webs }, set: { [unowned self] _ in toggleWebs() }),
                 .toggle("Build Hammocks", help: "Now and then it spins a hammock in a top corner of the screen and naps in it.",
                         get: { [unowned self] in spider.config.hammocks }, set: { [unowned self] _ in toggleHammocks() }),
-            ]),
-            PanelSection(title: "Your Mac", rows: [
-                .toggle("Feel the Battery", help: "In Low Power Mode it gets sleepy and slow — and draws fewer frames, so it uses less power itself. Plugging in the charger perks it right up.",
-                        get: { [unowned self] in feelsPower }, set: { [unowned self] _ in toggleFeelPower() }),
-                .toggle("Notice the Weather", help: "When it rains where you are, rain is on its mind. It checks every twenty minutes, from Open-Meteo, going by roughly where your internet connection is (GeoJS).",
-                        get: { [unowned self] in feelsWeather }, set: { [unowned self] _ in toggleFeelWeather() }),
-                .toggle("Notice Pop-ups", help: "A notification sliding in makes it jump — right up in the air, if it is on top of something — and stare at it. Turn the volume or brightness up or down and it looks up to see. Nothing in a notification is read.",
-                        get: { [unowned self] in feelsCommotion }, set: { [unowned self] _ in toggleFeelCommotion() }),
-                .toggle("Rain on the Screen", help: "Faint streaks of rain across the desktop while it rains. Never over a full-screen app or in Low Power Mode.",
-                        get: { [unowned self] in showsRain }, set: { [unowned self] _ in toggleShowRain() },
-                        enabled: { [unowned self] in feelsWeather }),
                 .status { [unowned self] in
-                    let power = feelsPower && sense.lowPower ? "Low Power Mode: \(name) is feeling sleepy." : nil
-                    let rain = feelsWeather && sense.raining ? "It's raining where you are." : nil
-                    let said = [power, rain].compactMap { $0 }.joined(separator: " ")
-                    return said.isEmpty ? "Nothing to report." : said
-                },
-            ]),
-            PanelSection(title: "Growing Up", rows: [
-                .toggle("Learn From Experience", help: "It remembers how things go — petting, play, frights, good hunts, time on its own — and its personality drifts a little with them, always close to what you set in the Studio. Nothing is needed of you. Off, it's exactly as the Studio made it.",
-                        info: """
-                            It remembers how things go: being stroked and said hello to, your company and its time alone, being carried or flung, frights, games, meals and hunts, and the spots where it settles.
-
-                            Each memory has a feeling that passes within the hour, and a lesson that builds slowly over days and fades unless it happens again.
-
-                            Together they nudge its personality a little — never more than a fifth of the way from what you set in the Studio, which stays just as you left it. A shy spider stroked often grows easier with you but stays shy. A run of frights leaves it warier for a while. Good hunts make it surer of itself, time on its own makes it more of an explorer, and favourite spots draw it back.
-
-                            Nothing is needed of you: left be, it never sulks or suffers — it just grows a bit more independent. Turn this off and it's exactly as the Studio made it; what it remembers is kept for if you turn it back on. Forget It All starts it afresh.
-                            """,
-                        get: { [unowned self] in learns }, set: { [unowned self] _ in toggleLearning() }),
-                .status { [unowned self] in
-                    guard learns, let m = memory else { return "\(name) is just as the Studio made it." }
-                    return m.summary(name: name, base: spider.basePersonality)
+                    spider.hasHammock ? "\(name) has a hammock in the corner of the screen."
+                        : spider.hasAnyHammock ? "\(name) is still spinning its hammock."
+                        : spider.config.hammocks ? "No hammock yet." : "Turn on Build Hammocks for one."
                 },
                 .buttons([
-                    PanelButton("Forget It All", symbol: "arrow.uturn.backward", shown: { [unowned self] in learns }) { [unowned self] in forgetExperiences() },
+                    PanelButton("Build One", symbol: "hammer", enabled: { [unowned self] in spider.config.hammocks },
+                                shown: { [unowned self] in !spider.hasAnyHammock }) { [unowned self] in buildHammock() },
+                    PanelButton("Nap in It", symbol: "moon.zzz", shown: { [unowned self] in spider.hasHammock }) { [unowned self] in nap() },
+                    PanelButton("Clear It Away", symbol: "trash", shown: { [unowned self] in spider.hasAnyHammock }) { [unowned self] in clearHammock() },
                 ]),
             ]),
-            PanelSection(title: nil, rows: [
-                .toggle("Pause", help: "It stays just where it is until you unpause it.",
-                        get: { [unowned self] in spider.config.paused }, set: { [unowned self] _ in togglePause() }),
-                .toggle("Launch at Login", help: "Opens by itself when you log in.",
-                        get: { [unowned self] in loginEnabled }, set: { [unowned self] _ in toggleLogin() }),
+            PanelSection(title: "Traces", rows: [
+                .toggle("Leave Traces", help: "It leaves its mark about the desktop: silk strands between the ledges it leaps and drops between, little webs in corners, what's left of its meals, a toy hauled off on a line. Only ever drawn over the desktop — nothing of yours is touched — and it all fades away on its own.",
+                        get: { [unowned self] in leavesTraces }, set: { [unowned self] on in setLeavesTraces(on) }),
+                .slider("Most at Once", low: "A Few", high: "Unlimited",
+                        get: { [unowned self] in traceLimitSetting }, set: { [unowned self] v in setTraceLimit(v) },
+                        enabled: { [unowned self] in leavesTraces }),
+                .status { [unowned self] in
+                    guard leavesTraces else { return "\(name) leaves nothing behind." }
+                    let most = AppDelegate.traceLimit(for: traceLimitSetting).map { "Up to \($0) at once; the oldest fade first." }
+                        ?? "No limit: everything stays until it fades on its own."
+                    let strands = traces.strands.filter { $0.kind != .free }.count, webs = traces.webs.count, bits = traces.leftovers.count
+                    var parts: [String] = []
+                    if strands > 0 { parts.append(strands == 1 ? "a strand of silk" : "\(strands) strands of silk") }
+                    if webs > 0 { parts.append(webs == 1 ? "a little web" : "\(webs) little webs") }
+                    if bits > 0 { parts.append(bits == 1 ? "some leftovers" : "leftovers from \(bits) meals") }
+                    guard !parts.isEmpty else { return "\(most) Nothing about just now." }
+                    let list = parts.count == 1 ? parts[0] : parts.dropLast().joined(separator: ", ") + " and " + parts.last!
+                    return "\(most) Out there: \(list)."
+                },
                 .buttons([
-                    PanelButton(title: { [unowned self] in updater.busy ? "Checking…" : "Check for Updates" }, symbol: { "arrow.down.circle" },
-                                enabled: { [unowned self] in !updater.busy }) { [unowned self] in checkForUpdates() },
+                    PanelButton("Tidy Up", symbol: "wind", enabled: { [unowned self] in !traces.isEmpty },
+                                shown: { [unowned self] in leavesTraces }) { [unowned self] in traces.clear(); refreshMenu() },
                 ]),
-                .status { "Version \(Updater.currentVersion)" },
             ]),
         ])
         let play = PanelPage(title: "Play", symbol: "sparkles", sections: [
@@ -1501,7 +1655,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     PanelButton("Peek-a-boo", symbol: "eyes") { [unowned self] in peekaboo() },
                 ]),
             ]),
-            PanelSection(title: "Laser & Toys", rows: [
+            PanelSection(title: "Toys", rows: [
                 .buttons([PanelButton("Laser Pointer", symbol: "smallcircle.filled.circle",
                                       selected: { [unowned self] in handToy == .laser }) { [unowned self] in choose(.laser) }]
                          + ToyKind.allCases.map { kind in
@@ -1511,12 +1665,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .status { [unowned self] in
                     switch handToy {
                     case nil: return "Pick one to play with it."
-                    case .laser?: return "The red dot is on your pointer: it chases it wherever you take it."
-                    case .toy(.feather)?: return "The feather dangles on its string from your pointer: wave it about for it to leap at."
+                    case .laser?: return "The red dot is on your pointer: it chases it wherever you take it. Right-click or press Esc to put it away."
+                    case .toy(.feather)?: return "The feather dangles on its string from your pointer: wave it about for it to leap at. Right-click or press Esc to put it away."
                     case .toy(let kind)? where holdingToy:
-                        return "The \(kind.label.lowercased()) is in your hand: take it where you want it and click to put it down, or drag and flick to throw it."
+                        return "The \(kind.label.lowercased()) is in your hand: take it where you want it and click to put it down, or drag and flick to throw it. Right-click or press Esc to put it away."
                     case .toy(let kind)?:
-                        return "Drag the \(kind.label.lowercased()) to throw it again or click it to poke it, or press its button to pick it back up."
+                        return "Drag the \(kind.label.lowercased()) to throw it again or click it to poke it, or press its button to pick it back up. Right-click it to put it away."
                     }
                 },
                 .buttons([
@@ -1525,25 +1679,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .toggle("Bell Sound", help: "The bell tinkles out loud — quietly — when it's knocked or shaken. Off, you only see it jingle.",
                         get: { [unowned self] in toySounds }, set: { [unowned self] on in toySounds = on; saveSettings() }),
             ]),
-            PanelSection(title: "Hammock", rows: [
-                .status { [unowned self] in
-                    spider.hasHammock ? "\(name) has a hammock in the corner of the screen."
-                        : spider.hasAnyHammock ? "\(name) is still spinning its hammock."
-                        : spider.config.hammocks ? "No hammock yet." : "Hammocks are turned off in Behavior."
-                },
-                .buttons([
-                    PanelButton("Build One", symbol: "hammer", enabled: { [unowned self] in spider.config.hammocks },
-                                shown: { [unowned self] in !spider.hasAnyHammock }) { [unowned self] in buildHammock() },
-                    PanelButton("Nap in It", symbol: "moon.zzz", shown: { [unowned self] in spider.hasHammock }) { [unowned self] in nap() },
-                    PanelButton("Clear It Away", symbol: "trash", shown: { [unowned self] in spider.hasAnyHammock }) { [unowned self] in clearHammock() },
-                ]),
-            ]),
             PanelSection(title: "Places", rows: [
                 .buttons([
                     PanelButton(title: { [unowned self] in spider.confine != nil ? "Redraw the Box" : "Draw a Box" }, symbol: { "square.dashed" }) { [unowned self] in panel?.close(); drawBox() },
                     PanelButton("Let It Out", symbol: "square.slash", shown: { [unowned self] in spider.confine != nil }) { [unowned self] in freeSpider() },
                     PanelButton(title: { [unowned self] in tankOpen ? "Close Habitat" : "Open Habitat" }, symbol: { "leaf" }) { [unowned self] in panel?.close(); toggleHabitat() },
                 ]),
+            ]),
+        ])
+        let mac = PanelPage(title: "Your Mac", symbol: "laptopcomputer", sections: [
+            PanelSection(title: nil, rows: [
+                .toggle("Low Power Mode", help: "Sleepy and slow, drawing half as many frames, so it uses less power itself. It follows your Mac's Low Power Mode, but you can put it in or take it out yourself.",
+                        get: { [unowned self] in lowPower }, set: { [unowned self] on in setLowPower(on) }),
+                .toggle("Feel the Battery", help: "When your Mac goes into Low Power Mode, so does it. Plugging in the charger perks it right up.",
+                        get: { [unowned self] in feelsPower }, set: { [unowned self] _ in toggleFeelPower() }),
+                .toggle("Notice the Weather", help: "When it rains where you are, rain is on its mind. It checks every twenty minutes, from Open-Meteo, going by roughly where your internet connection is (GeoJS).",
+                        get: { [unowned self] in feelsWeather }, set: { [unowned self] _ in toggleFeelWeather() }),
+                .toggle("Notice Pop-ups", help: "A notification sliding in makes it jump — right up in the air, if it is on top of something — and stare at it. Turn the volume or brightness up or down and it looks up to see. Nothing in a notification is read.",
+                        get: { [unowned self] in feelsCommotion }, set: { [unowned self] _ in toggleFeelCommotion() }),
+                .toggle("Rain on the Screen", help: "Faint streaks of rain across the desktop while it rains. Never over a full-screen app or in Low Power Mode.",
+                        get: { [unowned self] in showsRain }, set: { [unowned self] _ in toggleShowRain() },
+                        enabled: { [unowned self] in feelsWeather }),
+                .status { [unowned self] in
+                    let power: String?
+                    switch (powerOverride, macLowPower) {
+                    case (true?, false): power = "Low Power Mode, by your say-so: \(name) is feeling sleepy."
+                    case (false?, _): power = "Your Mac is in Low Power Mode, but \(name) is at full speed."
+                    case (_, true): power = "Low Power Mode: \(name) is feeling sleepy."
+                    default: power = nil
+                    }
+                    let rain = feelsWeather && sense.raining ? "It's raining where you are." : nil
+                    let said = [power, rain].compactMap { $0 }.joined(separator: " ")
+                    return said.isEmpty ? "Nothing to report." : said
+                },
+            ]),
+        ])
+        let app = PanelPage(title: "App", symbol: "gearshape", sections: [
+            PanelSection(title: nil, rows: [
+                .toggle("Launch at Login", help: "Opens by itself when you log in.",
+                        get: { [unowned self] in loginEnabled }, set: { [unowned self] _ in toggleLogin() }),
+                .buttons([
+                    PanelButton(title: { [unowned self] in updater.busy ? "Checking…" : "Check for Updates" }, symbol: { "arrow.down.circle" },
+                                enabled: { [unowned self] in !updater.busy }) { [unowned self] in checkForUpdates() },
+                ]),
+                .status { "Version \(Updater.currentVersion)" },
+            ]),
+            PanelSection(title: "Start Over", rows: [
+                .note("Lost it, or something looks stuck? This starts the app afresh. Its looks and settings are kept."),
+                .buttons([PanelButton("Reset Everything", symbol: "arrow.counterclockwise") { [unowned self] in resetEverything() }]),
             ]),
         ])
         let visitorsPage = PanelPage(title: "Visitors", symbol: "person.2", sections: [
@@ -1563,6 +1746,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .buttons([
                     PanelButton("Invite One Now", symbol: "envelope",
                                 enabled: { [unowned self] in visitorsOn && visitors.count < Visitor.most && !inHabitat }) { [unowned self] in inviteVisitor() },
+                    PanelButton("Dismiss Visitors", symbol: "hand.wave",
+                                enabled: { [unowned self] in visitors.contains { !$0.leaving } }) { [unowned self] in dismissVisitors() },
                 ]),
                 .status { [unowned self] in
                     let n = visitors.filter { !$0.leaving }.count
@@ -1573,7 +1758,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .note("Each spider is animated sixty times a second, so every visitor uses a lot more CPU and battery. With several about, your Mac may run warm and its fans may come on."),
             ]),
         ])
-        return [home, feed, behavior, play, visitorsPage]
+        return [home, play, feed, visitorsPage, behavior, mac, app]
     }
 
     private static func preySymbol(_ k: PreyKind) -> String {
@@ -1602,6 +1787,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showContextMenu(_ note: Notification) {
+        // With something on the pointer, a right-click (on the spider, say,
+        // sat right on the dot) puts it away.
+        if onPointer {
+            putAway()
+            return
+        }
         let menu = buildMenu()
         if let event = note.object as? NSEvent {
             NSMenu.popUpContextMenu(menu, with: event, for: event.window?.contentView ?? view)
@@ -1624,6 +1815,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             putAway()
             preyWindow.orderOut(nil)
             preyShown = false
+            traceWindow.orderOut(nil)
+            tracesShown = false
             // Visitors don't hang about while it is away.
             for v in visitors { v.window.orderOut(nil); silkView.clear(slot: v.slot) }
             visitors = []
@@ -2206,7 +2399,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // where you want it and click to put it down there (or drag and flick
     // to throw it). Put down, a toy stays where it ends up — to be dragged
     // and thrown again, poked, or picked back up with its button — and still
-    // gets played with now and then. Put Away puts it away.
+    // gets played with now and then. Put Away puts it away; so does a
+    // right-click or Esc while it is on the pointer, or a right-click on it
+    // once it is down.
 
     private enum HandToy: Equatable { case laser, toy(ToyKind) }
     private var handToy: HandToy?
@@ -2214,7 +2409,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A ball, bell or bug is in your hand, waiting to be put down.
     private var holdingToy = false
     private var toyDrag: [(p: V2, t: TimeInterval)] = []
-    /// Rides under the pointer while a toy is in hand, to take the click.
+    /// Something is on the pointer — the dot, the feather on its string, a
+    /// toy in hand — and the pointer is for playing with it.
+    private var onPointer: Bool {
+        switch handToy {
+        case .laser?: return !inHabitat
+        case .toy(let kind)?: return kind.tether > 0 ? !toyBox.isEmpty : holdingToy
+        case nil: return false
+        }
+    }
+    /// Rides under the pointer while something is on it, to take the clicks:
+    /// a click puts a toy in hand down, a right-click puts it all away.
     private lazy var handWindow: OverlayWindow = {
         let w = OverlayWindow(frame: CGRect(x: 0, y: 0, width: 160, height: 160))
         w.level = NSWindow.Level(rawValue: window.level.rawValue + 1)
@@ -2222,10 +2427,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         v.onDown = { [weak self] e in self?.handDown(e) }
         v.onDrag = { [weak self] e in self?.handDrag(e) }
         v.onUp = { [weak self] e in self?.handUp(e) }
+        v.onRight = { [weak self] in self?.putAway() }
         w.contentView = v
         w.ignoresMouseEvents = false
         return w
     }()
+    /// Esc, taken from whatever app is in front only while something is on
+    /// the pointer. (A hot key needs no permission to watch the keyboard.)
+    private var escapeKey: EventHotKeyRef?
+    private var escapeHandler: EventHandlerRef?
+
+    private func catchEscape(_ on: Bool) {
+        guard on != (escapeKey != nil) else { return }
+        if let k = escapeKey {
+            UnregisterEventHotKey(k)
+            escapeKey = nil
+            return
+        }
+        if escapeHandler == nil {
+            var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+            InstallEventHandler(GetApplicationEventTarget(), { _, _, me in
+                guard let me else { return noErr }
+                let app = Unmanaged<AppDelegate>.fromOpaque(me).takeUnretainedValue()
+                DispatchQueue.main.async { if app.onPointer { app.putAway() } }
+                return noErr
+            }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), &escapeHandler)
+        }
+        RegisterEventHotKey(UInt32(kVK_Escape), 0, EventHotKeyID(signature: OSType(0x53504452), id: 1),
+                            GetApplicationEventTarget(), 0, &escapeKey)
+    }
 
     @objc private func toggleLaser() { choose(laserOn ? nil : .laser) }
 
@@ -2269,6 +2499,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toyDrag = []
         handWindow.orderOut(nil)
         handToy = nil
+        catchEscape(false)
         refreshMenu()
     }
 
@@ -2280,15 +2511,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Every frame: the dot and the toy with the pointer, and the catcher
-    /// under it while a toy is in hand.
+    /// under it while something is on it.
     private func updateHand() {
         let p = V2(NSEvent.mouseLocation)
         switch handToy {
         case .laser?:
             // Not in the tank: the dot is a desktop game.
-            guard !inHabitat else {
+            if inHabitat {
                 if spider.laser != nil { spider.laser = nil; laserWindow.orderOut(nil) }
-                return
+                break
             }
             laserWindow.setFrameOrigin(CGPoint(x: p.x - 18, y: p.y - 18))
             if !laserWindow.isVisible { laserWindow.orderFrontRegardless() }
@@ -2297,7 +2528,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             spider.laser = p
             for v in visitors where !v.leaving { v.spider.laser = p }
         case .toy?:
-            guard let toy = toyBox.toys.first else { return }
+            guard let toy = toyBox.toys.first else { break }
             if toy.dangling {
                 toy.drag(to: p)
             } else if toy.kind.tether > 0 {
@@ -2309,7 +2540,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case nil:
             break
         }
-        if holdingToy {
+        let playing = onPointer
+        catchEscape(playing)
+        // The spider (or a visitor) under the dot or the feather can still
+        // be picked up; a toy in hand is put down on it.
+        let overSpider = !holdingToy && interactive && allSpiders.contains { $0.isHeld || $0.hitTest(p) }
+        if playing, !overSpider {
             handWindow.setFrameOrigin(CGPoint(x: p.x - 80, y: p.y - 80))
             if !handWindow.isVisible { handWindow.orderFrontRegardless() }
         } else if handWindow.isVisible {
@@ -2322,6 +2558,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handDrag(_ e: NSEvent) {
+        guard holdingToy else { return }
         let p = V2(NSEvent.mouseLocation)
         toyBox.toys.first?.drag(to: p)
         handWindow.setFrameOrigin(CGPoint(x: p.x - 80, y: p.y - 80))
@@ -2445,6 +2682,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         map.rebuild(windows: [])
         view.spider = spider
         spider.toys = toyBox
+        spider.traces = traces
+        traces.clear()
         preyView.spider = spider
         preyView.prey = []
         preyView.refresh()
@@ -2775,8 +3014,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Low Power Mode, if it is minded: a drowsy spider on a half-rate clock.
     private var lowPowerClock = false
 
+    /// The Mac's Low Power Mode, as far as it goes along with it.
+    private var macLowPower: Bool { feelsPower && sense.lowPower }
+    /// In Low Power Mode itself: the Mac's, or its own.
+    private var lowPower: Bool { powerOverride ?? macLowPower }
+
     private func applyPowerMood() {
-        let low = feelsPower && sense.lowPower
+        // Kept awake through one spell of the Mac's Low Power Mode, not the
+        // next as well.
+        if powerOverride == false, !ProcessInfo.processInfo.isLowPowerModeEnabled {
+            powerOverride = nil
+            saveSettings()
+        }
+        let low = lowPower
         for s in allSpiders { s.drowsy = low ? 1 : 0 }
         if low != lowPowerClock {
             lowPowerClock = low
@@ -2792,7 +3042,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The rain is out while it rains and there is a desktop to see it on.
     private func updateRain(now: CFTimeInterval) {
         let want = feelsWeather && showsRain && sense.raining && !hidden && !inHabitat && !awaitingEntrance
-            && cinemaScreens.isEmpty && !(feelsPower && sense.lowPower)
+            && cinemaScreens.isEmpty && !lowPower
         if want, !rainView.falling {
             rainWindow.order(.below, relativeTo: window.windowNumber)
             rainView.start()
@@ -2808,6 +3058,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleFeelPower() {
         feelsPower.toggle()
         if feelsPower { sense.startPower() } else { sense.stopPower() }
+        applyPowerMood(); saveSettings()
+    }
+
+    /// Its own Low Power Mode switched by hand. Taking it out while the Mac
+    /// is in Low Power Mode asks first: it is the one thing the Mac is
+    /// trying to save.
+    private func setLowPower(_ on: Bool) {
+        guard on != lowPower else { return }
+        if !on, ProcessInfo.processInfo.isLowPowerModeEnabled {
+            let alert = NSAlert()
+            alert.messageText = "Keep \(spider.name.isEmpty ? "your spider" : spider.name) at full speed?"
+            alert.informativeText = "Your Mac is in Low Power Mode to save battery. Out of Low Power Mode, the spider is animated sixty times a second instead of thirty and is up and about far more, so it uses a lot more CPU and battery — and your battery will run down sooner.\n\nIt goes back to following your Mac once Low Power Mode is turned off."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Use Full Speed")
+            alert.addButton(withTitle: "Cancel")
+            NSApp.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        powerOverride = on == macLowPower ? nil : on
         applyPowerMood(); saveSettings()
     }
 
@@ -2874,12 +3143,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         d.set(interactive, forKey: "interactive")
         d.set(hidden, forKey: "hidden")
         d.set(feelsPower, forKey: "feelPower")
+        if let o = powerOverride { d.set(o, forKey: "lowPowerOverride") } else { d.removeObject(forKey: "lowPowerOverride") }
         d.set(feelsWeather, forKey: "feelWeather")
         d.set(showsRain, forKey: "showRain")
         d.set(feelsCommotion, forKey: "feelCommotion")
         d.set(learns, forKey: "learns")
         d.set(wildOn, forKey: "wildlife")
         d.set(toySounds, forKey: "toySounds")
+        d.set(leavesTraces, forKey: "traces")
     }
 
     private func loadSettings() {
@@ -2889,10 +3160,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "webs": true, "hammocks": true, "paused": false, "interactive": true, "hidden": false,
             "visitors": false, "visitFrequency": 0.5, "visitStay": 0.5,
             "feelPower": true, "feelWeather": true, "showRain": true, "feelCommotion": true,
-            "learns": true, "wildlife": false, "wildFrequency": 0.35, "toySounds": true,
+            "learns": true, "wildlife": false, "wildFrequency": 0.35, "toySounds": true, "traces": false, "traceLimit": 0.45,
         ])
         toySounds = d.bool(forKey: "toySounds")
+        leavesTraces = d.bool(forKey: "traces")
+        traceLimitSetting = CGFloat(d.double(forKey: "traceLimit"))
         feelsPower = d.bool(forKey: "feelPower")
+        powerOverride = d.object(forKey: "lowPowerOverride") as? Bool
         feelsWeather = d.bool(forKey: "feelWeather")
         showsRain = d.bool(forKey: "showRain")
         feelsCommotion = d.bool(forKey: "feelCommotion")

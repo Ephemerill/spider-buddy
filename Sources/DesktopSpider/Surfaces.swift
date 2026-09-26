@@ -618,41 +618,100 @@ final class SurfaceMap {
         return (segs, edge)
     }
 
-    /// Dock strips, in AppKit coords. Falls back to visibleFrame insets.
+    /// The Dock, in AppKit coords, when it is there to stand on: a Dock that
+    /// stays put. One that hides itself is left out altogether — it pops up
+    /// in front of everything, the spider included, and the floor under it
+    /// stays flat, so it is only ever something that slides up in front.
+    ///
+    /// The Dock's window is no help for where it is (on recent macOS it is
+    /// the whole screen), so: a Dock that stays put keeps its edge of the
+    /// screen out of `visibleFrame`, which says which screen and edge it is
+    /// on; its exact frame comes from Accessibility if the app happens to
+    /// be allowed it, and is otherwise worked out from its tiles.
     private func dockStrips() -> [CGRect] {
-        var found: [CGRect] = []
-        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
-                                              kCGNullWindowID) as? [[String: Any]] ?? []
-        let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
-        for dict in info {
-            guard let owner = dict[kCGWindowOwnerName as String] as? String, owner == "Dock",
-                  let layer = dict[kCGWindowLayer as String] as? Int, layer >= 18, layer <= 22,
-                  let boundsDict = dict[kCGWindowBounds as String] as? [String: CGFloat],
-                  let cg = CGRect(dictionaryRepresentation: boundsDict as CFDictionary)
-            else { continue }
-            let r = CGRect(x: cg.minX, y: primaryTop - cg.maxY, width: cg.width, height: cg.height)
-            guard r.width > 60, r.height > 30, r.width * r.height > 8000 else { continue }
-            // The dock strip hugs a screen edge.
-            let hugs = NSScreen.screens.contains { s in
-                abs(r.minY - s.frame.minY) < 4 || abs(r.minX - s.frame.minX) < 4
-                    || abs(r.maxX - s.frame.maxX) < 4
-            }
-            if hugs { found.append(r) }
-        }
-        if !found.isEmpty {
-            // Prefer the biggest strip per screen.
-            return found.sorted { $0.width * $0.height > $1.width * $1.height }.prefix(2).map { $0 }
-        }
-        // Fallback: infer from visibleFrame.
         for s in NSScreen.screens {
             let f = s.frame, vf = s.visibleFrame
-            let bottomGap = vf.minY - f.minY
-            if bottomGap > 20 {
-                let w = f.width * 0.6
-                found.append(CGRect(x: f.midX - w / 2, y: f.minY, width: w, height: bottomGap))
+            // A hidden Dock keeps back nothing (a few points, on older
+            // systems); a showing one keeps back its own thickness.
+            let bottom = vf.minY - f.minY, left = vf.minX - f.minX, right = f.maxX - vf.maxX
+            let edge: DockEdge
+            if bottom > 20 { edge = .bottom } else if left > 20 { edge = .left } else if right > 20 { edge = .right } else { continue }
+            if let ax = SurfaceMap.accessibleDock(), f.insetBy(dx: -2, dy: -2).contains(ax) {
+                return [ax]
             }
+            return SurfaceMap.estimatedDock(on: f, edge: edge).map { [$0] } ?? []
         }
-        return found
+        return []
+    }
+
+    enum DockEdge { case bottom, left, right }
+
+    /// The Dock's icon strip as Accessibility reports it, if the app may ask.
+    private static func accessibleDock() -> CGRect? {
+        guard AXIsProcessTrusted(),
+              let pid = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first?.processIdentifier,
+              let primaryTop = NSScreen.screens.first?.frame.maxY else { return nil }
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.1)
+        var kids: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXChildrenAttribute as CFString, &kids) == .success,
+              let list = (kids as? [AXUIElement])?.first(where: { e in
+                  var role: CFTypeRef?
+                  AXUIElementCopyAttributeValue(e, kAXRoleAttribute as CFString, &role)
+                  return role as? String == kAXListRole as String
+              }) else { return nil }
+        var pos: CFTypeRef?, size: CFTypeRef?
+        var p = CGPoint.zero, sz = CGSize.zero
+        guard AXUIElementCopyAttributeValue(list, kAXPositionAttribute as CFString, &pos) == .success,
+              AXUIElementCopyAttributeValue(list, kAXSizeAttribute as CFString, &size) == .success,
+              let pos, let size,
+              AXValueGetValue(pos as! AXValue, .cgPoint, &p), AXValueGetValue(size as! AXValue, .cgSize, &sz),
+              sz.width > 30, sz.height > 30 else { return nil }
+        return CGRect(x: p.x, y: primaryTop - p.y - sz.height, width: sz.width, height: sz.height)
+    }
+
+    /// What the Dock's settings say about its length, read now and then.
+    private static var dockPrefs: (read: CFTimeInterval, tile: CGFloat, pinned: Set<String>, pinnedCount: Int,
+                                   others: Int, recents: Int)?
+
+    /// Where the Dock is, worked out from its settings: a tile per app in
+    /// it or running, one per folder and the Trash, a narrow divider before
+    /// the folders (and before recent apps), and a little padding at each
+    /// end — which is how macOS lays it out, centred on its edge.
+    private static func estimatedDock(on f: CGRect, edge: DockEdge) -> CGRect? {
+        let now = CACurrentMediaTime()
+        if dockPrefs == nil || now - dockPrefs!.read > 5 {
+            CFPreferencesAppSynchronize("com.apple.dock" as CFString)
+            let d = UserDefaults(suiteName: "com.apple.dock")
+            let apps = d?.array(forKey: "persistent-apps") as? [[String: Any]] ?? []
+            let pinned = Set(apps.compactMap { (($0["tile-data"] as? [String: Any])?["bundle-identifier"] as? String) })
+            let showRecents = d?.object(forKey: "show-recents") as? Bool ?? true
+            let recents = showRecents ? min((d?.array(forKey: "recent-apps") ?? []).count, 3) : 0
+            let tile = CGFloat(d?.double(forKey: "tilesize") ?? 0)
+            dockPrefs = (now, tile > 8 ? tile : 48, pinned.union(["com.apple.finder"]), apps.count + 1,
+                         (d?.array(forKey: "persistent-others") ?? []).count, recents)
+        }
+        guard let p = dockPrefs else { return nil }
+        let running = NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && !p.pinned.contains($0.bundleIdentifier ?? "") }.count
+        // Finder is always first (counted with the pinned apps); unpinned
+        // running apps join the recents section when there is one, else
+        // follow the pinned apps.
+        let extra = p.recents > 0 ? max(running, p.recents) : running
+        let tiles = p.pinnedCount + extra + p.others + 1
+        let dividers = 1 + (p.recents > 0 && extra > 0 ? 1 : 0)
+        let t = p.tile
+        let length = CGFloat(tiles) * t * 1.032 + CGFloat(dividers) * t * 0.465 + t * 0.27
+        let thick = t * 1.31
+        switch edge {
+        case .bottom:
+            let w = min(length, f.width)
+            return CGRect(x: f.midX - w / 2, y: f.minY, width: w, height: thick)
+        case .left, .right:
+            let h = min(length, f.height)
+            let x = edge == .left ? f.minX : f.maxX - thick
+            return CGRect(x: x, y: f.midY - h / 2, width: thick, height: h)
+        }
     }
 
     // MARK: Queries

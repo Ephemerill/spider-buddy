@@ -1350,6 +1350,8 @@ final class PreyView: NSView {
     weak var spider: Spider?
     /// The toys out on the desktop, drawn and picked up here too.
     weak var toyBox: ToyBox?
+    /// A toy right-clicked: put away.
+    var onToyRightClick: (() -> Void)?
     private var lastRects: [CGRect] = []
     private var grabbed: Prey?
     private var grabbedToy: Toy?
@@ -1422,6 +1424,11 @@ final class PreyView: NSView {
     }
 
     override func rightMouseDown(with event: NSEvent) {
+        // A right-click on a toy puts it away.
+        if toyBox?.hit(world(event)) != nil, let onToyRightClick {
+            onToyRightClick()
+            return
+        }
         NotificationCenter.default.post(name: .spiderContextMenu, object: event)
     }
 

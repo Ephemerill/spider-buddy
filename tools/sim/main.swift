@@ -1,4 +1,5 @@
 import AppKit
+Spider.debugGlideTally = true
 
 // Headless behaviour check: run the spider against a synthetic desktop and
 // report what it does. Catches "never lands", "falls forever", "jitters in
@@ -1113,6 +1114,44 @@ do {
     expect("covered, only way is down: ends up standing in the open", !done.isEmpty, done.isEmpty ? s.debugState + "  " + seen.joined(separator: " > ") : done)
 }
 
+// Standing on a window that is resized from the far end — or the Dock
+// growing — it keeps its place on the ground rather than being slid along
+// the edge on still legs. A window dragged as a whole carries it along.
+do {
+    let rm = SurfaceMap()
+    rm.standoff = map.standoff
+    var frame = CGRect(x: screen.minX + 300, y: screen.midY - 150, width: 900, height: 300)
+    rm.debugRebuild(screen: screen, menuBarHeight: 25, windows: [TrackedWindow(id: 51, frame: frame, depth: 0, owner: "Resized")], cinema: false)
+    let s = Spider(map: rm)
+    s.config.followCursor = false
+    _ = settleUntilAttached(s)
+    _ = park(s, loopID: "win:51", segIdx: 0, t: 450)
+    func still(_ secs: CGFloat) {
+        s.debugActivity("rest", for: 20)
+        for _ in 0..<Int(secs / dt) { s.setCursor(V2(-4000, -4000)); s.update(dt: dt) }
+    }
+    still(0.5)
+    let before = s.worldPos
+    // Dragged in from the left by 160, a little at a time, as a window is.
+    for _ in 0..<16 {
+        frame.origin.x += 10; frame.size.width -= 10
+        rm.debugRebuild(screen: screen, menuBarHeight: 25, windows: [TrackedWindow(id: 51, frame: frame, depth: 0, owner: "Resized")], cinema: false)
+        still(0.05)
+    }
+    still(0.5)
+    let slid = abs(s.worldPos.x - before.x)
+    expect("window resized under it: keeps its place", slid < 2 && s.debugState.hasPrefix("attached:rest"), String(format: "moved %.1f px, %@", slid, s.debugState))
+    let mid = s.worldPos
+    for _ in 0..<16 {
+        frame.origin.x += 6; frame.origin.y += 3
+        rm.debugRebuild(screen: screen, menuBarHeight: 25, windows: [TrackedWindow(id: 51, frame: frame, depth: 0, owner: "Resized")], cinema: false)
+        still(0.05)
+    }
+    still(0.5)
+    let carried = s.worldPos - mid
+    expect("window dragged with it on: goes along", abs(carried.x - 96) < 3 && abs(carried.y - 48) < 3, String(format: "carried %.1f,%.1f", carried.x, carried.y))
+}
+
 // A window dropped right over it while it stands on another window's
 // shelf, with the open part of the shelf close by: the shelf is behind the
 // window now, so it leaves it — drops, or a line out — and never walks
@@ -1512,6 +1551,164 @@ do {
     expect("habits: dialled all the way up, it drums", seen["always"]!.contains("drum"), "\(seen["always"]!.sorted())")
 }
 
+// Rolling is a ball going along the ground: only ever on top of something,
+// never under a window or up the side of one — and never carried round a
+// corner onto either. Asked to show it off from underneath, it gets down
+// onto a floor first.
+do {
+    let rm = SurfaceMap()
+    rm.standoff = map.standoff
+    let w = TrackedWindow(id: 41, frame: CGRect(x: screen.minX + 400, y: screen.minY + 260, width: 520, height: 300), depth: 0, owner: "W")
+    rm.debugRebuild(screen: screen, menuBarHeight: 25, windows: [w], cinema: false)
+    if let loop = rm.loop("win:41"),
+       let top = loop.segs.firstIndex(where: { $0.facing == .up }),
+       let side = loop.segs.firstIndex(where: { $0.facing == .left || $0.facing == .right }),
+       let under = loop.segs.firstIndex(where: { $0.facing == .down }) {
+        var rolly = Habits()
+        rolly.roll = 1
+        var offFloor: [String] = []
+        var onFloor = 0
+        for (label, seg, t) in [("top", top, CGFloat(60)), ("top", top, loop.segs[top].len - 60), ("side", side, CGFloat(120)), ("under", under, CGFloat(200))] {
+            for _ in 0..<3 {
+                let s = Spider(map: rm)
+                s.config.followCursor = false
+                s.config.webs = false
+                s.apply(design: SpiderDesign(name: "R", habits: rolly))
+                _ = settleUntilAttached(s)
+                guard park(s, loopID: "win:41", segIdx: seg, t: t) else { continue }
+                var n = 0
+                while CGFloat(n) * dt < 25 {
+                    s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+                    guard s.debugState.hasPrefix("attached:roll") else { continue }
+                    if s.debugFooting > 0.7 { onFloor += 1 } else { offFloor.append("\(label) \(String(format: "%.1f", s.debugFooting)) \(s.debugState)") }
+                }
+            }
+        }
+        expect("roll: never under a window or up its side", offFloor.isEmpty, "\(offFloor.count) frames, e.g. \(offFloor.prefix(2))")
+        expect("roll: it still rolls on top of things", onFloor > 0, "\(onFloor) frames")
+
+        var demoRolled = 0, demoTrials = 0, demoOff = 0
+        for _ in 0..<4 {
+            let s = Spider(map: rm)
+            s.config.followCursor = false
+            s.config.webs = false
+            _ = settleUntilAttached(s)
+            guard park(s, loopID: "win:41", segIdx: under, t: 200) else { continue }
+            demoTrials += 1
+            s.demo(\.roll)
+            var n = 0
+            while CGFloat(n) * dt < 8 {
+                s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+                guard s.debugState.hasPrefix("attached:roll") else { continue }
+                if s.debugFooting > 0.7 { demoRolled += 1; break } else { demoOff += 1 }
+            }
+        }
+        expect("roll: shown off from underneath, it rolls on a floor", demoTrials > 0 && demoRolled == demoTrials && demoOff == 0,
+               "\(demoRolled)/\(demoTrials), \(demoOff) frames off the floor")
+    }
+}
+
+// Under a window with its catch just below — on the floor under a low
+// window, or on the top of the window beneath — it gets it quickly: down
+// onto it, not pacing back and forth along the underside.
+do {
+    let um = SurfaceMap()
+    um.standoff = map.standoff
+    let low = TrackedWindow(id: 51, frame: CGRect(x: screen.minX + 300, y: screen.minY + 120, width: 600, height: 260), depth: 0, owner: "Low")
+    let over = TrackedWindow(id: 52, frame: CGRect(x: screen.minX + 250, y: screen.minY + 520, width: 700, height: 300), depth: 0, owner: "Over")
+    um.debugRebuild(screen: screen, menuBarHeight: 25, windows: [low, over], cinema: false)
+    var times: [String] = []
+    var missed: [String] = []
+    var skipped = 0
+    let dbg = ProcessInfo.processInfo.environment["SIM_UNDER"] != nil
+    // (window id, prey on: y of the surface under it)
+    for (winID, floorY) in [(51, screen.minY), (52, low.frame.maxY)] {
+        guard let loop = um.loop("win:\(winID)"), let under = loop.segs.firstIndex(where: { $0.facing == .down }) else { continue }
+        let seg = loop.segs[under]
+        for kind in [PreyKind.worm, .cricket, .beetle] {
+            for dx in [CGFloat(0), 45, -70, 110] {
+                let s = Spider(map: um)
+                s.config.followCursor = false
+                s.config.webs = false
+                _ = settleUntilAttached(s)
+                let t0 = seg.len / 2
+                // Still hanging under it when its catch turns up.
+                guard park(s, loopID: "win:\(winID)", segIdx: under, t: t0), s.debugFooting < -0.5,
+                      s.debugState.contains("win:\(winID)") else { skipped += 1; continue }
+                let at = V2(s.worldPos.x + dx, floorY + 6)
+                let p = s.release(kind, at: at)
+                var n = 0, caught = -1.0
+                var seen: [String] = []
+                while CGFloat(n) * dt < 15 {
+                    s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+                    let st = s.debugState
+                    if seen.last != st { seen.append(st) }
+                    if dbg, (n % 30 == 0 || st == "jump" || st.contains("crouch")) { print("    \(kind.label) dx \(Int(dx)) \(s.debugActivity) t=\(String(format: "%.1f", Double(n) * Double(dt))) \(st) spider=\(Int(s.worldPos.x)),\(Int(s.worldPos.y)) prey=\(Int(p.pos.x)),\(Int(p.pos.y)) \(p.state)\(p.tucked ? " tucked" : "")") }
+                    if p.state != .loose { caught = Double(n) * Double(dt); break }
+                }
+                let label = "\(kind.label) \(Int(dx)) below win:\(winID)"
+                // (A cricket hops off when it lands by it, and a chase can run
+                // on: counted in how quick the catches are, not in this.)
+                if caught < 0 { if kind != .cricket { missed.append(label + ": " + seen.prefix(8).joined(separator: " > ")) } } else { times.append(String(format: "%.1f", caught)) }
+                if dbg { print(String(format: "  SEQ %@ %.1fs: ", label, caught) + seen.prefix(9).joined(separator: " > ").replacingOccurrences(of: "attached:", with: "")) }
+            }
+        }
+    }
+    print("    under a window, catch below: caught in \(times.joined(separator: " ")) s (\(skipped) not under it to start)")
+    let quick = times.compactMap { Double($0) }.filter { $0 < 2.5 }.count
+    expect("under a window, prey right below: mostly caught at once (under 2.5 s)", quick * 4 >= times.count * 3, "\(quick)/\(times.count)")
+    expect("under a window, a worm or beetle right below: it gets it within 15 s", missed.isEmpty, "\(missed.count) missed: \(missed.prefix(3).joined(separator: " | "))")
+}
+
+// The Studio's ▶ next to every habit, in a copy of the Studio's little box,
+// from every kind of edge in it: each has to actually do its thing within
+// a few seconds — getting itself somewhere it can first, if need be (to a
+// floor to roll, somewhere with a line to swing on, high enough to drop).
+do {
+    let pm = SurfaceMap()
+    let scale: CGFloat = 1.55
+    pm.standoff = -SpiderRenderer.ground * scale
+    let b = CGRect(x: 0, y: 0, width: 330, height: 320).insetBy(dx: 4, dy: 4)
+    let ledge = CGRect(x: b.midX - 80, y: b.minY + 70, width: 160, height: 70)
+    pm.debugRebuild(screen: b, menuBarHeight: 0, windows: [TrackedWindow(id: 1, frame: ledge, depth: 0, owner: "Studio")])
+    // (The hammock ones the desktop spider shows; a thought is only a bubble.)
+    let expected: [PartialKeyPath<Habits>: String] = [
+        \Habits.wander: "attached:walk", \Habits.leap: "jump", \Habits.rappel: "dangling", \Habits.swing: "swinging",
+        \Habits.sleep: "attached:sleep", \Habits.drum: "attached:drum", \Habits.dance: "attached:dance", \Habits.roll: "attached:roll",
+        \Habits.spin: "attached:spin", \Habits.pushup: "attached:pushup", \Habits.stretch: "attached:legStretch",
+        \Habits.wiggle: "attached:wiggle", \Habits.armsUp: "attached:armsUp", \Habits.look: "attached:look",
+        \Habits.rest: "attached:rest", \Habits.groom: "attached:groom", \Habits.fidget: "attached:fidget",
+        \Habits.scratch: "attached:scratch", \Habits.peer: "attached:peer", \Habits.approach: "attached:walk",
+        \Habits.curious: "attached:curious", \Habits.stare: "attached:stare", \Habits.glance: "attached:glance",
+        \Habits.greet: "attached:greet", \Habits.wave: "attached:wave", \Habits.peekaboo: "attached:armsUp",
+    ]
+    let starts: [(String, Int, CGFloat)] = [("screen:0", 0, 126), ("screen:0", 1, 120), ("screen:0", 2, 120), ("screen:0", 3, 120),
+                                            ("win:1", 0, 114), ("win:1", 1, 60), ("win:1", 2, 110), ("win:1", 3, 60)]
+    var missed: [String] = []
+    var tried = 0
+    for (title, key) in Habits.groups.flatMap({ $0.1 }) {
+        guard let want = expected[key] else { continue }
+        for (loopID, seg, t) in starts {
+            let sp = Spider(map: pm)
+            sp.config.scale = scale
+            sp.config.webs = true
+            sp.config.followCursor = true
+            sp.debugAttach(loopID: loopID, segIdx: seg, t: t, dir: 1)
+            for _ in 0..<30 { sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt) }
+            tried += 1
+            sp.demo(key)
+            var did = false
+            for _ in 0..<Int(10 / dt) {
+                sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt)
+                if sp.debugState.hasPrefix(want) { did = true; break }
+            }
+            if !did { missed.append("\(title) from \(loopID)/\(seg)") }
+        }
+    }
+    expect("studio: every habit's ▶ does it, from anywhere in the box", missed.isEmpty,
+           "\(missed.count)/\(tried) missed: \(missed.prefix(6).joined(separator: "; "))")
+}
+
 // Commotions: a notification makes it jump — straight up off the top of a
 // window and back down onto it — and stare at where it came up; on a side
 // or underneath it only starts. The volume or brightness only turns its
@@ -1588,6 +1785,67 @@ do {
             if s.debugState.contains(":startle") { startled = true }
         }
         expect("volume change: only a look", !jumped && !startled && s.debugState.contains(":look"), s.debugState)
+    }
+
+    // The charger: on top, a real leap — up off the window under gravity
+    // and back down on it; on a side or underneath, it bobs where it is and
+    // every foot stays on the window the whole while.
+    print("--- charger ---")
+    var leaps = 0, back = 0, chargeRises: [CGFloat] = [], chargeTrials = 0
+    for trial in 0..<6 {
+        let s = fresh()
+        guard park(s, loopID: "win:31", segIdx: top, t: 150 + CGFloat(trial) * 60),
+              !["turn", "crouch", "shoot", "eat"].contains(where: { s.debugState.contains(":\($0)") }) else { continue }
+        chargeTrials += 1
+        let y0 = s.worldPos.y
+        let was = s.debugState + " " + s.debugActivity
+        s.perkUp()
+        var peak = y0, sawJump = false, n = 0
+        while CGFloat(n) * dt < 2.0 {
+            s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+            peak = max(peak, s.worldPos.y)
+            if s.debugState.hasPrefix("jump") { sawJump = true }
+            if sawJump, s.debugState.hasPrefix("attached") { break }
+        }
+        if sawJump { leaps += 1; chargeRises.append(peak - y0) } else if ProcessInfo.processInfo.environment["SIM_CHARGE"] != nil { print("CHT no leap from", was) }
+        if sawJump, s.debugState.hasPrefix("attached"), s.debugState.contains("win:31") { back += 1 }
+    }
+    expect("charger on top of a window: it leaps up for real", chargeTrials > 0 && leaps == chargeTrials && chargeRises.allSatisfy { $0 > 25 },
+           "\(leaps)/\(chargeTrials), rises \(chargeRises.map { Int($0) })")
+    expect("charger on top of a window: it lands back on it", back == chargeTrials, "\(back)/\(chargeTrials)")
+    for (label, seg) in [("side", side), ("underneath", under)] {
+        // Gathered for a leap it only crackles, and keeps its footing
+        // anyway: not a trial. A few goes to find it standing about.
+        var found: Spider?
+        for _ in 0..<5 where found == nil {
+            let s = fresh()
+            guard park(s, loopID: "win:31", segIdx: seg, t: 60) else { continue }
+            for _ in 0..<30 { s.setCursor(V2(-4000, -4000)); s.update(dt: dt) }
+            if !["turn", "crouch", "shoot"].contains(where: { s.debugState.contains(":\($0)") }) { found = s }
+        }
+        guard let s = found else { print("  [skip] charger \(label): never standing about"); continue }
+        let was = s.debugState
+        s.perkUp()
+        // Out of a walk the stride is finished, and a leg that was up (a
+        // scratch) comes down, in the first moments; after that, none that
+        // is down comes up again.
+        var lifts = 0, frames = 0, left = false, n = 0
+        var wasDown = s.debugPlanted.map { $0.planted }
+        while CGFloat(n) * dt < 2.0 {
+            s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+            if !s.debugState.hasPrefix("attached") { left = true }
+            let down = s.debugPlanted.map { $0.planted }
+            if CGFloat(n) * dt > 0.45, s.debugState.contains(":bounce") || s.debugState.contains(":wiggle") {
+                frames += 1
+                for i in down.indices where wasDown[i] && !down[i] {
+                    lifts += 1
+                    if ProcessInfo.processInfo.environment["SIM_CHARGE"] != nil { print("CHW", label, n, i, s.debugFeetWhy, "was", was) }
+                }
+            }
+            wasDown = down
+        }
+        expect("charger on a window's \(label): feet stay on it", frames > 30 && lifts == 0 && !left,
+               "\(lifts) feet lifted over \(frames) frames, left \(left ? "yes" : "no")")
     }
 }
 
@@ -1975,3 +2233,386 @@ do {
         expect("dangled feather: never tires of it while you play", !ended, s.debugToy)
     }
 }
+
+// Traces: what it leaves about. Silk fastened to real edges rides along
+// with them, stretches, and snaps when pulled apart; a window brought
+// between its ends cuts it, and one closed lets go of it; the pointer
+// pushes it aside slowly and snaps it quickly. Husks land on ledges, ride
+// along, fall when the ledge goes and can be flicked off. Flies stick in
+// the silk. And the spider itself leaves lines behind its leaps and
+// drops, spins webs, carries its catch off to eat and hauls toys about —
+// none of it with traces turned off.
+do {
+    print("\n--- traces ---")
+    let away = V2(-4000, -4000)
+    func tick(_ k: TraceKeeper, spider s: Spider? = nil, box: ToyBox? = nil, cursor: V2 = V2(-4000, -4000),
+              prey: [Prey] = [], frames: Int, each: (() -> Void)? = nil) {
+        for _ in 0..<frames {
+            box?.update(dt: dt)
+            if let s { s.setCursor(cursor); s.update(dt: dt) }
+            for p in prey { p.update(dt: dt, t: 0, map: map, spider: away) }
+            k.update(dt: dt, cursor: cursor, prey: s?.prey ?? prey, spider: s?.worldPos, spiderGrounded: s?.isStanding ?? false)
+            each?()
+        }
+    }
+    let pair = [
+        TrackedWindow(id: 11, frame: CGRect(x: screen.minX + 200, y: screen.minY + 300, width: 300, height: 300), depth: 1, owner: "A"),
+        TrackedWindow(id: 12, frame: CGRect(x: screen.minX + 700, y: screen.minY + 300, width: 300, height: 300), depth: 2, owner: "B"),
+    ]
+    func moved(_ w: TrackedWindow, _ dx: CGFloat, depth: Int? = nil) -> TrackedWindow {
+        TrackedWindow(id: w.id, frame: w.frame.offsetBy(dx: dx, dy: 0), depth: depth ?? w.depth, owner: w.owner)
+    }
+    let aR = V2(screen.minX + 500, screen.minY + 450), bL = V2(screen.minX + 700, screen.minY + 450)
+    func strandBetween(_ k: TraceKeeper, _ a: V2, _ b: V2) -> Strand? {
+        guard let pa = SilkPin.at(a, map: map), let pb = SilkPin.at(b, map: map),
+              let id = k.leaveLine([a, V2.lerp(a, b, 0.5) - V2(0, 6), b], from: pa, to: pb) else { return nil }
+        return k.strand(id)
+    }
+
+    // Between two windows: rides along, stretches, snaps.
+    do {
+        map.rebuild(windows: pair)
+        let k = TraceKeeper(map: map); k.scale = 0.95
+        guard let s = strandBetween(k, aR, bL) else { expect("traces: a strand between two windows", false, "no pins"); throw CancellationError() }
+        tick(k, frames: 180)
+        let sag = (s.rope.head + s.rope.tail) * 0.5 - s.rope.points[s.rope.points.count / 2]
+        expect("strand: hangs between them, sagging a little, and comes to rest", s.asleep && sag.y > 0 && sag.y < 40,
+               String(format: "sag %.1f, asleep %@", Double(sag.y), s.asleep ? "yes" : "no"))
+        map.rebuild(windows: [moved(pair[0], -30), pair[1]])
+        tick(k, frames: 30)
+        expect("strand: rides along with a window dragged, stretching", k.strand(s.id) != nil && abs(s.rope.head.x - (aR.x - 30)) < 1,
+               "head at \(Int(s.rope.head.x)), window edge at \(Int(aR.x - 30))")
+        map.rebuild(windows: [moved(pair[0], -200), pair[1]])
+        tick(k, frames: 30)
+        let loose = k.strands.filter { $0.kind == .loose }
+        expect("strand: pulled too far apart, it snaps, each end left hanging", k.strand(s.id) == nil && loose.count == 2, k.debugSummary)
+        let hanging = loose.map { $0.rope.tail.y < $0.rope.head.y - 10 }
+        tick(k, frames: 120)
+        expect("strand: the loose ends hang down", loose.allSatisfy { $0.rope.tail.y < $0.rope.head.y - 10 }, "\(hanging)")
+        map.rebuild(windows: [pair[1]])
+        tick(k, frames: 150)
+        expect("strand: the end on a window that closed goes with it", k.strands.filter { $0.kind == .loose }.count == 1, k.debugSummary)
+    }
+
+    // A window brought in front, between the ends, cuts it; one over an
+    // end unsticks that end.
+    do {
+        map.rebuild(windows: pair)
+        let k = TraceKeeper(map: map); k.scale = 0.95
+        let s = strandBetween(k, aR, bL)!
+        tick(k, frames: 60)
+        let front = TrackedWindow(id: 13, frame: CGRect(x: screen.minX + 560, y: screen.minY + 250, width: 80, height: 400), depth: 0, owner: "C")
+        map.rebuild(windows: [front, moved(pair[0], 0, depth: 1), moved(pair[1], 0, depth: 2)])
+        tick(k, frames: 30)
+        expect("strand: a window brought in front between its ends cuts it", k.strand(s.id) == nil && k.strands.filter { $0.kind == .loose }.count == 2, k.debugSummary)
+        map.rebuild(windows: pair)
+        let k2 = TraceKeeper(map: map); k2.scale = 0.95
+        let s2 = strandBetween(k2, aR, bL)!
+        tick(k2, frames: 60)
+        let overEnd = TrackedWindow(id: 14, frame: CGRect(x: screen.minX + 420, y: screen.minY + 380, width: 150, height: 150), depth: 0, owner: "D")
+        map.rebuild(windows: [overEnd, moved(pair[0], 0, depth: 1), moved(pair[1], 0, depth: 2)])
+        tick(k2, frames: 30)
+        expect("strand: a window over one end unsticks it there; it hangs from the other", s2.kind == .loose && s2.head?.loopID == "win:12", "\(s2.kind) from \(s2.head?.loopID ?? "-")")
+        // Across two rim edges — the menu bar and the floor — nothing comes in front of it.
+        map.rebuild(windows: windows)
+        let k3 = TraceKeeper(map: map); k3.scale = 0.95
+        let top = V2(screen.minX + 300, (map.menuBarBottom(for: screen) ?? screen.maxY))
+        if let st = strandBetween(k3, top, V2(screen.minX + 300, screen.minY)) {
+            tick(k3, frames: 60)
+            expect("strand: from the menu bar to the floor, down over windows, stays", k3.strand(st.id) != nil, k3.debugSummary)
+        } else {
+            print("  [skip] no menu bar here")
+        }
+    }
+
+    // The pointer: a slow push bends it and it springs back; a swipe snaps it.
+    do {
+        map.rebuild(windows: pair)
+        let k = TraceKeeper(map: map); k.scale = 0.95
+        let s = strandBetween(k, aR, bL)!
+        tick(k, frames: 120)
+        let restY = s.rope.points[7].y
+        var lowest = restY
+        var c = V2(screen.minX + 600, screen.minY + 520)
+        for _ in 0..<60 {
+            c.y -= 2.2
+            tick(k, cursor: c, frames: 1)
+            lowest = min(lowest, s.rope.points[7].y)
+        }
+        tick(k, frames: 180)
+        expect("strand: pushed slowly with the pointer, it bends and does not break", k.strand(s.id) != nil && lowest < restY - 8,
+               String(format: "bent %.0f px, now %@", Double(restY - lowest), k.debugSummary))
+        expect("strand: and springs back", abs(s.rope.points[7].y - restY) < 3, String(format: "%.1f px off", Double(s.rope.points[7].y - restY)))
+        tick(k, cursor: V2(screen.minX + 600, screen.minY + 580), frames: 1)
+        tick(k, cursor: V2(screen.minX + 600, screen.minY + 560), frames: 1)
+        tick(k, cursor: V2(screen.minX + 600, screen.minY + 340), frames: 1)
+        expect("strand: swiped through quickly, it snaps", k.strand(s.id) == nil, k.debugSummary)
+    }
+
+    // Leftovers: onto a window's top, along with it, off when it goes.
+    do {
+        map.rebuild(windows: windows)
+        let k = TraceKeeper(map: map); k.scale = 0.95
+        let w = windows[0].frame
+        k.leaveLeftover(of: .moth, at: V2(w.midX - 100, w.maxY + 30), facing: 1)
+        k.leaveLeftover(of: .ant, at: V2(w.midX, w.maxY + 30), facing: 1)
+        expect("leftovers: nothing much is left of an ant", k.leftovers.count == 1)
+        guard let l = k.leftovers.first else { throw CancellationError() }
+        tick(k, frames: 120)
+        expect("leftovers: lands on the window's top", l.rest?.loopID == "win:1" && abs(l.pos.y - w.maxY) < 12, "\(l.rest?.loopID ?? "air") at \(Int(l.pos.y))")
+        let x0 = l.pos.x
+        map.rebuild(windows: [moved(windows[0], 60), windows[1], windows[2]])
+        tick(k, frames: 10)
+        expect("leftovers: rides along when the window is dragged", abs(l.pos.x - x0 - 60) < 1.5, "moved \(Int(l.pos.x - x0))")
+        map.rebuild(windows: [windows[1], windows[2]])
+        tick(k, frames: 240)
+        expect("leftovers: falls when the window closes, onto whatever is below", l.rest != nil && l.pos.y < w.maxY - 100,
+               "\(l.rest?.loopID ?? "air") at \(Int(l.pos.y))")
+        let before = l.pos
+        tick(k, cursor: before + V2(-40, 3), frames: 1)
+        tick(k, cursor: before + V2(40, 3), frames: 1)
+        tick(k, frames: 180)
+        expect("leftovers: flicked away by a quick pointer", l.pos.distance(to: before) > 20, "moved \(Int(l.pos.distance(to: before))) px")
+        map.rebuild(windows: windows)
+    }
+
+    // The most at once: past it, the oldest fade; with no limit, none do.
+    do {
+        for limit in [3, nil] as [Int?] {
+            let k = TraceKeeper(map: map); k.scale = 0.95; k.limit = limit
+            for i in 0..<6 {
+                k.leaveLeftover(of: .moth, at: V2(screen.minX + 200 + CGFloat(i) * 60, screen.minY + 60), facing: 1)
+                tick(k, frames: 20)
+            }
+            let newest = k.leftovers.map(\.id).sorted().suffix(3)
+            tick(k, frames: 60 * 6)
+            if let n = limit {
+                expect("limit \(n): only that many are left, the newest", k.leftovers.count == n && Set(k.leftovers.map(\.id)) == Set(newest),
+                       k.debugSummary)
+            } else {
+                expect("no limit: they all stay", k.leftovers.count == 6, k.debugSummary)
+            }
+        }
+        let k = TraceKeeper(map: map); k.scale = 0.95; k.limit = nil
+        for i in 0..<5 { k.leaveLeftover(of: .beetle, at: V2(screen.minX + 200 + CGFloat(i) * 60, screen.minY + 60), facing: 1) }
+        tick(k, frames: 30)
+        k.limit = 2
+        tick(k, frames: 60 * 6)
+        expect("limit lowered: the extra fade away at once", k.leftovers.count == 2, k.debugSummary)
+    }
+
+    // A fly stuck in the silk, struggling, for a while.
+    do {
+        map.rebuild(windows: pair)
+        let k = TraceKeeper(map: map); k.scale = 0.95
+        _ = strandBetween(k, aR, bL)!
+        tick(k, frames: 60)
+        let fly = Prey(kind: .fruitFly, id: 500, at: V2(screen.minX + 600, screen.minY + 470), scale: 0.95)
+        var stuckAt = -1, freedAt = -1, n = 0, far: CGFloat = 0
+        while n < 60 * 20 {
+            if stuckAt < 0 { fly.pos.y -= 2; fly.vel = V2(0, -120) }
+            tick(k, prey: [fly], frames: 1)
+            n += 1
+            if stuckAt < 0, k.isSnagged(fly.id) { stuckAt = n }
+            if stuckAt >= 0, freedAt < 0 { far = max(far, abs(fly.pos.y - (screen.minY + 450))) }
+            if stuckAt >= 0, freedAt < 0, !k.isSnagged(fly.id) { freedAt = n }
+        }
+        expect("snag: a fly flying into the silk is caught in it", stuckAt >= 0, "never")
+        expect("snag: and held there, struggling", far < 16, String(format: "strayed %.0f px", Double(far)))
+        expect("snag: until it struggles free", freedAt > stuckAt && CGFloat(freedAt - stuckAt) * dt > 4,
+               String(format: "stuck %.1fs", Double(CGFloat(max(freedAt - stuckAt, 0)) * dt)))
+        map.rebuild(windows: windows)
+    }
+
+    Spider.debugTraceOdds = 1
+    let floorLoop = map.loop("screen:0")!
+    let fi = floorSeg(floorLoop)
+
+    // Webs: in the corner of the floor and the wall, and under a ledge.
+    do {
+        let k = TraceKeeper(map: map); k.scale = 0.95
+        let s = Spider(map: map); s.config.followCursor = false; s.traces = k
+        _ = park(s, loopID: floorLoop.id, segIdx: fi, t: 140)
+        let asked = s.debugSpinWeb()
+        var n = 0
+        while n < 60 * 25, k.webs.first.map({ $0.progress < 1 }) ?? true { tick(k, spider: s, frames: 1); n += 1 }
+        let web = k.webs.first
+        expect("web: spins one in the corner of the floor", asked && web?.shape == .corner && web?.progress == 1,
+               "\(asked ? "went" : "nowhere"), \(k.debugSummary) after \(n / 60)s, \(s.debugState)")
+        if let f = web?.frame {
+            expect("web: right in the corner", f.o.distance(to: V2(screen.minX, floorLoop.edge[fi].a.y)) < 2 && f.x.dot(f.y) > -0.1,
+                   "at \(Int(f.o.x)),\(Int(f.o.y))")
+        }
+        // Under the editor's bottom edge.
+        let k2 = TraceKeeper(map: map); k2.scale = 0.95
+        let s2 = Spider(map: map); s2.config.followCursor = false; s2.traces = k2
+        _ = park(s2, loopID: "win:1", segIdx: 2, t: 300)
+        let under = s2.debugSpinWeb()
+        n = 0
+        while n < 60 * 20, k2.webs.first.map({ $0.progress < 1 }) ?? true { tick(k2, spider: s2, frames: 1); n += 1 }
+        expect("web: spins a tangle under a window it hangs from", under && k2.webs.first?.shape == .underside && k2.webs.first?.progress == 1,
+               "\(k2.debugSummary), \(s2.debugState)")
+    }
+
+    // A fly in its web: it feels it, and comes for it.
+    do {
+        let k = TraceKeeper(map: map); k.scale = 0.95
+        let s = Spider(map: map); s.config.followCursor = false; s.traces = k
+        k.onTremble = { p, strength in s.feelTremble(at: p, strength: strength) }
+        _ = park(s, loopID: floorLoop.id, segIdx: fi, t: 140)
+        _ = s.debugSpinWeb()
+        var n = 0
+        while n < 60 * 25, k.webs.first.map({ $0.progress < 1 }) ?? true { tick(k, spider: s, frames: 1); n += 1 }
+        _ = settle(s, seconds: 3)
+        if let web = k.webs.first, let inWeb = web.world(V2(0.3, 0.25)) {
+            let fly = s.release(.fruitFly)
+            fly.pos = inWeb + V2(0, 8)
+            fly.vel = V2(0, -60)
+            fly.noticed = false
+            var stuck = false, caught = -1.0
+            n = 0
+            while n < 60 * 40, caught < 0 {
+                tick(k, spider: s, frames: 1)
+                n += 1
+                if k.isSnagged(fly.id) { stuck = true }
+                if fly.state != .loose { caught = Double(n) * Double(dt) }
+            }
+            expect("web: a fly blundering in is stuck", stuck)
+            expect("web: and it comes for it", caught >= 0, caught < 0 ? s.debugState : String(format: "%.0fs", caught))
+        }
+    }
+
+    // Its catch carried off to the end of its ledge, eaten there, and
+    // what is left of it left there.
+    do {
+        let k = TraceKeeper(map: map); k.scale = 0.95
+        let s = Spider(map: map); s.config.followCursor = false; s.traces = k
+        _ = park(s, loopID: floorLoop.id, segIdx: fi, t: 200)
+        let cricket = s.release(.cricket)
+        s.debugCatch(cricket)
+        let from = s.worldPos
+        var carried: CGFloat = 0, eaten = false, n = 0, carryFrames = 0
+        while n < 60 * 25, !eaten {
+            tick(k, spider: s, frames: 1)
+            n += 1
+            if s.debugCarrying { carryFrames += 1; carried = max(carried, s.worldPos.distance(to: from)) }
+            eaten = cricket.state == .eaten
+        }
+        expect("meal: carried off along its ledge before it is eaten", carried > 60, String(format: "carried %.0f px over %.1fs", Double(carried), Double(CGFloat(carryFrames) * dt)))
+        expect("meal: then eaten", eaten, s.debugState)
+        tick(k, spider: s, frames: 120)
+        expect("meal: and the leftovers left lying on the floor", k.leftovers.count == 1 && k.leftovers.first?.rest != nil, k.debugSummary)
+    }
+
+    // Lines left behind: a leap trails one, fastened where it lands; the
+    // line it came down on, left where it stepped off.
+    do {
+        let k = TraceKeeper(map: map); k.scale = 0.95
+        let s = Spider(map: map); s.config.followCursor = false; s.traces = k
+        let w0 = windows[0].frame, w1 = windows[1].frame
+        _ = park(s, loopID: "win:1", segIdx: 0, t: w0.width - 340)
+        s.debugJump(to: V2(w1.minX + 260, w1.maxY + map.standoff))
+        var leapt = false, n = 0
+        while n < 60 * 6 { tick(k, spider: s, frames: 1); n += 1; if s.debugState.hasPrefix("jump") { leapt = true }; if leapt, s.isStanding { break } }
+        tick(k, spider: s, frames: 90)
+        let leap = k.strands.first { $0.kind == .leap }
+        expect("leap: trails a line, fastened from where it went to where it came down",
+               leapt && leap?.head?.loopID == "win:1" && leap?.tail != nil && leap?.spinnerets == nil,
+               "\(k.debugSummary) \(leap?.head?.loopID ?? "-") -> \(leap?.tail?.loopID ?? "-"), \(s.debugState)")
+
+        var hang: Strand?
+        for _ in 0..<6 where hang == nil {
+            let k2 = TraceKeeper(map: map); k2.scale = 0.95
+            let s2 = Spider(map: map); s2.config.followCursor = false; s2.traces = k2
+            _ = park(s2, loopID: "win:1", segIdx: 2, t: 300)
+            s2.debugRappel()
+            var m = 0
+            while m < 60 * 50, hang == nil {
+                tick(k2, spider: s2, frames: 1)
+                m += 1
+                hang = k2.strands.first { $0.kind == .hang }
+                if m > 120, s2.isStanding, hang == nil { break }
+            }
+        }
+        expect("drop: the line it came down on is left, from the window above to where it stepped off",
+               hang?.head?.loopID == "win:1" && hang?.tail != nil, hang.map { "\($0.head?.loopID ?? "-") -> \($0.tail?.loopID ?? "-")" } ?? "never came down it")
+    }
+
+    // A toy hauled off on a line.
+    do {
+        let k = TraceKeeper(map: map); k.scale = 0.95
+        let box = ToyBox(map: map); box.scale = 0.95
+        k.toyBox = box
+        let s = Spider(map: map); s.config.followCursor = false; s.traces = k; s.toys = box
+        let seg = floorLoop.segs[fi]
+        _ = park(s, loopID: floorLoop.id, segIdx: fi, t: 300)
+        let ball = Toy(kind: .bell, id: 70, at: seg.point(at: 330) + V2(0, 10), scale: 0.95)
+        box.debugInsert(ball)
+        tick(k, box: box, frames: 90)
+        let start = ball.pos
+        let hitched = s.debugTow()
+        var towed: CGFloat = 0, n = 0, wasTowing = false
+        while n < 60 * 9 {
+            tick(k, spider: s, box: box, frames: 1)
+            n += 1
+            if s.debugTowing { wasTowing = true; towed = max(towed, (start - ball.pos).dot(seg.dir)) }
+            if ProcessInfo.processInfo.environment["SIM_DEBUG"] != nil, n % 15 == 0 {
+                print(String(format: "    tow t=%.2f spider x %.0f ball x %.0f roll-ish %.0f  %@ %@", Double(CGFloat(n) * dt), Double(s.worldPos.x), Double(ball.pos.x), Double(ball.vel.x), s.debugState, k.debugSummary))
+            }
+            if wasTowing, !s.debugTowing { break }
+        }
+        tick(k, spider: s, box: box, frames: 60)
+        expect("tow: hitches a line to the toy and hauls it off along the ledge", hitched && towed > 30,
+               String(format: "hauled %.0f px, %@", Double(towed), k.debugSummary))
+        expect("tow: lets go of it after a while, the line left on the toy", !s.debugTowing && ball.onSurface && k.strands.contains { $0.toyID == ball.id },
+               "\(s.debugState) \(k.debugSummary)")
+    }
+
+    // Left to itself for a while, it leaves this and that about; with
+    // traces off, nothing at all.
+    Spider.debugTraceOdds = nil
+    for on in [true, false] {
+        let k = TraceKeeper(map: map); k.scale = 0.95; k.enabled = on
+        let s = Spider(map: map); s.traces = k; s.config.liveliness = 3
+        k.onTremble = { p, strength in s.feelTremble(at: p, strength: strength) }
+        _ = settleUntilAttached(s)
+        var made = Set<Int>(), webs = Set<Int>(), bits = Set<Int>(), strayed = 0, n = 0
+        var feedAt = 40
+        while n < 60 * 240 {
+            let tt = CGFloat(n) * dt
+            let c = V2(screen.midX + cos(tt * 0.23) * 500, screen.midY + sin(tt * 0.17) * 320)
+            if n / 60 == feedAt { _ = s.release(PreyKind.allCases.randomElement()!); feedAt += 50 }
+            tick(k, spider: s, cursor: c, frames: 1)
+            n += 1
+            for st in k.strands where st.kind != .free { made.insert(st.id) }
+            for w in k.webs { webs.insert(w.id) }
+            for l in k.leftovers { bits.insert(l.id) }
+            for st in k.strands where st.rope.live {
+                if st.rope.points.contains(where: { !map.worldBounds.insetBy(dx: -300, dy: -300).contains($0.point) }) { strayed += 1 }
+            }
+        }
+        if on {
+            print("    240s of life: \(made.count) strands, \(webs.count) webs, \(bits.count) leftovers; now \(k.debugSummary)")
+            expect("traces on: it leaves something about in four minutes", made.count + webs.count + bits.count > 0)
+            expect("traces on: the silk stays on the desktop", strayed == 0, "\(strayed) frames off it")
+        } else {
+            expect("traces off: it leaves nothing at all", made.isEmpty && webs.isEmpty && bits.isEmpty && k.isEmpty, k.debugSummary)
+        }
+    }
+    map.rebuild(windows: windows)
+} catch {}
+
+// Every stretch where the body went along the ground with all its feet
+// down and sliding with it. Landings touch down with a few px of it; a
+// long one is sliding on ice.
+print("\n--- gliding (feet sliding over the ground, none lifted) ---")
+let runs = Spider.debugGlideRuns
+print(String(format: "%d glides; over 10 px: %d; over 25 px: %d", runs.count, runs.filter { $0.px > 10 }.count, runs.filter { $0.px > 25 }.count))
+var byWhat: [String: (n: Int, px: CGFloat)] = [:]
+for r in runs where r.px > 5 {
+    let k = r.what.components(separatedBy: " ").prefix(2).joined(separator: " ")
+    byWhat[k, default: (0, 0)].n += 1; byWhat[k, default: (0, 0)].px += r.px
+}
+for (k, v) in byWhat.sorted(by: { $0.value.px > $1.value.px }) { print(String(format: "  %-20@ %4d over 5 px, %6.0f px in all", k as NSString, v.n, v.px)) }
+print("longest:")
+for r in runs.sorted(by: { $0.px > $1.px }).prefix(8) { print(String(format: "  %5.1f px over %3d frames  %@", r.px, r.frames, r.what as NSString)) }

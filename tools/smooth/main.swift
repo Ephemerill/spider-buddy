@@ -13,8 +13,11 @@ import AppKit
 //   sweep     the pointer swept back and forth right over it
 //   hover     the pointer resting close by
 //   gaze      how far the drawn gaze is off the pointer, on each surface
+//   slide     free life: every stretch where the body travels along a ledge
+//             with no foot lifted (SLIDE_LOG=1 lists them, SLIDE_DUMP=1
+//             prints the second before any that carry the feet along)
 //
-// `./tools/smooth.sh [pairs|sweep|hover|gaze|all]`
+// `./tools/smooth.sh [pairs|sweep|hover|gaze|slide|all]`
 
 let dt: CGFloat = 1.0 / 60.0
 let snapA: CGFloat = 2.5        // px/frame², at scale 1
@@ -513,6 +516,9 @@ func runDemos() {
     let b = CGRect(x: 0, y: 0, width: 330, height: 320).insetBy(dx: 4, dy: 4)
     let ledge = CGRect(x: b.midX - 80, y: b.minY + 70, width: 160, height: 70)
     pm.debugRebuild(screen: b, menuBarHeight: 0, windows: [TrackedWindow(id: 1, frame: ledge, depth: 0, owner: "Studio")])
+    if ProcessInfo.processInfo.environment["DEMO_LOOPS"] != nil {
+        for l in pm.loops { print(l.id, l.segs.enumerated().map { i, s in "\(i):\(s.facing) len \(Int(s.len))" }.joined(separator: " | ")) }
+    }
     for (group, dials) in Habits.groups {
         print("\n\(group)")
         for (title, key) in dials {
@@ -520,7 +526,9 @@ func runDemos() {
             sp.config.scale = scale
             sp.config.webs = true
             sp.config.followCursor = true
-            sp.debugAttach(loopID: "win:1", segIdx: 0, t: 40, dir: 1)
+            // DEMO_AT=loop:seg:t starts it somewhere else in the box.
+            let at = (ProcessInfo.processInfo.environment["DEMO_AT"] ?? "win:1:0:40").split(separator: ":").map(String.init)
+            sp.debugAttach(loopID: at[0] + ":" + at[1], segIdx: Int(at[2]) ?? 0, t: CGFloat(Double(at[3]) ?? 40), dir: 1)
             for _ in 0..<30 { sp.setCursor(far); sp.update(dt: dt) }
             sp.demo(key)
             var seen: [String] = []
@@ -858,6 +866,93 @@ func legMap(_ act: String, secs: CGFloat, out: String) {
     print("wrote \(out)")
 }
 
+// MARK: - sliding
+
+/// Free life on the window: every stretch where the body travels along a
+/// ledge with no foot lifting — gliding as if on ice. Only a roll may.
+/// `SLIDE_LOG=1` prints each stretch as it is found.
+func runSlide() {
+    let window = 12                       // frames: 0.2 s
+    let minTravel: CGFloat = 4            // px over the window, at scale 1
+    let still: CGFloat = 0.08             // no foot lifted more than this
+    let log = ProcessInfo.processInfo.environment["SLIDE_LOG"] != nil
+    // SLIDE_DUMP=1: the second before each slide that carries the feet along.
+    let dump = ProcessInfo.processInfo.environment["SLIDE_DUMP"] != nil
+    // SLIDE_TRACE=away,0,10.77: every frame round that moment.
+    let trace: (String, Int, CGFloat)? = ProcessInfo.processInfo.environment["SLIDE_TRACE"].flatMap {
+        let f = $0.split(separator: ",")
+        guard f.count == 3, let r = Int(f[1]), let tt = Double(f[2]) else { return nil }
+        return (String(f[0]), r, CGFloat(tt))
+    }
+    struct Frame { var pos: V2; var lift: CGFloat; var feet: [V2]; var state: String; var surface: Bool }
+    var byState: [String: (n: Int, dist: CGFloat)] = [:]
+    var total: CGFloat = 0, frames = 0
+    let cursors: [(String, (CGFloat, V2, inout V2) -> V2)] = [
+        ("away", { _, _, _ in far }),
+        ("resting near", { _, p, _ in V2(p.x + 90, p.y + 60) }),
+        ("wandering", { t, _, c in
+            c = c + V2(sin(t * 0.7) * 3.2, cos(t * 0.53) * 2.4)
+            c.x = clamp(c.x, 150, 1050); c.y = clamp(c.y, 100, 700)
+            return c }),
+        ("sweep", { t, p, _ in V2(p.x + 140 * sin(t * 2 * .pi / 3.5), p.y + 70) }),
+    ]
+    for (name, cursorAt) in cursors {
+        var slid: CGFloat = 0, episodes = 0
+        for run in 0..<5 {
+            let s = freshSpider(followCursor: name != "away", at: 100 + CGFloat(run) * 70)
+            var hist: [Frame] = []
+            var c = V2(600, 400)
+            var t: CGFloat = 0
+            var inEpisode = false
+            var recent: [String] = []
+            while t < 150 {
+                t += dt
+                s.setCursor(cursorAt(t, s.worldPos, &c))
+                s.update(dt: dt)
+                let p = s.pose()
+                let j = joints(p)
+                let st = s.debugState
+                let surface = st.hasPrefix("attached") || st.hasPrefix("nesting") || st.hasPrefix("building")
+                let key = st.components(separatedBy: " on ").first ?? st
+                let line = String(format: "    %6.2f %-22@ pos %6.1f,%6.1f yaw %5.2f hd %5.2f lift %.2f  %@", t, st as NSString, p.pos.x, p.pos.y, p.facing,
+                                  p.heading, p.legs.map(\.lift).max() ?? 0, s.debugActivity as NSString)
+                if let tr = trace, tr.0 == name, tr.1 == run, abs(t - tr.2) < 1.6 { print(line) }
+                recent.append(line)
+                if recent.count > 50 { recent.removeFirst() }
+                hist.append(Frame(pos: p.pos, lift: p.legs.map(\.lift).max() ?? 0, feet: Array(j[0..<8]), state: key, surface: surface))
+                if hist.count > window { hist.removeFirst() }
+                frames += 1
+                guard hist.count == window, hist.allSatisfy(\.surface), !key.contains("roll") else { inEpisode = false; continue }
+                let travel = hist.last!.pos.distance(to: hist.first!.pos) / p.scale
+                let lifted = hist.map(\.lift).max() ?? 0
+                if travel > minTravel && lifted < still {
+                    let step = hist[window - 1].pos.distance(to: hist[window - 2].pos) / p.scale
+                    let footSlip = zip(hist.last!.feet, hist.first!.feet).map { $0.distance(to: $1) }.reduce(0, +) / 8 / p.scale
+                    slid += step; total += step
+                    byState[key, default: (0, 0)].dist += step
+                    if !inEpisode {
+                        if dump, footSlip > travel * 0.5 { print("  ---- \(name) run \(run)"); recent.forEach { print($0) } }
+                        episodes += 1
+                        byState[key, default: (0, 0)].n += 1
+                        if log {
+                            print(String(format: "  %@ run %d t %6.2f  %@  travel %.1f px/0.2s  feet moved %.1f  %@", name as NSString, run, t,
+                                         key as NSString, travel, footSlip, s.debugFeetWhy as NSString))
+                        }
+                    }
+                    inEpisode = true
+                } else {
+                    inEpisode = false
+                }
+            }
+        }
+        print(String(format: "%-13@ slides %3d  slid %6.0f px", name as NSString, episodes, slid))
+    }
+    print(String(format: "\nsliding by state (%.0f px in %.0f min):", total, CGFloat(frames) * dt / 60))
+    for (k, v) in byState.sorted(by: { $0.value.dist > $1.value.dist }) {
+        print(String(format: "  %-40@ %4d times  %6.0f px", k as NSString, v.n, v.dist))
+    }
+}
+
 switch mode {
 case "legmap": legMap(CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "greet",
                       secs: CommandLine.arguments.count > 3 ? CGFloat(Double(CommandLine.arguments[3]) ?? 1) : 1,
@@ -878,6 +973,7 @@ case "pairs": runPairs()
 case "sweep": runSweep()
 case "hover": runHover()
 case "gaze": runGaze()
+case "slide": runSlide()
 default:
     runPairs(); runSweep(); runHover(); runGaze()
 }

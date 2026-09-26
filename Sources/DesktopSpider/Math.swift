@@ -212,11 +212,62 @@ struct SilkRope {
     /// The rope's own length; ends further apart than this pull it straight.
     var length: CGFloat = 0
     var tailPinned = true
+    /// Off, the head end drifts too: a line with nothing holding it at all.
+    var headPinned = true
     private(set) var live = false
     static let segments = 14
 
     var head: V2 { points.first ?? .zero }
     var tail: V2 { points.last ?? .zero }
+
+    /// Takes on a shape given point by point — a line handed over from
+    /// somewhere else — spaced out evenly along it, and at rest.
+    mutating func reset(along given: [V2]) {
+        guard given.count >= 2 else { clear(); return }
+        let n = SilkRope.segments
+        var cum: [CGFloat] = [0]
+        for i in 1..<given.count { cum.append(cum[i - 1] + given[i].distance(to: given[i - 1])) }
+        let total = cum.last ?? 0
+        var out: [V2] = []
+        var j = 0
+        for k in 0...n {
+            let want = total * CGFloat(k) / CGFloat(n)
+            while j < given.count - 2, cum[j + 1] < want { j += 1 }
+            let span = max(cum[j + 1] - cum[j], 0.0001)
+            out.append(V2.lerp(given[j], given[j + 1], clamp((want - cum[j]) / span, 0, 1)))
+        }
+        points = out
+        prev = out
+        acc = 0
+        length = max(total, 1)
+        tailPinned = true
+        headPinned = true
+        live = true
+    }
+
+    /// The longest way any point went in the last substep: near zero once
+    /// the line has come to rest.
+    var motion: CGFloat {
+        var m: CGFloat = 0
+        for i in points.indices where i < prev.count { m = max(m, points[i].distance(to: prev[i])) }
+        return m
+    }
+
+    /// How long the line is as it lies, bends and all.
+    var pathLength: CGFloat {
+        var l: CGFloat = 0
+        for i in points.indices.dropFirst() { l += points[i].distance(to: points[i - 1]) }
+        return l
+    }
+
+    /// Moves a point without moving where it was: it carries the push on
+    /// as speed, and the rest of the line feels it.
+    mutating func push(_ i: Int, by d: V2) {
+        guard points.indices.contains(i) else { return }
+        if i == 0, headPinned { return }
+        if i == points.count - 1, tailPinned { return }
+        points[i] += d
+    }
 
     mutating func reset(from a: V2, to b: V2) {
         let n = SilkRope.segments
@@ -225,6 +276,7 @@ struct SilkRope {
         acc = 0
         length = a.distance(to: b)
         tailPinned = true
+        headPinned = true
         live = true
     }
 
@@ -248,19 +300,19 @@ struct SilkRope {
         }
         // Pin exactly, whatever the substep count, so the ends never float
         // off the things they are tied to.
-        points[0] = head
+        if headPinned { points[0] = head }
         if tailPinned { points[points.count - 1] = tail }
     }
 
     private mutating func substep(head: V2, tail: V2, gravity: CGFloat, drag: CGFloat, h: CGFloat) {
         let n = points.count - 1
-        points[0] = head
-        prev[0] = head
+        if headPinned { points[0] = head; prev[0] = head }
+        let first = headPinned ? 1 : 0
         let last = tailPinned ? n - 1 : n
         if tailPinned { points[n] = tail; prev[n] = tail }
-        if last >= 1 {
+        if last >= first {
             let g = V2(0, -gravity) * (h * h)
-            for i in 1...last {
+            for i in first...last {
                 let v = (points[i] - prev[i]) * drag
                 prev[i] = points[i]
                 points[i] += v + g
@@ -296,7 +348,7 @@ struct SilkRope {
         let dist = d.length
         guard dist > rest, dist > 0.0001 else { return }
         let corr = d * ((dist - rest) / dist)
-        let aPinned = i == 0
+        let aPinned = i == 0 && headPinned
         let bPinned = i + 1 == n && tailPinned
         if aPinned && bPinned { return }
         if aPinned { points[i + 1] -= corr }

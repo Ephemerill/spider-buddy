@@ -23,6 +23,7 @@ struct SpiderConfig {
 enum Emote {
     case none, hearts, zzz, surprise, sparkle, question, note
     case exclaim        // a little burst of "!" — a nervous start
+    case charge         // crackling with lightning — the charger went in
     case thought        // a thought bubble; what is in it is `SpiderPose.thought`
 }
 
@@ -738,6 +739,8 @@ final class Spider {
     /// their place in the world to cancel out.
     private var legOverFeet = V2.zero
     private var legDTheta: CGFloat = 0
+    /// How far the surface under it moved this frame, in world points.
+    private var legSurfaceWorld = V2.zero
     /// Where the anchor point on the surface was last frame, to tell the
     /// surface moving from the body moving.
     private var surfacePrev: V2?
@@ -1210,6 +1213,11 @@ final class Spider {
     /// A habit asked for from the Studio, waiting until it can be done.
     private var pendingDemo: WritableKeyPath<Habits, CGFloat>?
     private var demoClimbs = 0
+    /// Getting into place for it (turning round, backing up for room):
+    /// the demo waits until that is done — or, with `demoReady`, until
+    /// that says it is in place, which may be before the walk is over.
+    private var demoSetUp = false
+    private var demoReady: (() -> Bool)?
 
     /// Does what a habit dial is about, now, the way it does it of its own
     /// accord — so the Studio's ▶ next to a slider shows exactly what that
@@ -1221,11 +1229,22 @@ final class Spider {
         lastUserActivity = t
         pendingDemo = habit
         demoClimbs = 0
+        demoSetUp = false
+        demoReady = nil
         runPendingDemo()
     }
 
     private func runPendingDemo() {
         guard let h = pendingDemo else { return }
+        if demoSetUp {
+            // Still getting into place. (Once it is, whatever it has taken
+            // up in the meantime gives way.)
+            guard mode == .attached, activity != .turn else { return }
+            let there = demoReady?() ?? false
+            guard there || ![.walk, .sneak, .scurry].contains(activity) else { return }
+            demoSetUp = false
+            demoReady = nil
+        }
         if h == \.swing, mode == .dangling, config.webs {
             pendingDemo = nil
             workUpSwing()
@@ -1247,17 +1266,42 @@ final class Spider {
             turnTo(chance(0.5) ? walkDir : -walkDir, then: .walk, for: 2.6)
             decisionIn = 4
         case \.leap:
-            if let spot = bestJumpSpot(from: pos, exclude: anchor.loopID) { startJump(to: spot.point) } else { hold(.hop, 0.6) }
+            // Nowhere to leap to from here (tucked under something low, say):
+            // round the corner onto the side of it first.
+            if let spot = bestJumpSpot(from: pos, exclude: anchor.loopID) ?? anyLeap() {
+                startJump(to: spot.point)
+            } else if demoClimbs < 2, walkRoundCorner(for: h, onto: { _ in true }) {
+                demoClimbs += 1
+            } else {
+                hold(.hop, Spider.hopDur)
+            }
         case \.rappel:
             if config.webs, canRappel(userAsked: true) { dropOnWeb() } else { climbFor(h) }
         case \.swing:
-            if !(config.webs && startSwing()) { climbFor(h) }
+            guard config.webs, !confined else { hold(.look, 1.2); break }
+            if startSwing() { break }
+            // The line would go out behind it: round first. Nowhere to swing
+            // from here at all: over to somewhere there is.
+            if let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count,
+               swingLine(from: pos, on: anchor.loopID, forward: loop.segs[anchor.segIdx].dir * -walkDir) != nil {
+                pendingDemo = h
+                demoSetUp = true
+                turnTo(-walkDir, then: .idle, for: 0.1)
+                decisionIn = 2
+            } else {
+                perchFor(h)
+            }
         case \.hammock: buildHammock()
         case \.nap: napInHammock()
         case \.sleep: hold(.sleep, 6)
         case \.drum: hold(.drum, 3.4); setEmote(.note, 1.4)
         case \.dance: hold(.dance, 1.8); setEmote(.note, 1.4)
-        case \.roll: hold(.roll, 1.7); queue(.shake, 0.45)
+        case \.roll:
+            if let dir = rollWay() {
+                if dir == walkDir { hold(.roll, 1.7); queue(.shake, 0.45) } else { turnTo(dir, then: .roll, for: 1.7); decisionIn = 4 }
+            } else if !backUpToRoll(h) {
+                floorFor(h)
+            }
         case \.spin: hold(.spin, 0.1)
         case \.pushup: hold(.pushup, 1.6)
         case \.stretch: hold(.legStretch, 1.6)
@@ -1312,6 +1356,167 @@ final class Spider {
         }
         pendingDemo = habit
         startJump(to: high.point)
+    }
+
+    /// Down onto something it can stand on top of, to show off what can
+    /// only be done there (a roll): the nearest stretch of floor with room.
+    private func floorFor(_ habit: WritableKeyPath<Habits, CGFloat>) {
+        guard demoClimbs < 2 else { beginActivity(.look, dur: 1.2); return }
+        demoClimbs += 1
+        // Up the side of a window to its top, or down a wall of the screen to
+        // the floor: round the corner on foot, rather than leap for it.
+        let long = rollDistance + 12 * config.scale
+        if walkRoundCorner(for: habit, onto: { $0.normal.y > Spider.rollFloor && $0.len > long }) { return }
+        // Somewhere along the middle of it, not by an end — land by a
+        // corner and it may well come down on the side — and it backs up
+        // for the room from there (see `backUpToRoll`).
+        let room = rollDistance + 12 * config.scale
+        let clear = 40 * config.scale
+        let spots = map.sampleSpots(spacing: 30).filter { s in
+            s.seg.normal.y > Spider.rollFloor && s.seg.len > room && s.anchor.t > clear && s.anchor.t < s.seg.len - clear
+                && inBoxOrFree(s.point) && s.point.distance(to: pos) > 40 * config.scale && ballistic(from: pos, to: s.point) != nil
+        }
+        guard let floor = spots.min(by: { $0.point.distance(to: pos) < $1.point.distance(to: pos) }) else {
+            beginActivity(.look, dur: 1.2)
+            return
+        }
+        pendingDemo = habit
+        startJump(to: floor.point)
+    }
+
+    // MARK: Rolling
+    //
+    // A roll is a ball going along the ground: it can only be done on top
+    // of something. Under a window, or up the side of one, the ball would
+    // just drop off — so it never starts one there, and never one that would
+    // carry it round a corner onto a side or an underside.
+
+    /// How upward a ledge has to face to roll on.
+    private static let rollFloor: CGFloat = 0.7
+    /// About how far a roll carries it — the one turn of the ball, and the
+    /// push into it and the slide out of it (about 116 all told at scale 1)
+    /// — with a little to spare.
+    private var rollDistance: CGFloat {
+        (2 * .pi - Spider.rollTip) * (Spider.ballAlong + Spider.ballAcross) / 2 * config.scale * 1.2
+    }
+
+    /// On a floor long enough to roll on, but too near the end of it either
+    /// way: back along it far enough to have the room. False if this floor
+    /// is too short for a roll at all.
+    private func backUpToRoll(_ habit: WritableKeyPath<Habits, CGFloat>) -> Bool {
+        guard demoClimbs < 3, mode == .attached, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return false }
+        let seg = loop.segs[anchor.segIdx]
+        let room = rollDistance
+        let slack = 12 * config.scale
+        guard seg.normal.y > Spider.rollFloor, seg.len > room + slack else { return false }
+        // The nearer of: far enough back to roll forward along it, or far
+        // enough along to roll back.
+        let forwardFrom = seg.len - room - slack    // at or before this, a roll toward +dir fits
+        let backFrom = room + slack                 // at or after this, a roll toward -dir fits
+        let goal = abs(anchor.t - forwardFrom) < abs(anchor.t - backFrom) ? min(anchor.t, forwardFrom) : max(anchor.t, backFrom)
+        let dist = abs(goal - anchor.t)
+        guard dist > 1 else { return false }
+        demoClimbs += 1
+        pendingDemo = habit
+        demoSetUp = true
+        demoReady = { [unowned self] in rollWay() != nil }
+        // Plenty of time: it stops as soon as there is room (`demoReady`).
+        let walk = (dist + slack) * 2 / max(config.walkSpeed, 1) + 0.5
+        turnTo(goal > anchor.t ? 1 : -1, then: .walk, for: walk)
+        walkThen = nil
+        decisionIn = walk + 2
+        return true
+    }
+
+    /// Any leap at all, for showing one off where `bestJumpSpot` finds none
+    /// worth making (a cramped spot, the Studio's little box): somewhere on
+    /// another edge it can reach without jumping through what it is on.
+    private func anyLeap() -> (anchor: Anchor, point: V2)? {
+        guard mode == .attached, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return nil }
+        let normal = loop.segs[anchor.segIdx].normal
+        let sc = config.scale
+        let ok = map.sampleSpots(spacing: 30).filter { s in
+            let d = s.point.distance(to: pos)
+            guard d > 45 * sc, d < 680, s.loop.id != anchor.loopID || s.anchor.segIdx != anchor.segIdx, inBoxOrFree(s.point),
+                  let launch = ballistic(from: pos, to: s.point) else { return false }
+            return launch.normalized.dot(normal) > 0.05
+        }
+        return ok.randomElement().map { ($0.anchor, $0.point) }
+    }
+
+    /// Round the nearest corner of what it is on onto the next edge, if that
+    /// edge is `onto` and nothing is in the way — then on with the demo.
+    private func walkRoundCorner(for habit: WritableKeyPath<Habits, CGFloat>, onto: @escaping (Seg) -> Bool) -> Bool {
+        guard mode == .attached, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return false }
+        let n = loop.segs.count
+        let seg = loop.segs[anchor.segIdx]
+        var best: (dir: CGFloat, dist: CGFloat)?
+        for dir in [CGFloat(1), -1] {
+            let idx = anchor.segIdx + (dir > 0 ? 1 : -1)
+            guard loop.closed || (idx >= 0 && idx < n), onto(loop.segs[(idx + n) % n]) else { continue }
+            // Clear all the way to the corner.
+            let lim = seg.limit(from: anchor.t, dir: dir)
+            guard dir > 0 ? lim >= seg.len - 0.01 : lim <= 0.01 else { continue }
+            let dist = dir > 0 ? seg.len - anchor.t : anchor.t
+            if best == nil || dist < best!.dist { best = (dir, dist) }
+        }
+        guard let b = best else { return false }
+        pendingDemo = habit
+        demoSetUp = true
+        let from = anchor.segIdx
+        let inFrom = 24 * config.scale
+        demoReady = { [unowned self] in
+            guard anchor.loopID == loop.id, anchor.segIdx != from, anchor.segIdx < loop.segs.count else { return false }
+            let seg = loop.segs[anchor.segIdx]
+            return onto(seg) && anchor.t > inFrom && anchor.t < seg.len - inFrom
+        }
+        let walk = (b.dist + 30 * config.scale) * 2 / max(config.walkSpeed, 1) + 0.5
+        turnTo(b.dir, then: .walk, for: walk)
+        walkThen = nil
+        decisionIn = walk + 2
+        return true
+    }
+
+    /// Somewhere to swing from, for showing it off: the nearest spot it can
+    /// leap to with a line to shoot out one way or the other.
+    private func perchFor(_ habit: WritableKeyPath<Habits, CGFloat>) {
+        // (A leap in a cramped spot can come down somewhere else: a few goes.)
+        guard demoClimbs < 3 else { beginActivity(.look, dur: 1.2); return }
+        demoClimbs += 1
+        let near = map.sampleSpots(spacing: 30)
+            .filter { $0.loop.id != anchor.loopID || $0.anchor.segIdx != anchor.segIdx || $0.point.distance(to: pos) > 60 * config.scale }
+            .filter { inBoxOrFree($0.point) && $0.point.distance(to: pos) > 40 * config.scale }
+            .sorted { $0.point.distance(to: pos) < $1.point.distance(to: pos) }
+        for s in near.prefix(80) where ballistic(from: pos, to: s.point) != nil {
+            if swingLine(from: s.point, on: s.loop.id, forward: s.seg.dir) != nil
+                || swingLine(from: s.point, on: s.loop.id, forward: -s.seg.dir) != nil {
+                pendingDemo = habit
+                startJump(to: s.point)
+                return
+            }
+        }
+        beginActivity(.look, dur: 1.2)
+    }
+
+    /// Whether a roll the way of `dir` stays on top of things the whole way.
+    private func canRoll(toward dir: CGFloat) -> Bool {
+        guard mode == .attached, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return false }
+        let seg = loop.segs[anchor.segIdx]
+        guard seg.normal.y > Spider.rollFloor else { return false }
+        // Room enough before the end of this ledge — or, past it, more floor
+        // to roll on (or the end of the line, where it stops).
+        let room = dir > 0 ? seg.len - anchor.t : anchor.t
+        if room > rollDistance { return true }
+        let n = loop.segs.count
+        let nextIdx = anchor.segIdx + (dir > 0 ? 1 : -1)
+        guard loop.closed || (nextIdx >= 0 && nextIdx < n) else { return true }
+        return loop.segs[(nextIdx + n) % n].normal.y > Spider.rollFloor
+    }
+
+    /// Which way it can roll from here — the way it is facing if it can —
+    /// or nil if it cannot roll here at all.
+    private func rollWay() -> CGFloat? {
+        canRoll(toward: walkDir) ? walkDir : canRoll(toward: -walkDir) ? -walkDir : nil
     }
 
     func celebrate() {
@@ -1458,15 +1663,65 @@ final class Spider {
         decisionIn = randRange(1.5, 3)
     }
 
-    /// The charger has gone in: a jolt of excitement, even out of a nap.
+    /// The charger has gone in: a jolt of excitement, even out of a nap,
+    /// crackling with it. Stood on top of something, it jumps for joy — a
+    /// real jump, gathering itself, up off its legs and down onto them
+    /// again; on a wall or under a ledge every foot stays where it is, and
+    /// it bobs and wiggles on them.
     func perkUp() {
         guard !config.paused, !dormant, !inCinema, !isHeld, activity != .eat else { return }
         happy.velocity = 9
-        setEmote(.sparkle, 1.2)
-        guard mode == .attached else { return }
+        setEmote(.charge, 1.6)
+        joyLeapFrom = -1
+        joyLanding = false
+        // Gathered for a leap, or in the middle of one of its moves, it
+        // only crackles: it does not drop what it is doing.
+        guard mode == .attached, pendingJump == nil,
+              ![.crouch, .shoot, .turn, .fasten, .roll, .spin].contains(activity) else { return }
         wake()
+        let free = laser == nil && huntTarget == nil && caught == nil && build == nil
+            && peek == nil && cursorHunt == .none && departing == nil
+            && friendChase == nil && friendFlee == nil
+        if surfaceNormal.y > 0.85, free {
+            queued = nil
+            walkThen = nil
+            beginActivity(.hop, dur: Spider.hopDur + 0.1)
+            joyLeapFrom = activityStarted
+            decisionIn = max(decisionIn, 1.2)
+            return
+        }
         beginActivity(.bounce, dur: 1.0)
-        queue(chance(0.5) ? .wiggle : .armsUp, 0.9)
+        queue(.wiggle, 0.9)
+    }
+
+    /// A joy leap on its way: the `.hop` begun then gathers and pushes off
+    /// as any hop does, and at the top of the push leaves the ledge for real
+    /// (see `leapForJoy`). The hop's start time, or -1.
+    private var joyLeapFrom: CGFloat = -1
+    /// Up in a joy leap: a happy wiggle once it is down.
+    private var joyLanding = false
+
+    /// Straight up off the ledge under gravity, as high as its legs throw
+    /// it, and down again where it stood.
+    private func leapForJoy() {
+        joyLeapFrom = -1
+        let sc = config.scale
+        let g = -gravity.y
+        let height = randRange(36, 50) * sc * lerp(0.85, 1.2, personality.playfulness)
+        let vy = (2 * g * height).squareRoot()
+        mode = .airborne
+        air = .jump
+        airTime = 0
+        vel = V2(0, vy)
+        // Not caught by the ledge it is leaving on the way up.
+        noAttachFor = vy / g
+        launchLoop = ""
+        if let spot = map.nearestSpot(to: anchorPos, within: 12 * sc) { landing = (spot.point, spot.seg.angle, spot.seg.dir) }
+        crouch.velocity = -9
+        stretch.velocity = 6
+        wag.reset(0)
+        legMode = .free
+        joyLanding = true
     }
 
     /// Something went off up on the screen. A notification sliding in is a
@@ -1754,6 +2009,7 @@ final class Spider {
 
         updateRope(dt: dt)
         updateKnees(dt: dt)
+        syncTraces(dt: dt)
     }
 
     // MARK: The laser dot
@@ -1792,7 +2048,7 @@ final class Spider {
             if t - lastLaserPounce > 1.2 {
                 lastLaserPounce = t
                 remember(.played, 0.25)
-                beginActivity(chance(0.5) ? .hop : .peer, dur: chance(0.5) ? 0.42 : 0.8)
+                if chance(0.5) { beginActivity(.hop, dur: Spider.hopDur) } else { beginActivity(.peer, dur: chance(0.5) ? 0.42 : 0.8) }
                 if chance(0.4) { setEmote(.sparkle, 0.7) }
             } else {
                 beginActivity(.curious, dur: randRange(0.4, 0.8))
@@ -2997,6 +3253,8 @@ final class Spider {
     /// Gathering itself for a leap, or firing a line: about to leave.
     var isLeavingSurface: Bool { mode == .attached && (activity == .crouch || activity == .shoot || (activity == .turn && pendingJump != nil)) }
     var isAirborne: Bool { mode == .airborne }
+    /// On its feet on something.
+    var isStanding: Bool { mode == .attached }
     var isOnLine: Bool { mode == .dangling }
 
     /// Lets go of its line and drops.
@@ -3184,10 +3442,13 @@ final class Spider {
     /// Lets something loose on the desktop for it to hunt. Ground creatures
     /// drop in onto a ledge some way off; a fly is let go in the air.
     @discardableResult
-    func release(_ kind: PreyKind) -> Prey {
+    /// `spot`, for the tools only: exactly there instead.
+    func release(_ kind: PreyKind, at spot: V2? = nil) -> Prey {
         let screen = confine ?? map.screenFrame(containing: pos)
         var at: V2
-        if kind.flies {
+        if let spot {
+            at = spot
+        } else if kind.flies {
             at = V2(clamp(pos.x + randRange(-380, 380), screen.minX + 80, screen.maxX - 80),
                     clamp(pos.y + randRange(120, 300), screen.minY + 80, screen.maxY - 80))
         } else {
@@ -3425,6 +3686,25 @@ final class Spider {
             }
         }
 
+        // Hanging under something with it on the ground just below: it
+        // drops on it from above — no creeping along the underside first.
+        // (Gravity does the work: a good deal further down than it could
+        // spring along a ledge, not so far out to the side.)
+        if seg.normal.y < -0.5, p.onSurface, d.y < -10 * sc, -d.y < 300 * sc, abs(d.x) < reach * 1.4 - d.y * 0.35 {
+            let settled = p.vel.length < 20
+            let aim = settled ? p.mouthPoint : p.pos + p.vel * 0.3
+            if p.tucked {
+                // A beetle shut up in its shell: wait above it.
+                beginActivity(.crouch, dur: randRange(0.6, 1.0))
+                pendingJump = nil
+                return
+            }
+            if t - lastPounceAt > 1.2, let launch = ballistic(from: pos, to: aim), launch.normalized.dot(seg.normal) > -0.15 {
+                pounce(at: aim)
+                return
+            }
+        }
+
         let sameEdge = p.anchor?.loopID == anchor.loopID && p.anchor?.segIdx == anchor.segIdx
         if sameEdge || (off < 30 * sc && abs(along) < 140 * sc) {
             let settled = p.onSurface && p.vel.length < 20
@@ -3548,8 +3828,7 @@ final class Spider {
         happy.velocity = 6
         setEmote(.sparkle, 0.8)
         if mode == .attached {
-            queued = nil
-            beginActivity(.eat, dur: p.kind.mealTime * randRange(0.9, 1.15))
+            settleToMeal(p)
         }
     }
 
@@ -3581,6 +3860,9 @@ final class Spider {
         c.state = .eaten
         c.eaten = 1
         caught = nil
+        mealCarry = nil
+        // What is left of it is left where it was eaten.
+        if leavesTraces, traceOdds(0.85) { traces?.leaveLeftover(of: c.kind, at: c.pos, facing: facing) }
         fed = min(1, fed + c.kind.nourishment)
         remember(.fed)
         memory?.warm(to: c.kind.memoryName, by: 0.15)
@@ -3807,7 +4089,7 @@ final class Spider {
         // for a timid one, a trap with the front legs for a bold one.
         if mode == .attached, !isHeld, ![.crouch, .turn, .shoot, .eat, .startle].contains(activity), pendingJump == nil,
            t - lastToyFright > 2.5 {
-            for toy in here where !toy.held && toy.pinnedFor <= 0 {
+            for toy in here where !toy.held && toy.pinnedFor <= 0 && toy.id != towLine?.toy {
                 let rel = pos - toy.pos
                 let closing = toy.vel.dot(rel.normalized)
                 guard closing > 110 * sc, rel.length < 85 * sc, rel.length > 18 * sc else { continue }
@@ -4002,6 +4284,11 @@ final class Spider {
         // Held up a moment (getting out from under a window, say): the game
         // is still on once that is done.
         guard canPlayWithToys else { return }
+        // Hauling it off on a line: that walk plays out first.
+        if towLine != nil {
+            decisionIn = 0.3
+            return
+        }
         let P = personality
         let sc = config.scale
         decisionIn = toy.inPlay ? randRange(0.15, 0.35) : randRange(0.25, 0.6)
@@ -4097,7 +4384,8 @@ final class Spider {
                 approachToy(pos + seg.dir * along, style: .scurry, stop: 30 * sc, leap: false)
             } else {
                 let r = CGFloat.random(in: 0...1)
-                beginActivity(r < 0.45 ? .curious : r < 0.7 ? .look : r < 0.85 ? .hop : .wiggle, dur: randRange(0.4, 0.8))
+                let a: Activity = r < 0.45 ? .curious : r < 0.7 ? .look : r < 0.85 ? .hop : .wiggle
+                beginActivity(a, dur: a == .hop ? Spider.hopDur : randRange(0.4, 0.8))
             }
             return
         }
@@ -4112,7 +4400,7 @@ final class Spider {
             } else if abs(along) > 45 * sc {
                 approachToy(pos + seg.dir * along, style: .scurry, stop: 20 * sc, leap: false)
             } else if chance(0.5) {
-                beginActivity(.hop, dur: 0.45)
+                beginActivity(.hop, dur: Spider.hopDur)
             } else {
                 beginActivity(.curious, dur: randRange(0.5, 0.9))
             }
@@ -4134,6 +4422,8 @@ final class Spider {
                 turnTo(dir, then: .look, for: 0.2)
                 return
             }
+            // Or, now and then, a line hitched to it, to haul it off.
+            if startTow(toy, toward: dir) { return }
             let loft = CGFloat.random(in: toy.kind.batLoft)
             let push = (seg.dir * dir * cos(loft) + seg.normal * sin(loft)).normalized
             let power = lerp(150, 330, (P.energy + P.playfulness) / 2) * randRange(0.8, 1.2) * sc.squareRoot()
@@ -4244,6 +4534,392 @@ final class Spider {
             (confined && !inBox, "outOfBox"), (hangOnly, "hangOnly"), (t <= escapeUntil, "escaping"),
         ]
         return checks.filter(\.0).map(\.1).joined(separator: ",")
+    }
+
+    // MARK: Traces
+    //
+    // What it leaves about the desktop as it goes (see Traces.swift): now
+    // and then a line paid out behind a leap and fastened where it lands;
+    // the line it came down on, left where it stepped off; a little web in
+    // a corner or under a ledge; its catch carried off somewhere quieter to
+    // be eaten, and what is left of it; a toy hauled off on a line.
+
+    /// Where it leaves them. Nil — a visitor, the Studio, the tools — and
+    /// it leaves nothing.
+    var traces: TraceKeeper?
+    /// Tools only: odds for every leave-a-trace draw, in place of their own.
+    static var debugTraceOdds: CGFloat?
+    /// The line paying out behind a leap.
+    private var leapLine: Int?
+    /// A toy it is hauling off on a line: round with its back to it, a dab
+    /// of silk on it, and off it walks with it in tow.
+    private struct Tow {
+        var toy: Int
+        var strand: Int?
+        var since: CGFloat
+        var walkFor: CGFloat
+        var walkingSince: CGFloat?
+    }
+    private var towLine: Tow?
+    /// Taking its catch somewhere quieter to eat it.
+    private var mealCarry: (to: V2, since: CGFloat)?
+    /// A web it means to spin, or is spinning.
+    private struct WebJob {
+        var loopID: String
+        /// Where it stands to spin it.
+        var stand: V2
+        /// A corner — the point, and a spot a little way along each side
+        /// of it — or a spot under a ledge.
+        var corner: (o: V2, a: V2, b: V2)?
+        var under: V2?
+        var size: CGFloat
+        var web: Int?
+        var since: CGFloat
+    }
+    private var webJob: WebJob?
+    private var lastTremble: CGFloat = -9
+
+    /// It may leave traces here: it has somewhere to leave them, and is out
+    /// on the desktop they are for.
+    private var leavesTraces: Bool {
+        guard let k = traces, k.enabled, k.map === map else { return false }
+        return !inHabitat && !inCinema
+    }
+
+    private func traceOdds(_ p: CGFloat) -> Bool { chance(Spider.debugTraceOdds ?? p) }
+
+    /// The tip of the abdomen, where the silk comes from, in the world.
+    private func spinneretsWorld() -> V2 {
+        let ab = SpiderRenderer.abdomen(for: look)
+        return toWorld(V2(ab.c.x - ab.rx + 3, ab.c.y))
+    }
+
+    /// The ledge under it as a spot the silk can be stuck to.
+    private func ledgePin() -> SilkPin? {
+        guard let lp = ledgePoint() else { return nil }
+        return SilkPin.at(lp.point, map: map, prefer: anchor.loopID, within: map.standoff * 1.6 + 4)
+    }
+
+    /// Now and then a leap trails a line from where it went from, to be
+    /// fastened where it comes down.
+    private func maybeTrailLine(from pin: SilkPin?, to point: V2) {
+        leapLine = nil
+        guard leavesTraces, config.webs, !flyingHome, !confined, let pin, let keeper = traces else { return }
+        let d = pin.last.distance(to: point)
+        guard d > 90 * config.scale, d < 560 * config.scale, traceOdds(0.3) else { return }
+        leapLine = keeper.beginLine(from: pin, tail: spinneretsWorld())
+    }
+
+    /// The line it was on, left behind: from where it was fastened up above
+    /// to where it has stepped off onto something (`fastened`), or hanging
+    /// loose from up there. False if it is not left — nothing up there to
+    /// have stuck it to, or not this time — and the line goes as it always
+    /// did.
+    private func leaveLineBehind(fastened: Bool) -> Bool {
+        guard webActive, leavesTraces, config.webs, !confined, let keeper = traces, rope.live, rope.points.count >= 2,
+              traceOdds(fastened ? 0.7 : 0.5),
+              let top = SilkPin.at(webAnchor, map: map, within: 8) else { return false }
+        var end: SilkPin?
+        if fastened {
+            guard let pin = ledgePin(), pin.last.distance(to: top.last) > 50 * config.scale else { return false }
+            end = pin
+        }
+        guard keeper.leaveLine(rope.points, from: top, to: end) != nil else { return false }
+        detachWeb(fade: false)
+        rope.clear()
+        webAlpha.reset(0)
+        return true
+    }
+
+    /// Keeps the lines it has out in step with it, once a frame.
+    private func syncTraces(dt: CGFloat) {
+        guard let keeper = traces else { return }
+        if let id = leapLine {
+            if !keeper.has(id) {
+                leapLine = nil
+            } else if !leavesTraces {
+                keeper.letGo(id)
+                leapLine = nil
+            } else if mode == .airborne {
+                keeper.payOut(id, tail: spinneretsWorld())
+            } else {
+                // Down: stuck where it landed — unless that is hardly any
+                // way from where it went from, or it has come to be held
+                // or hanging some other way.
+                if mode == .attached, let pin = ledgePin(), let from = keeper.strand(id)?.head?.last,
+                   from.distance(to: pin.last) > 60 * config.scale {
+                    keeper.fasten(id, to: pin)
+                } else {
+                    keeper.letGo(id)
+                }
+                leapLine = nil
+            }
+        }
+        if var tow = towLine {
+            let stillOn = tow.strand.map { keeper.towing($0) } ?? true
+            if !stillOn || mode != .attached || !leavesTraces || toy(tow.toy)?.held != false || t - tow.since > 12 {
+                if let id = tow.strand, keeper.has(id) { keeper.letGo(id) }
+                towLine = nil
+            } else if tow.strand == nil {
+                // Backed up to it, the silk goes on as the abdomen dabs it.
+                if activity == .fasten, activityTime > 0.25, let toy = toy(tow.toy) {
+                    tow.strand = keeper.beginTow(toy: toy, tail: spinneretsWorld())
+                    towLine = tow.strand == nil ? nil : tow
+                } else if t - tow.since > 3, activity != .turn, activity != .fasten {
+                    towLine = nil
+                }
+            } else if let id = tow.strand {
+                keeper.payOut(id, tail: spinneretsWorld())
+                if tow.walkingSince == nil {
+                    if activity != .fasten, activity != .turn {
+                        tow.walkingSince = t
+                        beginActivity(.walk, dur: tow.walkFor)
+                    }
+                    towLine = tow
+                } else if let since = tow.walkingSince, activity != .walk || t - since > 7 {
+                    // Far enough: it lets go of the line and turns to see
+                    // what it has got.
+                    keeper.letGo(id)
+                    towLine = nil
+                    finishTow(tow.toy)
+                }
+            }
+        }
+        if let id = webJob?.web, activity == .fasten, mode == .attached {
+            keeper.spin(id, by: dt / max(activityDur * 3, 1))
+        }
+    }
+
+    /// Silk somewhere shook — plucked, torn, a fly blundering into it. Near
+    /// enough to feel it, it turns to look (a fly caught wakes it), and
+    /// whatever is caught there is spotted.
+    func feelTremble(at p: V2, strength: CGFloat) {
+        guard leavesTraces, !dormant, !config.paused, mode == .attached || mode == .dangling else { return }
+        guard p.distance(to: pos) < 650 * config.scale * (0.5 + strength) else { return }
+        for q in prey where q.state == .loose && !q.noticed && q.pos.distance(to: p) < 30 {
+            q.noticed = true
+            memory?.meet(q.kind.memoryName)
+        }
+        guard t - lastTremble > 3, activity != .sleep || strength > 0.7 else { return }
+        lastTremble = t
+        guard mode == .attached, caught == nil, towLine == nil,
+              [.idle, .look, .rest, .groom, .fidget, .stare, .glance, .sleep, .peer].contains(activity) else { return }
+        wake()
+        setEmote(strength > 0.6 ? .exclaim : .question, 0.8)
+        queued = nil
+        walkThen = nil
+        if let dir = alongEdge(to: p), dir != walkDir, abs((p - pos).dot(surfaceNormal.perp)) > 40 * config.scale {
+            turnTo(dir, then: .look, for: randRange(0.8, 1.3))
+        } else {
+            beginActivity(.look, dur: randRange(0.8, 1.3))
+        }
+        decisionIn = min(decisionIn, 0.6)
+    }
+
+    // Its catch, taken somewhere quieter.
+
+    /// Its catch in its jaws: it settles down to eat it here — or, now and
+    /// then, carries it off to the end of its ledge first, tucked into the
+    /// corner there.
+    private func settleToMeal(_ c: Prey) {
+        queued = nil
+        walkThen = nil
+        let dur = c.kind.mealTime * randRange(0.9, 1.15)
+        if mealCarry == nil, leavesTraces, !c.kind.bitter, c.kind != .ant, c.kind != .mosquito, traceOdds(0.55),
+           let spot = quietSpot() {
+            mealCarry = (spot, t)
+            walkToward(spot)
+            walkThen = (.eat, dur)
+            return
+        }
+        mealCarry = nil
+        beginActivity(.eat, dur: dur)
+    }
+
+    /// The nearer end of its ledge, if that is a short walk off with
+    /// nothing in the way.
+    private func quietSpot() -> V2? {
+        guard mode == .attached, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return nil }
+        let seg = loop.segs[anchor.segIdx]
+        let sc = config.scale
+        var best: (d: CGFloat, p: V2)?
+        for dir in [CGFloat(1), -1] {
+            let end = dir > 0 ? seg.len - 22 * sc : 22 * sc
+            let d = (end - anchor.t) * dir
+            guard d > 50 * sc, d < 280 * sc else { continue }
+            let reach = seg.limit(from: anchor.t, dir: dir)
+            guard dir > 0 ? reach >= end : reach <= end else { continue }
+            if best == nil || d < best!.d { best = (d, seg.point(at: end)) }
+        }
+        return best?.p
+    }
+
+    // A toy, hauled off.
+
+    /// Rather than a pat, now and then it hitches a line to a toy lying
+    /// still beside it, turns its back on it and hauls it off behind it
+    /// along the ledge. `dir` is the way to the toy.
+    private func startTow(_ toy: Toy, toward dir: CGFloat) -> Bool {
+        guard towLine == nil, leavesTraces, config.webs, traces != nil, toy.onSurface, !toy.inPlay, !toy.held,
+              toy.kind != .feather, toy.speed < 8, traceOdds(0.22),
+              let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return false }
+        // Room to walk off with it.
+        let seg = loop.segs[anchor.segIdx]
+        guard loop.closed || abs(seg.limit(from: anchor.t, dir: -dir) - anchor.t) > 70 * config.scale else { return false }
+        towLine = Tow(toy: toy.id, strand: nil, since: t, walkFor: randRange(2.8, 4.0), walkingSince: nil)
+        pendingBat = nil
+        queued = nil
+        walkThen = nil
+        turnTo(-dir, then: .fasten, for: randRange(0.55, 0.75))
+        if chance(0.3) { setEmote(.sparkle, 0.8) }
+        return true
+    }
+
+    /// Hauled it far enough: round to have a look at it.
+    private func finishTow(_ id: Int) {
+        guard mode == .attached else { return }
+        if toyPlay?.id == id {
+            toyPlay!.bats += 1
+            toyPlay!.boredom += 0.12
+        }
+        remember(.played, 0.15)
+        queued = nil
+        walkThen = nil
+        if let toy = toy(id), let dir = alongEdge(to: toy.pos), dir != walkDir {
+            turnTo(dir, then: .peer, for: randRange(0.9, 1.4))
+        } else {
+            beginActivity(.peer, dur: randRange(0.9, 1.4))
+        }
+        happy.velocity = 4
+        if chance(0.4) { setEmote(chance(0.5) ? .sparkle : .note, 0.9) }
+    }
+
+    // A little web.
+
+    /// Somewhere near to spin a little web: a corner at the end of its own
+    /// ledge — the floor meeting a wall, the side of the Dock — or right
+    /// here under the ledge it is hanging from. Nil if there is nowhere, or
+    /// a web is there already.
+    private func webSite() -> WebJob? {
+        guard mode == .attached, let keeper = traces, let loop = map.loop(anchor.loopID),
+              anchor.segIdx < loop.segs.count, !loop.edge.isEmpty else { return nil }
+        let sc = config.scale
+        let size = randRange(44, 62) * max(sc, 0.7)
+        let seg = loop.segs[anchor.segIdx]
+        var best: (d: CGFloat, job: WebJob)?
+        let n = loop.edge.count
+        for i in 0..<n where loop.closed || i + 1 < n {
+            let e1 = loop.edge[i], e2 = loop.edge[(i + 1) % n]
+            // Two edges meeting with the open space between them — the
+            // second turning up from the first, into a corner.
+            guard e1.b.distance(to: e2.a) < 1, e2.dir.dot(e1.normal) > 0.5,
+                  e1.len > size * 1.4, e2.len > size * 1.4 else { continue }
+            let o = e1.b
+            // At an end of the stretch it is on, a short walk off.
+            let (tt, off) = projectOnSegment(o, seg.a, seg.b)
+            guard off < map.standoff * 1.7, tt < 1 || tt > seg.len - 1 else { continue }
+            let standT = tt < 1 ? 26 * sc : seg.len - 26 * sc
+            let stand = seg.point(at: standT)
+            let d = stand.distance(to: pos)
+            let dir: CGFloat = standT >= anchor.t ? 1 : -1
+            let reach = seg.limit(from: anchor.t, dir: dir)
+            guard d < 480 * sc, dir > 0 ? reach >= standT : reach <= standT,
+                  !keeper.webNear(o, within: 110 * sc) else { continue }
+            let job = WebJob(loopID: loop.id, stand: stand, corner: (o, o - e1.dir * size, o + e2.dir * size),
+                             under: nil, size: size, web: nil, since: t)
+            if best == nil || d < best!.d { best = (d, job) }
+        }
+        if let b = best { return b.job }
+        // Under a ledge: a tangle hung from right where it is.
+        if seg.facing == .down, let lp = ledgePoint(), !keeper.webNear(lp.point, within: 110 * sc),
+           let e = loop.edge.first(where: { $0.facing == .down && projectOnSegment(lp.point, $0.a, $0.b).dist < 3 }) {
+            let t0 = projectOnSegment(lp.point, e.a, e.b).t
+            guard t0 > size, t0 < e.len - size else { return nil }
+            return WebJob(loopID: loop.id, stand: pos, corner: nil, under: lp.point, size: size * 0.8, web: nil, since: t)
+        }
+        return nil
+    }
+
+    /// One step of spinning a web: over to the spot, round with its tail to
+    /// where the web goes, and a few dabs to stick the threads down, the
+    /// web growing with each; then a look at its work.
+    private func pursueWeb() {
+        guard var job = webJob, let keeper = traces else { return }
+        decisionIn = 0.2
+        guard leavesTraces, t - job.since < 40, mode == .attached, anchor.loopID == job.loopID else {
+            webJob = nil
+            return
+        }
+        if let id = job.web {
+            if (keeper.web(id)?.progress ?? 1) >= 1 {
+                webJob = nil
+                beginActivity(.peer, dur: randRange(1.0, 1.6))
+                if chance(0.5) { setEmote(.sparkle, 0.9) }
+                remember(.played, 0.05)
+                return
+            }
+            beginActivity(.fasten, dur: randRange(1.2, 1.6))
+            return
+        }
+        if pos.distance(to: job.stand) > 20 * config.scale {
+            walkToward(job.stand)
+            activityDur = min(activityDur, max(pos.distance(to: job.stand) / max(config.walkSpeed * 0.9, 1), 0.4))
+            return
+        }
+        // Tail to the corner.
+        if let c = job.corner, let dir = alongEdge(to: c.o), dir == walkDir {
+            turnTo(-dir, then: .idle, for: 0.1)
+            return
+        }
+        if let c = job.corner {
+            job.web = keeper.startWeb(corner: c.o, a: c.a, b: c.b)
+        } else if let u = job.under {
+            job.web = keeper.startWeb(under: u, size: job.size)
+        }
+        guard job.web != nil else { webJob = nil; return }
+        webJob = job
+        beginActivity(.fasten, dur: randRange(1.2, 1.6))
+    }
+
+    /// Tools only: what it has left about.
+    var debugTraces: String {
+        var s = traces?.debugSummary ?? "none"
+        if leapLine != nil { s += " | leap line out" }
+        if towLine != nil { s += " | towing" }
+        if mealCarry != nil { s += " | carrying" }
+        if let j = webJob { s += " | web job \(j.web.map { "#\($0)" } ?? "planned")" }
+        return s
+    }
+    var debugCarrying: Bool { mealCarry != nil && caught != nil }
+    var debugTowing: Bool { towLine != nil }
+
+    /// Tools only: has it in its jaws, as if it had just caught it.
+    func debugCatch(_ p: Prey) { catchPrey(p) }
+
+    /// Tools only: pays out a line from where it is and goes down it.
+    func debugRappel() {
+        guard mode == .attached else { return }
+        dropOnWeb()
+    }
+
+    /// Tools only: hitches a line to the nearest toy, the one it is facing,
+    /// and hauls it off.
+    func debugTow() -> Bool {
+        guard let toy = toysHere.min(by: { $0.pos.distance(to: pos) < $1.pos.distance(to: pos) }),
+              let dir = alongEdge(to: toy.pos), dir == walkDir else { return false }
+        if toyPlay == nil { startToyPlay(toy) }
+        return startTow(toy, toward: dir)
+    }
+
+    /// Tools only: sets about spinning a web, if there is somewhere near.
+    func debugSpinWeb() -> Bool {
+        guard let site = webSite() else { return false }
+        webJob = site
+        queued = nil
+        walkThen = nil
+        beginActivity(.idle, dur: 0.1)
+        decisionIn = 0
+        return true
     }
 
     // MARK: Silk line
@@ -4643,6 +5319,7 @@ final class Spider {
     // MARK: Attached
 
     private func updateAttached(dt: CGFloat) {
+        keepFooting()
         guard let here = map.resolve(anchor, cornerRadius: Spider.cornerRadius * config.scale),
               let loop = map.loop(anchor.loopID) else {
             detachAndFall()
@@ -4689,6 +5366,39 @@ final class Spider {
         if laser != nil, !inCinema, [.walk, .sneak, .rest, .sleep, .watch, .stare, .groom, .look, .glance, .drum, .eat].contains(activity) {
             if activityTime > 0.4 { queued = nil; finishActivity() }
         }
+        // Likewise its catch, spotted close by: whatever it was idling over
+        // is dropped for it — it does not finish its grooming first.
+        // (A walk too, unless it is the hunt's own.)
+        if caught == nil, laser == nil, departing == nil, !inCinema, pendingDemo == nil, t > huntPauseUntil, activityTime > 0.25,
+           [.rest, .watch, .stare, .groom, .look, .glance, .drum, .dance, .peer, .fidget, .scratch, .pushup,
+            .legStretch, .wiggle, .armsUp, .curious, .wave, .greet, .stretch].contains(activity)
+            || (huntTarget == nil && [.walk, .sneak, .scurry].contains(activity)),
+           prey.contains(where: { $0.state == .loose && $0.noticed && !$0.spurned && $0.pos.distance(to: pos) < 300 * config.scale }) {
+            queued = nil
+            walkThen = nil
+            decisionIn = 0
+            finishActivity()
+        }
+        // Gathering itself for a leap — at its catch, or anywhere at all —
+        // with its catch below it on the ground: the aim follows the catch
+        // until the moment it goes, so it lands on it, not where it was.
+        if mode == .attached, activity == .crouch, pendingJump != nil, caught == nil, cursorHunt == .none,
+           let q = prey.first(where: { $0.state == .loose && $0.noticed && !$0.spurned && $0.onSurface && !$0.tucked
+                                       && (huntPounce ? $0.id == huntTarget : $0.pos.distance(to: pos) < 300 * config.scale) }),
+           surfaceNormal.y < -0.5, q.pos.y < pos.y - 10 * config.scale {
+            // How long until it gets there: what is left of the gathering,
+            // and the drop.
+            let g = -gravity.y
+            let fall = max(pos.y - q.pos.y, 0)
+            let flight = (-90 + (90 * 90 + 2 * g * fall).squareRoot()) / g
+            let aim = q.pos + q.vel * (max(activityDur - activityTime, 0) + flight)
+            if ballistic(from: pos, to: aim) != nil {
+                pendingJump = aim
+                pounceMark = aim
+                huntPounce = true
+                huntTarget = q.id
+            }
+        }
         if departing != nil, ![.walk, .turn, .crouch, .shoot, .fasten, .idle].contains(activity), activityTime > 0.4 {
             queued = nil
             finishActivity()
@@ -4707,7 +5417,7 @@ final class Spider {
             let elsewhere: Set<Activity> = [.rest, .sleep, .watch, .groom, .drum, .dance, .roll, .spin, .pushup,
                                              .legStretch, .scratch, .wave, .greet, .glance, .fidget, .stare]
             if elsewhere.contains(activity), activityTime > 0.3 { queued = nil; finishActivity() }
-            else if play.stage == .play, [.walk, .sneak, .scurry].contains(activity),
+            else if play.stage == .play, towLine == nil, [.walk, .sneak, .scurry].contains(activity),
                     activityTime > (toy(play.id)?.inPlay == true ? 0.45 : 0.8) { activityDur = min(activityDur, activityTime) }
         }
         // Stalking the pointer: the same, with the creep re-aimed often.
@@ -4747,7 +5457,8 @@ final class Spider {
 
         // Posture targets for whatever it is doing.
         let post = posture()
-        targetSpeed = config.walkSpeed * post.speed * bout
+        // Laden — a catch in its jaws, a toy in tow — it goes slower.
+        targetSpeed = config.walkSpeed * post.speed * bout * (caught != nil ? 0.75 : 1) * (towLine != nil ? 0.7 : 1)
         // Taken with the pointer: up on its toes, nose tipped toward it.
         // (Not face on: there the feet are free of the ledge and would
         // rise with it.)
@@ -4769,9 +5480,15 @@ final class Spider {
         }
         // The roll's ups and downs are the shape of the ball on the ledge,
         // frame by frame; a spring would smooth the thump out of them.
+        // Nor for a hop, which is over too quick for a spring to keep up
+        // with: its ups and downs are already the shape of a hop.
         if activity == .roll {
             lift.value = approach(lift.value, post.lift * config.scale, 40, dt); lift.velocity = 0
-        } else if lift.value < -maxSink(tilt: angleDelta(here.tangent.angle, heading)) {
+        } else if activity == .hop, mode == .attached {
+            lift.value = approach(lift.value, (post.lift - post.crouch * Spider.crouchDrop) * config.scale, 45, dt)
+            lift.velocity = 0
+        }
+        if activity != .roll, lift.value < -maxSink(tilt: angleDelta(here.tangent.angle, heading)) {
             // However hard it comes down, the belly never goes into the
             // ledge: the legs bottom out.
             lift.value = -maxSink(tilt: angleDelta(here.tangent.angle, heading))
@@ -4851,6 +5568,25 @@ final class Spider {
         if glance > 0, t > glanceUntil { glance = 0 }
 
         reactToCursor(dt: dt)
+        footing = map.seg(anchor).map { (anchor.loopID, anchor.segIdx, anchor.t, $0.a, $0.b) }
+    }
+
+    /// The edge it stood on at the end of the last frame, and where on it.
+    private var footing: (loopID: String, segIdx: Int, t: CGFloat, a: V2, b: V2)?
+
+    /// Its place is kept as a distance along the edge from one end. An edge
+    /// that moves as a whole (a window dragged) carries it along, as it
+    /// should. But one that changes shape instead — a window resized from
+    /// the far end, the Dock growing as an app opens — would slide it along
+    /// the edge on still legs, as if on ice. So then it keeps its place on
+    /// the ground: only the edge's own movement under it, toward or away,
+    /// takes it along.
+    private func keepFooting() {
+        guard let was = footing, was.loopID == anchor.loopID, was.segIdx == anchor.segIdx, was.t == anchor.t,
+              let seg = map.seg(anchor) else { return }
+        guard (seg.a - was.a).distance(to: seg.b - was.b) > 0.25 else { return }
+        let stood = was.a + (was.b - was.a).normalized * was.t
+        anchor.t = projectOnSegment(stood, seg.a, seg.b).t
     }
 
     // MARK: Posture
@@ -4993,9 +5729,13 @@ final class Spider {
             p.wag = 1.4
             p.lift = 1.5
         case .bounce:
-            let hops = 3.0
-            p.lift = abs(sin(u * .pi * hops)) * 8
-            p.legsFree = p.lift > 2
+            // Bobbing on springy legs: down onto them and up on them, three
+            // times, every foot staying where it is — it never leaves the
+            // ledge, whichever way up that is (a jump is a `.hop`).
+            let b = abs(sin(u * .pi * 3))
+            let env = min(1, u * 8, (1 - u) * 8)
+            p.lift = 3.5 * b * env
+            p.crouch = 0.3 * (1 - b) * env
         case .curious:
             p.pitch = -0.2
             p.lift = 2
@@ -5083,10 +5823,32 @@ final class Spider {
             p.lift = -1
             p.crouch = 0.12
         case .hop:
-            // A small nervous hop straight up and down, legs tucked at the top.
-            let h = sin(clamp(u, 0, 1) * .pi)
-            p.lift = h * 7
-            p.legsFree = h > 0.35
+            // A small hop straight up and down, with the weight in it: it
+            // sinks onto its legs, springs off them — the body going first,
+            // the feet the last of it to leave the ledge — flies, and comes
+            // down onto its legs, giving under the landing before it
+            // straightens up again.
+            // One for joy (see `leapForJoy`) gathers itself lower first.
+            let (stage, v) = hopPhase()
+            let sink: CGFloat = joyLeapFrom == activityStarted ? 0.65 : 0.4
+            switch stage {
+            case 0:
+                p.crouch = sink * smoothstep(v)
+                p.pitch = -0.06 * smoothstep(v)
+            case 1:
+                p.crouch = sink * (1 - v * v)
+                p.lift = Spider.hopTakeoff * v * v
+                p.pitch = -0.06 * (1 - v)
+            case 2:
+                p.lift = Spider.hopTakeoff + 4 * Spider.hopHeight * v * (1 - v)
+                p.legsFree = true
+            case 3:
+                let give = v < 0.4 ? sin(v / 0.4 * .pi / 2) : 1 - smoothstep((v - 0.4) / 0.6)
+                p.lift = v < 0.4 ? Spider.hopTakeoff * (1 - give) : 0
+                p.crouch = 0.5 * give
+            default:
+                break
+            }
         case .drum:
             // Braced low on the back three pairs, abdomen quivering in time,
             // while the front pair beat on the surface.
@@ -5154,6 +5916,9 @@ final class Spider {
             let decay = max(0, 1 - activityTime / activityDur)
             headingVel += sin(activityTime * 62) * 6 * decay
             wag.value = decay * 1.2
+        case .hop:
+            // Off the top of the push, a leap for joy goes up for real.
+            if joyLeapFrom == activityStarted, mode == .attached, hopPhase().stage >= 2 { leapForJoy() }
         case .crouch:
             if activityTime > activityDur {
                 // A pounce at the pointer is aimed where the pointer is now.
@@ -5290,7 +6055,7 @@ final class Spider {
         if a == .walk {
             // A first pause a little way in, on longer walks; none on a
             // short one, and none when it is going somewhere on purpose.
-            let purposeful = huntTarget != nil || laser != nil || homing != nil || build != nil || inCinema || t < bedBoundUntil || (confined && !inBox) || cursorHunt != .none
+            let purposeful = huntTarget != nil || laser != nil || homing != nil || build != nil || towLine != nil || mealCarry != nil || inCinema || t < bedBoundUntil || (confined && !inBox) || cursorHunt != .none
             walkPauseAt = (dur > 2.2 && !purposeful && chance(0.7)) ? randRange(0.7, 1.6) : 99
             walkPauseFor = randRange(0.25, 0.7)
         }
@@ -5447,6 +6212,12 @@ final class Spider {
             let wrapped = (nextIdx + n) % n
             let next = loop.segs[wrapped]
             let entryT: CGFloat = walkDir > 0 ? 0 : next.len
+            // A ball does not roll round onto the side or the underside of
+            // anything: it comes to a stop on the top.
+            if activity == .roll, next.normal.y <= Spider.rollFloor {
+                speed = 0
+                break
+            }
             guard through || next.isOpen(at: entryT + (walkDir > 0 ? 0.5 : -0.5)) else {
                 reachedEnd = true
                 speed = 0
@@ -5615,8 +6386,15 @@ final class Spider {
         outOfBoxSince = -1
         returnTheLongWay = false
 
-        // Holding a meal it has not got round to: eat it.
+        // Holding a meal it has not got round to: eat it — somewhere
+        // quieter first, if that is where it was taking it.
         if let c = caught, c.state == .caught {
+            if let carry = mealCarry, t - carry.since < 10, mode == .attached, pos.distance(to: carry.to) > 26 * config.scale {
+                walkToward(carry.to)
+                walkThen = (.eat, c.kind.mealTime * randRange(0.9, 1.15))
+                return
+            }
+            mealCarry = nil
             beginActivity(.eat, dur: c.kind.mealTime * randRange(0.9, 1.15))
             return
         }
@@ -5631,6 +6409,11 @@ final class Spider {
         if toyPlay != nil || pickToy() {
             playWithToy()
             return
+        }
+        // A web under way.
+        if webJob != nil {
+            pursueWeb()
+            if webJob != nil || activity != .idle { return }
         }
 
         // Left alone, it settles down and eventually nods off. The lazy ones
@@ -5769,10 +6552,17 @@ final class Spider {
             self.beginActivity(.armsUp, dur: randRange(0.9, 1.5))
             if chance(0.5) { self.setEmote(.sparkle, 0.9) }
         }))
-        options.append((2 * play * hw(\.roll), {
-            self.beginActivity(.roll, dur: randRange(1.5, 1.9))
-            self.queue(.shake, 0.45)
-        }))
+        // Only ever on top of something (see `canRoll`).
+        if let dir = rollWay() {
+            options.append((2 * play * hw(\.roll), {
+                if dir == self.walkDir {
+                    self.beginActivity(.roll, dur: randRange(1.5, 1.9))
+                    self.queue(.shake, 0.45)
+                } else {
+                    self.turnTo(dir, then: .roll, for: randRange(1.5, 1.9))
+                }
+            }))
+        }
         options.append((1.5 * play * hw(\.dance) * gestureWeight(.dance), {
             self.beginActivity(.dance, dur: randRange(1.2, 2.0))
             self.setEmote(.note, 1.4)
@@ -5806,6 +6596,13 @@ final class Spider {
             options.append((7 * hw(\.swing) * lerp(0.6, 1.4, P.playfulness), {
                 if self.config.webs, self.startSwing() { return }
                 self.beginActivity(.look, dur: randRange(0.6, 1.2))
+            }))
+        }
+        // A little web in a corner, or under the ledge it is hanging from.
+        if leavesTraces, config.webs, !confined, webJob == nil, let site = webSite() {
+            options.append((3.5 * lerp(0.6, 1.4, P.laziness) * lerp(0.7, 1.3, P.curiosity), {
+                self.webJob = site
+                self.pursueWeb()
             }))
         }
         // Spinning a retreat, once, when it has been about for a while.
@@ -5995,12 +6792,26 @@ final class Spider {
         // with a push away from the surface, rather than leaping into it —
         // unless the surface is glass it means to go through.
         if !glassLeap, launch.length < 1 || launch.normalized.dot(surfaceNormal) < -0.05 {
-            let along = launch - surfaceNormal * launch.dot(surfaceNormal)
-            launch = along.clampedLength(220) + surfaceNormal * 90
+            if surfaceNormal.y < -0.9, point.y < pos.y - 4 {
+                // Under something flat with the mark below: let go with the
+                // push down, and drift out just enough over the fall to come
+                // down on it — not short of it, or it drops straight past
+                // the ledge it was meant for.
+                let g = -gravity.y
+                let push: CGFloat = 90
+                let fall = pos.y - point.y
+                let time = (-push + (push * push + 2 * g * fall).squareRoot()) / g
+                let drift = (point.x - pos.x) / max(time, 0.05) * (1 + 0.11 * time)   // (the air's drag)
+                launch = V2(clamp(drift, -700, 700), -push)
+            } else {
+                let along = launch - surfaceNormal * launch.dot(surfaceNormal)
+                launch = along.clampedLength(220) + surfaceNormal * 90
+            }
         }
         glassLeap = false
         pendingJump = nil
         launchLoop = anchor.loopID
+        let trailFrom = mode == .attached ? ledgePin() : nil
         mode = .airborne
         air = .jump
         airTime = 0
@@ -6014,6 +6825,7 @@ final class Spider {
         if let spot = map.nearestSpot(to: point, within: 40 * config.scale) {
             landing = (spot.point, spot.seg.angle, spot.seg.dir)
         }
+        maybeTrailLine(from: trailFrom, to: point)
         crouch.velocity = -9
         stretch.velocity = 5
         wag.reset(0)
@@ -6315,6 +7127,9 @@ final class Spider {
     private func land(on a: Anchor, seg: Seg) {
         tumbleVel = 0
         let impact = min(vel.length, 1400)
+        // Down off a line — a hang, a dragline paying out, a swing — onto
+        // something: the line may be left where it is, from up there to here.
+        let offALine = webActive && rope.live
         hurrying = false
         mode = .attached
         anchor = a
@@ -6392,7 +7207,7 @@ final class Spider {
                 legs[i].settleTo = spot
             }
         }
-        detachWeb(fade: true)
+        if !(offALine && leaveLineBehind(fastened: true)) { detachWeb(fade: true) }
         webPlan = []
         lingerUntil = -1
         pendingJump = nil
@@ -6410,6 +7225,11 @@ final class Spider {
             huntPounce = false
             pounceMark = nil
             snapAtPrey(reach: 14)
+            // Come down right on top of it — dropped on it from above, say —
+            // it is pinned under it: got, as surely as in the fangs.
+            if caught == nil, let p = prey.first(where: { $0.state == .loose && $0.onSurface && $0.pos.distance(to: pos) < $0.kind.catchRadius * config.scale }) {
+                catchPrey(p)
+            }
             if caught == nil {
                 decisionIn = 0.15
                 if cursorHunt != .pouncing { remember(.huntMissed) }
@@ -6429,7 +7249,12 @@ final class Spider {
         }
         if let c = caught, c.state == .caught, activity != .eat {
             // Landed with the catch: settle down to it.
-            beginActivity(.eat, dur: c.kind.mealTime * randRange(0.9, 1.15))
+            settleToMeal(c)
+        }
+        if joyLanding {
+            // Down from a leap for joy: still fizzing with it.
+            joyLanding = false
+            if caught == nil, activity == .idle { queue(.wiggle, 0.8) }
         }
         if t < commotionUntil, activity == .idle {
             // Down from a start: still staring at what made it jump.
@@ -6881,7 +7706,7 @@ final class Spider {
     }
 
     private func releaseSwing() {
-        detachWeb(fade: true)
+        if !leaveLineBehind(fastened: false) { detachWeb(fade: true) }
         mode = .airborne
         air = .jump
         airTime = 0
@@ -6900,16 +7725,27 @@ final class Spider {
         guard mode == .attached, !inCinema, !confined, let loop = map.loop(anchor.loopID),
               anchor.segIdx < loop.segs.count else { return false }
         let seg = loop.segs[anchor.segIdx]
-        let forward = seg.dir * walkDir
-        let screen = map.screenFrame(containing: pos)
+        guard let target = swingLine(from: pos, on: anchor.loopID, forward: seg.dir * walkDir) else { return false }
+        shotTarget = target
+        shotPurpose = .swing
+        shotProgress = 0
+        queued = nil
+        beginActivity(.shoot, dur: 0.28)
+        return true
+    }
+
+    /// Where a line shot `forward` from `from` (standing on loop `loopID`)
+    /// would fasten for a good swing, if anywhere.
+    private func swingLine(from origin: V2, on loopID: String, forward: V2) -> V2? {
+        let screen = map.screenFrame(containing: origin)
         // From the floor there is nothing to swing down from, so the line has
         // to go out well ahead and it reels in hard; from up high, a steeper
         // line gives a proper drop.
-        let onFloor = pos.y - screen.minY < 80
+        let onFloor = origin.y - screen.minY < 80
         var best: (score: CGFloat, point: V2)?
-        for spot in map.sampleSpots(spacing: 40) where spot.loop.id != anchor.loopID || spot.loop.kind == .screenBorder {
+        for spot in map.sampleSpots(spacing: 40) where spot.loop.id != loopID || spot.loop.kind == .screenBorder {
             let a = spot.point - spot.seg.normal * map.standoff        // the edge itself
-            let d = a - pos
+            let d = a - origin
             let rise = d.y
             guard rise > (onFloor ? 140 : 90), rise < 620 else { continue }
             let ahead = d.dot(forward)
@@ -6924,13 +7760,7 @@ final class Spider {
             score *= randRange(0.7, 1.3)
             if best == nil || score > best!.score { best = (score, a) }
         }
-        guard let target = best else { return false }
-        shotTarget = target.point
-        shotPurpose = .swing
-        shotProgress = 0
-        queued = nil
-        beginActivity(.shoot, dur: 0.28)
-        return true
+        return best?.point
     }
 
     /// The line has caught: let go of the ledge and push off into the swing.
@@ -7124,7 +7954,7 @@ final class Spider {
         case .jumpOff:
             webPlan.removeFirst()
             if let spot = bestJumpSpot(from: pos, exclude: ""), let launch = ballistic(from: pos, to: spot.point) {
-                detachWeb(fade: true)
+                if !leaveLineBehind(fastened: false) { detachWeb(fade: true) }
                 mode = .airborne
                 air = .jump
                 airTime = 0
@@ -8266,9 +9096,9 @@ final class Spider {
             if liftsOuterPair, let out = faceOnOuter(i) { return out }
             return standingFoot(i, braced: k == 1)
         case (.attached, .hop):
-            // Tucked up under it for the instant it is in the air.
-            let h = sin(clamp(u, 0, 1) * .pi)
-            return V2.lerp(rest, leg.hip + reach * 0.55 + V2(0, 3), h)
+            // On the ledge but for the flight, which places them itself (see
+            // `updateLegControllers`).
+            return rest
         case (.attached, .drum):
             // The front pair drum: a burst of quick alternating taps, then
             // a pause, then a few beats with both together — the foot lifts
@@ -8371,9 +9201,6 @@ final class Spider {
         case (.attached, .turn):
             // Feet shuffle round to where they stand in the blended layout.
             return SpiderRenderer.rig(i, profile: SpiderRenderer.profileAmount(yaw: yaw), look: look).foot
-        case (.attached, .bounce):
-            // Off the ground mid-hop: legs tuck slightly.
-            return leg.hip + reach * 0.85 + V2(0, 4)
         default:
             let profile = SpiderRenderer.profileAmount(yaw: yaw)
             return profile > 0.98 ? rest : SpiderRenderer.rig(i, profile: profile, look: look).foot
@@ -8453,6 +9280,14 @@ final class Spider {
     private static let handoffTime: CGFloat = 0.26
     /// Tools only: the hand-offs and the jolt limits, off, to compare.
     static var debugRawLegs = false
+    /// Tools only: tally how far the feet glide over the ground while none
+    /// is lifted (see `tallyGlide`), by what it was doing.
+    static var debugGlideTally = false
+    static var debugGlide: [String: CGFloat] = [:]
+    static var debugGlideRuns: [(px: CGFloat, frames: Int, what: String)] = []
+    private var glideRun: CGFloat = 0
+    private var glideFrames = 0
+    private var glideLabel = ""
 
     private func updateLegs(dt: CGFloat) {
         let before = legs.map(\.foot)
@@ -8476,7 +9311,9 @@ final class Spider {
             }
         }
         modeBeforeLegs = mode
-        if mode == .held || mode == .airborne || absorbingLanding { handoffT = 1 }
+        // (Nor in a hop, which is all over before a hand-off would be: the
+        // hop's own poses take the feet off the ledge and back onto it.)
+        if mode == .held || mode == .airborne || absorbingLanding || activity == .hop { handoffT = 1 }
         guard handoffT < 1, handoffFrom.count == legs.count else { return }
         handoffT = min(1, handoffT + dt / Spider.handoffTime)
         let e = smoothstep(handoffT)
@@ -8506,6 +9343,7 @@ final class Spider {
     /// body as they are.
     private func limitFootJolts(dt: CGFloat) {
         let world = legs.map { toWorld($0.foot) }
+        if Spider.debugGlideTally { tallyGlide(world: world, dt: dt) }
         let onSurface = (mode == .attached || mode == .nesting) && activity != .roll
         let bodyJump = pos.distance(to: footLimitPos) > 30 * config.scale
         footLimitPos = pos
@@ -8521,6 +9359,32 @@ final class Spider {
             if Spider.limitJolt(&w, last: &footWorld[i], vel: &footWorldVel[i], cap: cap, dt: dt) {
                 legs[i].foot = toLocal(w)
             }
+        }
+    }
+
+    /// Tools only: the body going along the ground, every foot down, and
+    /// the feet sliding over the ground with it — gliding, as if on ice.
+    /// Each glide is tallied by what it was doing.
+    private func tallyGlide(world: [V2], dt: CGFloat) {
+        var slip: CGFloat = 0
+        if mode == .attached, activity != .roll, dt > 0, footWorld.count == world.count,
+           legs.allSatisfy({ $0.lift < 0.05 && !$0.swinging && $0.settle < 0 }) {
+            let body = legOverFeet.length
+            let down = legs.indices.filter { legs[$0].foot.distance(to: groundFoot(legs[$0].foot)) < 1.5 }
+            if body / dt > 20, down.count >= 6 {
+                let s = down.map { (world[$0] - footWorld[$0] - legSurfaceWorld).length }.reduce(0, +) / CGFloat(down.count) / config.scale
+                if s > body * 0.5 { slip = s }
+            }
+        }
+        if slip > 0 {
+            Spider.debugGlide["\(activity) \(legController)", default: 0] += slip
+            if glideRun == 0 { glideLabel = String(format: "%@ %@ %.2fs after landing, %.2fs in", "\(activity)", "\(legController)", t - landedAt, activityTime) }
+            glideRun += slip
+            glideFrames += 1
+        } else if glideRun > 0 {
+            Spider.debugGlideRuns.append((glideRun, glideFrames, glideLabel))
+            glideRun = 0
+            glideFrames = 0
         }
     }
 
@@ -8556,6 +9420,7 @@ final class Spider {
             surf.x *= m
             overFeet = deltaLocal - surf
         }
+        legSurfaceWorld = mode == .attached ? surfaceMotion : .zero
         surfaceMotion = .zero
         legOverFeet = overFeet
         legDTheta = dTheta
@@ -8625,6 +9490,27 @@ final class Spider {
             let rise = eased ? smoothstep(clamp((t - activityStarted) / Spider.poseEaseIn, 0, 1)) : 1
             let fall = eased && activityDur > Spider.poseEaseOut * 2 && activity != .sleep
                 ? smoothstep(clamp((activityDur - activityTime) / Spider.poseEaseOut, 0, 1)) : 1
+            // In the air in a hop, the feet are placed outright, off the
+            // ledge under them: a spring would have them either stay stuck
+            // to it or snap to the body's pace the moment they left it.
+            if mode == .attached, activity == .hop, case let (stage, v) = hopPhase(), stage == 2 {
+                // They peel off after the body has gone — from a standstill —
+                // come up under it, and are back down on the ledge, gently,
+                // just before it lands on them.
+                let peel = pow(v, 1.25)
+                let up = sin(peel * .pi) * sin(peel * .pi)
+                for i in legs.indices {
+                    let rest = SpiderRenderer.rig(i, profile: profile, look: look).foot
+                    let ground = groundFoot(rest, spread: true)
+                    let x = lerp(ground.x, legs[i].hip.x + (rest.x - legs[i].hip.x) * 0.7, up * 0.6)
+                    legs[i].foot = V2(x, ground.y + up * Spider.hopFeet)
+                    legs[i].footVel = .zero
+                    legs[i].lift = up
+                    legs[i].swinging = false
+                    legs[i].settle = -1
+                }
+                return
+            }
             for i in legs.indices {
                 let posed = poseTarget(i)
                 var target = groundPose(i, posed)
@@ -8888,6 +9774,7 @@ final class Spider {
     func debugEmote(_ name: String) {
         switch name {
         case "exclaim": setEmote(.exclaim, 0.7)
+        case "charge": setEmote(.charge, 1.6)
         case "hearts": setEmote(.hearts, 1.2)
         case "zzz": setEmote(.zzz, 3)
         default: break
@@ -8968,6 +9855,13 @@ final class Spider {
         case .clinging: hunt = ""
         }
         return (mode == .attached ? "\(m):\(activity) on \(anchor.loopID)" + (build != nil ? " [spinning]" : "") : m) + hunt
+    }
+
+    /// Tools only: which way the edge it is standing on faces — its
+    /// normal's y: 1 on top of something, 0 up a side, -1 underneath.
+    var debugFooting: CGFloat {
+        guard mode == .attached, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return 0 }
+        return loop.segs[anchor.segIdx].normal.y
     }
 
     /// Tools only: its footing goes from under it, as if the surface had
@@ -9055,6 +9949,32 @@ final class Spider {
     /// wide.
     /// How far a full crouch lets the body down, in sprite units.
     private static let crouchDrop: CGFloat = 7.5
+
+    /// A hop on the spot: long enough for all of it — the gather, the push,
+    /// the flight and the landing — with a beat left to stand after.
+    static let hopDur: CGFloat = 0.62
+    /// Up on its toes at the moment the feet leave, and how much higher the
+    /// top of the hop is, in sprite units.
+    private static let hopTakeoff: CGFloat = 2
+    private static let hopHeight: CGFloat = 7
+    /// How high the feet come up off the ledge at the top of it.
+    private static let hopFeet: CGFloat = 6
+
+    /// Where a hop is: gathering itself (0), pushing off (1), in the air
+    /// (2), coming down onto its legs (3), standing after (4) — and how far
+    /// through that stage. The push ends at the pace the flight begins at,
+    /// and the landing takes it on at the pace the flight ends at, so the
+    /// body carries its speed through each hand-off.
+    private func hopPhase() -> (stage: Int, v: CGFloat) {
+        let push: CGFloat = 0.08, flight: CGFloat = 0.22, land: CGFloat = 0.16
+        let gather = clamp(activityDur - push - flight - land, 0.1, 0.22)
+        var s = activityTime
+        for (i, d) in [gather, push, flight, land].enumerated() {
+            if s < d { return (i, s / d) }
+            s -= d
+        }
+        return (4, 1)
+    }
 
     private func bodySquash() -> (stretch: CGFloat, fatten: CGFloat) {
         // Only a touch of squash for a crouch — the lowering is the body

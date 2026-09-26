@@ -2734,6 +2734,10 @@ enum SpiderRenderer {
         let fade = t < 0.12 ? t / 0.12 : (t > 0.75 ? (1 - t) / 0.25 : 1)
         let alpha = clamp(fade, 0, 1)
         guard alpha > 0.01 else { return }
+        if pose.emote == .charge {
+            drawCharge(pose, alpha: alpha, in: ctx)
+            return
+        }
 
         ctx.saveGState()
         ctx.translateBy(x: 0, y: 30 * s)
@@ -2852,8 +2856,84 @@ enum SpiderRenderer {
                 ctx.addQuadCurve(to: CGPoint(x: x + 6.5, y: y + 6), control: CGPoint(x: x + 5.5, y: y + 9.5))
                 ctx.strokePath()
             }
-        case .none:
+        case .none, .charge:
             break
+        }
+        ctx.restoreGState()
+    }
+
+    /// The charger has gone in: lightning crackles all round it — jagged
+    /// arcs flickering out from its body, a fresh set every few frames —
+    /// with a bolt either side of its head, so it is plain what set it off.
+    private static func drawCharge(_ pose: SpiderPose, alpha: CGFloat, in ctx: CGContext) {
+        let clock = pose.emoteClock
+        let pop = easeOutBack(min(pose.emoteT * 5, 1))
+        func rand(_ n: Int) -> CGFloat {
+            let x = sin(CGFloat(n) * 12.9898) * 43758.5453
+            return x - x.rounded(.down)
+        }
+        ctx.saveGState()
+        ctx.scaleBy(x: pose.scale, y: pose.scale)
+        ctx.setLineCap(.round)
+        ctx.setLineJoin(.round)
+        let rim = CGColor(red: 0.298, green: 0.180, blue: 0.086, alpha: Double(alpha * 0.55))
+        let glow = CGColor(red: 1, green: 0.86, blue: 0.2, alpha: Double(alpha))
+        let core = CGColor(red: 1, green: 1, blue: 0.9, alpha: Double(alpha))
+
+        // The arcs: each one on for most flickers and off for some, from
+        // the edge of it (a squat oval: it is wider than it is tall) out to
+        // a ragged end, with a fork off the middle.
+        let flick = Int(clock / 0.07)
+        let arcs = CGMutablePath()
+        func at(_ ang: CGFloat, _ r: CGFloat, _ jag: CGFloat) -> CGPoint {
+            let d = CGPoint(x: cos(ang), y: sin(ang))
+            return CGPoint(x: d.x * r - d.y * jag, y: 3 + (d.y * r + d.x * jag) * 0.8)
+        }
+        for i in 0..<6 {
+            let seed = flick * 17 + i * 131
+            guard rand(seed) < 0.7 else { continue }
+            let ang = CGFloat(i) * .pi / 3 + (rand(seed + 1) - 0.5) * 0.8
+            let r0: CGFloat = 30, r1 = r0 + (12 + rand(seed + 2) * 9) * pop
+            let n = 5
+            var mid = CGPoint.zero
+            for k in 0...n {
+                let f = CGFloat(k) / CGFloat(n)
+                let p = at(ang, lerp(r0, r1, f), k == 0 ? 0 : (rand(seed + 3 + k) - 0.5) * 9)
+                if k == 0 { arcs.move(to: p) } else { arcs.addLine(to: p) }
+                if k == 2 { mid = p }
+            }
+            let side: CGFloat = rand(seed + 11) < 0.5 ? -1 : 1
+            arcs.move(to: mid)
+            arcs.addLine(to: CGPoint(x: mid.x + cos(ang + side * 0.9) * 5, y: mid.y + sin(ang + side * 0.9) * 5))
+            arcs.addLine(to: CGPoint(x: mid.x + cos(ang + side * 0.5) * 9, y: mid.y + sin(ang + side * 0.5) * 9))
+        }
+        for (colour, width) in [(rim, 3.2), (glow, 2.0), (core, 0.7)] as [(CGColor, CGFloat)] {
+            ctx.addPath(arcs)
+            ctx.setStrokeColor(colour)
+            ctx.setLineWidth(width)
+            ctx.strokePath()
+        }
+
+        // Two little bolts over its head, jittering with the charge.
+        let rimSolid = CGColor(red: 0.357, green: 0.227, blue: 0.114, alpha: Double(alpha))
+        for side in [CGFloat(-1), 1] {
+            ctx.saveGState()
+            let shake = (rand(flick * 5 + (side > 0 ? 1 : 2)) - 0.5) * 2
+            ctx.translateBy(x: side * 16 + shake, y: 38 + pose.emoteT * 5)
+            ctx.rotate(by: -side * 0.3)
+            ctx.scaleBy(x: pop * 1.9, y: pop * 1.9)
+            let bolt = CGMutablePath()
+            bolt.addLines(between: [CGPoint(x: 1.6, y: 6), CGPoint(x: -2.6, y: -0.4), CGPoint(x: 0, y: -0.4),
+                                    CGPoint(x: -1.6, y: -6), CGPoint(x: 2.8, y: 1), CGPoint(x: 0.2, y: 1)])
+            bolt.closeSubpath()
+            ctx.addPath(bolt)
+            ctx.setFillColor(glow)
+            ctx.fillPath()
+            ctx.addPath(bolt)
+            ctx.setStrokeColor(rimSolid)
+            ctx.setLineWidth(0.9)
+            ctx.strokePath()
+            ctx.restoreGState()
         }
         ctx.restoreGState()
     }

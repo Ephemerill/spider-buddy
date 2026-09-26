@@ -711,15 +711,17 @@ final class HandCatchView: NSView {
     var onDown: ((NSEvent) -> Void)?
     var onDrag: ((NSEvent) -> Void)?
     var onUp: ((NSEvent) -> Void)?
+    var onRight: (() -> Void)?
     override var isFlipped: Bool { false }
     override func hitTest(_ point: NSPoint) -> NSView? { frame.contains(point) ? self : nil }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseDown(with event: NSEvent) { onDown?(event) }
     override func mouseDragged(with event: NSEvent) { onDrag?(event) }
     override func mouseUp(with event: NSEvent) { onUp?(event) }
-    override func rightMouseDown(with event: NSEvent) {
-        NotificationCenter.default.post(name: .spiderContextMenu, object: event)
-    }
+    override func rightMouseDown(with event: NSEvent) { onRight?() }
+    // Nor does anything else under it get the pointer's scrolling while it
+    // plays.
+    override func scrollWheel(with event: NSEvent) {}
     override func draw(_ dirty: NSRect) {
         // Not quite clear: a window shows through where it is fully clear.
         NSColor(white: 0, alpha: 0.004).setFill()

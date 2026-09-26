@@ -37,6 +37,8 @@ base("startled") { $0.startled = 1.0; $0.emote = .surprise; $0.emoteT = 0.4 }
 base("asleep") { $0.blink = 1; $0.sleep = 1; $0.emote = .zzz; $0.emoteT = 0.4
     $0.legs = restLegs { _, h, r in h + (r - h) * 0.72 } }
 base("petted") { $0.happy = 1; $0.emote = .hearts; $0.emoteT = 0.45 }
+base("charger in") { $0.happy = 1; $0.emote = .charge; $0.emoteT = 0.35; $0.emoteClock = 0.5 }
+base("charger, a flicker on") { $0.happy = 1; $0.emote = .charge; $0.emoteT = 0.5; $0.emoteClock = 0.9; $0.heading = .pi / 2 }
 base("mid-jump") { $0.stretch = 1.15; $0.fatten = 0.88; $0.grounded = 0; $0.heading = 0.5
     $0.legs = restLegs { i, h, r in h + (r - h) * 1.15 + V2(i % 4 < 2 ? 5 : -5, 6) } }
 base("landing squash") { $0.stretch = 1.22; $0.fatten = 0.72 }
