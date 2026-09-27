@@ -1517,6 +1517,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var name: String { spider.name.isEmpty ? "Your spider" : spider.name }
         let home = PanelPage(title: "Spider", symbol: "house", sections: [
             PanelSection(title: nil, rows: [
+                // Only there while an update found on the daily check waits.
+                .buttons([
+                    PanelButton(title: { [unowned self] in "Update to \(updater.waiting ?? "")" }, symbol: { "arrow.down.circle" },
+                                shown: { [unowned self] in updater.waiting != nil },
+                                selected: { true }) { [unowned self] in checkForUpdates() },
+                ]),
                 .buttons([
                     PanelButton(title: { [unowned self] in hidden ? "Show \(name)" : "Hide \(name)" },
                                 symbol: { [unowned self] in hidden ? "eye" : "eye.slash" }) { [unowned self] in toggleHidden() },
@@ -1718,11 +1724,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             PanelSection(title: nil, rows: [
                 .toggle("Launch at Login", help: "Opens by itself when you log in.",
                         get: { [unowned self] in loginEnabled }, set: { [unowned self] _ in toggleLogin() }),
+            ]),
+            PanelSection(title: "Updates", rows: [
+                .toggle("Check Automatically", help: "Looks for a new version once a day.",
+                        get: { [unowned self] in updater.checksAutomatically },
+                        set: { [unowned self] on in updater.checksAutomatically = on }),
+                .toggle("Install Automatically", help: "Downloads new versions quietly and puts them in the next time the app quits.",
+                        info: nil,
+                        get: { [unowned self] in updater.installsAutomatically },
+                        set: { [unowned self] on in updater.installsAutomatically = on },
+                        enabled: { [unowned self] in updater.checksAutomatically }),
                 .buttons([
-                    PanelButton(title: { [unowned self] in updater.busy ? "Checking…" : "Check for Updates" }, symbol: { "arrow.down.circle" },
-                                enabled: { [unowned self] in !updater.busy }) { [unowned self] in checkForUpdates() },
+                    PanelButton(title: { [unowned self] in updater.waiting.map { "Update to \($0)" } ?? (updater.canCheck ? "Check for Updates" : "Checking…") },
+                                symbol: { "arrow.down.circle" },
+                                enabled: { [unowned self] in updater.canCheck },
+                                selected: { [unowned self] in updater.waiting != nil }) { [unowned self] in checkForUpdates() },
                 ]),
-                .status { "Version \(Updater.currentVersion)" },
+                .status { [unowned self] in
+                    if let error = updater.startError {
+                        return "Version \(Updater.currentVersion). Updates are off: \(error.localizedDescription)"
+                    }
+                    return updater.waiting.map { "Version \(Updater.currentVersion) — \($0) is ready to install." }
+                        ?? "Version \(Updater.currentVersion)"
+                },
             ]),
             PanelSection(title: "Start Over", rows: [
                 .note("Lost it, or something looks stuck? This starts the app afresh. Its looks and settings are kept."),
@@ -3099,7 +3123,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func checkForUpdates() {
         saveSettings()
-        updater.checkAndInstall()
+        updater.check()
     }
 
     // MARK: Launch at login

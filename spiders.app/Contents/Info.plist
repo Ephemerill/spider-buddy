@@ -7,12 +7,18 @@
   <key>CFBundleIdentifier</key><string>com.gabriel.desktopspider</string>
   <key>CFBundleExecutable</key><string>DesktopSpider</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.6.0</string>
-  <key>CFBundleVersion</key><string>0.6.0</string>
+  <key>CFBundleShortVersionString</key><string>0.7.0</string>
+  <key>CFBundleVersion</key><string>0.7.0</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
   <key>NSHumanReadableCopyright</key><string>A friendly jumping spider for your desktop.</string>
+  <key>SUFeedURL</key><string>https://ephemerill.github.io/spider-buddy/appcast.xml</string>
+  <key>SUPublicEDKey</key><string>XOyzaJD04viRmPjvWSW7qP2/DWJhofgLGDLXi0+Bcv4=</string>
+  <key>SURequireSignedFeed</key><true/>
+  <key>SUVerifyUpdateBeforeExtraction</key><true/>
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUScheduledCheckInterval</key><integer>86400</integer>
 </dict>
 </plist>

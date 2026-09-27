@@ -25,17 +25,29 @@ if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Develope
   export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 fi
 
+# Updates come through Sparkle (fetched into build/Sparkle the first time).
+# The feed is served by GitHub Pages from the repo's gh-pages branch, which
+# tools/release.sh updates with each release. It and every update are signed
+# with the EdDSA key whose public half is below; the private half lives in
+# the release machine's keychain. Every shipped copy reads this address, so
+# it must never move.
+SPARKLE="$(tools/sparkle.sh)"
+FEED_URL="https://ephemerill.github.io/spider-buddy/appcast.xml"
+SPARKLE_PUBLIC_KEY="XOyzaJD04viRmPjvWSW7qP2/DWJhofgLGDLXi0+Bcv4="
+
 echo "==> Compiling $VERSION ($CONF)  [$(xcrun swiftc --version | head -1)]"
 mkdir -p build
 # shellcheck disable=SC2086
 xcrun swiftc $FLAGS -swift-version 5 -target "$(uname -m)-apple-macos13.0" \
   -framework AppKit -framework QuartzCore -framework ServiceManagement -framework IOKit \
+  -F "$SPARKLE" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
   -o "build/$BIN" Sources/DesktopSpider/*.swift
 
 echo "==> Assembling $APP"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp "build/$BIN" "$APP/Contents/MacOS/$BIN"
+ditto "$SPARKLE/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -54,6 +66,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
   <key>NSHumanReadableCopyright</key><string>A friendly jumping spider for your desktop.</string>
+  <key>SUFeedURL</key><string>$FEED_URL</string>
+  <key>SUPublicEDKey</key><string>$SPARKLE_PUBLIC_KEY</string>
+  <key>SURequireSignedFeed</key><true/>
+  <key>SUVerifyUpdateBeforeExtraction</key><true/>
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUScheduledCheckInterval</key><integer>86400</integer>
 </dict>
 </plist>
 PLIST

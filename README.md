@@ -4,7 +4,8 @@ A friendly jumping spider that lives on your Mac's screen. It crawls the edges
 of your display, leaps between your open windows, walks along the Dock, rappels
 from the menu bar on a silk thread, and can be picked up and thrown around.
 
-Native AppKit + Core Graphics. No dependencies, no Xcode project, ~2 MB binary.
+Native AppKit + Core Graphics. No Xcode project, ~2 MB binary; the one dependency is
+[Sparkle](https://sparkle-project.org), for updates.
 
 ## Install
 
@@ -13,10 +14,17 @@ open it and drag Spider to Applications. The app is ad-hoc signed, so the
 first launch needs the usual step for an unsigned app: right-click Spider →
 Open, or allow it under System Settings → Privacy & Security.
 
-That is the only time. **Check for Updates…** in the spider's menu asks GitHub
-for the newest release and, if there is one, downloads the `.dmg`, swaps the
-new app in over the running one and relaunches — without a quarantine flag,
-so Gatekeeper does not ask again. Settings and the design are kept.
+That is the only time. After that it keeps itself up to date with
+[Sparkle](https://sparkle-project.org): it looks for a new version once a day,
+and **Check for Updates** on the panel's App page looks straight away. The
+update window shows what's new; installing replaces the app in place and
+relaunches it, and Sparkle takes the download out of quarantine so Gatekeeper
+does not ask again. **Install Automatically** downloads new versions quietly
+and puts them in the next time the app quits. Settings and the design are
+kept.
+
+Copies older than 0.8.0 have their own updater, which fetches the release's
+`.dmg`; the first update they install brings Sparkle with it.
 
 ## Build & run
 
@@ -734,7 +742,7 @@ The design is saved as JSON in the app's defaults.
 | Click to Pick Up | turn off to make it fully click-through |
 | Pause | freeze it |
 | Launch at Login | |
-| Check for Updates… | asks GitHub for a newer release; installs it over this copy and relaunches (see Install) |
+| Check for Updates | looks for a newer version now and offers it with its release notes (see Install). The App page also has Check Automatically (daily) and Install Automatically (on quit); an update the daily check finds waits as an **Update to …** button at the top of the panel rather than popping up |
 | Bring *name* to the Middle | lost it? puts it in the air in the middle of the main screen, letting go of everything (line, hammock, pointer, meal), and it falls from there onto whatever is below |
 | Reset Everything | starts over: the app relaunches itself, rebuilding every window and re-reading the desktop. The design, settings and hammock are kept — they are saved |
 
@@ -773,19 +781,43 @@ DisplayServices.
 | `Studio.swift` | the studio window, option grids, thumbnails and the terrarium preview |
 | `OverlayWindow.swift` | transparent always-on-top panel, silk layers, input |
 | `AppDelegate.swift` | menu bar item, display link, settings |
-| `Updater.swift` | Check for Updates: GitHub Releases lookup, `.dmg` download, swap-in, relaunch |
+| `Updater.swift` | updates, through Sparkle: its settings, and holding an update found in the background for the panel |
 
 ### Releasing
 
 ```bash
-echo 0.6.0 > VERSION          # bump; the tag will be v0.6.0
-tools/release.sh --publish    # build, package build/SpiderBuddy-0.6.0.dmg, create the GitHub release
+echo 0.8.0 > VERSION                           # bump; the tag will be v0.8.0
+NOTES=notes.md tools/release.sh --publish      # build, package, sign, and create the GitHub release
+tools/release.sh --appcast                     # after editing a release's notes on GitHub
 ```
 
-`build.sh` stamps `VERSION` into the app's `Info.plist`; the updater compares
-that against the newest release's tag, so the tag must be `v` + `VERSION`.
+`build.sh` stamps `VERSION` into the app's `Info.plist` and bakes in the
+Sparkle feed, `https://ephemerill.github.io/spider-buddy/appcast.xml` — GitHub
+Pages serving the repo's `gh-pages` branch, which holds nothing but that file.
+Every shipped copy reads that address, so it must never move. `tools/release.sh`
+writes the appcast (`build/appcast.xml`), creates the release with the `.dmg`,
+and then commits the appcast to `gh-pages` through the GitHub API (your local
+checkout is not touched); installed copies see it within about ten minutes.
+`NOTES` (markdown) becomes the "What's new" in the update window and at the top
+of the release; everything after the `<!-- install -->` marker in the notes is
+for people downloading by hand and is left out of the window. Edited the notes
+on GitHub afterwards? `tools/release.sh --appcast` rewrites the appcast from
+them.
+
+The `.dmg` and the appcast are both signed with an EdDSA key; the app checks
+both against `SUPublicEDKey` (in `build.sh`) before installing anything. The
+private key lives in the release Mac's login keychain (made once with
+`build/Sparkle/bin/generate_keys`; `SPARKLE_KEY_FILE=<file>` uses an exported
+copy). **Back it up** — `build/Sparkle/bin/generate_keys -x sparkle-key` — and
+keep it out of the repo: without it, installed copies can never be updated
+again.
+
+`tools/sparkle.sh` fetches the pinned Sparkle release (framework and its
+`sign_update`/`generate_keys` tools) into `build/Sparkle`, checksum-checked;
+`build.sh` calls it and embeds the framework in `Contents/Frameworks`.
 Publishing needs the `gh` CLI (`brew install gh`), logged in or with
-`GH_TOKEN` set.
+`GH_TOKEN` set. `SPIDER_UPDATE_TEST=1` makes the app run the background check
+straight away, for trying a feed out.
 
 ### Tools
 
