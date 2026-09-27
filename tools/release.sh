@@ -28,6 +28,16 @@
 # the "<!-- install -->" marker; the install instructions after it are for
 # people downloading by hand. Versions before 0.8.0 update themselves by
 # fetching the release's .dmg, so there must only be one .dmg attached.
+#
+# The app and the .dmg are signed with the "Developer ID Application"
+# certificate in this Mac's keychain (SIGN_IDENTITY=<name> picks another),
+# notarized by Apple with the notarytool credentials stored under the
+# keychain profile "spider-notary" (NOTARY_PROFILE=<name> for another), and
+# stapled, so they open without Gatekeeper warnings, even offline. Made once with:
+#   xcrun notarytool store-credentials spider-notary \
+#     --apple-id <Apple ID> --team-id 86L5N846P4
+# (it asks for an app-specific password from account.apple.com).
+# UNSIGNED=1 skips all of that and signs ad hoc, as releases before 0.9 were.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -47,8 +57,31 @@ SPARKLE_BIN="$(tools/sparkle.sh)/bin"
 KEY_ARGS=()
 [ -n "${SPARKLE_KEY_FILE:-}" ] && KEY_ARGS=(--ed-key-file "$SPARKLE_KEY_FILE")
 
+NOTARY_PROFILE="${NOTARY_PROFILE:-spider-notary}"
+SIGNED=1
+[ "${UNSIGNED:-}" = "1" ] && SIGNED=""
+
 need_gh() {
   command -v gh >/dev/null || { echo "gh is not installed: brew install gh"; exit 1; }
+}
+
+# Sends $1 (a .zip or .dmg) to Apple's notary service and waits for its
+# verdict; if it is not accepted, prints Apple's log of what was wrong.
+notarize() {
+  local file="$1" out id status
+  echo "==> Notarizing $(basename "$file") (usually a few minutes)"
+  out="$(mktemp)"
+  xcrun notarytool submit "$file" --keychain-profile "$NOTARY_PROFILE" \
+    --wait --output-format json > "$out" || true
+  id="$(plutil -extract id raw -o - "$out" 2>/dev/null || true)"
+  status="$(plutil -extract status raw -o - "$out" 2>/dev/null || true)"
+  rm -f "$out"
+  if [ "$status" != "Accepted" ]; then
+    echo "    Notarization ${status:-failed} ${id:+(submission $id)}"
+    [ -n "$id" ] && xcrun notarytool log "$id" --keychain-profile "$NOTARY_PROFILE"
+    exit 1
+  fi
+  echo "    Accepted ($id)"
 }
 
 # The appcast for this version's .dmg, with $1 (markdown) as its notes.
@@ -116,7 +149,29 @@ if [ "$MODE" = "--appcast" ]; then
   exit 0
 fi
 
+if [ -n "$SIGNED" ]; then
+  if [ -z "${SIGN_IDENTITY:-}" ]; then
+    SIGN_IDENTITY="$(security find-identity -v -p codesigning |
+      sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -1)"
+  fi
+  [ -n "$SIGN_IDENTITY" ] || {
+    echo "No \"Developer ID Application\" certificate in the keychain (UNSIGNED=1 releases without one)"; exit 1; }
+  xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 || {
+    echo "No notarytool credentials under \"$NOTARY_PROFILE\"; see the top of this script"; exit 1; }
+  export SIGN_IDENTITY
+fi
+
 APP_NAME="$NAME" ./build.sh release
+
+if [ -n "$SIGNED" ]; then
+  # The app is notarized and stapled on its own first, so the copy people
+  # drag out of the .dmg (and the one Sparkle installs) carries its ticket.
+  ZIP="build/SpiderBuddy-$VERSION-notarize.zip"
+  ditto -c -k --keepParent "$APP" "$ZIP"
+  notarize "$ZIP"
+  rm -f "$ZIP"
+  xcrun stapler staple -q "$APP"
+fi
 
 echo "==> Packaging $DMG"
 rm -rf "$STAGE" "$DMG"
@@ -125,6 +180,15 @@ ditto "$APP" "$STAGE/$APP"
 ln -s /Applications "$STAGE/Applications"
 hdiutil create -volname "$VOL" -srcfolder "$STAGE" -ov -format UDZO -quiet "$DMG"
 rm -rf "$STAGE"
+
+if [ -n "$SIGNED" ]; then
+  codesign --force --sign "$SIGN_IDENTITY" --timestamp "$DMG"
+  notarize "$DMG"
+  xcrun stapler staple -q "$DMG"
+  spctl --assess --type open --context context:primary-signature "$DMG" || {
+    echo "Gatekeeper does not accept $DMG"; exit 1; }
+  spctl --assess --type execute "$APP" || { echo "Gatekeeper does not accept $APP"; exit 1; }
+fi
 echo "    $(du -h "$DMG" | cut -f1)  $DMG"
 
 NOTES_TEXT=""
@@ -140,10 +204,15 @@ fi
 
 need_gh
 
+if [ -n "$SIGNED" ]; then
+  FIRST_LAUNCH="It is signed and notarized by Apple, so it opens like any other app."
+else
+  FIRST_LAUNCH="The first launch needs the usual step for an unsigned app: right-click Spider Buddy → Open, or allow it under System Settings → Privacy & Security."
+fi
 INSTALL="$MARKER
 Download the .dmg, open it, and drag Spider Buddy to Applications.
 
-The first launch needs the usual step for an unsigned app: right-click Spider Buddy → Open, or allow it under System Settings → Privacy & Security. After that it keeps itself up to date: it looks for new versions once a day, and **Check for Updates** in the panel's App page looks straight away."
+$FIRST_LAUNCH After that it keeps itself up to date: it looks for new versions once a day, and **Check for Updates** in the panel's App page looks straight away."
 
 if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
   echo "==> Release $TAG exists; replacing its .dmg"

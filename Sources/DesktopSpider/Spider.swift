@@ -132,6 +132,14 @@ private struct Leg {
     /// Where in its window this swing began, so a step that starts a little
     /// late still runs from the ground to the end of the window.
     var swingPh0: CGFloat = 0
+    /// A step handed to this leg's mirror twin as the body passed the front
+    /// view mid-walk keeps its own timing: how far this slot's gait window
+    /// is shifted for it, until it lands. 0 otherwise.
+    var swingShift: CGFloat = 0
+    /// Which way along the sprite's x the body was going as this step set
+    /// off: a foot already in the air lands where it was aimed, even if the
+    /// body turns back under it.
+    var swingDir: CGFloat = 1
     /// Where a settling step is going: fixed when it begins, so a target
     /// that flickers between two edges near a corner cannot drag the foot.
     var settleTo: V2 = .zero
@@ -2197,7 +2205,7 @@ final class Spider {
         if off < 40 * sc || (abs(along) > off * 2 && abs(along) < 260 * sc) {
             // Near this edge: run for it.
             let dir: CGFloat = along >= 0 ? 1 : -1
-            if dir != walkDir { walkDir = dir; facing = dir }
+            setOff(dir)
             beginActivity(.scurry, dur: clamp(abs(along) / max(config.walkSpeed * 2.6, 1), 0.3, 2.0))
             return
         }
@@ -2213,9 +2221,19 @@ final class Spider {
             startJump(to: b.point)
         } else {
             let dir: CGFloat = along >= 0 ? 1 : -1
-            if dir != walkDir { walkDir = dir; facing = dir }
+            setOff(dir)
             beginActivity(.scurry, dur: randRange(0.5, 1.2))
         }
+    }
+
+    /// Off along the ledge the way `dir` says. Going back the way it came
+    /// starts from a standstill, its feet coming down where they are: it
+    /// cannot turn round at a run in the space of a frame.
+    private func setOff(_ dir: CGFloat) {
+        guard dir != walkDir else { return }
+        walkDir = dir
+        facing = dir
+        speed = 0
     }
 
     // MARK: Friends
@@ -2292,7 +2310,7 @@ final class Spider {
         let seg = loop.segs[anchor.segIdx]
         let along = d.dot(seg.dir)
         let dir: CGFloat = abs(along) < 4 ? (chance(0.5) ? 1 : -1) : (along >= 0 ? 1 : -1)
-        if dir != walkDir { walkDir = dir; facing = dir }
+        setOff(dir)
         beginActivity(.scurry, dur: randRange(0.5, 1.1))
     }
 
@@ -5275,6 +5293,9 @@ final class Spider {
             // that way when the pointer leaves.
             if mode == .attached, activity != .turn {
                 facing = yaw >= 0 ? 1 : -1
+                // On the move, going the other way starts from a stop — its
+                // feet come down where they are — not a reversal in a frame.
+                if walkDir != facing { speed = 0 }
                 walkDir = facing
             }
             for i in legs.indices {
@@ -5298,6 +5319,17 @@ final class Spider {
                 (a.settleTo, b.settleTo) = (b.settleTo, a.settleTo)
                 (a.skipSwing, b.skipSwing) = (b.skipSwing, a.skipSwing)
                 (a.swingPh0, b.swingPh0) = (b.swingPh0, a.swingPh0)
+                (a.swingShift, b.swingShift) = (b.swingShift, a.swingShift)
+                (a.swingDir, b.swingDir) = (-b.swingDir, -a.swingDir)
+                // Walking, a step in flight carries on as it was going, on
+                // its own clock: the twin slot's place in the gait is a few
+                // hundredths of a cycle off, which would jerk it on or cut it
+                // short in mid-air.
+                if mode == .attached, legController == .gait {
+                    let d = a.phase - b.phase
+                    if a.swinging { a.swingPh0 += d; a.swingShift += d }
+                    if b.swinging { b.swingPh0 -= d; b.swingShift -= d }
+                }
                 legs[i] = a
                 legs[j] = b
                 if footWorld.count == legs.count, footWorldVel.count == legs.count {
@@ -5319,6 +5351,8 @@ final class Spider {
                     kneeShapeVel[i] = V2(vj.x, -vj.y)
                     kneeShapeVel[j] = V2(vi.x, -vi.y)
                 }
+                kneeOver.swapAt(i, j)
+                kneeOverAim.swapAt(i, j)
                 // (On a line likewise: the side of its leg a knee is on.)
                 if lineSide.count == legs.count {
                     (lineSide[i], lineSide[j]) = (-lineSide[j], -lineSide[i])
@@ -5366,11 +5400,18 @@ final class Spider {
     /// `spread`: for where a foot is going to stand (a step, a stance, a
     /// pose) rather than one already down: see `spreadOnEdge`.
     private func groundFoot(_ local: V2, spread: Bool = false) -> V2 {
+        groundSpot(local, spread: spread).point
+    }
+
+    /// `groundFoot`, and whether there is really something there to stand
+    /// on: false when the only edge near enough is hidden behind a window in
+    /// front of it.
+    private func groundSpot(_ local: V2, spread: Bool = false) -> (point: V2, seen: Bool) {
         if mode == .nesting, let h = hammock {
             // On the silk: the sling's centre line is the ground.
-            return toLocal(h.nearest(to: toWorld(local)))
+            return (toLocal(h.nearest(to: toWorld(local))), true)
         }
-        guard mode == .attached, let loop = map.loop(anchor.loopID), !loop.edge.isEmpty else { return local }
+        guard mode == .attached, let loop = map.loop(anchor.loopID), !loop.edge.isEmpty else { return (local, true) }
         let want = toWorld(local)
         // How far from where a foot would naturally be another surface can
         // take it: a step across to the window alongside, not a long
@@ -5410,7 +5451,7 @@ final class Spider {
                 if cost < bestCost, cost < reach { best = o.point; bestCost = cost }
             }
         }
-        return toLocal(best)
+        return (toLocal(best), bestCost < .greatestFiniteMagnitude)
     }
 
     /// Where a foot is to stand, by how far along the body it is: that far
@@ -5508,7 +5549,100 @@ final class Spider {
     /// the pose raises or tucks is left as it is, relative to the body.
     private func groundPose(_ i: Int, _ target: V2) -> V2 {
         guard mode == .attached, target.y <= legs[i].rest.y + 1.5 else { return target }
-        return groundFoot(target, spread: true)
+        return groundFoot(target, spread: true, leg: i)
+    }
+
+    /// `groundFoot` for leg `i`, kept to where that leg can reach. On a
+    /// straight edge the ground is right where the pose puts the foot and
+    /// this is `groundFoot` exactly. Round a corner, at the lip of a step,
+    /// over a crack or with a second surface close by, the nearest ground
+    /// can be a long way off — the far side of a gap, the top of the next
+    /// block, an edge beyond the one it stands on — and a leg sent there
+    /// is drawn out to two or three times its length. There, it goes to
+    /// the nearest bit of ground it can reach instead: never further from
+    /// its hip than the pose itself asked for (with a little slack for the
+    /// body riding up and down on its legs), or than the leg is long.
+    private func groundFoot(_ local: V2, spread: Bool = false, leg i: Int) -> V2 {
+        reachableSpot(local, spread: spread, leg: i).point
+    }
+
+    /// `groundFoot(_:spread:leg:)`, and whether the spot is on the ground:
+    /// false when there is none in reach and the leg is only reaching out
+    /// toward it.
+    private func reachableSpot(_ local: V2, spread: Bool = false, leg i: Int) -> (point: V2, onGround: Bool) {
+        let (p, seen) = groundSpot(local, spread: spread)
+        guard mode == .attached else { return (p, true) }
+        let hip = SpiderRenderer.rig(i, profile: SpiderRenderer.profileAmount(yaw: yaw), look: look).hip
+        let most = max(local.distance(to: hip) + Spider.reachSlack, legLength(i) * Spider.reachShare)
+        // (Likewise a spot on an edge hidden behind a window in front: there
+        // is nothing there it could be seen to stand on.)
+        guard p.distance(to: hip) > most || !seen else { return (p, true) }
+        if let q = nearestReachable(local, hip: hip, within: most) { return (q, true) }
+        // No ground in reach at all — the body out over a gap it is
+        // stepping across, or not yet down onto the ledge — and the leg
+        // reaches out toward the nearest, as far as it goes.
+        let d = p.distance(to: hip)
+        return d <= most ? (p, true) : (hip + (p - hip) * (most / d), false)
+    }
+
+    /// Past what the pose asks for, how much further a foot may be put on
+    /// the ground — what the body's bob and lift can add — and how much of
+    /// a leg's full length it may reach out to when the pose is closer in.
+    private static let reachSlack: CGFloat = 6
+    private static let reachShare: CGFloat = 0.94
+    /// How far behind its hip — or behind where its stride takes it, if
+    /// that is further — a front foot can be left, walking, before it
+    /// steps forward out of turn. (An ordinary stride trails it about half
+    /// this.)
+    private static let strandedBehind: CGFloat = 18
+
+    /// Thigh and shin together, in sprite units, as the leg is drawn now.
+    private func legLength(_ i: Int) -> CGFloat {
+        let r = SpiderRenderer.rig(i, profile: SpiderRenderer.profileAmount(yaw: yaw), look: look)
+        return (r.knee - r.hip).length + (r.foot - r.knee).length
+    }
+
+    /// The spot on the ground nearest `want` that is within `most` of the
+    /// hip (all sprite units): on the edge it stands on, or on another one
+    /// close by — on a window's rounded corner where there is one, and
+    /// never somewhere hidden behind a window in front. Nil if there is no
+    /// ground in reach at all.
+    private func nearestReachable(_ want: V2, hip: V2, within most: CGFloat) -> V2? {
+        guard let own = map.loop(anchor.loopID) else { return nil }
+        let s = config.scale
+        let wantW = toWorld(want), hipW = toWorld(hip), r = most * s
+        var best: V2?
+        var bestCost = CGFloat.greatestFiniteMagnitude
+        for loop in [own] + map.loops.filter({ $0.id != own.id }) {
+            if loop.id != own.id, loop.kind == .windowEdge, !loop.rect.insetBy(dx: -r, dy: -r).contains(hipW.point) { continue }
+            // A step across to another surface costs a little: its own
+            // edge is preferred when the two are much of a muchness.
+            let penalty: CGFloat = loop.id == own.id ? 0 : 3 * s
+            for e in loop.edge where e.len > 0.01 {
+                // The stretch of this edge inside the reach.
+                let f = e.a - hipW
+                let bq = f.dot(e.dir), c = f.lengthSquared - r * r
+                let disc = bq * bq - c
+                guard disc > 0 else { continue }
+                let root = disc.squareRoot()
+                let t0 = max(-bq - root, 0), t1 = min(-bq + root, e.len)
+                guard t1 > t0 else { continue }
+                // Its nearest point to where the pose wanted the foot, and a
+                // few more along it, each put on a rounded corner if near one.
+                let tn = clamp((wantW - e.a).dot(e.dir), t0, t1)
+                for k in 0...8 {
+                    let tk = k == 8 ? tn : lerp(t0, t1, CGFloat(k) / 7)
+                    var q = e.point(at: tk)
+                    var normal = e.normal
+                    if let c = loop.onRoundedCorner(q) { q = c.point; normal = c.normal }
+                    guard q.distance(to: hipW) <= r * 1.02 else { continue }
+                    if loop.kind == .windowEdge, !map.isVisible(q + normal * 3, depth: loop.depth) { continue }
+                    let cost = q.distance(to: wantW) + penalty
+                    if cost < bestCost { best = q; bestCost = cost }
+                }
+            }
+        }
+        return best.map { toLocal($0) }
     }
 
     private func trackCursorMotion(dt: CGFloat) {
@@ -7464,10 +7598,18 @@ final class Spider {
             legs[i].footVel = .zero
             legs[i].swinging = false
             legs[i].lift = 0
-            let spot = groundFoot(legs[i].rest, spread: true)
+            // (Nothing in reach yet — caught a way out from it — and the
+            // step is to the ground itself, reached for as the body comes
+            // down onto it: see `settleFoot`.)
+            let near = reachableSpot(legs[i].rest, spread: true, leg: i)
+            let spot = near.onGround ? near.point : groundFoot(legs[i].rest, spread: true)
             let foot = toWorld(legs[i].foot)
             let through = map.snapToEdge(foot, loopID: a.loopID).map { (foot - $0).dot(normal) < 1 } ?? false
-            if through {
+            // (Only if it can reach its spot from here: one it cannot is
+            // reached for as the body comes down — see `settleFoot`.)
+            let hip = SpiderRenderer.rig(i, profile: SpiderRenderer.profileAmount(yaw: yaw), look: look).hip
+            let reaches = spot.distance(to: hip) <= legLength(i) * Spider.reachShare + 0.5
+            if through, reaches || climbedUp {
                 // (Climbing up onto it, a foot that has hold of it already
                 // keeps that hold, and steps to its spot from there.)
                 if climbedUp, let touch = map.snapToEdge(foot, loopID: a.loopID) {
@@ -10060,6 +10202,16 @@ final class Spider {
         let u = clamp(leg.settle, 0, 1)
         leg.lift = sin(u * .pi) * (quick ? 0.3 : 0.7)
         leg.foot = stepPath(i, from: leg.swingFrom, to: leg.settleTo, u: u) + V2(0, leg.lift * 3.5)
+        // A spot still out of the leg's reach — the body not yet down onto
+        // the ledge out of a landing, the ground a long way round a corner
+        // — is reached for, the leg out toward it, and stood on once the
+        // body has brought it near; the leg is never drawn out past its
+        // length to get there.
+        let hip = SpiderRenderer.rig(i, profile: SpiderRenderer.profileAmount(yaw: yaw), look: look).hip
+        let most = max(legLength(i) * Spider.reachShare, leg.swingFrom.distance(to: hip))
+        if leg.settleTo.distance(to: hip) > most, leg.foot.distance(to: hip) > most {
+            leg.foot = hip + (leg.foot - hip).normalized * most
+        }
         if u >= 1 { leg.settle = -1; leg.lift = 0 }
         return true
     }
@@ -10096,7 +10248,7 @@ final class Spider {
         if legController != was {
             // A step in flight belongs to the clock that started it; the
             // next controller begins its own.
-            for i in legs.indices { legs[i].swinging = false }
+            for i in legs.indices { legs[i].swinging = false; legs[i].swingShift = 0 }
             // Eased only from one way of standing to another, or onto a
             // line. Picked up, launched, falling, the feet go with the body
             // at once; landing, the landing has them (see `absorbingLanding`).
@@ -10160,12 +10312,68 @@ final class Spider {
             return
         }
         let cap = Spider.footJolt * config.scale * landingJolt
+        let profile = SpiderRenderer.profileAmount(yaw: yaw)
+        defer { limitReach(profile: profile) }
         for i in legs.indices {
             var w = world[i]
+            let from = footWorld[i]
             if Spider.limitJolt(&w, last: &footWorld[i], vel: &footWorldVel[i], cap: cap, dt: dt) {
+                // Held back on its way somewhere past its own hip — a foot
+                // thrown to the far side of it by a landing, or round a
+                // corner — it goes round the hip at arm's length, as a leg
+                // swings, not straight through it, where the knee has
+                // nowhere to go.
+                let hip = toWorld(SpiderRenderer.rig(i, profile: profile, look: look).hip)
+                let near = legLength(i) * 0.15 * config.scale
+                if projectOnSegment(hip, from, world[i]).dist < near, from.distance(to: hip) > 1, world[i].distance(to: hip) > 1 {
+                    let ra = from.distance(to: hip), rb = world[i].distance(to: hip)
+                    let turn = abs(angleDelta((from - hip).angle, (world[i] - hip).angle))
+                    let arc = max(turn * max(ra, rb, near) + abs(rb - ra), 0.001)
+                    w = Spider.swing(from, world[i], about: hip, clamp(from.distance(to: w) / arc, 0, 1))
+                    footWorldVel[i] = (w - from) / dt
+                    footWorld[i] = w
+                }
                 legs[i].foot = toLocal(w)
             }
         }
+    }
+
+    /// The last word on how far a foot is from its hip, on a surface:
+    /// however it got there — held in the world while the body moved on
+    /// over a gap, eased toward a spot that is out of reach — no leg is
+    /// ever drawn out much past its own length. (An ordinary stride, the
+    /// short second leg reaching out at the front of it, stays well inside
+    /// this.)
+    private func limitReach(profile: CGFloat) {
+        guard mode == .attached, activity != .roll else { return }
+        for i in legs.indices {
+            // (From the hip as it is drawn — the body leaning, or squashed
+            // down onto its legs by a landing — which is where the leg is.)
+            let hip = drawnHip(i, profile: profile)
+            // (A long stride — at a run, and small, strides are long for
+            // its size — takes the feet further out at its ends.)
+            let most = legLength(legBones[i] ?? i) * Spider.reachLimit + max(strideNow - Spider.longStride, 0) * 0.5
+            let d = legs[i].foot - hip
+            guard d.length > most else { continue }
+            legs[i].foot = hip + d * (most / d.length)
+            if footWorld.count == legs.count { footWorld[i] = toWorld(legs[i].foot) }
+        }
+    }
+    private static let reachLimit: CGFloat = 1.25
+    private static let longStride: CGFloat = 45
+
+    /// Leg `i`'s hip where the leg is drawn from, in the feet's frame:
+    /// turned with the body's lean and squashed with it (see `modelLeg`).
+    private func drawnHip(_ i: Int, profile: CGFloat) -> V2 {
+        var hip = SpiderRenderer.rig(i, profile: profile, look: look).hip
+        let bp = bodyPitchNow
+        if abs(bp) > 0.0005 {
+            let pivot = SpiderRenderer.leanPivot
+            hip = pivot + (hip - pivot).rotated(by: bp) + V2(-bp * 8, bp * 2)
+        }
+        let sq = bodySquash()
+        let g = SpiderRenderer.ground
+        return V2(hip.x * sq.stretch, g + (hip.y - g) * sq.fatten)
     }
 
     /// Tools only: the body going along the ground, every foot down, and
@@ -10247,7 +10455,7 @@ final class Spider {
                 var leg = legs[i]
                 leg.footVel = .zero
                 let ph = (turnGait + leg.phase).truncatingRemainder(dividingBy: 1)
-                let target = groundFoot(SpiderRenderer.rig(i, profile: profile, look: look).foot, spread: true)
+                let target = groundFoot(SpiderRenderer.rig(i, profile: profile, look: look).foot, spread: true, leg: i)
                 if ph >= duty { leg.skipSwing = false }
                 // A leg whose window was already half over when the turn
                 // began waits for its next one, rather than appear mid-step.
@@ -10291,7 +10499,11 @@ final class Spider {
         // a mere glance keeps them stepping.
         // (A little either way of the switch-over, so a body hovering about
         // it — following the pointer — does not flap between the two.)
-        guard legMode == .planted, facing == m, profile > (legController == .posed ? 0.55 : 0.45) else {
+        // On the move it steps however far round it is — walking sideways
+        // face on to you, or swinging through the front view as it doubles
+        // back — or the body would glide along on frozen legs.
+        let onTheMove = mode == .attached && speed > 1 && activity != .hop
+        guard legMode == .planted, onTheMove || (facing == m && profile > (legController == .posed ? 0.55 : 0.45)) else {
             legController = .posed
             // On a ledge, a gesture is eased into from wherever the feet
             // were, and eased out of back to standing before it ends.
@@ -10310,7 +10522,7 @@ final class Spider {
                 let up = sin(peel * .pi) * sin(peel * .pi)
                 for i in legs.indices {
                     let rest = SpiderRenderer.rig(i, profile: profile, look: look).foot
-                    let ground = groundFoot(rest, spread: true)
+                    let ground = groundFoot(rest, spread: true, leg: i)
                     let x = lerp(ground.x, legs[i].hip.x + (rest.x - legs[i].hip.x) * 0.7, up * 0.6)
                     legs[i].foot = V2(x, ground.y + up * Spider.hopFeet)
                     legs[i].footVel = .zero
@@ -10362,31 +10574,43 @@ final class Spider {
 
         // Where a foot aims to touch down: half a stance ahead of its rest
         // position, so over the stance it drifts back through the rest pose.
+        // (A step still in flight from another controller's clock, this
+        // one frame before the hand-off drops it, goes the way it walks.)
+        let ownSteps = legController == .gait
         legController = .gait
         let stride = strideNow
         let landAhead = stride * (1 - duty) * 0.5
         let walking = speed > 1
+        // Which way along the sprite's x the body is going: backwards while
+        // it swings round through the front view to the way it now walks.
+        let fwd: CGFloat = mode == .attached && walkDir * m < 0 ? -1 : 1
 
         for i in legs.indices {
             var leg = legs[i]
             leg.footVel = .zero
-            let ph = (gaitPhase + leg.phase).truncatingRemainder(dividingBy: 1)
+            var ph = (gaitPhase + leg.phase).truncatingRemainder(dividingBy: 1)
+            // (A step handed over at the front view, on its own clock, may
+            // have begun just before this slot's window came round.)
+            if leg.swingShift != 0, leg.swinging, ph > 0.75 { ph -= 1 }
+            let swingEnd = duty + leg.swingShift
 
             if ph >= duty { leg.skipSwing = false }
             if walking, ph < duty, !leg.swinging, ph > duty * 0.3 { leg.skipSwing = true }
-            if walking && ph < duty && !leg.skipSwing {
+            if walking && ph < swingEnd && !leg.skipSwing {
                 leg.settle = -1
                 if !leg.swinging {
                     leg.swinging = true
                     leg.swingFrom = leg.foot
                     leg.swingPh0 = ph
+                    leg.swingDir = fwd
                 } else {
+                    if !ownSteps { leg.swingDir = fwd }
                     // The step runs over the ground, not with the body: it
                     // leaves from the spot the foot stood on, which stays
                     // where it is while the body carries on over it.
                     leg.swingFrom = leg.swingFrom.rotated(by: -dTheta) - deltaLocal
                 }
-                let u = clamp((ph - leg.swingPh0) / max(duty - leg.swingPh0, 0.01), 0, 1)
+                let u = clamp((ph - leg.swingPh0) / max(swingEnd - leg.swingPh0, 0.01), 0, 1)
                 // Land on the edge itself, wherever that is relative to the
                 // body — at the spot on the ground that will be there at
                 // touchdown, not where it is now. Both ends of the step are
@@ -10394,8 +10618,8 @@ final class Spider {
                 // down at rest instead of being yanked from a standstill to
                 // the body's pace and stopped dead again.
                 let restNow = SpiderRenderer.rig(i, profile: profile, look: look).foot
-                let ahead = (duty - ph) * stride   // body travel before it lands
-                let target = groundFoot(restNow + travelLocal * (landAhead + ahead), spread: true)
+                let ahead = (swingEnd - ph) * stride   // body travel before it lands
+                let target = groundFoot(restNow + travelLocal * leg.swingDir * (landAhead + ahead), spread: true, leg: i)
                 let base = stepPath(i, from: leg.swingFrom, to: target, u: u)
                 // Eased off and onto the ledge at both ends of the arc.
                 leg.lift = pow(sin(u * .pi), 1.5)
@@ -10405,13 +10629,22 @@ final class Spider {
                 leg.foot = base + V2(0, leg.lift * stepHeight)
             } else {
                 leg.swinging = false
+                leg.swingShift = 0
                 leg.lift = approach(leg.lift, 0, 16, dt)
                 if walking {
                     // Stance: hold station on the ledge while the body moves
                     // — unless the foot is still in the air from before, in
                     // which case it steps down first.
-                    let rest = groundFoot(SpiderRenderer.rig(i, profile: profile, look: look).foot, spread: true)
-                    if leg.settle >= 0 || leg.foot.y > max(rest.y, leg.hip.y) + 5 {
+                    let restNow = SpiderRenderer.rig(i, profile: profile, look: look).foot
+                    let rest = groundFoot(restNow, spread: true, leg: i)
+                    // (Likewise a front foot left well behind its own hip —
+                    // still on the floor as the body came round off a wall
+                    // onto it — which no stride puts there: it steps up.)
+                    // (Past where a stride this long ever trails it: at a
+                    // run, and small, the strides are long for its size.)
+                    let trails = min(leg.hip.x, leg.rest.x - stride * (1 - duty) * 0.5)
+                    let stranded = fwd > 0 && i % 4 == 0 && leg.foot.x < trails - Spider.strandedBehind
+                    if leg.settle >= 0 || leg.foot.y > max(rest.y, leg.hip.y) + 5 || stranded {
                         _ = settleFoot(&leg, i, to: rest, dt: dt)
                         legs[i] = leg
                         continue
@@ -10420,10 +10653,12 @@ final class Spider {
                     let g = groundFoot(leg.foot)
                     leg.foot = leg.foot.distance(to: g) > 2 ? approach(leg.foot, g, 14, maxSpeed: 240, dt) : g
                     // Never let a foot be dragged past what the leg can reach.
+                    // (Turned toward you the feet stand wider: face on, walking
+                    // sideways, a stride takes them that much further out.)
                     let reach = leg.foot - leg.hip
-                    let maxReach = (leg.rest - leg.hip).length * 1.4
+                    let maxReach = max((leg.rest - leg.hip).length, (restNow - leg.hip).length) * 1.4
                     if reach.length > maxReach {
-                        leg.foot = groundFoot(leg.hip + reach.normalized * maxReach)
+                        leg.foot = groundFoot(leg.hip + reach.normalized * maxReach, leg: i)
                     }
                 } else {
                     // Standing: settle onto the rest pose — on the edge, which
@@ -10434,7 +10669,11 @@ final class Spider {
                     // the legs go one at a time, in gait order.
                     var rest = SpiderRenderer.rig(i, profile: profile, look: look).foot
                     rest.x += leg.wobble.value(t * 0.8) * 0.5
-                    let target = groundFoot(rest, spread: true)
+                    // (Coming down onto a ledge still out of reach, the step
+                    // is to the ledge itself, reached for as the body comes
+                    // down — as in `land`.)
+                    let near = reachableSpot(rest, spread: true, leg: i)
+                    let target = near.onGround || !absorbingLanding ? near.point : groundFoot(rest, spread: true)
                     // A planted foot holds its place in the world while the
                     // body moves over it — coming down and lurching out of
                     // a landing, leaning, breathing — the leg giving, never
@@ -10443,7 +10682,7 @@ final class Spider {
                         leg.foot = leg.foot.rotated(by: -dTheta) - overFeet
                         let reach = leg.foot - leg.hip
                         let maxReach = (leg.rest - leg.hip).length * 1.4
-                        if reach.length > maxReach { leg.foot = groundFoot(leg.hip + reach.normalized * maxReach) }
+                        if reach.length > maxReach { leg.foot = groundFoot(leg.hip + reach.normalized * maxReach, leg: i) }
                     }
                     // One leg at a time unless a foot is well out of place.
                     let othersBusy = !absorbingLanding && legs.contains(where: { $0.settle >= 0 }) && leg.settle < 0
@@ -11109,6 +11348,17 @@ final class Spider {
     /// Tools only: how taken it is with the pointer right now.
     var debugInterest: CGFloat { interest }
 
+    /// Tools only: each leg's place in the gait and its step, one line.
+    var debugLegTiming: String {
+        legs.enumerated().map { i, l in
+            let ph = (gaitPhase + l.phase).truncatingRemainder(dividingBy: 1)
+            return String(format: "%d:%@ph%.3f p0%.3f sh%.3f L%.2f f%.1f,%.1f st%.2f", i, l.swinging ? "S" : (l.skipSwing ? "k" : "-"), ph, l.swingPh0, l.swingShift, l.lift, l.foot.x, l.foot.y, l.settle)
+        }.joined(separator: " ") + String(format: " G%.3f", gaitPhase)
+    }
+
+    /// Tools only: which controller has the legs, and the body's walking speed.
+    var debugGait: (controller: String, speed: CGFloat) { ("\(legController)", speed) }
+
     /// Tools only: the clock and the aim of whatever it is doing.
     var debugActivity: String {
         String(format: "%@ %.2f/%.2f jump=%@ poised=%d stalls=%d", "\(activity)", Double(activityTime), Double(activityDur),
@@ -11370,7 +11620,35 @@ final class Spider {
         defer { lineKneesLive = (line || offLine) && !fresh }
         kneeLocal = legs.indices.map { i in
             let j = modelLeg(i, profile: profile)
-            let want = Spider.kneeShape(hip: j.hip, foot: j.foot, knee: j.knee)
+            // On a surface a knee never folds down through what it stands
+            // on. The leg model swings the standing shape round the hip with
+            // the foot, which for a foot left behind its hip coming round a
+            // corner (a front foot still on the floor as it comes down off a
+            // block, say) puts the knee under the ground; the leg bends the
+            // other way instead, same bones, knee up — going over as a
+            // movement, through the leg held straight, and only once the
+            // knee is plainly under, so one right at the ground does not
+            // flick from side to side. (Under is under the ground line it
+            // stands on, or — rounding an inside corner, where that line is
+            // turned away from the floor — under the edge itself.)
+            var model = j.knee
+            let under = mode == .attached && !line
+                ? max(SpiderRenderer.ground - model.y, depthUnderEdge(kneeWorldPoint(model)) / max(config.scale, 0.05))
+                : SpiderRenderer.ground - model.y
+            let wantOver: CGFloat = mode == .attached && !line && !fresh ? (under > 2 ? 1 : (under < -1 ? 0 : kneeOverAim[i])) : 0
+            kneeOverAim[i] = wantOver
+            kneeOver[i] = wantOver > kneeOver[i] ? min(kneeOver[i] + dt / Spider.kneeOverTime, 1)
+                                                 : max(kneeOver[i] - dt / Spider.kneeOverTime, 0)
+            if kneeOver[i] > 0 {
+                // The thigh swings over about the hip, keeping its length,
+                // by way of pointing straight at the foot: never in through
+                // the hip, where the leg would look snapped off.
+                let k = model - j.hip
+                let toFoot = (j.foot - j.hip).angle
+                let side = 1 - 2 * smoothstep(kneeOver[i])
+                model = j.hip + V2.angle(toFoot + angleDelta(toFoot, k.angle) * side) * k.length
+            }
+            let want = Spider.kneeShape(hip: j.hip, foot: j.foot, knee: model)
             var local: V2
             if fresh {
                 kneeShape[i] = want
@@ -11385,6 +11663,27 @@ final class Spider {
                 kneeShape[i] = kneeShape[i] + (want - kneeShape[i]) * k
                 kneeShapeVel[i] = .zero
                 local = Spider.knee(from: kneeShape[i], hip: j.hip, foot: j.foot)
+                // However the shape eases, neither bone is drawn much longer
+                // than the leg's model has it. A shape taken with the foot
+                // right by its hip (a landing, a foot swept round a corner)
+                // is all out of proportion, and laid on the leg as it
+                // stretches out again it throws the knee out to two or three
+                // times the thigh's length. (A knee going over to the other
+                // side passes between the two bends, inside both bones'
+                // reach, and is left to.)
+                let thigh = model.distance(to: j.hip) * Spider.boneGive + Spider.boneSlack
+                let shin = j.foot.distance(to: model) * Spider.boneGive + Spider.boneSlack
+                if local.distance(to: j.hip) > thigh || j.foot.distance(to: local) > shin {
+                    // As little of the way back to the model's knee as puts
+                    // both within that.
+                    var lo: CGFloat = 0, hi: CGFloat = 1
+                    for _ in 0..<10 {
+                        let m = (lo + hi) / 2, k = V2.lerp(local, model, m)
+                        if k.distance(to: j.hip) > thigh || j.foot.distance(to: k) > shin { lo = m } else { hi = m }
+                    }
+                    local = V2.lerp(local, model, hi)
+                    kneeShape[i] = Spider.kneeShape(hip: j.hip, foot: j.foot, knee: local)
+                }
             }
             var w = kneeWorldPoint(local)
             if limit {
@@ -11399,6 +11698,35 @@ final class Spider {
         }
     }
     private var kneeLimitPos: V2 = .zero
+    /// How far a point is behind the edge it stands on — inside the window,
+    /// under the floor — in world points; negative in the open. Measured
+    /// from the nearest stretch of edge that is square to it, so the far
+    /// side of a corner does not count.
+    private func depthUnderEdge(_ w: V2) -> CGFloat {
+        guard let loop = map.loop(anchor.loopID) else { return -.greatestFiniteMagnitude }
+        var best: (dist: CGFloat, depth: CGFloat)?
+        for e in loop.edge where e.len > 0.5 {
+            let t = (w - e.a).dot(e.dir)
+            guard t > 0, t < e.len else { continue }
+            let off = (w - e.point(at: t)).dot(e.normal)
+            if best == nil || abs(off) < best!.dist { best = (abs(off), -off) }
+        }
+        return best?.depth ?? -.greatestFiniteMagnitude
+    }
+
+    /// How far each knee is through going over to its other bend, to keep
+    /// it out of the ground it stands on (0 as the model has it, 1 over),
+    /// the way it is going, and how long going over takes, in seconds.
+    private var kneeOver: [CGFloat] = Array(repeating: 0, count: SpiderRenderer.legCount)
+    private var kneeOverAim: [CGFloat] = Array(repeating: 0, count: SpiderRenderer.legCount)
+    private static let kneeOverTime: CGFloat = 0.16
+    /// How much longer than the leg model's an eased knee may draw either
+    /// bone, as a share and then some, in sprite units (see `updateKnees`).
+    /// Walking, small, with long strides for its size, the easing alone
+    /// comes to within a few units of this; a knee thrown out by a shape
+    /// taken right by the hip goes well past it.
+    private static let boneGive: CGFloat = 1.8
+    private static let boneSlack: CGFloat = 10
     /// How fast each knee's shape is changing (see `updateKnees`).
     private var kneeShapeVel: [V2] = []
 

@@ -10,11 +10,12 @@ Native AppKit + Core Graphics. No Xcode project, ~2 MB binary; the one dependenc
 ## Install
 
 Grab the `.dmg` from the [latest release](https://github.com/Ephemerill/spider-buddy/releases/latest),
-open it and drag Spider to Applications. The app is ad-hoc signed, so the
-first launch needs the usual step for an unsigned app: right-click Spider →
-Open, or allow it under System Settings → Privacy & Security.
+open it and drag Spider to Applications. From 0.9.0 it is signed with a
+Developer ID and notarized by Apple, so it opens like any other app.
+(Releases before that are ad-hoc signed and need the usual first-launch step
+for an unsigned app: right-click Spider → Open.)
 
-That is the only time. After that it keeps itself up to date with
+It keeps itself up to date with
 [Sparkle](https://sparkle-project.org): it looks for a new version once a day,
 and **Check for Updates** on the panel's App page looks straight away. The
 update window shows what's new; installing replaces the app in place and
@@ -33,6 +34,8 @@ Copies older than 0.8.0 have their own updater, which fetches the release's
 open spiders.app    # or: ./run.sh  (rebuild + restart)
 tools/release.sh    # the release build, "Spider Buddy.app", in a .dmg
 ```
+
+Signing, notarizing and publishing a release: see [RELEASING.md](RELEASING.md).
 
 `build.sh` compiles with Xcode's toolchain when it is installed. It has to:
 the bare Command Line Tools ship an SDK whose Swift build does not match their

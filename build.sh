@@ -3,6 +3,8 @@
 #
 # The name is APP_NAME: "spiders" for the testing build (the default, what
 # ./run.sh makes), "Spider Buddy" for a release (tools/release.sh sets it).
+# SIGN_IDENTITY="Developer ID Application: …" signs it for distribution;
+# without it the app is signed ad hoc.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -76,9 +78,26 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "==> Signing (ad-hoc)"
-codesign --force --sign - --timestamp=none "$APP" >/dev/null 2>&1 || \
-  echo "    (ad-hoc signing skipped)"
+if [ -n "${SIGN_IDENTITY:-}" ]; then
+  # A Developer ID signature with the hardened runtime and a secure timestamp,
+  # as notarization requires (tools/release.sh sets SIGN_IDENTITY). Signed
+  # inside out: Sparkle's helpers, then the framework, then the app. The app
+  # needs no entitlements. The Downloader keeps its own (it is sandboxed).
+  echo "==> Signing as $SIGN_IDENTITY"
+  sign() { codesign --force --sign "$SIGN_IDENTITY" --options runtime --timestamp "$@"; }
+  FW="$APP/Contents/Frameworks/Sparkle.framework"
+  sign "$FW/Versions/B/XPCServices/Installer.xpc"
+  sign --preserve-metadata=entitlements "$FW/Versions/B/XPCServices/Downloader.xpc"
+  sign "$FW/Versions/B/Autoupdate"
+  sign "$FW/Versions/B/Updater.app"
+  sign "$FW"
+  sign "$APP"
+  codesign --verify --deep --strict "$APP"
+else
+  echo "==> Signing (ad-hoc)"
+  codesign --force --sign - --timestamp=none "$APP" >/dev/null 2>&1 || \
+    echo "    (ad-hoc signing skipped)"
+fi
 
 echo "==> Done: $(pwd)/$APP"
 echo "    Run it with:  open \"$(pwd)/$APP\""

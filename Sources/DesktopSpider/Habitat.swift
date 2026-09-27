@@ -430,7 +430,8 @@ extension Habitat {
             }
         }
 
-        let floor = Habitat.skyline(blocks, from: inner.minX, to: inner.maxX, base: groundY, standoff: off, ceiling: inner.maxY - 24)
+        let floor = Habitat.skyline(blocks, from: inner.minX, to: inner.maxX, feetFrom: air.minX, feetTo: air.maxX,
+                                    base: groundY, standoff: off, ceiling: inner.maxY - 24)
         let hl = floor.heights.first ?? inner.minY, hr = floor.heights.last ?? inner.minY
         let bl = V2(inner.minX, hl), br = V2(inner.maxX, hr)
         let tr = V2(inner.maxX, inner.maxY), tl = V2(inner.minX, inner.maxY)
@@ -445,10 +446,14 @@ extension Habitat {
     /// nothing, and up the near side, over the top and down the far side
     /// of anything standing on it — as the desktop's floor does the Dock.
     /// `heights` are the body's height at the two ends, for the walls.
-    static func skyline(_ blocks: [CGRect], from x0: CGFloat, to x1: CGFloat, base: CGFloat, standoff off: CGFloat,
+    /// The body's line runs `x0`…`x1`, stood off the walls; the ground its
+    /// feet go on runs `feetFrom`…`feetTo`, right up to the glass, so a
+    /// foot in a bottom corner has the floor under it.
+    static func skyline(_ blocks: [CGRect], from x0: CGFloat, to x1: CGFloat, feetFrom: CGFloat, feetTo: CGFloat,
+                        base: CGFloat, standoff off: CGFloat,
                         ceiling: CGFloat) -> (segs: [Seg], edge: [Seg], heights: [CGFloat]) {
         // The body's line: each block grown by the body's height.
-        func profile(_ rects: [CGRect], lift: CGFloat, grow: CGFloat) -> [(x0: CGFloat, x1: CGFloat, y: CGFloat)] {
+        func profile(_ rects: [CGRect], lift: CGFloat, grow: CGFloat, from x0: CGFloat, to x1: CGFloat) -> [(x0: CGFloat, x1: CGFloat, y: CGFloat)] {
             let grown = rects.map { CGRect(x: $0.minX - grow, y: $0.minY, width: $0.width + grow * 2, height: $0.height + lift) }
             var xs = Set<CGFloat>([x0, x1])
             for g in grown {
@@ -500,8 +505,8 @@ extension Habitat {
             }
             return out
         }
-        let body = profile(blocks, lift: off, grow: off)
-        let feet = profile(blocks, lift: 0, grow: 0)
+        let body = profile(blocks, lift: off, grow: off, from: x0, to: x1)
+        let feet = profile(blocks, lift: 0, grow: 0, from: feetFrom, to: feetTo)
         return (segs(body), segs(feet), [body.first?.y ?? base + off, body.last?.y ?? base + off])
     }
 
