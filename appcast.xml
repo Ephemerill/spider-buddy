@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Spider Buddy</title>
+    <link>https://github.com/Ephemerill/spider-buddy/releases</link>
+  </channel>
+</rss>
+<!-- sparkle-signatures:
+edSignature: n4Y14/eKl2DkTF93xlre68KZOpSwoaC87punM3UiEIBduz0cqxJaRuqgXygcjdtW7494zvszy291gywpuWyoCA==
+length: 260
+-->
