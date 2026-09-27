@@ -3,9 +3,29 @@
   <channel>
     <title>Spider Buddy</title>
     <link>https://github.com/Ephemerill/spider-buddy/releases</link>
+    <item>
+      <title>Spider Buddy 0.8.0</title>
+      <pubDate>Sun, 27 Sep 2026 02:54:48 +0000</pubDate>
+      <sparkle:version>0.8.0</sparkle:version>
+      <sparkle:shortVersionString>0.8.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <sparkle:fullReleaseNotesLink>https://github.com/Ephemerill/spider-buddy/releases/tag/v0.8.0</sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown"><![CDATA[## What's new
+
+**Updates look after themselves now.** Spider Buddy checks for new versions once a day, using [Sparkle](https://sparkle-project.org), the updater many Mac apps use.
+
+- Each update shows what's new before you install it, then installs in place and relaunches.
+- An update found in the background never pops up over your work. An **Update to …** button appears at the top of the panel instead.
+- Every download and the update feed are cryptographically signed, and the app checks both before installing anything.
+- New switches on the panel's **App** page: **Check Automatically** (daily) and **Install Automatically**, which installs quietly the next time the app quits.
+
+**Coming from 0.7.0 or earlier?** Click **Check for Updates** on the App page once to install this version. From then on, updates arrive on their own.]]></description>
+      <enclosure url="https://github.com/Ephemerill/spider-buddy/releases/download/v0.8.0/SpiderBuddy-0.8.0.dmg" type="application/octet-stream" sparkle:edSignature="wvylah+fxEEp/z/zxeA+JKN4Q51gkAaWtVBVcahI59O9HS+fa5w0097OTkk0g92XHbMVO6dk5rtocPUhVprTBQ==" length="2677165"/>
+    </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: n4Y14/eKl2DkTF93xlre68KZOpSwoaC87punM3UiEIBduz0cqxJaRuqgXygcjdtW7494zvszy291gywpuWyoCA==
-length: 260
+edSignature: 7tIu3Fr3Wm4D77D88xbLP3J7Ez8jkeuuYt7MgmFaRbNUM8zgLex6ddXqmjW0DdD0u+St0xKjOjisHFaCZQ2fCQ==
+length: 1956
 -->
