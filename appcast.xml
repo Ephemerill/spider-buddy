@@ -4,28 +4,24 @@
     <title>Spider Buddy</title>
     <link>https://github.com/Ephemerill/spider-buddy/releases</link>
     <item>
-      <title>Spider Buddy 0.8.0</title>
-      <pubDate>Sun, 27 Sep 2026 02:54:48 +0000</pubDate>
-      <sparkle:version>0.8.0</sparkle:version>
-      <sparkle:shortVersionString>0.8.0</sparkle:shortVersionString>
+      <title>Spider Buddy 0.9.0</title>
+      <pubDate>Sun, 27 Sep 2026 07:36:31 +0000</pubDate>
+      <sparkle:version>0.9.0</sparkle:version>
+      <sparkle:shortVersionString>0.9.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <sparkle:fullReleaseNotesLink>https://github.com/Ephemerill/spider-buddy/releases/tag/v0.8.0</sparkle:fullReleaseNotesLink>
+      <sparkle:fullReleaseNotesLink>https://github.com/Ephemerill/spider-buddy/releases/tag/v0.9.0</sparkle:fullReleaseNotesLink>
       <description sparkle:format="markdown"><![CDATA[## What's new
 
-**Updates look after themselves now.** Spider Buddy checks for new versions once a day, using [Sparkle](https://sparkle-project.org), the updater many Mac apps use.
+- **Signed and notarized by Apple.** Spider Buddy now opens like any other app — no more right-click → Open on first launch.
+- **Surer footing.** Its legs find real ground in corners, at the lip of a step, across gaps and round window edges, instead of stretching out to ground they couldn't reach.
 
-- Each update shows what's new before you install it, then installs in place and relaunches.
-- An update found in the background never pops up over your work. An **Update to …** button appears at the top of the panel instead.
-- Every download and the update feed are cryptographically signed, and the app checks both before installing anything.
-- New switches on the panel's **App** page: **Check Automatically** (daily) and **Install Automatically**, which installs quietly the next time the app quits.
-
-**Coming from 0.7.0 or earlier?** Click **Check for Updates** on the App page once to install this version. From then on, updates arrive on their own.]]></description>
-      <enclosure url="https://github.com/Ephemerill/spider-buddy/releases/download/v0.8.0/SpiderBuddy-0.8.0.dmg" type="application/octet-stream" sparkle:edSignature="wvylah+fxEEp/z/zxeA+JKN4Q51gkAaWtVBVcahI59O9HS+fa5w0097OTkk0g92XHbMVO6dk5rtocPUhVprTBQ==" length="2677165"/>
+**One-time step:** because the app is now signed differently, macOS may ask you to allow Screen Recording (and Accessibility, if you'd granted it) again after this update.]]></description>
+      <enclosure url="https://github.com/Ephemerill/spider-buddy/releases/download/v0.9.0/SpiderBuddy-0.9.0.dmg" type="application/octet-stream" sparkle:edSignature="xI1Ds1hsEbSfmC93F7K3wMgv+5b8sM4shC8lblKrIphw28FlbZDJfklZQfkK1Y7126fS6n4BTvCirrtYYmZnDA==" length="2743886"/>
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: 7tIu3Fr3Wm4D77D88xbLP3J7Ez8jkeuuYt7MgmFaRbNUM8zgLex6ddXqmjW0DdD0u+St0xKjOjisHFaCZQ2fCQ==
-length: 1956
+edSignature: w4j1Fg6xvFOL2aIR0FPdHiP2GnIzpshI4rnSAdWOe8E/uTOfHT7UAa8yROe9+Fqdq9riLcBuEffMsOIGqwAiDw==
+length: 1608
 -->
