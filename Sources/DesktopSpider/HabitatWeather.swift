@@ -13,14 +13,16 @@ import QuartzCore
 // Animation does all the moving and it costs the app next to nothing.
 
 final class WeatherLayers {
-    /// The scene's slots for it, back to front: behind the scenery, in
-    /// front of it, on the ground, on the furniture, the light, what falls,
-    /// and the flash of lightning (see `HabitatSceneView`).
-    let back = CALayer(), mid = CALayer(), ground = CALayer(), caps = CALayer()
+    /// The scene's slots for it, back to front, each in its own space:
+    /// behind the scenery and in front of it (the backdrop's, which moves
+    /// less than the world — see `HabitatSceneView`); on the ground, on the
+    /// furniture and snow falling (the world's); and the light, what falls
+    /// right in front, and the flash of lightning (the glass's own).
+    let back = CALayer(), mid = CALayer(), ground = CALayer(), caps = CALayer(), fall = CALayer()
     let shade = CALayer(), front = CALayer(), flash = CALayer()
 
     /// Thunder, a moment after a flash: where the lightning came down, in
-    /// the scene, and how loud (1: right overhead).
+    /// the backdrop, and how loud (1: right overhead).
     var onThunder: ((CGPoint, CGFloat) -> Void)?
 
     /// How much snow is lying, and how wet the ground is, 0…1: it builds
@@ -28,10 +30,15 @@ final class WeatherLayers {
     private(set) var groundSnow: CGFloat = 0
     private(set) var groundWet: CGFloat = 0
 
-    private var size = CGSize.zero
+    /// The backdrop, the world and the glass, and a frame for each of the
+    /// first two (one to one, the ground 74 up).
+    private var backSize = CGSize.zero, worldSize = CGSize.zero, viewSize = CGSize.zero
     private var biome: Biome = .forest
     private var f = HabitatArt.Frame(rect: .zero)
+    private var fw = HabitatArt.Frame(rect: .zero)
     private var built = false
+    /// What the glass shows: of the world, and of the backdrop.
+    private var visible = CGRect.zero, backVisible = CGRect.zero
 
     // Behind the scenery.
     private let nightSky = CALayer()
@@ -60,11 +67,14 @@ final class WeatherLayers {
     private let prints = CAShapeLayer()
     private let splashes = CAEmitterLayer()
     private let hailFloor = CAEmitterLayer()
-    // On the furniture.
+    // On the furniture: a little picture on each thing.
     private let capsThin = CALayer(), capsThick = CALayer()
     // The light.
     private let dim = CALayer(), warm = CALayer()
-    // In front of everything.
+    // Falling through the world.
+    private let snowE = CAEmitterLayer()
+    private let fallMask = CAGradientLayer()
+    // In front of everything, on the glass.
     private let precip = CALayer()
     private let precipMask = CAGradientLayer()
     /// Rain and hail: sheets of streaks and stones sliding down on a loop,
@@ -72,7 +82,7 @@ final class WeatherLayers {
     /// above the tank, never got far down it.)
     private let rainBox = CALayer()
     private var rainSheets: [CALayer] = [], hailSheets: [CALayer] = []
-    private let snowE = CAEmitterLayer(), sideE = CAEmitterLayer()
+    private let sideE = CAEmitterLayer()
     private let fogFront = CALayer()
     private let veil = CALayer()
     private let flashFill = CALayer()
@@ -85,6 +95,7 @@ final class WeatherLayers {
     /// emitter is set up.
     private var sideFrom: CGFloat = 0
     private var lastSnowAim: CGFloat = 99
+    private var snowAim: CGFloat = 0
     private var lastSideSpeed: CGFloat = -1
     private var marks: [(p: CGPoint, t: CFTimeInterval)] = []
     private var itemsKey = ""
@@ -96,9 +107,22 @@ final class WeatherLayers {
     private var lastLean: CGFloat = 99
     private var lastDim: [CGFloat] = [], lastVeil: [CGFloat] = []
     private var sideRates: [String: CGFloat] = [:]
+    /// Where the following emitters were last aimed.
+    private var followedAt = CGRect.null
+    /// When snow was last falling: the layer it falls in is left out once
+    /// the last of it has come down.
+    private var snowSeenAt: CFTimeInterval = -100
+    /// Pictures not painted until the weather first needs them: most of
+    /// them are never shown in a given spell, and the backdrop's are big.
+    private var later: [ObjectIdentifier: () -> Any?] = [:]
+
+    private func paintLater(_ l: CALayer, _ paint: @escaping () -> Any?) {
+        l.contents = nil
+        later[ObjectIdentifier(l)] = paint
+    }
 
     init() {
-        for l in [back, mid, ground, caps, shade, front, flash] {
+        for l in [back, mid, ground, caps, fall, shade, front, flash] {
             l.masksToBounds = false
             l.anchorPoint = .zero
         }
@@ -109,11 +133,13 @@ final class WeatherLayers {
         for l in [wetDark, puddles, dusting, blanket, prints, splashes, hailFloor] as [CALayer] { ground.addSublayer(l) }
         caps.addSublayer(capsThin)
         caps.addSublayer(capsThick)
+        fall.addSublayer(snowE)
+        fall.mask = fallMask
+        fall.isHidden = true
         shade.addSublayer(dim)
         shade.addSublayer(warm)
         front.addSublayer(precip)
         precip.addSublayer(rainBox)
-        precip.addSublayer(snowE)
         precip.addSublayer(sideE)
         front.addSublayer(fogFront)
         front.addSublayer(veil)
@@ -146,13 +172,18 @@ final class WeatherLayers {
 
     // MARK: Building
 
-    /// Sets everything up for a scene this size, in this scenery. `groundImage`
-    /// is the substrate's picture (what gets darker when it is wet).
-    func build(size s: CGSize, biome b: Biome, groundImage: Any?) {
-        guard s.width > 100, s.height > 100 else { return }
-        size = s
+    /// Sets everything up for a backdrop, a world and a glass these sizes,
+    /// in this scenery. `groundImage` is the substrate's picture (what gets
+    /// darker when it is wet).
+    func build(backdrop bs: CGSize, world ws: CGSize, view vs: CGSize, biome b: Biome, groundImage: Any?) {
+        guard vs.width > 100, vs.height > 100, bs.width > 100, ws.width > 100 else { return }
+        later = [:]
+        backSize = bs
+        worldSize = ws
+        viewSize = vs
         biome = b
-        f = HabitatArt.Frame(rect: CGRect(origin: .zero, size: s))
+        f = HabitatArt.Frame(world: CGRect(origin: .zero, size: bs))
+        fw = HabitatArt.Frame(world: CGRect(origin: .zero, size: ws))
         built = true
         itemsKey = ""
         stillTicks = 0
@@ -160,19 +191,21 @@ final class WeatherLayers {
         lastDim = []
         lastVeil = []
         sideRates = [:]
-        let u = f.u, W = s.width, H = s.height, G = f.groundY, air = f.air
+        followedAt = .null
+        let u: CGFloat = 1, G = HabitatLayout.ground, air = f.air, P = f.panelWidth
+        let W = bs.width, H = bs.height
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-        for l in [back, mid, ground, caps, shade, front, flash, precip, dim, warm, veil, flashFill] {
-            l.frame = CGRect(origin: .zero, size: s)
-        }
-        for l in [snowE, sideE, splashes, hailFloor, meteors] as [CALayer] { l.frame = CGRect(origin: .zero, size: s) }
+        for l in [back, mid] { l.frame = CGRect(origin: .zero, size: bs) }
+        for l in [ground, caps, fall, capsThin, capsThick, fallMask, snowE, splashes, hailFloor, prints] as [CALayer] { l.frame = CGRect(origin: .zero, size: ws) }
+        meteors.frame = CGRect(origin: .zero, size: bs)
 
-        // The night sky, and what shows in it.
-        nightSky.frame = CGRect(x: 0, y: G - 30 * u, width: W, height: air + 30 * u)
-        nightSky.contents = WeatherArt.nightSky(CGSize(width: W, height: air + 30 * u), u: u)
-        auroraBox.frame = CGRect(origin: .zero, size: s)
+        // The night sky, and what shows in it: all of the sky, however tall.
+        nightSky.frame = CGRect(x: 0, y: G - 30, width: W, height: H - G + 30)
+        let nightSize = nightSky.bounds.size
+        paintLater(nightSky) { WeatherArt.nightSky(nightSize, u: u) }
+        auroraBox.frame = CGRect(origin: .zero, size: bs)
         auroraBox.sublayers?.forEach { $0.removeFromSuperlayer() }
         for (k, cols) in [[HabitatArt.c(0.3, 1, 0.65), HabitatArt.c(0.3, 0.85, 1)], [HabitatArt.c(0.5, 1, 0.55), HabitatArt.c(0.75, 0.45, 1)]].enumerated() {
             let sz = CGSize(width: W * 1.3, height: air * (0.55 - CGFloat(k) * 0.1))
@@ -184,17 +217,18 @@ final class WeatherLayers {
             l.add(loop(basic("opacity", k == 0 ? 0.5 : 0.3, k == 0 ? 1 : 0.75), 6 + Double(k) * 3, reverse: true), forKey: "glow")
             l.add(loop(basic("position.x", l.position.x - 40 * u, l.position.x + 40 * u), 22 + Double(k) * 9, reverse: true), forKey: "drift")
         }
-        // Shooting stars: a few, each streaking across now and then.
+        // Shooting stars: a few to each scene's width, each streaking
+        // across now and then.
         meteors.sublayers?.forEach { $0.removeFromSuperlayer() }
         let streakImg = WeatherArt.meteor(length: 110 * u, angle: 0.42)
-        for k in 0..<6 {
+        for k in 0..<f.count(6) {
             let l = CALayer()
             l.contents = streakImg
             l.bounds = CGRect(x: 0, y: 0, width: 110 * u * cos(0.42) + 6, height: 110 * u * sin(0.42) + 6)
             l.anchorPoint = CGPoint(x: 1, y: 0)
             l.opacity = 0
             meteors.addSublayer(l)
-            let start = CGPoint(x: W * (0.2 + HabitatArt.rnd(71, k) * 0.7), y: f.y(0.72 + HabitatArt.rnd(72, k) * 0.25))
+            let start = CGPoint(x: W * (0.02 + HabitatArt.rnd(71, k) * 0.9), y: f.y(0.72) + HabitatArt.rnd(72, k) * max(H - f.y(0.72) - 20, air * 0.25))
             let travel = (200 + HabitatArt.rnd(73, k) * 180) * u
             let end = CGPoint(x: start.x + travel * cos(0.42), y: start.y - travel * sin(0.42))
             let period = 2.5 + Double(HabitatArt.rnd(74, k)) * 4.5
@@ -214,22 +248,23 @@ final class WeatherLayers {
         }
 
         // Cloud: a grey deck over the sky, and a darker one under it for
-        // storms — each twice the width of the tank and the same every
-        // tank-width along, so it can drift round for ever.
-        let deckH = air * 0.8
-        deck.contents = WeatherArt.cloudDeck(width: W, height: deckH, u: u, seed: 3,
-                                             light: HabitatArt.c(0.93, 0.94, 0.96), dark: HabitatArt.c(0.66, 0.69, 0.75))
+        // storms — each twice the width of the backdrop and the same every
+        // width along, so it can drift round for ever — from the top of the
+        // sky down to where it came down to in the old tank.
+        let deckH = max(air * 0.8, H - (f.y(1) - air * 0.8))
+        paintLater(deck) { WeatherArt.cloudDeck(width: W, height: deckH, u: u, seed: 3,
+                                                light: HabitatArt.c(0.93, 0.94, 0.96), dark: HabitatArt.c(0.66, 0.69, 0.75)) }
         deck.bounds = CGRect(x: 0, y: 0, width: W * 2, height: deckH)
         deck.position = CGPoint(x: W * 0.5 + deckOff, y: H - deckH / 2 + 6 * u)
-        let stormH = air * 0.66
-        stormDeck.contents = WeatherArt.cloudDeck(width: W, height: stormH, u: u, seed: 9,
-                                                  light: HabitatArt.c(0.5, 0.52, 0.6), dark: HabitatArt.c(0.24, 0.26, 0.33))
+        let stormH = max(air * 0.66, H - (f.y(1) - air * 0.66))
+        paintLater(stormDeck) { WeatherArt.cloudDeck(width: W, height: stormH, u: u, seed: 9,
+                                                     light: HabitatArt.c(0.5, 0.52, 0.6), dark: HabitatArt.c(0.24, 0.26, 0.33)) }
         stormDeck.bounds = CGRect(x: 0, y: 0, width: W * 2, height: stormH)
         stormDeck.position = CGPoint(x: W * 0.5 + stormOff, y: H - stormH / 2 + 10 * u)
 
         // The sun blazing: a great glare where it is (up at the right,
         // where there is none), breathing.
-        let sun = HabitatArt.sun(b, f)?.point ?? CGPoint(x: f.x(0.8), y: f.y(0.84))
+        let sun = HabitatArt.sun(b, f)?.point ?? CGPoint(x: f.mid(0.8), y: f.y(0.84))
         let gr = 200 * u
         glare.contents = HabitatArt.softDot(gr, HabitatArt.c(1, 0.94, 0.72, 0.8), core: 0.1)
         glare.frame = CGRect(x: sun.x - gr, y: sun.y - gr, width: gr * 2, height: gr * 2)
@@ -238,32 +273,158 @@ final class WeatherLayers {
         breathe.animations = [basic("transform.scale", 0.93, 1.07), basic("opacity", 0.8, 1)]
         glare.add(loop(breathe, 4.5, reverse: true), forKey: "breathe")
 
-        let rbSize = CGSize(width: W, height: air)
-        rainbow.contents = WeatherArt.rainbow(rbSize, u: u)
-        rainbow.frame = CGRect(x: 0, y: G, width: W, height: air)
-        skyFlash.contents = WeatherArt.skyFlash(CGSize(width: W, height: air), u: u)
-        skyFlash.frame = CGRect(x: 0, y: G, width: W, height: air)
+        // A rainbow, over the middle; the sky lighting up, all of it.
+        paintLater(rainbow) { WeatherArt.rainbow(CGSize(width: P, height: air), u: u) }
+        rainbow.frame = CGRect(x: f.mid(0), y: G, width: P, height: air)
+        paintLater(skyFlash) { WeatherArt.skyFlash(CGSize(width: W, height: H - G), u: u) }
+        skyFlash.frame = CGRect(x: 0, y: G, width: W, height: H - G)
         skyFlash.opacity = 0
 
-        // Rain far off, falling behind the ground; and the rain and hail
-        // in front, in a box that leans with the wind about the ground line.
+        paintLater(shafts) { HabitatArt.lightShafts(bs, seed: 23, colour: HabitatArt.c(1, 0.95, 0.76)) }
+        shafts.frame = CGRect(origin: .zero, size: bs)
+        shafts.removeAllAnimations()
+        shafts.add(loop(basic("opacity", 0.55, 1), 7, reverse: true), forKey: "shimmer")
+        // Fog in banks, drifting: low along the ground and higher up; and
+        // dust, filling the air.
+        func bank(_ l: CALayer, height: CGFloat, at y: CGFloat, seed: Int, colour: CGColor, density: CGFloat, period: Double, across w: CGFloat) {
+            let sz = CGSize(width: w * 1.8, height: height)
+            paintLater(l) { HabitatArt.mist(sz, seed: seed, colour: colour, density: density) }
+            l.frame = CGRect(x: 0, y: y, width: sz.width, height: sz.height)
+            l.removeAllAnimations()
+            l.add(loop(basic("position.x", sz.width / 2 - w * 0.1, sz.width / 2 - w * 0.7), period, reverse: true), forKey: "drift")
+        }
+        bank(fogLow, height: air * 0.5, at: G - 30 * u, seed: 41, colour: HabitatArt.c(0.96, 0.97, 1), density: 1.7, period: 46, across: W)
+        bank(fogHigh, height: max(air * 0.45, H - G - air * 0.3), at: G + air * 0.3, seed: 43, colour: HabitatArt.c(0.94, 0.95, 0.98), density: 1.3, period: 61, across: W)
+        bank(dustBank, height: max(air * 0.95, H - G + 30), at: G - 30 * u, seed: 47, colour: HabitatArt.c(0.86, 0.7, 0.5), density: 1.9, period: 23, across: W)
+        paintLater(haze) { WeatherArt.heatHaze(CGSize(width: W * 1.2, height: 60 * u), u: u) }
+        haze.frame = CGRect(x: -W * 0.1, y: G - 6 * u, width: W * 1.2, height: 60 * u)
+        haze.removeAllAnimations()
+        haze.add(loop(basic("position.x", haze.position.x - 8 * u, haze.position.x + 8 * u), 1.7, reverse: true), forKey: "waver")
+        haze.add(loop(basic("transform.scale.y", 0.9, 1.12), 1.1, reverse: true), forKey: "rise")
+
+        // The ground, the length of the world: darker wet, with puddles; a
+        // dusting of snow, then a blanket; hail lying about; splashes.
+        let WW = ws.width
+        let gh = G + HabitatArt.groundOverhang(fw)
+        wetDark.frame = CGRect(x: 0, y: 0, width: WW, height: gh)
+        wetDark.backgroundColor = CGColor(red: 0.1, green: 0.09, blue: 0.12, alpha: 1)
+        wetMask.frame = wetDark.bounds
+        wetMask.contents = groundImage
+        wetMask.contentsGravity = .resize
+        let band = CGSize(width: WW, height: G + 10 * u)
+        let fwNow = fw
+        paintLater(dusting) { WeatherArt.snowGround(band, f: fwNow, thick: false) }
+        paintLater(blanket) { WeatherArt.snowGround(band, f: fwNow, thick: true) }
+        for l in [dusting, blanket, puddles] { l.frame = CGRect(origin: .zero, size: band) }
+
+        // (Splashes, hail bouncing and snow falling are born only about
+        // the glass, following it — see `follow`.)
+        let drop = CAEmitterCell()
+        drop.name = "drop"
+        drop.contents = HabitatArt.softDot(1.6 * u, HabitatArt.c(0.85, 0.92, 1, 0.95), core: 0.5)
+        drop.birthRate = 170
+        drop.lifetime = 0.26
+        drop.velocity = 70 * u
+        drop.velocityRange = 45 * u
+        drop.emissionLongitude = .pi / 2
+        drop.emissionRange = 0.9
+        drop.yAcceleration = -700 * u
+        drop.alphaSpeed = -2.5
+        drop.scaleRange = 0.4
+        let ring = CAEmitterCell()
+        ring.name = "ring"
+        ring.contents = HabitatArt.ring(size: 12 * u, colour: HabitatArt.c(0.85, 0.92, 1, 0.9))
+        ring.birthRate = 70
+        ring.lifetime = 0.3
+        ring.scale = 0.25
+        ring.scaleSpeed = 2.6
+        ring.alphaSpeed = -3
+        setEmitter(splashes, [drop, ring], shape: .rectangle, at: CGPoint(x: ws.width / 2, y: G - 4 * u), size: CGSize(width: 860, height: 12 * u))
+
+        let stone = WeatherArt.hailstone(2.2 * u)
+        let bounce = CAEmitterCell()
+        bounce.name = "bounce"
+        bounce.contents = stone
+        bounce.birthRate = 60
+        bounce.lifetime = 0.34
+        bounce.velocity = 110 * u
+        bounce.velocityRange = 50 * u
+        bounce.emissionLongitude = .pi / 2
+        bounce.emissionRange = 0.7
+        bounce.yAcceleration = -1000 * u
+        bounce.spin = 3
+        bounce.spinRange = 6
+        let lying = CAEmitterCell()
+        lying.name = "lying"
+        lying.contents = stone
+        lying.birthRate = 16
+        lying.lifetime = 5
+        lying.lifetimeRange = 2
+        lying.alphaSpeed = -0.18
+        lying.scaleRange = 0.3
+        setEmitter(hailFloor, [bounce, lying], shape: .rectangle, at: CGPoint(x: ws.width / 2, y: G - 4 * u), size: CGSize(width: 860, height: 10 * u))
+
+        // The light: dimmed under cloud (a dark wash over the whole scene),
+        // warmed in the sun.
+        dim.backgroundColor = CGColor(red: 0.06, green: 0.08, blue: 0.16, alpha: 1)
+        warm.backgroundColor = CGColor(red: 1, green: 0.8, blue: 0.45, alpha: 1)
+
+        // What falls fades out at the ground: in the world, and on the
+        // glass (where the ground is on it: see `follow`).
+        for m in [fallMask, precipMask] {
+            m.colors = [CGColor(gray: 0, alpha: 0), CGColor(gray: 0, alpha: 1)]
+        }
+
+        veil.backgroundColor = CGColor(red: 0.9, green: 0.92, blue: 0.95, alpha: 1)
+        flashFill.backgroundColor = CGColor(red: 0.92, green: 0.95, blue: 1, alpha: 1)
+        flashFill.opacity = 0
+        for e in [splashes, hailFloor] { e.birthRate = 0 }
+        marks = []
+        prints.path = nil
+        let rates = [snowE.birthRate, sideE.birthRate]
+        viewSize = .zero
+        layoutView(vs)
+        snowE.birthRate = rates[0]
+        sideE.birthRate = rates[1]
+    }
+
+    /// The glass is this size now: what is sized to it — the rain in front
+    /// and far off, what blows in from the side, the light, the fog on the
+    /// glass, snow falling far enough — is laid out afresh.
+    func layoutView(_ vs: CGSize) {
+        guard backSize.width > 1, vs.width > 100, vs.height > 100, vs != viewSize else { return }
+        viewSize = vs
+        let u: CGFloat = 1, G = HabitatLayout.ground, air = f.air
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        for l in [shade, front, flash, precip, dim, warm, veil, flashFill, precipMask, sideE] as [CALayer] { l.frame = CGRect(origin: .zero, size: vs) }
+        for l in [farSheet] + rainSheets + hailSheets { later[ObjectIdentifier(l)] = nil }
+        let shown = [farSheet.opacity] + rainSheets.map(\.opacity) + hailSheets.map(\.opacity)
+        let hidden = [farSheet.isHidden] + rainSheets.map(\.isHidden) + hailSheets.map(\.isHidden)
+        // Rain far off, falling behind the ground, and the rain and hail in
+        // front: sheets the size of the glass (far off, kept in front of the
+        // glass as the backdrop moves), in boxes that lean with the wind
+        // about the ground line.
+        let VW = vs.width, VH = vs.height
         func box(_ l: CALayer) {
-            l.bounds = CGRect(origin: .zero, size: s)
-            l.anchorPoint = CGPoint(x: 0.5, y: G / H)
-            l.position = CGPoint(x: W / 2, y: G)
+            l.bounds = CGRect(origin: .zero, size: vs)
+            l.anchorPoint = CGPoint(x: 0.5, y: G / VH)
+            l.position = CGPoint(x: VW / 2, y: G)
             l.transform = CATransform3DIdentity
             l.sublayers?.forEach { $0.removeFromSuperlayer() }
         }
         box(farBox)
         box(rainBox)
-        let spare = H * 0.45
-        let period = (H * 0.5).rounded()
-        func sheet(_ img: CGImage?, speed v: CGFloat, phase: CGFloat, into parent: CALayer) -> CALayer {
+        let spare = VH * 0.45
+        let period = (VH * 0.5).rounded()
+        func sheet(_ img: @escaping @autoclosure () -> CGImage?, speed v: CGFloat, phase: CGFloat, into parent: CALayer) -> CALayer {
             let l = CALayer()
-            l.contents = img
+            // (Painted when it first rains, or hails.)
+            paintLater(l, img)
             l.anchorPoint = CGPoint(x: 0.5, y: 0)
-            l.bounds = CGRect(x: 0, y: 0, width: W + spare * 2, height: H + period)
-            l.position = CGPoint(x: W / 2, y: 0)
+            l.bounds = CGRect(x: 0, y: 0, width: VW + spare * 2, height: VH + period)
+            l.position = CGPoint(x: VW / 2, y: 0)
             l.opacity = 0
             l.isHidden = true
             let fall = CABasicAnimation(keyPath: "position.y")
@@ -276,103 +437,14 @@ final class WeatherLayers {
             parent.addSublayer(l)
             return l
         }
-        let sheetSize = CGSize(width: W + spare * 2, height: H + period)
+        let sheetSize = CGSize(width: VW + spare * 2, height: VH + period)
         farSheet = sheet(WeatherArt.rainSheet(sheetSize, period: period, count: 110, length: 15 * u, width: 0.8 * u, alpha: 0.4, seed: 31),
                          speed: 620 * u, phase: 0, into: farBox)
-
-        shafts.contents = HabitatArt.lightShafts(s, seed: 23, colour: HabitatArt.c(1, 0.95, 0.76))
-        shafts.frame = CGRect(origin: .zero, size: s)
-        shafts.removeAllAnimations()
-        shafts.add(loop(basic("opacity", 0.55, 1), 7, reverse: true), forKey: "shimmer")
-        // Fog in banks, drifting: low along the ground and higher up; and
-        // dust, filling the air.
-        func bank(_ l: CALayer, height: CGFloat, at y: CGFloat, seed: Int, colour: CGColor, density: CGFloat, period: Double) {
-            let sz = CGSize(width: W * 1.8, height: height)
-            l.contents = HabitatArt.mist(sz, seed: seed, colour: colour, density: density)
-            l.frame = CGRect(x: 0, y: y, width: sz.width, height: sz.height)
-            l.removeAllAnimations()
-            l.add(loop(basic("position.x", sz.width / 2 - W * 0.1, sz.width / 2 - W * 0.7), period, reverse: true), forKey: "drift")
-        }
-        bank(fogLow, height: air * 0.5, at: G - 30 * u, seed: 41, colour: HabitatArt.c(0.96, 0.97, 1), density: 1.7, period: 46)
-        bank(fogHigh, height: air * 0.45, at: G + air * 0.3, seed: 43, colour: HabitatArt.c(0.94, 0.95, 0.98), density: 1.3, period: 61)
-        bank(dustBank, height: air * 0.95, at: G - 30 * u, seed: 47, colour: HabitatArt.c(0.86, 0.7, 0.5), density: 1.9, period: 23)
-        bank(fogFront, height: air * 0.38, at: G - 36 * u, seed: 53, colour: HabitatArt.c(0.97, 0.98, 1), density: 1.2, period: 38)
-        haze.contents = WeatherArt.heatHaze(CGSize(width: W * 1.2, height: 60 * u), u: u)
-        haze.frame = CGRect(x: -W * 0.1, y: G - 6 * u, width: W * 1.2, height: 60 * u)
-        haze.removeAllAnimations()
-        haze.add(loop(basic("position.x", haze.position.x - 8 * u, haze.position.x + 8 * u), 1.7, reverse: true), forKey: "waver")
-        haze.add(loop(basic("transform.scale.y", 0.9, 1.12), 1.1, reverse: true), forKey: "rise")
-
-        // The ground: darker wet, with puddles; a dusting of snow, then a
-        // blanket; hail lying about; splashes.
-        let gh = G + HabitatArt.groundOverhang(f)
-        wetDark.frame = CGRect(x: 0, y: 0, width: W, height: gh)
-        wetDark.backgroundColor = CGColor(red: 0.1, green: 0.09, blue: 0.12, alpha: 1)
-        wetMask.frame = wetDark.bounds
-        wetMask.contents = groundImage
-        wetMask.contentsGravity = .resize
-        let band = CGSize(width: W, height: G + 10 * u)
-        dusting.contents = WeatherArt.snowGround(band, f: f, thick: false)
-        blanket.contents = WeatherArt.snowGround(band, f: f, thick: true)
-        for l in [dusting, blanket, puddles] { l.frame = CGRect(origin: .zero, size: band) }
-        prints.frame = CGRect(origin: .zero, size: s)
-
-        let drop = CAEmitterCell()
-        drop.name = "drop"
-        drop.contents = HabitatArt.softDot(1.6 * u, HabitatArt.c(0.85, 0.92, 1, 0.95), core: 0.5)
-        drop.birthRate = Float(170 * W / 860)
-        drop.lifetime = 0.26
-        drop.velocity = 70 * u
-        drop.velocityRange = 45 * u
-        drop.emissionLongitude = .pi / 2
-        drop.emissionRange = 0.9
-        drop.yAcceleration = -700 * u
-        drop.alphaSpeed = -2.5
-        drop.scaleRange = 0.4
-        let ring = CAEmitterCell()
-        ring.name = "ring"
-        ring.contents = HabitatArt.ring(size: 12 * u, colour: HabitatArt.c(0.85, 0.92, 1, 0.9))
-        ring.birthRate = Float(70 * W / 860)
-        ring.lifetime = 0.3
-        ring.scale = 0.25
-        ring.scaleSpeed = 2.6
-        ring.alphaSpeed = -3
-        setEmitter(splashes, [drop, ring], shape: .rectangle, at: CGPoint(x: W / 2, y: G - 4 * u), size: CGSize(width: W, height: 12 * u))
-
-        let stone = WeatherArt.hailstone(2.2 * u)
-        let bounce = CAEmitterCell()
-        bounce.name = "bounce"
-        bounce.contents = stone
-        bounce.birthRate = Float(60 * W / 860)
-        bounce.lifetime = 0.34
-        bounce.velocity = 110 * u
-        bounce.velocityRange = 50 * u
-        bounce.emissionLongitude = .pi / 2
-        bounce.emissionRange = 0.7
-        bounce.yAcceleration = -1000 * u
-        bounce.spin = 3
-        bounce.spinRange = 6
-        let lying = CAEmitterCell()
-        lying.name = "lying"
-        lying.contents = stone
-        lying.birthRate = Float(16 * W / 860)
-        lying.lifetime = 5
-        lying.lifetimeRange = 2
-        lying.alphaSpeed = -0.18
-        lying.scaleRange = 0.3
-        setEmitter(hailFloor, [bounce, lying], shape: .rectangle, at: CGPoint(x: W / 2, y: G - 4 * u), size: CGSize(width: W, height: 10 * u))
-
-        // The light: dimmed under cloud (a dark wash over the whole scene),
-        // warmed in the sun.
-        dim.backgroundColor = CGColor(red: 0.06, green: 0.08, blue: 0.16, alpha: 1)
-        warm.backgroundColor = CGColor(red: 1, green: 0.8, blue: 0.45, alpha: 1)
-
-        // What falls in front of everything, fading out at the ground.
-        precipMask.frame = CGRect(origin: .zero, size: s)
-        precipMask.colors = [CGColor(gray: 0, alpha: 0), CGColor(gray: 0, alpha: 1)]
-        precipMask.startPoint = CGPoint(x: 0.5, y: (G - 8 * u) / H)
-        precipMask.endPoint = CGPoint(x: 0.5, y: (G + 4 * u) / H)
-
+        let fsz = CGSize(width: vs.width * 1.8, height: air * 0.38)
+        paintLater(fogFront) { HabitatArt.mist(fsz, seed: 53, colour: HabitatArt.c(0.97, 0.98, 1), density: 1.2) }
+        fogFront.frame = CGRect(x: 0, y: G - 36 * u, width: fsz.width, height: fsz.height)
+        fogFront.removeAllAnimations()
+        fogFront.add(loop(basic("position.x", fsz.width / 2 - vs.width * 0.1, fsz.width / 2 - vs.width * 0.7), 38, reverse: true), forKey: "drift")
         rainSheets = [
             sheet(WeatherArt.rainSheet(sheetSize, period: period, count: 75, length: 30 * u, width: 1.3 * u, alpha: 0.6, seed: 41),
                   speed: 1050 * u, phase: 0, into: rainBox),
@@ -383,32 +455,39 @@ final class WeatherLayers {
             sheet(WeatherArt.stoneSheet(sheetSize, period: period, count: 26, radius: 2.6 * u, seed: 47), speed: 820 * u, phase: 0.2, into: rainBox),
             sheet(WeatherArt.stoneSheet(sheetSize, period: period, count: 22, radius: 2 * u, seed: 53), speed: 660 * u, phase: 0.7, into: rainBox),
         ]
-
+        // (Keeping whatever the rain was doing.)
+        for (i, l) in ([farSheet] + rainSheets + hailSheets).enumerated() where i < shown.count {
+            l.opacity = shown[i]
+            l.isHidden = hidden[i]
+        }
+        lastLean = 99
+        // Snow, falling through the world (it drifts past as the glass
+        // moves along, the way it would): born along a line above what the
+        // glass shows, however high up that is.
         let flake = CAEmitterCell()
         flake.name = "flake"
         flake.contents = HabitatArt.snowflake(2.4 * u)
-        flake.birthRate = Float(64 * W / 860)
+        flake.birthRate = 64
         flake.velocity = 42 * u
         flake.velocityRange = 14 * u
         flake.emissionLongitude = -.pi / 2
         flake.emissionRange = 0.35
         flake.yAcceleration = -3 * u
-        flake.lifetime = Float((H + 40 * u) / (34 * u))
+        flake.lifetime = Float((VH + 240) / (34 * u))
         flake.scaleRange = 0.4
         flake.alphaRange = 0.25
         let big = CAEmitterCell()
         big.name = "big"
         big.contents = HabitatArt.snowflake(3.8 * u)
-        big.birthRate = Float(20 * W / 860)
+        big.birthRate = 20
         big.velocity = 58 * u
         big.velocityRange = 16 * u
         big.emissionLongitude = -.pi / 2
         big.emissionRange = 0.3
-        big.lifetime = Float((H + 40 * u) / (46 * u))
+        big.lifetime = Float((VH + 240) / (46 * u))
         big.scaleRange = 0.3
-        setEmitter(snowE, [flake, big], shape: .line, at: CGPoint(x: W / 2, y: H + 12 * u), size: CGSize(width: W * 2.4, height: 1))
+        setEmitter(snowE, [flake, big], shape: .line, at: CGPoint(x: VW / 2, y: VH + 12 * u), size: CGSize(width: VW * 2.4, height: 1))
         lastSnowAim = 99
-
         // Blown in from the side: sand, dust, snow on a gale, streaks of
         // wind, and whatever loose bits the scenery has (leaves, petals).
         func sideCell(_ name: String, _ img: CGImage?, velocity v: CGFloat, range: CGFloat = 0.12, lifetime: CGFloat, spin: CGFloat = 0,
@@ -427,48 +506,97 @@ final class WeatherLayers {
             c.scaleRange = 0.35
             return c
         }
-        let debris = WeatherArt.debris(b, u: u)
+        let debris = WeatherArt.debris(biome, u: u)
         var side = [
-            sideCell("grain", HabitatArt.softDot(1.7 * u, HabitatArt.c(0.9, 0.76, 0.54), core: 0.5), velocity: 540 * u, lifetime: W / (380 * u), ay: -24 * u),
-            sideCell("dust", HabitatArt.softDot(18 * u, HabitatArt.c(0.86, 0.7, 0.5, 0.3), core: 0.1), velocity: 260 * u, range: 0.2, lifetime: W / (190 * u), alpha: 0.9),
-            sideCell("gale", HabitatArt.snowflake(2.2 * u), velocity: 420 * u, range: 0.2, lifetime: W / (300 * u), ay: -40 * u),
-            sideCell("streak", WeatherArt.windStreak(length: 80 * u, u: u), velocity: 760 * u, range: 0.05, lifetime: W / (560 * u), alpha: 0.26),
+            sideCell("grain", HabitatArt.softDot(1.7 * u, HabitatArt.c(0.9, 0.76, 0.54), core: 0.5), velocity: 540 * u, lifetime: VW / (380 * u), ay: -24 * u),
+            sideCell("dust", HabitatArt.softDot(18 * u, HabitatArt.c(0.86, 0.7, 0.5, 0.3), core: 0.1), velocity: 260 * u, range: 0.2, lifetime: VW / (190 * u), alpha: 0.9),
+            sideCell("gale", HabitatArt.snowflake(2.2 * u), velocity: 420 * u, range: 0.2, lifetime: VW / (300 * u), ay: -40 * u),
+            sideCell("streak", WeatherArt.windStreak(length: 80 * u, u: u), velocity: 760 * u, range: 0.05, lifetime: VW / (560 * u), alpha: 0.26),
         ]
         for (k, img) in debris.enumerated() {
-            side.append(sideCell("leaf\(k)", img, velocity: 330 * u, range: 0.4, lifetime: W / (230 * u), spin: 9, ay: -30 * u))
+            side.append(sideCell("leaf\(k)", img, velocity: 330 * u, range: 0.4, lifetime: VW / (230 * u), spin: 9, ay: -30 * u))
         }
-        setEmitter(sideE, side, shape: .rectangle, at: CGPoint(x: -14 * u, y: G + air * 0.5), size: CGSize(width: 2, height: air * 1.05))
+        setEmitter(sideE, side, shape: .rectangle, at: CGPoint(x: -14 * u, y: VH * 0.5), size: CGSize(width: 2, height: VH * 1.05))
         sideE.birthRate = 1
         sideFrom = 1
         lastSideSpeed = -1
-
-        veil.backgroundColor = CGColor(red: 0.9, green: 0.92, blue: 0.95, alpha: 1)
-        flashFill.backgroundColor = CGColor(red: 0.92, green: 0.95, blue: 1, alpha: 1)
-        flashFill.opacity = 0
-        for e in [splashes, hailFloor, snowE] { e.birthRate = 0 }
-        marks = []
-        prints.path = nil
+        followedAt = .null
+        if visible.width > 1 { follow(visible: visible, backdrop: backVisible) }
     }
 
-    /// The furniture: snow on top of it, and where the puddles form.
-    func layoutItems(_ h: Habitat, toView: (CGRect) -> CGRect) {
+    /// The glass has moved over the world (and the backdrop): what falls
+    /// is born where it shows, the far rain and the rain on the glass keep
+    /// to the glass, and what falls in front fades where the ground is.
+    func follow(visible v: CGRect, backdrop bv: CGRect) {
+        visible = v
+        backVisible = bv
         guard built else { return }
-        let key = "\(Int(size.width))x\(Int(size.height))-" + h.items.map { "\($0.id):\(Int($0.x)),\(Int($0.y)),\(Int($0.w)),\(Int($0.h)),\($0.flipped),\($0.front)" }.joined(separator: ";")
-        guard key != itemsKey else { return }
-        itemsKey = key
-        let u = f.u
-        let sx = size.width / HabitatLayout.width, sy = size.height / HabitatLayout.height
-        let point: (V2) -> CGPoint = { CGPoint(x: $0.x * sx, y: $0.y * sy) }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-        capsThin.frame = CGRect(origin: .zero, size: size)
-        capsThick.frame = CGRect(origin: .zero, size: size)
-        capsThin.contents = WeatherArt.snowCaps(h.items, size: size, u: u, thick: false, toView: toView, point: point)
-        capsThick.contents = WeatherArt.snowCaps(h.items, size: size, u: u, thick: true, toView: toView, point: point)
+        let G = HabitatLayout.ground
+        // Far rain: in front of the glass, in the backdrop.
+        farBox.position = CGPoint(x: bv.minX + viewSize.width / 2, y: bv.minY + G)
+        // Snow fades at the ground: the fade kept to what shows (a mask is
+        // drawn over all of itself, every frame).
+        let fm = v.insetBy(dx: -60, dy: -60).intersection(CGRect(origin: .zero, size: worldSize))
+        fallMask.frame = fm
+        fallMask.startPoint = CGPoint(x: 0.5, y: (G - 8 - fm.minY) / max(fm.height, 1))
+        fallMask.endPoint = CGPoint(x: 0.5, y: (G + 4 - fm.minY) / max(fm.height, 1))
+        // On the glass, the ground line is where the world's is.
+        let groundOnGlass = G - v.minY
+        precipMask.startPoint = CGPoint(x: 0.5, y: (groundOnGlass - 8) / viewSize.height)
+        precipMask.endPoint = CGPoint(x: 0.5, y: (groundOnGlass + 4) / viewSize.height)
+        rainBox.anchorPoint = CGPoint(x: 0.5, y: groundOnGlass / viewSize.height)
+        rainBox.position = CGPoint(x: viewSize.width / 2, y: groundOnGlass)
+        fogFront.position.y = groundOnGlass - 36 + fogFront.bounds.height / 2
+        // Born about the glass (and a little either side): new ones where
+        // they show, the ones already falling left where they are.
+        guard followedAt.isNull || abs(followedAt.midX - v.midX) > 30 || abs(followedAt.midY - v.midY) > 30
+                || followedAt.size != v.size else { return }
+        followedAt = v
+        let wide = v.width * 1.6
+        for e in [splashes, hailFloor] {
+            e.emitterPosition = CGPoint(x: v.midX, y: G - 4)
+            e.emitterSize = CGSize(width: wide, height: e === splashes ? 12 : 10)
+            // As many a point as there ever were.
+            e.setValue(170 * wide / 860, forKeyPath: e === splashes ? "emitterCells.drop.birthRate" : "emitterCells.bounce.birthRate")
+            e.setValue((e === splashes ? 70 : 16) * wide / 860, forKeyPath: e === splashes ? "emitterCells.ring.birthRate" : "emitterCells.lying.birthRate")
+        }
+        aimSnow(force: true)
+    }
+
+    /// The furniture: snow on top of each thing (a small picture of its
+    /// own, so a thing out of sight costs nothing), and where the puddles
+    /// form along the ground.
+    func layoutItems(_ h: Habitat) {
+        guard built else { return }
+        let key = "\(Int(worldSize.width))x\(Int(worldSize.height))-" + h.items.map { "\($0.id):\(Int($0.x)),\(Int($0.y)),\(Int($0.w)),\(Int($0.h)),\($0.flipped),\($0.front)" }.joined(separator: ";")
+        guard key != itemsKey else { return }
+        itemsKey = key
+        let u: CGFloat = 1
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        // (Painted when snow first lies: most days it never does.)
+        let items = h.items.filter { !$0.inFront }
+        for (thick, box) in [(false, capsThin), (true, capsThick)] {
+            box.sublayers?.forEach { $0.removeFromSuperlayer() }
+            paintLater(box) { [weak box] in
+                for it in items {
+                    let area = it.rect.insetBy(dx: -8, dy: -8)
+                    guard let img = WeatherArt.snowCaps([it], in: area, u: u, thick: thick) else { continue }
+                    let l = CALayer()
+                    l.contents = img
+                    l.frame = area
+                    box?.addSublayer(l)
+                }
+                return nil
+            }
+        }
         // Puddles, in the open stretches of ground.
         let spots = WeatherArt.puddleSpots(h)
-        puddles.contents = WeatherArt.puddles(CGSize(width: size.width, height: f.groundY + 10 * u), f: f, spots: spots)
+        puddles.contents = WeatherArt.puddles(CGSize(width: worldSize.width, height: fw.groundY + 10 * u), f: fw, spots: spots)
         for r in ripples { r.removeFromSuperlayer() }
         ripples = spots.map { s in
             let e = CAEmitterLayer()
@@ -480,11 +608,22 @@ final class WeatherLayers {
             c.scale = 0.3
             c.scaleSpeed = 2
             c.alphaSpeed = -2
-            e.frame = CGRect(origin: .zero, size: size)
-            setEmitter(e, [c], shape: .line, at: CGPoint(x: s.x * sx, y: f.groundY - 5 * u), size: CGSize(width: s.w * sx * 0.7, height: 1))
+            e.frame = CGRect(origin: .zero, size: worldSize)
+            setEmitter(e, [c], shape: .line, at: CGPoint(x: s.x, y: fw.groundY - 5 * u), size: CGSize(width: s.w * 0.7, height: 1))
             e.birthRate = 0
             ground.insertSublayer(e, above: puddles)
             return e
+        }
+    }
+
+    /// Snow on the furniture's layers, for culling: those out of sight are
+    /// left out.
+    func showCaps(near r: CGRect) {
+        for box in [capsThin, capsThick] {
+            for l in box.sublayers ?? [] {
+                let out = !l.frame.intersects(r)
+                if l.isHidden != out { l.isHidden = out }
+            }
         }
     }
 
@@ -495,8 +634,15 @@ final class WeatherLayers {
     func update(_ c: WeatherConditions, dt: CGFloat) {
         guard built else { return }
         let m = c.mix
-        let u = f.u, W = size.width
+        let u = f.u, W = backSize.width
         let wind = c.windNow
+        let clock = CACurrentMediaTime()
+        if m.snow > 0.01 || m.snow > 0 && m.wind > 0 {
+            snowSeenAt = clock
+            if fall.isHidden { fall.isHidden = false }
+        } else if !fall.isHidden, clock - snowSeenAt > 30 {
+            fall.isHidden = true
+        }
         // Clear skies and nothing lying about: once all is put away, there
         // is nothing to do.
         if m == WeatherRecipe(), groundSnow == 0, groundWet == 0, marks.isEmpty {
@@ -615,22 +761,25 @@ final class WeatherLayers {
         fade(veil, whiteout + veilSand + veilFog)
         CATransaction.commit()
 
-        aimSnow(wind)
+        snowAim = clamp(wind * 0.55, -1.0, 1.0)
+        aimSnow()
         blowSide(m, wind: wind, u: u)
         lightning(m, dt: dt)
     }
 
     /// Snow drifts with the wind: new flakes set off at a slant, from
-    /// upwind of the tank so none of it is left bare.
-    private func aimSnow(_ wind: CGFloat) {
-        let aim = clamp(wind * 0.55, -1.0, 1.0)
-        guard abs(aim - lastSnowAim) > 0.03 else { return }
+    /// upwind of what the glass shows so none of it is left bare, and from
+    /// a little above it wherever in the world that is.
+    private func aimSnow(force: Bool = false) {
+        let aim = snowAim
+        guard force || abs(aim - lastSnowAim) > 0.03, visible.width > 1 else { return }
         lastSnowAim = aim
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         snowE.setValue(-CGFloat.pi / 2 + aim, forKeyPath: "emitterCells.flake.emissionLongitude")
         snowE.setValue(-CGFloat.pi / 2 + aim, forKeyPath: "emitterCells.big.emissionLongitude")
-        snowE.emitterPosition = CGPoint(x: size.width / 2 - aim * size.width * 0.5, y: size.height + 12 * f.u)
+        snowE.emitterPosition = CGPoint(x: visible.midX - aim * visible.width * 0.5, y: min(visible.maxY + 120, worldSize.height + 12))
+        snowE.emitterSize = CGSize(width: visible.width * 2.4, height: 1)
         CATransaction.commit()
     }
 
@@ -644,10 +793,10 @@ final class WeatherLayers {
         let names = ["grain", "dust", "gale", "streak"] + (0..<3).map { "leaf\($0)" }
         if from != sideFrom {
             sideFrom = from
-            sideE.emitterPosition = CGPoint(x: from > 0 ? -14 * u : size.width + 14 * u, y: sideE.emitterPosition.y)
+            sideE.emitterPosition = CGPoint(x: from > 0 ? -14 * u : viewSize.width + 14 * u, y: sideE.emitterPosition.y)
             for n in names { sideE.setValue(from > 0 ? 0 : CGFloat.pi, forKeyPath: "emitterCells.\(n).emissionLongitude") }
         }
-        let k = size.width / 860
+        let k = viewSize.width / 860
         let gusty = 0.5 + m.gust
         func birth(_ name: String, _ v: CGFloat) {
             guard abs((sideRates[name] ?? -1) - v) > 0.05 else { return }
@@ -681,17 +830,19 @@ final class WeatherLayers {
     }
 
     /// A bolt — far off behind the hills, or right down to the ground in
-    /// front of them — the sky lighting up with it, and thunder after.
+    /// front of them, somewhere the glass shows — the sky lighting up with
+    /// it, and thunder after.
     func strike(near: Bool) {
         guard built else { return }
         let u = f.u
-        let x = CGFloat.random(in: 0.08...0.92) * size.width
-        let top = CGPoint(x: x + CGFloat.random(in: -40...40) * u, y: size.height + 4)
+        let bv = backVisible.width > 1 ? backVisible : CGRect(origin: .zero, size: backSize)
+        let x = bv.minX + CGFloat.random(in: 0.08...0.92) * bv.width
+        let top = CGPoint(x: x + CGFloat.random(in: -40...40) * u, y: bv.maxY + 4)
         let bottom = CGPoint(x: x + CGFloat.random(in: -70...70) * u, y: near ? f.groundY + 2 * u : f.y(0.2))
         let bolt = near ? nearBolt : farBolt
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        bolt.frame = CGRect(origin: .zero, size: size)
+        bolt.frame = CGRect(origin: .zero, size: backSize)
         bolt.path = WeatherArt.bolt(from: top, to: bottom, u: u)
         bolt.lineWidth = (near ? 2.6 : 1.5) * u
         CATransaction.commit()
@@ -704,6 +855,7 @@ final class WeatherLayers {
     }
 
     private func flicker(_ l: CALayer, _ peaks: [CGFloat], over d: CFTimeInterval) {
+        if let paint = later.removeValue(forKey: ObjectIdentifier(l)) { l.contents = paint() }
         let a = CAKeyframeAnimation(keyPath: "opacity")
         a.values = [0, peaks[0], peaks[1], peaks[2], 0]
         a.keyTimes = [0, 0.05, 0.15, 0.25, 1]
@@ -721,7 +873,7 @@ final class WeatherLayers {
     // MARK: Footprints
 
     /// Tracks in the snow: whoever walks through it leaves a line of little
-    /// prints (a foot down at `p`, in the scene), which new snow fills in.
+    /// prints (a foot down at `p`, in the world), which new snow fills in.
     var wantsFootprints: Bool { groundSnow > 0.3 }
 
     func footDown(at p: CGPoint) {
@@ -751,6 +903,12 @@ final class WeatherLayers {
     private func fade(_ l: CALayer, _ v: CGFloat) {
         let o = Float(clamp(v, 0, 1))
         if o > 0.002 {
+            if let paint = later.removeValue(forKey: ObjectIdentifier(l)) {
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                l.contents = paint()
+                CATransaction.commit()
+            }
             if l.isHidden {
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
@@ -1058,12 +1216,15 @@ enum WeatherArt {
         let blocked = h.items.filter { !$0.kind.hangs && $0.onGround && ($0.kind.climbable || $0.kind == .moss || $0.kind == .leafPile) }
             .map { ($0.x - $0.w * 0.5 - 12, $0.x + $0.w * 0.5 + 12) }
         var spots: [(x: CGFloat, w: CGFloat)] = []
-        let widths: [CGFloat] = [84, 60, 70]
+        // Three to each old tank's width.
+        let across = max(1, Int((h.size.width / HabitatLayout.width).rounded()))
+        let widths: [CGFloat] = Array(repeating: [84, 60, 70] as [CGFloat], count: across).flatMap { $0 }
+        let steps = 40 * across
         var seed = h.items.reduce(7) { ($0 &* 31 &+ $1.id &* 17 &+ Int($1.x)) % 9973 }
         for w in widths {
             var best: (x: CGFloat, score: CGFloat)?
-            for step in 0..<40 {
-                let x = 70 + CGFloat(step) / 39 * (HabitatLayout.width - 140)
+            for step in 0..<steps {
+                let x = 70 + CGFloat(step) / CGFloat(steps - 1) * (h.size.width - 140)
                 let lo = x - w / 2, hi = x + w / 2
                 if blocked.contains(where: { $0.0 < hi && $0.1 > lo }) { continue }
                 if spots.contains(where: { abs($0.x - x) < ($0.w + w) / 2 + 40 }) { continue }
@@ -1105,9 +1266,11 @@ enum WeatherArt {
     /// Snow on top of the furniture: along the tops of logs and stones,
     /// down the length of a branch, on the leaves of a plant; a sprinkle on
     /// the low plants.
-    static func snowCaps(_ items: [HabitatItem], size: CGSize, u: CGFloat, thick: Bool,
-                         toView: (CGRect) -> CGRect, point: (V2) -> CGPoint) -> CGImage? {
-        HabitatArt.image(size, scale: 1) { ctx in
+    static func snowCaps(_ items: [HabitatItem], in area: CGRect, u: CGFloat, thick: Bool) -> CGImage? {
+        let toView: (CGRect) -> CGRect = { $0.offsetBy(dx: -area.minX, dy: -area.minY) }
+        let point: (V2) -> CGPoint = { CGPoint(x: $0.x - area.minX, y: $0.y - area.minY) }
+        let size = area.size
+        return HabitatArt.image(size, scale: 1) { ctx in
             let depth: CGFloat = (thick ? 4.6 : 1.7) * u
             for it in items where !it.inFront {
                 let r = toView(it.rect)

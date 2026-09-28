@@ -1318,6 +1318,13 @@ final class Spider {
         lastUserActivity = t
     }
 
+    /// Where the pointer is within its reach, if not everywhere: in the
+    /// habitat, the part of the tank seen through the glass — the pointer
+    /// out past the glass is outside the tank. It still looks at it; it
+    /// doesn't go after it. (Nil on the desktop.)
+    var cursorArea: CGRect?
+    private func cursorFree(_ p: V2) -> Bool { inBoxOrFree(p) && (cursorArea?.contains(p.point) ?? true) }
+
     var worldPos: V2 { pos }
     /// In its hammock (spinning it, getting in, asleep in it, getting out).
     var inHammock: Bool { mode == .nesting }
@@ -2663,7 +2670,7 @@ final class Spider {
         // for a moment, however far off it is.
         let busy = preoccupied
         let focus = noticing ? commotionAt : cursor
-        let wants = noticing || config.followCursor && !busy && !bored && d < Spider.interestRange * sc && inBoxOrFree(cursor)
+        let wants = noticing || config.followCursor && !busy && !bored && d < Spider.interestRange * sc && cursorFree(cursor)
             && t - lastUserActivity < 8 && cursorHunt == .none
         interest = approach(interest, wants ? 1 : 0, wants ? 6.0 : (busy ? 4 : 1.2), dt)
         // Where the pointer is, give or take its fidgeting: what a pounce
@@ -2745,7 +2752,7 @@ final class Spider {
         let fidgeting = cursorWiggle > 1.8 && cursorNearFor > 0.6
         guard config.pounceOnCursor, config.followCursor, cursorHunt == .none, !noticing, distractable, t > nextCursorHuntAt,
               interest > 0.5, fidgeting, d < Spider.huntRange * sc,
-              inBoxOrFree(cursor), chance(dt * 2.5) else { return }
+              cursorFree(cursor), chance(dt * 2.5) else { return }
         beginCursorHunt()
     }
 
@@ -2786,7 +2793,7 @@ final class Spider {
         let d = cursor - pos
         let dist = d.length
         // Gone off, or it has been at this too long: it gives up, puzzled.
-        if dist > 460 * sc || t - cursorHuntSince > 14 || !inBoxOrFree(cursor) || inCinema
+        if dist > 460 * sc || t - cursorHuntSince > 14 || !cursorFree(cursor) || inCinema
             || t - lastUserActivity > 6 {
             endCursorHunt(nextIn: randRange(10, 20))
             beginActivity(.look, dur: randRange(0.8, 1.5))
@@ -2891,7 +2898,7 @@ final class Spider {
     private func updateClinging(dt: CGFloat) {
         let sc = config.scale
         // The pointer has gone somewhere it cannot follow.
-        if !map.isOnScreen(cursor, slack: 20) || cursor.distance(to: pos) > 400 * sc || !inBoxOrFree(cursor) {
+        if !map.isOnScreen(cursor, slack: 20) || cursor.distance(to: pos) > 400 * sc || !cursorFree(cursor) {
             letGoOfCursor(flung: false)
             return
         }
@@ -3330,15 +3337,16 @@ final class Spider {
     }
 
     /// Whether the underside of anything is over `p`: a branch, the leaves
-    /// of a plant, whatever is raised off the ground. (The lid of the tank
-    /// is over everything: only right under it counts.)
+    /// of a plant, whatever is raised off the ground — near enough over it
+    /// to keep the weather off (a branch high up in a tall tank doesn't).
+    /// (The lid of the tank is over everything: only right under it counts.)
     private func roofOver(_ p: V2) -> Bool {
         for l in map.loops {
             for s in (l.edge.isEmpty ? l.segs : l.edge) where s.facing == .down {
                 let lo = min(s.a.x, s.b.x), hi = max(s.a.x, s.b.x)
                 guard p.x > lo + 3, p.x < hi - 3 else { continue }
                 let y = abs(s.b.x - s.a.x) > 0.01 ? s.a.y + (s.b.y - s.a.y) * (p.x - s.a.x) / (s.b.x - s.a.x) : max(s.a.y, s.b.y)
-                guard y > p.y + 4 else { continue }
+                guard y > p.y + 4, y - p.y < 320 * config.scale else { continue }
                 if l.kind == .screenBorder, y - p.y > 60 * config.scale { continue }
                 return true
             }
@@ -4856,6 +4864,32 @@ final class Spider {
         for p in prey { p.shift(by: d) }
     }
 
+    /// Everything it knows about where things are, `d` further along: for
+    /// going in or out through the tank's glass, between the desktop's
+    /// points and the habitat's world, where the same spot has different
+    /// numbers. Nothing moves on the screen.
+    func shiftSpace(by d: V2) {
+        pos += d
+        anchorPos += d
+        legFramePos += d
+        if let l = landing { landing = (l.point + d, l.angle, l.dir) }
+        draglineCatchY = draglineCatchY.map { $0 + d.y }
+        pounceMark = pounceMark.map { $0 + d }
+        surfacePrev = surfacePrev.map { $0 + d }
+        pendingJump = pendingJump.map { $0 + d }
+        toyContactPos = toyContactPos.map { $0 + d }
+        shotTarget += d
+        footLimitPos += d
+        kneeLimitPos += d
+        cursor += d
+        prevCursor += d
+        cursorCentre += d
+        cursorStalkLastPos += d
+        if let l = laser { laser = l + d }
+        if webActive { webAnchor += d; rope.clear() }
+        for p in prey { p.shift(by: d) }
+    }
+
     /// The map it is on was rebuilt under it (the habitat window was
     /// resized): back onto the nearest edge, or let go if there is none.
     func mapChanged() {
@@ -4968,14 +5002,17 @@ final class Spider {
     /// drop in onto a ledge some way off; a fly is let go in the air.
     @discardableResult
     /// `spot`, for the tools only: exactly there instead.
-    func release(_ kind: PreyKind, at spot: V2? = nil) -> Prey {
-        let screen = confine ?? map.screenFrame(containing: pos)
+    /// `area`: somewhere in there (the part of the tank the glass shows).
+    func release(_ kind: PreyKind, at spot: V2? = nil, in area: CGRect? = nil) -> Prey {
+        let screen = area ?? confine ?? map.screenFrame(containing: pos)
+        // Near it — or, let loose somewhere it isn't, in the middle of there.
+        let near = area.map { $0.contains(pos.point) ? pos : V2($0.midX, $0.minY + $0.height * 0.3) } ?? pos
         var at: V2
         if let spot {
             at = spot
         } else if kind.flies {
-            at = V2(clamp(pos.x + randRange(-380, 380), screen.minX + 80, screen.maxX - 80),
-                    clamp(pos.y + randRange(120, 300), screen.minY + 80, screen.maxY - 80))
+            at = V2(clamp(near.x + randRange(-380, 380), screen.minX + 80, screen.maxX - 80),
+                    clamp(near.y + randRange(120, 300), screen.minY + 80, screen.maxY - 80))
         } else {
             // A ledge facing up, in the open, a decent distance away.
             var best: (score: CGFloat, point: V2)?
@@ -4985,7 +5022,7 @@ final class Spider {
                 let score = remap(d, 160, 700, 1.2, 0.6) * spot.loop.kind.appeal * randRange(0.7, 1.3)
                 if best == nil || score > best!.score { best = (score, spot.point) }
             }
-            at = best?.point ?? V2(clamp(pos.x + randRange(-300, 300), screen.minX + 80, screen.maxX - 80), screen.minY + 60)
+            at = best?.point ?? V2(clamp(near.x + randRange(-300, 300), screen.minX + 80, screen.maxX - 80), screen.minY + 60)
             at.y += 30   // dropped in from a little way up
         }
         let p = Prey(kind: kind, id: nextPreyID, at: at, scale: config.scale)
@@ -8353,7 +8390,7 @@ final class Spider {
             return
         }
 
-        if config.followCursor, dCursor < 340, inBoxOrFree(cursor), chance(min(1, lerp(0.1, 0.65, P.curiosity) * hw(\.approach))) {
+        if config.followCursor, dCursor < 340, cursorFree(cursor), chance(min(1, lerp(0.1, 0.65, P.curiosity) * hw(\.approach))) {
             // Investigate the pointer — from where it stands, if it is
             // already close enough to have its attention.
             if dCursor > 70, interest < 0.5 {

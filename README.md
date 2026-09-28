@@ -484,9 +484,34 @@ hops over onto the ground inside. (Up on a window or a wall, it drops down
 first; off to one side, it walks over; in its hammock, it gets up; thrown
 over the tank, it just drops in.)
 
+The tank is much bigger than its window — about two and three-quarter
+screens long and a screen and a third high, worked out from your display
+the first time — and the window is a pane of glass onto part of it.
+Everything in there is life size: the spider is exactly as big in the tank
+as on the desktop, and so are its prey and the furniture. Make the window
+bigger and you see more of the tank, not bigger things; make it any shape
+you like.
+
+The glass follows the spider about, quietly: it can wander over the middle
+of the window without anything moving, and only when it strays toward an
+edge does the view ease over after it and settle again, with a little more
+room ahead of it than behind. Drag the bare glass to look round the tank on
+your own (flick it and it coasts), swipe two fingers sideways (or shift and
+the wheel), or use the arrow keys; the spider carries on wherever it is.
+While it is out of sight a **Find …** button at the edge of the glass
+points the way to it, and takes you back there. Left looking somewhere else
+for a minute and a half, the view drifts back to it by itself.
+
+**Overview** (in the toolbar) shows the whole tank at once, small — a map,
+not a view into it: where the window is looking (drag the frame to look
+round), where the spider is and anything loose. Click anywhere and the
+glass goes there, life size again.
+
 Inside, it lives in the tank: it walks along the ground, up and over the
 logs and stones standing on it, onto branches, vines and the leaves of the
-plant, and up the glass — and it never leaves by itself. It is drawn *in*
+plant, up the glass at either end and along under the lid, and out along
+the branches and vines up in the air of the tank — and it never leaves by
+itself. It is drawn *in*
 the tank, among its furniture, so foliage placed in front hides it as it
 walks behind, and other windows cover it like anything else in a window.
 Everything it does on the desktop it does in there — hunting what you let
@@ -499,7 +524,10 @@ and it rings. Drag the tank about and it comes along.
 
 **Let Out** (or the window's close button) closes the tank: the spider
 drops from exactly where it was — off the log, the branch, the glass —
-onto whatever is below on the desktop, as the tank fades away. The app
+onto whatever is below on the desktop, as the tank fades away. (If it is
+somewhere the window isn't showing, the view goes to it first, so it drops
+from where you can see it.) Opened again with it inside, it is back where
+it was, and so is the view. The app
 remembers which side of the glass it was on across a restart. Desktop-only
 things — the hammock, the box, cinema manners, the laser, visitors — wait
 for it outside (a box you have drawn is set aside while the tank is open).
@@ -512,7 +540,10 @@ tumbleweed goes by, crystals glow and water drips in the cave, snow falls
 under the northern lights, stars twinkle and fireflies blink by moonlight.
 Plants sway, crystals and mushrooms glow, water dishes ripple.
 
-**Decorate** opens a panel beside the tank (the tank itself does not move):
+**Decorate** opens a panel beside the tank (the tank itself does not move).
+The glass stays put while decorating (it doesn't follow the spider), and a
+thing dragged to the edge of it takes the view along; the Overview,
+decorating, lets you pick anything up and put it anywhere in the tank:
 - **Scenery**: Forest, Jungle, Desert, Meadow, Cave, Beach, Snowfall and
   Moonlit, each a picture tile. The furniture takes on the light of the
   place — bluer by moonlight, dimmer in the cave.
@@ -520,9 +551,14 @@ Plants sway, crystals and mushrooms glow, water dishes ripple.
   log, rock, boulder, bamboo, cactus, leafy plant, hanging vine, water
   dish) and plants and details (fern, tall grass, flowers, succulent,
   mushrooms, moss, leaf litter, pebbles, twigs, crystals). Click one and it
-  drops into the most open spot.
+  drops into the most open spot of what the window is showing.
 - **Layouts**: eight ready-made tanks and a bare one, **Surprise Me** and
-  **Clear All**.
+  **Clear All**. Each ready-made tank is laid out end to end: its old
+  arrangement in the middle, and either side of it parts with a character
+  of their own — a thicket, a clearing, a pool, rocks, a hollow log and
+  bark to shelter in, a trunk with branches going up into the air of the
+  tank and vines down from the lid. **Surprise Me** lays a new one out the
+  same way, part by part.
 - **Weather**: how the tank's weather runs (see below) — whether it comes
   and goes, is kept to one kind, or follows the weather outside; which
   kinds come to this scenery; how often it changes and how much of the
@@ -536,8 +572,12 @@ Plants sway, crystals and mushrooms glow, water dishes ripple.
   duplicate, F flip, arrows nudge (⇧ for more), ⌘Z / ⇧⌘Z undo and redo,
   Esc deselect, then leave.
 
-The habitat is saved as you go. The tank keeps its shape as the window is
-resized, and remembers its size.
+The habitat is saved as you go, with its size; the window remembers its
+size and where it was looking. A habitat from before the tank was bigger
+than its window is moved into a world of its own: a ready-made layout
+becomes the new one of it, and one you made yourself is kept as it was, in
+the middle of the tank. Toys, the laser, the hammock and visitors stay out
+on the desktop.
 
 ### Weather
 
@@ -816,13 +856,15 @@ DisplayServices.
 |---|---|
 | `Math.swift` | vectors, springs, easing, smooth noise |
 | `Surfaces.swift` | turns screens/windows/Dock/menu bar into walkable loops |
-| `Habitat.swift` | the tank's model: biomes, furniture, layouts, and the surfaces the spider walks on in there |
+| `Habitat.swift` | the tank's model: its world's size, biomes, furniture, layouts laid out in parts, regions, and the surfaces the spider walks on in there |
 | `HabitatArt.swift` | painting the tank: palettes, sky, scenery, substrate, glass, and the pictures the moving parts are made of |
 | `HabitatItems.swift` | painting the furniture, and the picker's thumbnails |
 | `HabitatAtmosphere.swift` | what moves in the tank's air, per biome, as Core Animation layers and emitters |
 | `Weather.swift` | the tank's weather: its kinds, each scenery's list, the settings, and the clock that brings it in and clears it |
 | `HabitatWeather.swift` | the weather drawn in the tank — cloud, rain, snow, lightning, puddles, snow lying about — and the Weather tab's tiles |
-| `HabitatScene.swift` | the inside of the tank: its layers, the spider and creatures drawn in it, the mouse, decorating |
+| `HabitatCamera.swift` | the coordinate spaces round the tank (screen, window, glass, world), and the camera: following, panning, gliding, kept for next time |
+| `HabitatScene.swift` | the inside of the tank: its layers (backdrop, world, glass), the conversions between spaces, the spider and creatures drawn in it, the mouse, decorating |
+| `HabitatOverview.swift` | the whole tank at once, small: going anywhere in it, and moving the furniture about it |
 | `HabitatWindow.swift` | the tank's window: frame, toolbar buttons, the decorating panel, undo |
 | `Prey.swift` | the creatures: their behaviour, drawing, and the click-through window they (and the toys) live in |
 | `Toys.swift` | the toys: kinds as data, one physics body for all of them, the toy box, and their drawing |
@@ -902,6 +944,8 @@ straight away, for trying a feed out.
 | `./tools/bench.sh` | times one rendered frame |
 | `SPIDER_STATS=1 ./spiders.app/Contents/MacOS/DesktopSpider` | prints fps and a per-frame budget once a second |
 | `SPIDER_TRACE_TEST=secs ./spiders.app/Contents/MacOS/DesktopSpider` | takes every chance to leave a trace (memory and hammocks off for the run, nothing saved), lays a few out to look at, lets a fly loose now and then, prints what is out and what the traces cost a frame every two seconds, turns traces off halfway to compare, and quits |
+| `SPIDER_HABITAT_CAMERA=1 ./spiders.app/Contents/MacOS/DesktopSpider` | the big tank and its camera: following end to end and up the glass, panned away and found again, resized, furniture added and dragged far along the tank, layouts and Surprise Me, prey, a throw, carried out and back, closed with the spider out of sight and opened again, weather while it moves, the overview — `[ok]`/`[FAIL]` for each, then the habitat keys put back |
+| `SPIDER_HABITAT_SHOT=dir ./spiders.app/Contents/MacOS/DesktopSpider` | pictures of every layout from the middle, one end and up high, its overview, and the decorating panel (`SPIDER_HABITAT_SHOT_ONLY=forestFloor` for one) |
 | `SPIDER_TOY_TEST=secs ./spiders.app/Contents/MacOS/DesktopSpider` | picks each toy in turn (memory off), throws it now and then as if by you, prints what the spider and the toy are up to every two seconds, and quits |
 
 ## Performance

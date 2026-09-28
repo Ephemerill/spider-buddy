@@ -108,6 +108,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Creatures are moving about, so the calm clock only halves the rate.
     private var critterPace = false
     private var lastCursor = V2(-9999, -9999)
+    /// The pointer where the spider sees it: the same, on the desktop; in
+    /// the tank, where it is over the tank's world.
+    private var lastSpiderCursor = V2(-9999, -9999)
     // SPIDER_STATS=1 prints a frame budget breakdown once a second.
     private let stats = ProcessInfo.processInfo.environment["SPIDER_STATS"] == "1"
     /// SPIDER_CINEMA_LOG=1 prints when a display is taken by a full-screen app, and given back.
@@ -300,6 +303,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             runWeatherShots(dir: dir)
         }
         if ProcessInfo.processInfo.environment["SPIDER_HABITAT_INPUT"] == "1" { runHabitatInputTest() }
+        // SPIDER_HABITAT_CAMERA=1: the big tank and its camera, through every
+        // way of looking round it, coming and going, and decorating it
+        // (prints [ok]/[FAIL] for each, then puts the habitat keys back).
+        if ProcessInfo.processInfo.environment["SPIDER_HABITAT_CAMERA"] == "1" { runHabitatCameraTest() }
         // SPIDER_HABITAT_RETURN=left|right|above: carried out of the tank to
         // that side and let go; reports how long it takes to get back in.
         if let side = ProcessInfo.processInfo.environment["SPIDER_HABITAT_RETURN"] {
@@ -546,6 +553,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         UserDefaults.standard.set(inHabitat, forKey: "inHabitat")
+        rememberTankPlace()
         memory?.save()
         ears.stop()
         tracker.stop()
@@ -686,7 +694,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Whether clicks reach us is decided every tick, throttled or not: a
         // stale decision here is a spider you cannot pick up.
         let cursorNow = V2(NSEvent.mouseLocation)
-        let wantsMouseNow = interactive && (spider.isHeld || spider.hitTest(cursorNow))
+        // (In the tank, it is the tank's window that takes the clicks.)
+        let wantsMouseNow = interactive && (spider.isHeld || (!inHabitat && spider.hitTest(cursorNow)))
         if window.ignoresMouseEvents == wantsMouseNow {
             window.ignoresMouseEvents = !wantsMouseNow
         }
@@ -723,8 +732,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let cursor = V2(NSEvent.mouseLocation)
         if cursor.distance(to: lastCursor) > 0.4 {
             lastCursor = cursor
-            for s in allSpiders { s.setCursor(cursor) }
+            for v in visitors { v.spider.setCursor(cursor) }
         }
+        // In the tank it sees the pointer over the tank's world (which moves
+        // under a still pointer as the camera does); out past the glass the
+        // pointer is outside the tank, to be looked at, not gone after.
+        let seen = inHabitat ? (habitat.map { $0.scene.worldPoint(fromScreen: cursor) } ?? cursor) : cursor
+        // (In your hand it goes where the drag takes it; a drag not made by
+        // a real button — the tools' — is left to do so.)
+        let handDrag = spider.isHeld && NSEvent.pressedMouseButtons == 0
+        if !handDrag, seen.distance(to: lastSpiderCursor) > 0.4 {
+            lastSpiderCursor = seen
+            spider.setCursor(seen)
+        }
+        spider.cursorArea = inHabitat ? habitat?.scene.visibleWorld : nil
         updateWeather(now: now, dt: dt)
         // The beat of whatever is playing, as it is on the screen this frame.
         let heard = dancesToMusic ? ears.music(at: now) : nil
@@ -740,9 +761,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let a = CACurrentMediaTime()
             spider.update(dt: dt)
             let b = CACurrentMediaTime()
+            let looked = tickTank(dt: dt)
             let pose = spider.pose()
             let moved = show(pose)
-            settle(moved: updateVisitors(dt: dt, now: a) || moved || toyBox.astir, critters: spider.preyAstir || traces.astir)
+            settle(moved: updateVisitors(dt: dt, now: a) || moved || looked || toyBox.astir, critters: spider.preyAstir || traces.astir)
             let c = CACurrentMediaTime()
             let d = CACurrentMediaTime()
             statUpdate += b - a
@@ -767,8 +789,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 thoughtRoom = wantsRoom
                 applyWindowSize()
             }
+            let looked = tickTank(dt: dt)
             let moved = show(pose)
-            settle(moved: updateVisitors(dt: dt, now: now) || moved || toyBox.astir, critters: spider.preyAstir || traces.astir)
+            settle(moved: updateVisitors(dt: dt, now: now) || moved || looked || toyBox.astir, critters: spider.preyAstir || traces.astir)
         }
         if !inHabitat { updateHammock(dt: dt) }
         updateCarrying()
@@ -780,7 +803,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateSurroundings(now: now)
 
         // Only swallow clicks when the pointer is actually on the spider.
-        let wantsMouse = interactive && (spider.isHeld || spider.hitTest(cursor))
+        let wantsMouse = interactive && (spider.isHeld || (!inHabitat && spider.hitTest(cursor)))
         if window.ignoresMouseEvents == wantsMouse {
             window.ignoresMouseEvents = !wantsMouse
         }
@@ -802,11 +825,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             drawnInTank = false
             window.orderFrontRegardless()
         }
-        // In your hand, it is drawn over everything; what is loose in the
-        // tank stays there.
-        if inHabitat { habitat?.scene.showCreatures(nil, sprite: spriteSide, prey: spider.prey) }
+        // In your hand, it is drawn over everything — out on the screen,
+        // from where it is in the tank's world; what is loose in the tank
+        // stays there.
+        var pose = pose
+        if inHabitat, let hc = habitat {
+            hc.scene.showCreatures(nil, sprite: spriteSide, prey: spider.prey)
+            pose = pose.shifted(by: hc.scene.worldToScreen)
+        }
         let moved = place(pose)
         view.apply(pose)
+        return moved
+    }
+
+    /// The tank's camera, each frame while the tank is open: it follows the
+    /// spider while it is in there (not while it is in your hand). And a
+    /// tank closing with the spider out of sight in it waits for the glass
+    /// to get to it first. True if the view moved.
+    private func tickTank(dt: CGFloat) -> Bool {
+        guard let hc = habitat, tankOpen else { return false }
+        let moved = hc.scene.tick(dt: dt, spider: inHabitat && !spider.isHeld ? spider.worldPos : nil)
+        if let deadline = closeWhenSeen, CACurrentMediaTime() >= deadline || hc.scene.isInView(spider.worldPos, margin: 40) || !inHabitat {
+            closeWhenSeen = nil
+            closeHabitat(animated: closeAnimated)
+        }
         return moved
     }
 
@@ -1465,7 +1507,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func release(_ kind: PreyKind) {
         guard canFeed else { return }
-        spider.release(kind)
+        // In the tank, somewhere the glass shows: you see it let go.
+        spider.release(kind, in: inHabitat ? habitat?.scene.visibleWorld.insetBy(dx: 40, dy: 0) : nil)
         calmFrames = 0
         calm = false
         refreshMenu()
@@ -2005,6 +2048,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var headInAfter: CFTimeInterval = 0
     private var lastEntryNudge: CFTimeInterval = 0
     private var onLineSince: CFTimeInterval = -1
+    /// Closing with it somewhere in the tank the glass isn't showing: the
+    /// glass goes to it first, and the tank closes once it can be seen (or
+    /// at this time, whatever).
+    private var closeWhenSeen: CFTimeInterval?
+    private var closeAnimated = true
+    /// Where in the tank's world it was, and where the glass was looking,
+    /// for when the tank opens again with it inside.
+    private static let tankSpiderKey = "habitatSpider"
+
+    private func rememberTankPlace() {
+        guard let hc = habitat, tankOpen || tankClosing else { return }
+        hc.scene.camera.save()
+        if inHabitat {
+            UserDefaults.standard.set([Double(spider.worldPos.x), Double(spider.worldPos.y)], forKey: AppDelegate.tankSpiderKey)
+        }
+    }
 
     @objc private func toggleHabitat() {
         if tankOpen { closeHabitat() } else { openHabitat() }
@@ -2016,7 +2075,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let hc = habitat { return hc }
         let hc = HabitatController(spiderName: spider.name)
         hc.scene.spider = spider
-        hc.scene.map.standoff = map.standoff
+        // (Its surfaces are laid out for its size: once now, then only as
+        // the furniture changes.)
+        hc.scene.setStandoff(map.standoff)
+        view.toSpider = { [weak self] p in
+            guard let self, self.inHabitat, let hc = self.habitat else { return p }
+            return hc.scene.worldPoint(fromScreen: p)
+        }
         hc.onLetOut = { [weak self] in self?.closeHabitat() }
         hc.onFeed = { [weak self] kind in self?.release(kind) }
         hc.canFeed = { [weak self] in self?.canFeed ?? false }
@@ -2078,7 +2143,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Opens the tank. `restoring`: it was in there when the app last
-    /// quit, and is put straight back.
+    /// quit, and is put straight back — where it was in the tank, the glass
+    /// on it.
     private func openHabitat(restoring: Bool = false) {
         if let hc = habitat, hc.window.isVisible || hc.window.isMiniaturized, !tankClosing {
             NSApp.activate(ignoringOtherApps: true)
@@ -2089,6 +2155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if hidden { toggleHidden() }
         let hc = makeHabitat()
         tankClosing = false
+        closeWhenSeen = nil
         boxWhileInTank = spider.confine
         if spider.confine != nil {
             spider.confine = nil
@@ -2107,10 +2174,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if restoring {
             hc.window.setFrame(target, display: true)
             hc.scene.syncToScreen()
-            let spots = hc.scene.groundSpots()
-            let middle = V2(hc.scene.screenScene.midX, hc.scene.screenGroundY)
-            spider.placeInHabitat(map: hc.scene.map, at: spots.min { $0.distance(to: middle) < $1.distance(to: middle) } ?? middle)
+            let saved = (UserDefaults.standard.array(forKey: AppDelegate.tankSpiderKey) as? [Double]).flatMap { $0.count == 2 ? V2(CGFloat($0[0]), CGFloat($0[1])) : nil }
+            let world = hc.scene.habitat.bounds.insetBy(dx: 30, dy: 30)
+            let at: V2
+            if let s = saved, world.contains(s.point) {
+                at = s
+            } else {
+                let middle = V2(hc.scene.visibleWorld.midX, HabitatLayout.ground)
+                at = hc.scene.groundSpots().min { $0.distance(to: middle) < $1.distance(to: middle) } ?? middle
+            }
+            spider.placeInHabitat(map: hc.scene.map, at: at)
+            hc.scene.lookAt(spider.worldPos)
             settleIn()
+        } else {
+            // It will come in over the ground: the glass looks along it,
+            // where it last looked (the middle, the first time).
+            let x = HabitatCamera.saved() != nil ? hc.scene.visibleWorld.midX : hc.scene.habitat.size.width / 2
+            hc.scene.lookAt(V2(x, hc.scene.visibleWorld.height / 2))
         }
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.35
@@ -2131,19 +2211,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// way in. On the ground (or a window) under the tank, a line up to the
     /// lip of its ground and a climb; off to one side, it walks over; up
     /// above it, it drops down; flying, it is in the moment it is over it.
+    /// (All on the screen: it is out on the desktop.)
     private func updateTankEntry(now: CFTimeInterval) {
-        guard let hc = habitat, tankOpen, !inHabitat, !spider.isHeld, now >= headInAfter else { return }
+        guard let hc = habitat, tankOpen, !inHabitat, !spider.isHeld, now >= headInAfter, closeWhenSeen == nil else { return }
         if spider.config.paused {
             hc.setStatus("\(spiderName) is paused — unpause it to let it climb in")
             return
         }
-        let scene = hc.scene.screenScene
+        let glass = hc.scene.glassOnScreen
         let p = spider.worldPos
         if spider.isAirborne {
-            if scene.insetBy(dx: 10, dy: 10).contains(p.point) {
-                spider.moveInMidAir(map: hc.scene.map, habitat: true)
-                settleIn()
-            }
+            if glass.insetBy(dx: 10, dy: 10).contains(p.point) { enterThroughGlass(hc) }
             return
         }
         if spider.isOnLine {
@@ -2160,9 +2238,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         guard spider.currentLoopID != nil, !spider.isLeavingSurface else { return }
+        // The lip of the ground where the glass shows it. Looking up into
+        // the air of the tank, the glass goes down to the ground for it
+        // (once you have stopped looking round).
+        guard let lip = hc.scene.groundLipOnScreen else {
+            if hc.scene.camera.resting, !hc.scene.overviewOpen, now - lastEntryNudge > 1.5 {
+                lastEntryNudge = now
+                let vis = hc.scene.visibleWorld
+                hc.scene.camera.glide(toCentre: V2(vis.midX, vis.height / 2), thenFollow: false)
+            }
+            return
+        }
+        let lips = hc.scene.visibleGroundSpotsOnScreen()
         // The lip of the open ground nearest to straight above it.
-        let lip = hc.scene.screenGroundY
-        guard let target = hc.scene.groundSpots().min(by: { abs($0.x - p.x) < abs($1.x - p.x) }) else { return }
+        guard let target = lips.min(by: { abs($0.x - p.x) < abs($1.x - p.x) }) else { return }
         let rise = lip - p.y
         // Straight up is best; having tried a while for a spot like that,
         // it settles for a line at a slant, and swings in on it.
@@ -2178,7 +2267,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Not somewhere it can shoot from: over to a ledge under the tank
         // that it can — a leap if it can make it, a walk along if it is
         // on the same edge — and failing that, down, or across.
-        let lips = hc.scene.groundSpots()
         let perches = map.sampleSpots(spacing: 40).filter { s in
             guard s.seg.facing == .up, map.isOnScreen(s.point, slack: -20) else { return false }
             let up = lip - s.point.y
@@ -2204,10 +2292,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// At the top of its line: over the lip and onto the ground.
+    /// Over the glass, in the air: in it is, just where it is — now in the
+    /// tank's world.
+    private func enterThroughGlass(_ hc: HabitatController) {
+        spider.shiftSpace(by: -hc.scene.worldToScreen)
+        spider.moveInMidAir(map: hc.scene.map, habitat: true)
+        settleIn()
+    }
+
+    /// At the top of its line: over the lip and onto the ground — the
+    /// screen spot it reached, and the one it is landing on, now in the
+    /// tank's world.
     private func climbedIn(landing target: V2) {
         guard let hc = habitat, tankOpen, !inHabitat else { return }
-        spider.hopIntoHabitat(map: hc.scene.map, landing: target)
+        let d = hc.scene.worldToScreen
+        spider.shiftSpace(by: -d)
+        spider.hopIntoHabitat(map: hc.scene.map, landing: target - d)
         settleIn()
     }
 
@@ -2229,9 +2329,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Out, with the tank still open (carried out by hand): on the desktop,
-    /// drawn over it as ever; after a while it heads back in.
+    /// drawn over it as ever — from where it is in the tank's world to the
+    /// same spot on the screen; after a while it heads back in.
     private func carriedOut() {
+        guard let hc = habitat else { return }
         inHabitat = false
+        spider.shiftSpace(by: hc.scene.worldToScreen)
         spider.moveInMidAir(map: map, habitat: false)
         headInAfter = CACurrentMediaTime() + 12
         habitat?.setStatus("\(spiderName) is out on your desktop — it’ll climb back in")
@@ -2242,29 +2345,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// whichever side of the glass it is on is where it is.
     private func updateCarrying() {
         guard spider.isHeld, let hc = habitat, tankOpen else { return }
-        let scene = hc.scene.screenScene
-        let p = spider.worldPos.point
-        if inHabitat, !scene.insetBy(dx: -6, dy: -6).contains(p) {
-            carriedOut()
-        } else if !inHabitat, scene.insetBy(dx: 16, dy: 16).contains(p) {
-            spider.moveInMidAir(map: hc.scene.map, habitat: true)
-            settleIn()
+        let glass = hc.scene.glassOnScreen
+        if inHabitat {
+            if !glass.insetBy(dx: -6, dy: -6).contains(hc.scene.screenPoint(fromWorld: spider.worldPos).point) { carriedOut() }
+        } else if glass.insetBy(dx: 16, dy: 16).contains(spider.worldPos.point) {
+            enterThroughGlass(hc)
         }
     }
 
     /// Closes the tank. If it is in there, it drops from the very spot it
-    /// was, onto whatever is below on the desktop, as the tank fades away.
+    /// was, onto whatever is below on the desktop, as the tank fades away —
+    /// and if that spot is somewhere in the tank the glass isn't showing,
+    /// the glass goes to it first, so it drops from where it can be seen.
     private func closeHabitat(animated: Bool = true) {
         guard let hc = habitat, hc.window.isVisible || hc.window.isMiniaturized, !tankClosing else { return }
+        if animated, closeWhenSeen == nil, inHabitat, !spider.isHeld, !hc.window.isMiniaturized,
+           !hc.scene.isInView(spider.worldPos, margin: 40) {
+            hc.scene.showOverview(false)
+            if hc.decorating { hc.toggleDecorate() }
+            hc.scene.camera.recall(to: spider.worldPos)
+            closeWhenSeen = CACurrentMediaTime() + 2.5
+            closeAnimated = animated
+            hc.setStatus("Off to find \(spiderName)…")
+            return
+        }
+        closeWhenSeen = nil
+        rememberTankPlace()
         tankClosing = true
         if inHabitat {
             inHabitat = false
+            spider.shiftSpace(by: hc.scene.worldToScreen)
             spider.dropOutOfHabitat(onto: map)
         } else if spider.isClimbingAway {
             // Halfway up its line into it: the line goes with the tank.
             spider.dropOutOfHabitat(onto: map)
         }
+        spider.cursorArea = nil
+        lastSpiderCursor = V2(-9999, -9999)
         hc.scene.showCreatures(nil, sprite: spriteSide, prey: [])
+        hc.scene.showOverview(false)
         if drawnInTank {
             // Straight back over the desktop, this frame, where it was.
             drawnInTank = false
@@ -2359,7 +2478,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The saved state a habitat test may touch, to put back afterwards.
     private func habitatTestSnapshot() -> () -> Void {
-        let keys = [Habitat.key, HabitatController.tankWidthKey, HabitatController.nameKey, "inHabitat", WeatherSettings.key, WeatherClock.saveKey]
+        let keys = [Habitat.key, HabitatController.tankWidthKey, HabitatController.glassKey, HabitatController.nameKey, "inHabitat",
+                    WeatherSettings.key, WeatherClock.saveKey, HabitatCamera.saveKey, AppDelegate.tankSpiderKey]
         let saved = keys.map { UserDefaults.standard.object(forKey: $0) }
         return {
             for (k, v) in zip(keys, saved) { UserDefaults.standard.set(v, forKey: k) }
@@ -2400,15 +2520,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         func after(_ secs: Double, _ f: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + secs, execute: f) }
         func report(_ label: String) {
             let p = spider.worldPos
-            let scene = habitat?.scene.screenScene ?? .zero
-            print(String(format: "habitat test: %@ in=%@ open=%@ at %.0f,%.0f %@ climbing=%@ scene %.0f,%.0f %.0fx%.0f ground %.0f",
+            let scene = habitat?.scene.glassOnScreen ?? .zero
+            let cam = habitat?.scene.camera.origin ?? .zero
+            print(String(format: "habitat test: %@ in=%@ open=%@ at %.0f,%.0f %@ climbing=%@ glass %.0f,%.0f %.0fx%.0f lip %.0f camera %.0f,%.0f",
                          label, "\(inHabitat)", "\(tankOpen)", p.x, p.y, spider.debugState, "\(spider.isClimbingAway)",
-                         scene.minX, scene.minY, scene.width, scene.height, habitat?.scene.screenGroundY ?? 0))
+                         scene.minX, scene.minY, scene.width, scene.height, habitat?.scene.groundLipOnScreen ?? -1, cam.x, cam.y))
             fflush(stdout)
         }
         func shot(_ name: String) {
             guard let dir, let hc = habitat else { return }
-            let r = hc.window.frame.union(CGRect(x: spider.worldPos.x - 150, y: spider.worldPos.y - 150, width: 300, height: 300)).insetBy(dx: -40, dy: -40)
+            let s = inHabitat ? hc.scene.screenPoint(fromWorld: spider.worldPos) : spider.worldPos
+            let r = hc.window.frame.union(CGRect(x: s.x - 150, y: s.y - 150, width: 300, height: 300)).insetBy(dx: -40, dy: -40)
             debugShot("\(dir)/\(name).png", rect: r)
         }
         after(1) { [self] in
@@ -2421,13 +2543,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         after(14) { [self] in
             guard let hc = habitat else { return }
             report("before carry")
-            let from = spider.worldPos
+            let from = inHabitat ? hc.scene.screenPoint(fromWorld: spider.worldPos) : spider.worldPos
             let out = V2(hc.window.frame.minX - 180, hc.window.frame.midY)
-            spider.beginGrab(at: from)
+            spider.beginGrab(at: view.toSpider?(from) ?? from)
             var step = 0
             Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { t in
                 step += 1
-                self.spider.moveGrab(to: V2.lerp(from, out, CGFloat(min(step, 50)) / 50))
+                let p = V2.lerp(from, out, CGFloat(min(step, 50)) / 50)
+                self.spider.moveGrab(to: self.view.toSpider?(p) ?? p)
                 if step >= 60 { t.invalidate(); self.spider.endGrab(throwVelocity: .zero); report("let go outside") }
             }
             for i in 1...20 { after(1.2 + Double(i) * 1.0) { report("outside+\(i)") } }
@@ -2437,11 +2560,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         after(36) { [self] in
             guard let hc = habitat else { return }
             report("before move")
-            let rel = spider.worldPos - V2(hc.scene.screenScene.origin)
+            // (Its world position is the same; on the screen it goes with the tank.)
+            let rel = hc.scene.viewPoint(fromWorld: spider.worldPos)
             hc.window.setFrameOrigin(CGPoint(x: hc.window.frame.minX + 120, y: hc.window.frame.minY - 60))
             after(0.3) {
-                let now = self.spider.worldPos - V2(hc.scene.screenScene.origin)
-                print(String(format: "habitat test: moved tank; spider relative to scene %.1f,%.1f -> %.1f,%.1f", rel.x, rel.y, now.x, now.y))
+                let now = hc.scene.viewPoint(fromWorld: self.spider.worldPos)
+                print(String(format: "habitat test: moved tank; spider on the glass %.1f,%.1f -> %.1f,%.1f", rel.x, rel.y, now.x, now.y))
                 report("after move")
             }
         }
@@ -2530,14 +2654,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         after(3) { [self] in
             check("in the tank after opening", inHabitat, spider.debugState)
             // Picked up in the tank and carried out past its left side.
-            let local = CGPoint(x: spider.worldPos.x - scene.screenOrigin.x, y: spider.worldPos.y - scene.screenOrigin.y)
+            let local = scene.viewPoint(fromWorld: spider.worldPos)
             drag(local, CGPoint(x: -260, y: local.y), steps: 40) {
                 check("carried out: out of the tank", !self.inHabitat && !self.spider.inHabitat, self.spider.debugState)
                 check("carried out: drawn over the desktop", self.window.isVisible)
                 after(0.5) {
                     // Straight back in, by hand, for the rest.
                     self.spider.beginGrab(at: self.spider.worldPos)
-                    self.spider.moveGrab(to: V2(scene.screenScene.midX, scene.screenScene.midY))
+                    self.spider.moveGrab(to: V2(scene.glassOnScreen.midX, scene.glassOnScreen.midY))
                     after(0.3) {
                         self.updateCarrying()
                         self.spider.endGrab(throwVelocity: .zero)
@@ -2547,21 +2671,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         after(6) {
-            hc.scene.setHabitat(Habitat.preset(.forestFloor))
+            hc.scene.setHabitat(Habitat.preset(.forestFloor, world: hc.scene.habitat.size))
             if !hc.decorating { hc.toggleDecorate() }
+            // A log in the middle of the glass, the glass well along the tank.
+            if let log = scene.habitat.items.last(where: { $0.kind == .log }) { scene.lookAt(V2(log.x, log.rect.midY)) }
         }
         after(7) {
-            guard let log = scene.habitat.items.first(where: { $0.kind == .log }) else { check("a log to test with", false); return }
-            let r = scene.toView(log.rect)
-            let start = CGPoint(x: r.midX, y: r.midY)
+            guard let log = scene.habitat.items.last(where: { $0.kind == .log }) else { check("a log to test with", false); return }
+            let c = scene.viewPoint(fromWorld: V2(log.rect.midX, log.rect.midY))
+            let start = CGPoint(x: c.x, y: c.y)
+            check("the glass is well along the tank", scene.camera.origin.x > 200, String(format: "camera %.0f", scene.camera.origin.x))
             drag(start, CGPoint(x: start.x + 120, y: start.y + 40), steps: 20) {
                 let moved = scene.habitat.items.first { $0.id == log.id }!
                 check("clicked piece is selected", scene.selected == log.id)
-                check("dragged along", abs(moved.x - log.x - 120 / (scene.bounds.width / HabitatLayout.width)) < 3, String(format: "x %.0f -> %.0f", log.x, moved.x))
+                check("dragged along, one to one", abs(moved.x - log.x - 120) < 3, String(format: "x %.0f -> %.0f", log.x, moved.x))
                 check("let go in the air, it comes to rest on what is under it", moved.y < 40 && (moved.y == 0 || scene.habitat.items.contains { o in
                     o.id != log.id && (Habitat.solidRect(o).map { abs($0.maxY - HabitatLayout.ground - moved.y) < 0.5 } ?? false) }), String(format: "y %.1f", moved.y))
                 // Its top-right handle, pulled out.
-                let r2 = scene.toView(moved.rect).insetBy(dx: -5, dy: -5)
+                let r2 = moved.rect.insetBy(dx: -5, dy: -5).offsetBy(dx: -scene.visibleWorld.minX, dy: -scene.visibleWorld.minY)
                 drag(CGPoint(x: r2.maxX, y: r2.maxY), CGPoint(x: r2.maxX + 80, y: r2.maxY + 30), steps: 15) {
                     let grown = scene.habitat.items.first { $0.id == log.id }!
                     check("corner handle resizes it", grown.w > moved.w * 1.1, String(format: "w %.0f -> %.0f", moved.w, grown.w))
@@ -2620,19 +2747,383 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hc.rename(spiderName)
         }
         after(10) { [self] in
-            // The window pulled wider: the tank keeps its shape.
-            let proposed = CGSize(width: hc.window.frame.width + 200, height: hc.window.frame.height)
+            // The window pulled wider (from its right edge): the glass shows
+            // more of the world, which stays where it is.
+            let was = scene.bounds.size, cam = scene.camera.origin, at = spider.worldPos
+            let proposed = CGSize(width: hc.window.frame.width + 200, height: hc.window.frame.height - 40)
             let size = hc.windowWillResize(hc.window, to: proposed)
             hc.window.setFrame(CGRect(origin: hc.window.frame.origin, size: size), display: true)
             after(0.5) {
                 let s = scene.bounds
-                check("tank keeps its shape", abs(s.height / s.width - HabitatLayout.aspect) < 0.01, String(format: "%.0fx%.0f", s.width, s.height))
-                check("spider still in the tank", scene.screenScene.insetBy(dx: -10, dy: -10).contains(self.spider.worldPos.point) && self.inHabitat, self.spider.debugState)
+                check("the glass grows, any shape", s.width > was.width + 150 && abs(s.height - was.height + 40) < 12,
+                      String(format: "%.0fx%.0f -> %.0fx%.0f", was.width, was.height, s.width, s.height))
+                check("the world stays put", (scene.camera.origin - cam).length < 1 || scene.camera.mode != .free,
+                      String(format: "camera %.0f,%.0f -> %.0f,%.0f", cam.x, cam.y, scene.camera.origin.x, scene.camera.origin.y))
+                check("the spider the same size, in the same place", self.inHabitat && self.spider.worldPos.distance(to: at) < 60, self.spider.debugState)
                 self.closeHabitat(animated: false)
                 check("closed", !self.inHabitat && !self.tankOpen)
                 after(0.5) { self.finishHabitatTest(restore) }
             }
         }
+    }
+
+    /// SPIDER_HABITAT_CAMERA=1: the habitat bigger than its window, and the
+    /// glass looking round it — following the spider end to end and up the
+    /// glass, panned away and back, resized, decorated far from the start,
+    /// fed, the spider thrown, carried out and back, the tank closed with
+    /// the spider out of sight and opened again, weather while it moves, and
+    /// the overview.
+    private func runHabitatCameraTest() {
+        let restore = habitatTestSnapshot()
+        var fails = 0
+        func check(_ label: String, _ ok: Bool, _ detail: String = "") {
+            if !ok { fails += 1 }
+            print("habitat camera: [\(ok ? "ok  " : "FAIL")] \(label) \(detail)")
+            fflush(stdout)
+        }
+        func note(_ s: String) { print("habitat camera: \(s)"); fflush(stdout) }
+        func after(_ secs: Double, _ f: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + secs, execute: f) }
+        /// Runs `each` every frame for `secs`, then `done`.
+        func watch(_ secs: Double, each: @escaping () -> Void, done: @escaping () -> Void) {
+            let end = CACurrentMediaTime() + secs
+            Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { t in
+                each()
+                if CACurrentMediaTime() >= end { t.invalidate(); done() }
+            }
+        }
+        for s in [CGSize(width: 1280, height: 800), CGSize(width: 1470, height: 920), CGSize(width: 1728, height: 1080), CGSize(width: 2560, height: 1415), CGSize(width: 3840, height: 2135)] {
+            let w = HabitatLayout.world(for: s)
+            note(String(format: "a %.0fx%.0f screen makes a %.0fx%.0f world (%.2f screens across, %.2f high)", s.width, s.height, w.width, w.height, w.width / s.width, w.height / s.height))
+        }
+        openHabitat(restoring: true)
+        guard let hc = habitat else { return }
+        hc.scene.debugKeepAnimating = true
+        let scene = hc.scene
+        scene.setHabitat(Habitat.preset(.forestFloor, world: scene.habitat.size))
+        let W = scene.habitat.size.width, H = scene.habitat.size.height, G = HabitatLayout.ground
+        let floorY = G + scene.map.standoff
+        func mouse(_ type: NSEvent.EventType, _ p: CGPoint) {
+            let w = scene.convert(p, to: nil)
+            guard let e = NSEvent.mouseEvent(with: type, location: w, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                             windowNumber: hc.window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
+            switch type {
+            case .leftMouseDown: scene.mouseDown(with: e)
+            case .leftMouseDragged: scene.mouseDragged(with: e)
+            default: scene.mouseUp(with: e)
+            }
+        }
+        func drag(_ from: CGPoint, _ to: CGPoint, steps: Int, then: @escaping () -> Void) {
+            mouse(.leftMouseDown, from)
+            var i = 0
+            Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { t in
+                i += 1
+                let u = CGFloat(i) / CGFloat(steps)
+                mouse(.leftMouseDragged, CGPoint(x: from.x + (to.x - from.x) * u, y: from.y + (to.y - from.y) * u))
+                if i >= steps { t.invalidate(); mouse(.leftMouseUp, to); then() }
+            }
+        }
+        /// Stood on the open floor at `x`.
+        func standAt(_ x: CGFloat) {
+            spider.placeInHabitat(map: scene.map, at: V2(x, floorY))
+        }
+        var steps: [(Double, () -> Void)] = []
+        var t: Double = 1.5
+        func step(_ wait: Double, _ f: @escaping () -> Void) { steps.append((t, f)); t += wait }
+
+        step(3) { [self] in
+            note(String(format: "world %.0fx%.0f, glass %.0fx%.0f, %d things", W, H, scene.bounds.width, scene.bounds.height, scene.habitat.items.count))
+            check("the world is much bigger than the glass", W > scene.bounds.width * 2.5 && H > scene.bounds.height * 1.5)
+            check("in the tank", inHabitat, spider.debugState)
+            standAt(W / 2)
+            scene.lookAt(spider.worldPos)
+            check("true scale: a point on the glass is a point in the world",
+                  abs(scene.worldPoint(fromView: CGPoint(x: 100, y: 0)).x - scene.worldPoint(fromView: .zero).x - 100) < 0.01)
+            check("the ground shows at the bottom of the glass", scene.groundLipOnScreen != nil)
+        }
+        // 1–3: the camera, following something along the tank end to end,
+        // up the glass, and flung across it (the same camera, on its own,
+        // with a spider that goes exactly where it is told).
+        step(0.5) {
+            let cam = HabitatCamera()
+            cam.setWorld(CGSize(width: W, height: H))
+            cam.setView(scene.bounds.size)
+            var s = V2(W / 2, floorY)
+            cam.jump(to: cam.centring(s))
+            let dt: CGFloat = 1.0 / 60
+            var frames = 0, seen = 0, moving = 0, goes = 0, wasMoving = false
+            func run(until done: () -> Bool, move: () -> Void) {
+                var n = 0
+                while !done() && n < 60 * 120 {
+                    move()
+                    let before = cam.origin
+                    cam.update(dt: dt, spider: s, follows: true)
+                    let m = (cam.origin - before).length > 0.05
+                    frames += 1; n += 1
+                    if cam.visible.insetBy(dx: -10, dy: -10).contains(s.point) { seen += 1 }
+                    if m { moving += 1 }
+                    if m && !wasMoving { goes += 1 }
+                    wasMoving = m
+                }
+            }
+            // Along the floor at a walk, stopping now and then.
+            var pause = 0
+            run(until: { s.x <= 60 }, move: {
+                pause = (pause + 1) % 400
+                if pause < 300 { s.x -= 95 * dt }
+            })
+            let along = (frames, seen, moving, goes, cam.origin)
+            note(String(format: "along the tank: in sight %d/%d frames, camera moving %d frames in %d goes, ends at %.0f,%.0f", along.0, along.1, along.2, along.3, along.4.x, along.4.y))
+            check("followed end to end, it is always in sight", along.1 == along.0)
+            check("the camera ends at the end of the tank, not past it", along.4.x == 0)
+            check("the camera goes in easy stretches, and is still in between", along.2 < along.0 * 3 / 4 && along.3 >= 3, "\(along.2)/\(along.0) in \(along.3)")
+            // Up the glass to near the lid.
+            frames = 0; seen = 0; moving = 0; goes = 0
+            run(until: { s.y >= H - 60 }, move: { s = V2(22, s.y + 70 * dt) })
+            note(String(format: "up the glass: in sight %d/%d, camera at %.0f,%.0f", seen, frames, cam.origin.x, cam.origin.y))
+            check("up the glass, the camera goes up with it, to the top", seen == frames && abs(cam.origin.y - (H - scene.bounds.height)) < 6,
+                  String(format: "%.0f of %.0f", cam.origin.y, H - scene.bounds.height))
+            // Flung across the tank: it catches up and settles.
+            s = V2(W * 0.6, H * 0.5)
+            var n = 0
+            frames = 0; seen = 0
+            run(until: { n += 1; return n > 150 }, move: {})
+            let caught = cam.visible.contains(s.point)
+            check("flung across, the camera catches up within a few seconds", caught, String(format: "at %.0f,%.0f", cam.origin.x, cam.origin.y))
+            // Resting in the middle, jiggling about a little: no stirring.
+            n = 0
+            run(until: { n += 1; return n > 300 }, move: {})
+            let still = cam.origin
+            s = V2(cam.visible.midX, cam.visible.midY)
+            n = 0
+            run(until: { n += 1; return n > 300 }, move: { s = V2(cam.visible.midX + sin(CGFloat(n) * 0.2) * 60, cam.visible.midY + cos(CGFloat(n) * 0.13) * 40) })
+            check("pottering about in the middle, the camera doesn't stir", (cam.origin - still).length < 1)
+        }
+        // And the real spider, walking about for a while (smoke test).
+        step(22) { [self] in
+            standAt(W / 2)
+            scene.lookAt(spider.worldPos)
+            var frames = 0, seen = 0
+            var summoned: CFTimeInterval = 0
+            watch(21, each: {
+                frames += 1
+                let now = CACurrentMediaTime()
+                if now - summoned > 2 { summoned = now; self.spider.summon(to: V2(self.spider.worldPos.x - 300, floorY)) }
+                if scene.isInView(self.spider.worldPos, margin: -10) { seen += 1 }
+            }, done: {
+                note(String(format: "the spider wandered to %.0f,%.0f (%@), in sight %d/%d, camera at %.0f,%.0f",
+                            self.spider.worldPos.x, self.spider.worldPos.y, self.spider.debugState, seen, frames, scene.camera.origin.x, scene.camera.origin.y))
+                check("the real spider, followed, stays in sight", CGFloat(seen) >= CGFloat(frames) * 0.97)
+            })
+        }
+        // 4–5: panned away; it carries on out of sight; the find button.
+        step(6) { [self] in
+            standAt(W * 0.3)
+            scene.lookAt(spider.worldPos)
+            after(0.5) {
+                let from = scene.camera.origin
+                scene.camera.pan(by: V2(1600, 300))
+                let panned = scene.camera.origin
+                let at = self.spider.worldPos
+                var moved: CGFloat = 0
+                watch(5, each: { moved = max(moved, self.spider.worldPos.distance(to: at)) }, done: {
+                    check("panned away, the camera stays where it was put", (scene.camera.origin - panned).length < 1 && (panned - from).length > 500,
+                          String(format: "%.0f,%.0f", scene.camera.origin.x, scene.camera.origin.y))
+                    check("out of sight, it carries on as it was", self.inHabitat, String(format: "moved %.0f, %@", moved, self.spider.debugState))
+                    check("the find button shows the way", scene.debugFindShown)
+                })
+            }
+        }
+        // 6: found.
+        step(4) {
+            scene.findSpider()
+            after(3.5) { [self] in
+                check("found: back on it, gliding, and following again", scene.isInView(spider.worldPos, margin: 10)
+                      && (scene.camera.mode == .follow || scene.camera.mode == .glide(thenFollow: true)),
+                      String(format: "camera %.0f,%.0f spider %.0f,%.0f", scene.camera.origin.x, scene.camera.origin.y, spider.worldPos.x, spider.worldPos.y))
+                check("the find button goes", !scene.debugFindShown)
+            }
+        }
+        // 7: resized.
+        step(1.5) {
+            let was = scene.bounds.size
+            let size = hc.windowWillResize(hc.window, to: CGSize(width: hc.window.frame.width + 260, height: hc.window.frame.height + 90))
+            hc.window.setFrame(CGRect(origin: hc.window.frame.origin, size: size), display: true)
+            after(0.8) {
+                check("resized: the glass shows more of the world, same scale", scene.visibleWorld.size == scene.bounds.size && scene.bounds.width > was.width + 100,
+                      String(format: "%.0fx%.0f -> %.0fx%.0f", was.width, was.height, scene.bounds.width, scene.bounds.height))
+            }
+        }
+        // 8: something added with the glass far along the tank.
+        step(1.5) { [self] in
+            scene.lookAt(V2(W - 300, 300))
+            let count = scene.habitat.items.count
+            scene.add(.rock)
+            let it = scene.habitat.items.last!
+            check("added where the glass is looking", scene.habitat.items.count == count + 1 && scene.visibleWorld.insetBy(dx: -30, dy: -60).contains(CGPoint(x: it.x, y: it.rect.midY)),
+                  String(format: "rock at %.0f, glass %.0f…%.0f", it.x, scene.visibleWorld.minX, scene.visibleWorld.maxX))
+            hc.undo()
+            _ = spider
+        }
+        // 9: dragged by hand with the glass far along (in decorating).
+        step(2.5) {
+            if !hc.decorating { hc.toggleDecorate() }
+            after(0.6) {
+                guard let it = scene.habitat.items.filter({ $0.kind == .log || $0.kind == .rock || $0.kind == .boulder })
+                        .min(by: { abs($0.x - scene.visibleWorld.midX) < abs($1.x - scene.visibleWorld.midX) }) else { check("something to drag", false); return }
+                scene.lookAt(V2(it.x, it.rect.midY + 100))
+                let c = scene.viewPoint(fromWorld: V2(it.x, it.rect.midY))
+                drag(c, CGPoint(x: c.x - 90, y: c.y), steps: 12) {
+                    let moved = scene.habitat.items.first { $0.id == it.id }!
+                    check("dragged with the glass along the tank, one to one", abs(moved.x - (it.x - 90)) < 3 || abs(moved.x - it.x) > 60,
+                          String(format: "%.0f -> %.0f (glass at %.0f)", it.x, moved.x, scene.camera.origin.x))
+                    hc.undo()
+                    hc.toggleDecorate()
+                }
+            }
+        }
+        // 10–11: a layout, and a surprise.
+        step(2) { [self] in
+            hc.loadPreset(.jungleCanopy)
+            let h = scene.habitat
+            check("a layout fills the tank end to end", (h.items.map(\.x).min() ?? W) < W * 0.2 && (h.items.map(\.x).max() ?? 0) > W * 0.8, "\(h.items.count) things")
+            check("things up in the air to climb to", h.items.contains { $0.kind == .branch && $0.y > H * 0.4 })
+            check("it is still in the tank, on something", inHabitat, spider.debugState)
+            hc.shuffle()
+            let s = scene.habitat
+            check("surprise: spread across the tank", (s.items.map(\.x).min() ?? W) < W * 0.25 && (s.items.map(\.x).max() ?? 0) > W * 0.75, "\(s.items.count) things, \(s.biome)")
+            note("regions: " + s.regions.map { "\($0.kind.rawValue)@\(Int($0.rect.minX))" }.joined(separator: " "))
+            hc.loadPreset(.forestFloor)
+        }
+        // 12–13: fed with the glass along from it; hunting across the glass's edge.
+        step(26) { [self] in
+            standAt(W * 0.35)
+            scene.lookAt(spider.worldPos + V2(scene.bounds.width * 0.3, 0))
+            after(0.3) {
+                self.release(.fruitFly)
+                self.release(.cricket)
+                let loose = self.spider.prey
+                check("let loose where the glass is looking", loose.count >= 2 && loose.allSatisfy { scene.visibleWorld.insetBy(dx: -120, dy: -200).contains($0.pos.point) },
+                      loose.map { String(format: "%.0f,%.0f", $0.pos.x, $0.pos.y) }.joined(separator: " "))
+                var outOfSight = 0
+                watch(24, each: { if !scene.isInView(self.spider.worldPos) { outOfSight += 1 } }, done: {
+                    note("after 24 s: \(self.spider.prey.count) of 2 still loose, spider \(self.spider.debugState), out of sight \(outOfSight) frames, camera \(scene.camera.mode)")
+                    check("hunting, the camera keeps it in sight", outOfSight < 60)
+                })
+            }
+        }
+        // 14: picked up and thrown with the glass along the tank.
+        step(4) { [self] in
+            scene.findSpider()
+            after(1.8) {
+                let at = scene.viewPoint(fromWorld: self.spider.worldPos)
+                check("the glass along the tank", scene.camera.origin.x > 50, String(format: "%.0f", scene.camera.origin.x))
+                drag(at, CGPoint(x: min(at.x + 160, scene.bounds.width - 60), y: min(at.y + 150, scene.bounds.height - 60)), steps: 6) {
+                    check("thrown, it flies in the tank", self.inHabitat && (self.spider.isAirborne || self.spider.isStanding), self.spider.debugState)
+                    after(1.8) {
+                        check("thrown, it lands in the tank", self.inHabitat && scene.habitat.bounds.insetBy(dx: -10, dy: -10).contains(self.spider.worldPos.point), self.spider.debugState)
+                    }
+                }
+            }
+        }
+        // 15–16: carried out through the glass, and back in.
+        step(2) { [self] in
+            // (Down on the floor again after being thrown, the glass on it.)
+            standAt(scene.visibleWorld.midX)
+            scene.findSpider()
+        }
+        step(3) { [self] in
+            let at = scene.viewPoint(fromWorld: spider.worldPos)
+            let out = CGPoint(x: -220, y: at.y)
+            drag(at, out, steps: 30) {
+                let pointer = V2(scene.glassOnScreen.minX + out.x, scene.glassOnScreen.minY + out.y)
+                check("carried out: on the desktop", !self.inHabitat && !self.spider.inHabitat, self.spider.debugState)
+                check("carried out: where the pointer is, on the screen", self.spider.worldPos.distance(to: pointer) < 60,
+                      String(format: "%.0f,%.0f vs %.0f,%.0f", self.spider.worldPos.x, self.spider.worldPos.y, pointer.x, pointer.y))
+                after(0.4) {
+                    let mid = V2(scene.glassOnScreen.midX, scene.glassOnScreen.midY)
+                    self.spider.beginGrab(at: self.spider.worldPos)
+                    self.spider.moveGrab(to: mid)
+                    after(2.0) {
+                        self.updateCarrying()
+                        let want = scene.worldPoint(fromScreen: mid)
+                        check("dropped back in: in the tank's world where it was let go", self.inHabitat && self.spider.worldPos.distance(to: want) < 60,
+                              String(format: "%.0f,%.0f vs %.0f,%.0f", self.spider.worldPos.x, self.spider.worldPos.y, want.x, want.y))
+                        self.spider.endGrab(throwVelocity: .zero)
+                    }
+                }
+            }
+        }
+        // 17: closed with it out of sight: the glass goes to it, then it drops.
+        step(6) { [self] in
+            standAt(W * 0.2)
+            after(1.2) {
+                scene.camera.pan(by: V2(W * 0.5, 0))
+                after(0.2) {
+                    check("out of sight before closing", !scene.isInView(self.spider.worldPos))
+                    self.closeHabitat()
+                    check("closing waits for the glass to get to it", self.tankOpen && self.inHabitat)
+                    var dropped: V2?
+                    var glass = CGRect.zero
+                    watch(3.5, each: {
+                        if dropped == nil, !self.inHabitat { dropped = self.spider.worldPos; glass = scene.glassOnScreen }
+                    }, done: {
+                        check("closed, it dropped from where it could be seen", dropped.map { glass.insetBy(dx: -30, dy: -30).contains($0.point) } ?? false,
+                              dropped.map { String(format: "%.0f,%.0f in %@", $0.x, $0.y, NSStringFromRect(glass)) } ?? "never")
+                        check("closed", !self.tankOpen)
+                    })
+                }
+            }
+        }
+        // 19: open again with it put back where it was.
+        step(4) { [self] in
+            let saved = (UserDefaults.standard.array(forKey: AppDelegate.tankSpiderKey) as? [Double]) ?? []
+            openHabitat(restoring: true)
+            after(1) {
+                let want = saved.count == 2 ? V2(CGFloat(saved[0]), CGFloat(saved[1])) : .zero
+                check("opened again: back where it was, and the glass on it", self.inHabitat && self.spider.worldPos.distance(to: want) < 120 && scene.isInView(self.spider.worldPos),
+                      String(format: "%.0f,%.0f (was %.0f,%.0f)", self.spider.worldPos.x, self.spider.worldPos.y, want.x, want.y))
+            }
+        }
+        // 18: weather while the glass moves.
+        step(7) {
+            hc.weather.persists = false
+            hc.weather.debugForce(.snow)
+            after(2) {
+                scene.camera.glide(toCentre: V2(W * 0.8, H * 0.6), thenFollow: false)
+                after(2.5) {
+                    hc.weather.debugForce(.storm)
+                    scene.weatherFX.strike(near: true)
+                    after(1.5) {
+                        check("weather while the glass moves along and up", scene.camera.origin.x > W * 0.5, String(format: "%.0f,%.0f", scene.camera.origin.x, scene.camera.origin.y))
+                        hc.weather.debugForce(.clear)
+                    }
+                }
+            }
+        }
+        // 20: the overview.
+        step(4) { [self] in
+            scene.showOverview(true)
+            after(0.5) {
+                check("the overview opens", scene.overviewOpen)
+                guard let o = scene.overview else { return }
+                let goal = V2(W * 0.15, 200)
+                let p = o.debugViewPoint(for: goal)
+                o.debugClick(at: p)
+                after(2.8) {
+                    check("a click in it takes the glass there, life size", !scene.overviewOpen && scene.visibleWorld.insetBy(dx: -40, dy: -40).contains(goal.point),
+                          String(format: "glass %.0f…%.0f", scene.visibleWorld.minX, scene.visibleWorld.maxX))
+                    let hidden = scene.debugItemLayers.values.filter(\.isHidden).count
+                    check("what is well out of sight is left out", hidden > 0, "\(hidden) of \(scene.debugItemLayers.count) hidden")
+                    _ = self.spider
+                }
+            }
+        }
+        step(1) { [self] in
+            closeHabitat(animated: false)
+            print("habitat camera: \(fails == 0 ? "all passed" : "\(fails) FAILED")")
+            after(0.5) { self.finishHabitatTest(restore) }
+        }
+        for (at, f) in steps { after(at, f) }
     }
 
     private func runWeatherShots(dir: String) {
@@ -2666,7 +3157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     print("weather shot: \(b.rawValue) \(k.rawValue) — \(self.spider.debugState) — \(self.spider.debugWeather)")
                     self.debugShot("\(dir)/weather_\(b.rawValue)_\(k.rawValue).png", rect: .zero, window: hc.window)
                     // And a close look at the spider.
-                    let f = hc.window.frame, p = self.spider.worldPos
+                    let f = hc.window.frame, p = hc.scene.screenPoint(fromWorld: self.spider.worldPos)
                     self.debugShot("\(dir)/weather_\(b.rawValue)_\(k.rawValue)_spider.png", rect: .zero, window: hc.window,
                                    crop: CGRect(x: p.x - f.minX - 70, y: f.maxY - p.y - 70, width: 140, height: 140))
                     next()
@@ -2676,24 +3167,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         after(2) { next() }
     }
 
+    /// SPIDER_HABITAT_SHOT=dir: pictures of the tank in every layout —
+    /// looking at the middle, along at one end, and up at the top —
+    /// the overview, and the decorating panel's tabs. (SPIDER_HABITAT_SHOT_ONLY
+    /// = a layout's name, to take just that one.)
     private func runHabitatShots(dir: String) {
         let restore = habitatTestSnapshot()
         openHabitat(restoring: true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [self] in
             guard let hc = habitat else { return }
+            hc.scene.debugKeepAnimating = true
+            hc.scene.setAnimating(true)
+            let world = hc.scene.habitat.size
             var presets = Habitat.Preset.allCases
+            if let only = ProcessInfo.processInfo.environment["SPIDER_HABITAT_SHOT_ONLY"] { presets = presets.filter { $0.rawValue == only } }
+            func shot(_ name: String) { self.debugShot("\(dir)/\(name).png", rect: .zero, window: hc.window) }
+            func after(_ s: Double, _ f: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + s, execute: f) }
             func next() {
                 guard let p = presets.first else {
-                    hc.scene.setHabitat(Habitat.preset(.forestFloor))
+                    hc.scene.setHabitat(Habitat.preset(.forestFloor, world: world))
                     hc.toggleDecorate()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                        hc.scene.select(hc.scene.habitat.items.first { $0.kind == .log }?.id)
-                        self.debugShot("\(dir)/habitat_decorating.png", rect: .zero, window: hc.window)
+                    after(1.2) {
+                        let log = hc.scene.habitat.items.last { $0.kind == .log }
+                        if let log { hc.scene.lookAt(V2(log.x, log.rect.midY + 150)) }
+                        hc.scene.select(log?.id)
+                        after(0.4) { shot("habitat_decorating") }
+                        after(0.8) {
+                            hc.scene.showOverview(true)
+                            after(0.6) {
+                                shot("habitat_overview_decorating")
+                                hc.scene.showOverview(false)
+                            }
+                        }
                         for tab in 1...3 {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + Double(tab) * 0.8) {
+                            after(1.8 + Double(tab) * 0.8) {
                                 hc.debugShowTab(tab)
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                    self.debugShot("\(dir)/habitat_decorating_tab\(tab).png", rect: .zero, window: hc.window)
+                                after(0.5) {
+                                    shot("habitat_decorating_tab\(tab)")
                                     if tab == 3 { self.finishHabitatTest(restore) }
                                 }
                             }
@@ -2702,10 +3212,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
                 presets.removeFirst()
-                hc.scene.setHabitat(Habitat.preset(p))
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                    self.debugShot("\(dir)/habitat_\(p.rawValue).png", rect: .zero, window: hc.window)
-                    next()
+                hc.scene.setHabitat(Habitat.preset(p, world: world))
+                self.spider.placeInHabitat(map: hc.scene.map, at: V2(world.width / 2, HabitatLayout.ground + 30))
+                hc.scene.lookAt(V2(world.width / 2, 0))
+                after(2.5) {
+                    shot("habitat_\(p.rawValue)")
+                    hc.scene.lookAt(V2(0, 0))
+                    after(0.8) {
+                        shot("habitat_\(p.rawValue)_end")
+                        hc.scene.lookAt(V2(world.width * 0.7, world.height))
+                        after(0.8) {
+                            shot("habitat_\(p.rawValue)_high")
+                            hc.scene.showOverview(true)
+                            after(0.6) {
+                                shot("habitat_\(p.rawValue)_overview")
+                                hc.scene.showOverview(false)
+                                after(0.3) { next() }
+                            }
+                        }
+                    }
                 }
             }
             next()
@@ -2959,7 +3484,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Lost it somewhere? This puts it in the middle of the main screen, in
     /// the air, and it falls from there onto whatever is below.
     @objc private func teleportToMiddle() {
-        let f = inHabitat ? (habitat?.scene.screenScene ?? worldFrame()) : spider.confine ?? NSScreen.main?.frame ?? worldFrame()
+        let f = inHabitat ? (habitat?.scene.visibleWorld ?? worldFrame()) : spider.confine ?? NSScreen.main?.frame ?? worldFrame()
         if hidden { toggleHidden() }
         spider.config.paused = false
         spider.teleport(to: V2(f.midX, f.midY))

@@ -143,6 +143,10 @@ final class SpiderView: NSView {
         return V2(p.x + worldOrigin.x, p.y + worldOrigin.y)
     }
 
+    /// A point on the screen, where the spider is: the same on the desktop;
+    /// carried into the habitat mid-drag, its world (see HabitatCamera.swift).
+    var toSpider: ((V2) -> V2)?
+
     override func mouseDown(with event: NSEvent) {
         guard let spider else { return }
         let w = world(event)
@@ -153,7 +157,7 @@ final class SpiderView: NSView {
         if event.clickCount >= 2 {
             spider.celebrate()
         } else {
-            spider.beginGrab(at: w)
+            spider.beginGrab(at: toSpider?(w) ?? w)
             dragging = true
         }
     }
@@ -161,7 +165,7 @@ final class SpiderView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard let spider, dragging else { return }
         let w = world(event)
-        spider.moveGrab(to: w)
+        spider.moveGrab(to: toSpider?(w) ?? w)
         dragSamples.append((w, event.timestamp))
         if dragSamples.count > 8 { dragSamples.removeFirst(dragSamples.count - 8) }
     }

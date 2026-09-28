@@ -865,14 +865,15 @@ do {
 do {
     let tank = SurfaceMap()
     tank.standoff = map.standoff
-    let scene = CGRect(x: 0, y: 0, width: 900, height: 540)
-    let hab = Habitat.preset(.forestFloor)
-    let built = hab.surfaces(in: scene, standoff: tank.standoff)
+    // (A world of its own, 1:1 with the screen, much bigger than a window.)
+    let hab = Habitat.preset(.forestFloor, world: CGSize(width: 4000, height: 1250))
+    let scene = hab.bounds
+    let built = hab.surfaces(standoff: tank.standoff)
     tank.rebuild(habitat: built.air, loops: built.loops)
     let s = Spider(map: map)
     s.config.followCursor = false
     _ = settleUntilAttached(s)
-    s.enter(map: tank, at: V2(scene.midX, scene.midY), habitat: true)
+    s.enter(map: tank, at: V2(scene.midX, 300), habitat: true)
     var n = 0
     var out = 0
     var loops: Set<String> = []
@@ -903,8 +904,13 @@ do {
     print("\n--- weather ---")
     let tank = SurfaceMap()
     tank.standoff = map.standoff
-    let scene = CGRect(x: 0, y: 0, width: 900, height: 540)
-    let built = Habitat.preset(.forestFloor).surfaces(in: scene, standoff: tank.standoff)
+    // (The old tank's layout on its old 900 × 540 scene — a habitat not yet
+    // moved into a world — so the weather is checked on the same ground as
+    // ever: how far cover is, what is over it.)
+    var tankHab = Habitat()
+    tankHab.items = Habitat.legacyItems(.forestFloor)
+    let scene = tankHab.bounds
+    let built = tankHab.surfaces(standoff: tank.standoff)
     tank.rebuild(habitat: built.air, loops: built.loops)
     let verbose = ProcessInfo.processInfo.environment["SIM_WEATHER"] != nil
     /// A spider standing on the open floor of the tank at `x`.

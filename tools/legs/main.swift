@@ -123,18 +123,17 @@ func desk(_ name: String, _ wins: [(CGRect, Int)], dock: CGRect? = nil) -> World
 }
 
 func hab(_ p: Habitat.Preset) -> World {
-    let scene = CGRect(x: 0, y: 0, width: 900, height: 540)
+    // A world of its own, 1:1 with the screen, as the tank has now.
+    let h = Habitat.preset(p, world: CGSize(width: 4000, height: 1250))
+    let scene = h.bounds
     let m = SurfaceMap()
     m.standoff = 22 * S
-    let h = Habitat.preset(p)
-    let built = h.surfaces(in: scene, standoff: m.standoff)
+    let built = h.surfaces(standoff: m.standoff)
     m.rebuild(habitat: built.air, loops: built.loops)
-    let w = World(name: "hab:\(p.rawValue)", map: m, habitat: true, start: V2(scene.midX, scene.midY))
-    let sx = scene.width / HabitatLayout.width, sy = scene.height / HabitatLayout.height
+    let w = World(name: "hab:\(p.rawValue)", map: m, habitat: true, start: V2(scene.midX, 300))
     for it in h.items where it.kind.climbable {
         guard let r = Habitat.solidRect(it) else { continue }
-        let s = CGRect(x: scene.minX + r.minX * sx, y: scene.minY + r.minY * sy, width: r.width * sx, height: r.height * sy)
-        w.solids.append(Solid(rect: s, radius: 0, depth: 0, id: "item:\(it.id)"))
+        w.solids.append(Solid(rect: r, radius: 0, depth: 0, id: "item:\(it.id)"))
     }
     w.groundY = built.air.minY
     return w

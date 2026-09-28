@@ -14,6 +14,7 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private let decorateButton = HabitatButton(title: "Decorate", symbol: "paintbrush.pointed")
     private let feedButton = HabitatButton(title: "Feed", symbol: "fork.knife", menu: true)
     private let letOutButton = HabitatButton(title: "Let Out", symbol: "door.left.hand.open")
+    private let overviewButton = HabitatButton(title: "Overview", symbol: "map")
     private let weatherButton = HabitatButton(title: "Weather", symbol: "cloud.sun", menu: true)
 
     /// The tank's weather: what it is doing, and what comes next (see
@@ -42,15 +43,26 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private var redoStack: [Habitat] = []
     private var name: String
 
+    /// The size of the glass, kept from one time to the next.
+    static let glassKey = "habitatGlass"
+    /// (How wide the whole tank was, when its glass kept one shape: read
+    /// once, for the glass's first size.)
     static let tankWidthKey = "habitatTankWidth"
-    private var tankWidth: CGFloat {
-        didSet { root.tankWidth = tankWidth }
+    /// The glass: how much of the world the window shows. Any shape, from
+    /// small up to the whole world (or the screen, whichever is less).
+    private var glass: CGSize {
+        didSet { root.glass = glass }
     }
 
     init(spiderName: String) {
         name = spiderName
-        let saved = CGFloat(UserDefaults.standard.double(forKey: HabitatController.tankWidthKey))
-        tankWidth = saved > 400 ? saved : 880
+        if let a = UserDefaults.standard.array(forKey: HabitatController.glassKey) as? [Double], a.count == 2 {
+            glass = CGSize(width: CGFloat(a[0]), height: CGFloat(a[1]))
+        } else {
+            let saved = CGFloat(UserDefaults.standard.double(forKey: HabitatController.tankWidthKey))
+            let w = (saved > 400 ? saved : 880) - HabitatRootView.rim * 2
+            glass = CGSize(width: w, height: (w * HabitatLayout.aspect).rounded())
+        }
         window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 880, height: 600),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                           backing: .buffered, defer: false)
@@ -65,7 +77,7 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         window.collectionBehavior = [.fullScreenNone]
         window.tabbingMode = .disallowed
         window.delegate = self
-        root.tankWidth = tankWidth
+        root.glass = glass
         window.contentView = root
         root.addSubview(scene)
         root.addSubview(panel)
@@ -97,6 +109,9 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         letOutButton.target = self
         letOutButton.action = #selector(letOut)
         letOutButton.toolTip = "Close the habitat — it drops back onto your desktop"
+        overviewButton.target = self
+        overviewButton.action = #selector(toggleOverview)
+        overviewButton.toolTip = "See the whole habitat at once — and go anywhere in it"
         weatherButton.target = self
         weatherButton.action = #selector(showWeatherMenu)
         weatherButton.toolTip = "Rain, snow, wind, sun and more — change what the weather does in the tank"
@@ -111,11 +126,15 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
             case .done: if self?.decorating == true { self?.toggleDecorate() }
             }
         }
+        scene.onOverviewChange = { [weak self] on in self?.overviewButton.isOn = on }
+        scene.spiderName = spiderName
         panel.controller = self
         scene.setHabitat(Habitat.load())
+        if let o = HabitatCamera.saved() { scene.camera.jump(to: o) }
         panel.build()
-        window.setContentSize(size(forTank: tankWidth))
-        window.minSize = size(forTank: HabitatController.minTank)
+        glass = fitted(glass)
+        window.setContentSize(size(forGlass: glass))
+        window.minSize = size(forGlass: HabitatController.minGlass)
         root.needsLayout = true
     }
 
@@ -139,6 +158,7 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     func rename(_ spiderName: String) {
         name = spiderName
+        scene.spiderName = spiderName
         window.title = HabitatController.title(for: spiderName)
         titleView.set(title: window.title, status: titleView.status)
     }
@@ -162,7 +182,8 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     // MARK: Sizes
 
-    static let minTank: CGFloat = 620
+    /// The smallest the glass goes.
+    static let minGlass = CGSize(width: 596, height: 300)
     static let sidebarWidth: CGFloat = 300
 
     /// The height of the lid: the title bar and toolbar, which the content
@@ -172,44 +193,39 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         return h > 20 ? h : 52
     }
 
-    /// The whole window for a tank this wide.
-    func size(forTank w: CGFloat) -> CGSize {
-        let sceneW = w - HabitatRootView.rim * 2
-        let h = HabitatRootView.base + sceneW * HabitatLayout.aspect + HabitatRootView.topRim + lidHeight
-        return CGSize(width: w + (decorating ? HabitatController.sidebarWidth : 0), height: h.rounded())
+    /// The whole window for a glass this size.
+    func size(forGlass g: CGSize) -> CGSize {
+        CGSize(width: g.width + HabitatRootView.rim * 2 + (decorating ? HabitatController.sidebarWidth : 0),
+               height: (HabitatRootView.base + g.height + HabitatRootView.topRim + lidHeight).rounded())
     }
 
-    /// The window frame that puts the tank's glass at `sceneOrigin` on
-    /// the screen, for a tank this wide.
-    func frame(forTank w: CGFloat, sceneOrigin o: CGPoint) -> CGRect {
-        let s = size(forTank: w)
-        return CGRect(x: o.x - HabitatRootView.rim, y: o.y - HabitatRootView.base, width: s.width, height: s.height)
-    }
+    var tankSize: CGSize { size(forGlass: glass) }
 
-    /// Where the scene's glass would be for a window frame.
-    func sceneRect(forFrame f: CGRect) -> CGRect {
-        let w = tankWidth - HabitatRootView.rim * 2
-        return CGRect(x: f.minX + HabitatRootView.rim, y: f.minY + HabitatRootView.base, width: w, height: w * HabitatLayout.aspect)
+    /// A glass no smaller than the least, and no bigger than the world or
+    /// than would fit on the screen.
+    private func fitted(_ g: CGSize, screen: NSScreen? = nil) -> CGSize {
+        let world = scene.habitat.size
+        let vis = (screen ?? window.screen ?? NSScreen.main)?.visibleFrame.size ?? CGSize(width: 1400, height: 900)
+        let extra = decorating ? HabitatController.sidebarWidth : 0
+        let maxW = min(world.width, vis.width - extra - HabitatRootView.rim * 2)
+        let maxH = min(world.height, vis.height - HabitatRootView.base - HabitatRootView.topRim - lidHeight)
+        return CGSize(width: clamp(g.width, HabitatController.minGlass.width, max(maxW, HabitatController.minGlass.width)).rounded(),
+                      height: clamp(g.height, HabitatController.minGlass.height, max(maxH, HabitatController.minGlass.height)).rounded())
     }
-
-    var tankSize: CGSize { size(forTank: tankWidth) }
 
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
-        // The tank keeps its shape: height follows width.
+        // Any shape: the glass shows more or less of the world, never
+        // more than there is of it.
         let extra = decorating ? HabitatController.sidebarWidth : 0
-        let fromWidth = frameSize.width - extra
-        let fromHeight = (frameSize.height - HabitatRootView.base - HabitatRootView.topRim - lidHeight) / HabitatLayout.aspect + HabitatRootView.rim * 2
-        // Whichever edge is being dragged more.
-        let w = abs(fromWidth - tankWidth) >= abs(fromHeight - tankWidth) ? fromWidth : fromHeight
-        let limit = (sender.screen?.visibleFrame.width ?? 2000) - extra
-        tankWidth = min(max(w, HabitatController.minTank), limit).rounded()
-        return size(forTank: tankWidth)
+        glass = fitted(CGSize(width: frameSize.width - extra - HabitatRootView.rim * 2,
+                              height: frameSize.height - HabitatRootView.base - HabitatRootView.topRim - lidHeight), screen: sender.screen)
+        return size(forGlass: glass)
     }
 
     func windowDidResize(_ notification: Notification) {
         root.needsLayout = true
         root.layoutSubtreeIfNeeded()
-        UserDefaults.standard.set(Double(tankWidth), forKey: HabitatController.tankWidthKey)
+        UserDefaults.standard.set([Double(glass.width), Double(glass.height)], forKey: HabitatController.glassKey)
     }
 
     func windowDidMove(_ notification: Notification) {
@@ -232,7 +248,7 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     // MARK: Toolbar
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, .habitatTitle, .flexibleSpace, .habitatWeather, .habitatFeed, .habitatDecorate, .habitatLetOut]
+        [.flexibleSpace, .habitatTitle, .flexibleSpace, .habitatWeather, .habitatFeed, .habitatOverview, .habitatDecorate, .habitatLetOut]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -245,6 +261,7 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         case .habitatTitle: item.view = titleView
         case .habitatWeather: item.view = weatherButton; item.label = "Weather"
         case .habitatFeed: item.view = feedButton; item.label = "Feed"
+        case .habitatOverview: item.view = overviewButton; item.label = "Overview"
         case .habitatDecorate: item.view = decorateButton; item.label = "Decorate"
         case .habitatLetOut: item.view = letOutButton; item.label = "Let Out"
         default: return nil
@@ -259,6 +276,7 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         decorateButton.isOn = decorating
         decorateButton.set(title: decorating ? "Done" : "Decorate", symbol: decorating ? "checkmark" : "paintbrush.pointed")
         scene.editing = decorating
+        scene.overview?.reload()
         panel.refresh()
         // The window grows to the right for the panel (or to the left if
         // there is no room), and the tank stays exactly where it is.
@@ -270,7 +288,7 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         }
         panel.isHidden = false
         root.decorating = decorating
-        window.minSize = size(forTank: HabitatController.minTank)
+        window.minSize = size(forGlass: HabitatController.minGlass)
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.25
             ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -309,6 +327,11 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     }
 
     @objc func letOut() { onLetOut?() }
+
+    /// The whole habitat at once, small — or back to the tank.
+    @objc func toggleOverview() {
+        scene.showOverview(!scene.overviewOpen)
+    }
 
     /// Tools only: the decorating panel at a tab.
     func debugShowTab(_ i: Int) { panel.debugShowTab(i) }
@@ -357,11 +380,12 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     }
 
     func loadPreset(_ p: Habitat.Preset) {
-        scene.replace(with: Habitat.preset(p), fade: true)
+        scene.replace(with: Habitat.preset(p, world: scene.habitat.size), fade: true)
     }
 
     func shuffle() {
-        scene.replace(with: Habitat.surprise(), fade: true)
+        // Half the time in the scenery it has, half the time somewhere new.
+        scene.replace(with: Habitat.surprise(world: scene.habitat.size, biome: Bool.random() ? scene.habitat.biome : nil), fade: true)
     }
 
     func clearAll() {
@@ -377,6 +401,7 @@ extension NSToolbarItem.Identifier {
     static let habitatDecorate = NSToolbarItem.Identifier("habitat.decorate")
     static let habitatLetOut = NSToolbarItem.Identifier("habitat.letOut")
     static let habitatWeather = NSToolbarItem.Identifier("habitat.weather")
+    static let habitatOverview = NSToolbarItem.Identifier("habitat.overview")
 }
 
 // MARK: - The weather controls
@@ -561,7 +586,8 @@ final class HabitatRootView: NSView {
     static let topRim: CGFloat = 10
     static let base: CGFloat = 30
 
-    var tankWidth: CGFloat = 880 { didSet { needsLayout = true; needsDisplay = true } }
+    /// The glass's size: the frame goes round it.
+    var glass = CGSize(width: 856, height: 514) { didSet { needsLayout = true; needsDisplay = true } }
     var decorating = false { didSet { needsLayout = true; needsDisplay = true } }
     weak var scene: NSView?
     weak var panel: NSView?
@@ -569,9 +595,11 @@ final class HabitatRootView: NSView {
     override var isFlipped: Bool { false }
     override var mouseDownCanMoveWindow: Bool { true }
 
+    /// The tank, frame and all (the decorating panel is beside it).
+    private var tankWidth: CGFloat { glass.width + HabitatRootView.rim * 2 }
+
     private var sceneFrame: CGRect {
-        let w = tankWidth - HabitatRootView.rim * 2
-        return CGRect(x: HabitatRootView.rim, y: HabitatRootView.base, width: w, height: (w * HabitatLayout.aspect).rounded())
+        CGRect(x: HabitatRootView.rim, y: HabitatRootView.base, width: glass.width, height: glass.height)
     }
 
     override func layout() {
@@ -1078,10 +1106,11 @@ final class DecorPanel: NSView {
     }
 
     private func layoutPage(width: CGFloat) -> NSView {
-        let tileW = (width - 8) / 2
-        let thumb = CGSize(width: tileW - 12, height: ((tileW - 12) * HabitatLayout.aspect).rounded())
+        // Each the whole tank, end to end, so a row each.
+        let world = controller?.scene.habitat.size ?? HabitatLayout.defaultWorld
+        let thumb = CGSize(width: width - 12, height: ((width - 12) * min(world.height / world.width, 0.45)).rounded())
         let tiles = Habitat.Preset.allCases.map { p -> NSView in
-            let t = TileButton(image: HabitatArt.habitatThumbnail(Habitat.preset(p), size: thumb), title: p.label, subtitle: nil, imageSize: thumb)
+            let t = TileButton(image: HabitatArt.habitatThumbnail(Habitat.preset(p, world: world), size: thumb), title: p.label, subtitle: nil, imageSize: thumb)
             t.onClick = { [weak self] in self?.controller?.loadPreset(p) }
             return t
         }
@@ -1097,8 +1126,8 @@ final class DecorPanel: NSView {
         row.spacing = 8
         row.translatesAutoresizingMaskIntoConstraints = false
         row.widthAnchor.constraint(equalToConstant: width).isActive = true
-        return page([note("Start from a ready-made tank. You can undo it if you liked yours better.", width: width),
-                     grid(tiles, columns: 2, width: width), row])
+        return page([note("Start from a ready-made tank, laid out end to end. You can undo it if you liked yours better.", width: width),
+                     grid(tiles, columns: 1, width: width), row])
     }
 
     private func weatherPage(width: CGFloat) -> NSView {
@@ -1341,7 +1370,7 @@ final class DecorPanel: NSView {
         r1.widthAnchor.constraint(equalToConstant: width - 24).isActive = true
         hint.font = .systemFont(ofSize: 11.5)
         hint.textColor = NSColor(white: 1, alpha: 0.55)
-        hint.stringValue = "Click anything in the tank to move it. Drag a corner to resize it. ⌘Z undoes."
+        hint.stringValue = "Click anything in the tank to move it; drag a corner to resize it. Drag the bare glass to look round the tank, or use the Overview to move things a long way. ⌘Z undoes."
         hint.translatesAutoresizingMaskIntoConstraints = false
         hint.widthAnchor.constraint(equalToConstant: width - 24).isActive = true
         for v in [top, sizeRow, r1, hint] as [NSView] { inspector.addArrangedSubview(v) }
@@ -1393,9 +1422,10 @@ final class DecorPanel: NSView {
         // One edit for the whole slide, however many steps it takes.
         if sizeEditBefore == nil { sizeEditBefore = c.scene.habitat }
         c.scene.updateSelected(silently: true) { it in
-            let base = it.kind.defaultSize
-            it.w = base.width * k
-            it.h = base.height * k
+            // (Keeping its own shape: a long vine stays long.)
+            let tall = it.h / max(it.w, 1)
+            it.w = it.kind.defaultSize.width * k
+            it.h = it.w * tall
         }
         sizeValue.stringValue = "\(Int((k * 100).rounded()))%"
         if NSApp.currentEvent?.type != .leftMouseDragged, let before = sizeEditBefore {

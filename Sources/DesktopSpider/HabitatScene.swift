@@ -3,19 +3,34 @@ import QuartzCore
 
 // MARK: - The inside of the tank
 
-/// Everything behind the glass, as a stack of layers: the painted backdrop,
-/// the things that drift and glow in its air, the furniture, the spider
-/// and anything loose in there, foliage in front of it, and the glass.
+/// Everything behind the glass. The glass is a window onto a world bigger
+/// than it (see HabitatCamera.swift): the view is the glass, and behind it
+/// are three stacks of layers —
+///
+///  • the backdrop: the painted sky and scenery and what drifts in them,
+///    moving half as far as the world does as the camera moves, the way
+///    a far view does;
+///  • the world: the substrate, the furniture, the spider and anything
+///    loose in there, foliage in front of it, the tank's own air — all at
+///    one to one with the screen, placed where they are in the world, and
+///    moved as one by the camera;
+///  • the glass itself, and what is right on it: its reflections, the
+///    light, rain streaming past.
+///
 /// All the movement is Core Animation's; the spider is placed each frame
 /// by the app's clock like it is on the desktop, but drawn in here, so the
 /// tank's furniture can be in front of it and other windows can cover it.
+/// Whatever is well out of sight is left out, and not drawn.
 ///
-/// Decorating, the furniture takes the mouse instead of the spider: click
-/// to pick a thing up, drag it, pull a corner to size it.
+/// Dragging the bare glass looks round the tank; decorating, the furniture
+/// takes the mouse instead of the spider: click to pick a thing up, drag
+/// it, pull a corner to size it.
 final class HabitatSceneView: NSView {
     let map = SurfaceMap()
     weak var spider: Spider?
     private(set) var habitat = Habitat()
+    /// What part of the world the glass shows.
+    let camera = HabitatCamera()
 
     /// A change made here by hand, finished: what it was before, and now.
     var onEdit: ((Habitat, Habitat) -> Void)?
@@ -23,6 +38,9 @@ final class HabitatSceneView: NSView {
     /// Keys the tank passes up: undo, redo, done.
     var onCommand: ((Command) -> Void)?
     enum Command { case undo, redo, done }
+
+    /// The spider's name, for the button that finds it.
+    var spiderName = "" { didSet { findButton.set(title: HabitatSceneView.findTitle(spiderName), symbol: findSymbol) } }
 
     var editing = false {
         didSet {
@@ -34,12 +52,17 @@ final class HabitatSceneView: NSView {
     }
     private(set) var selected: Int?
 
+    /// How far the backdrop moves for each point the world does.
+    static let parallax: CGFloat = 0.5
+
     // The layers, back to front.
     private let world = CALayer()
+    private let backdrop = CALayer()
     private let sky = CALayer()
     private var airBack = CALayer()
     private let scenery = CALayer()
     private var airMid = CALayer()
+    private let content = CALayer()
     private let ground = CALayer()
     private let backItems = CALayer()
     private let creatures = CALayer()
@@ -48,16 +71,24 @@ final class HabitatSceneView: NSView {
     private var preyLayers: [ObjectIdentifier: PreyLayer] = [:]
     private let frontItems = CALayer()
     private var airFront = CALayer()
+    /// The tank's own ends and lid, in the world: the corners of the
+    /// glass, where the world stops.
+    private let tankEnds = CALayer()
     private let glass = CALayer()
+    /// Decorating: outlines and handles, in the world.
     private let editLayer = CALayer()
+    /// Taps on the glass, on the glass.
+    private let tapLayer = CALayer()
     private let selectionOutline = CAShapeLayer()
     private let hoverOutline = CAShapeLayer()
     private var handles: [CALayer] = []
 
     private var itemLayers: [Int: ItemLayer] = [:]
-    /// What the backdrop was last painted for.
-    private var paintedKey = ""
-    private var atmosphereKey = ""
+    /// What the backdrop, the ground, the glass and the air were last made for.
+    private var backdropKey = "", groundKey = "", glassKey = "", atmosphereKey = ""
+    /// The backdrop as it was painted.
+    private var backdropSize = CGSize.zero
+    private var atmos = HabitatAtmosphere.Built()
 
     /// The weather, drawn: its layers go in among the scene's own (see
     /// HabitatWeather.swift).
@@ -65,9 +96,19 @@ final class HabitatSceneView: NSView {
     private var weatherDue: CGFloat = 0
     /// Tools only: it keeps moving even out of sight.
     var debugKeepAnimating = false
-    /// Thunder, a moment after the lightning: where it came down, on the
-    /// screen, and how loud (1: right overhead).
+    /// Thunder, a moment after the lightning: where it came down, in the
+    /// world, and how loud (1: right overhead).
     var onThunder: ((V2, CGFloat) -> Void)?
+
+    /// Round the edge of the glass when the spider is out of sight: "Find
+    /// it", pointing the way; it brings the camera back to it.
+    private let findButton = HabitatButton(title: "Find", symbol: "scope")
+    private var findSymbol = "scope"
+    private var findShown = false
+    /// The whole world, small: decorating it, and going anywhere in it.
+    private(set) var overview: HabitatOverviewView?
+    var overviewOpen: Bool { overview?.isHidden == false }
+    var onOverviewChange: ((Bool) -> Void)?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -79,10 +120,13 @@ final class HabitatSceneView: NSView {
         world.masksToBounds = true
         root.addSublayer(world)
         let wx = weatherFX
-        for l in [sky, airBack, wx.back, scenery, airMid, wx.mid, ground, wx.ground, backItems, wx.caps, creatures,
-                  frontItems, airFront, wx.shade, wx.front, wx.flash, glass] { world.addSublayer(l) }
+        for l in [backdrop, content, wx.shade, wx.front, wx.flash, glass] { world.addSublayer(l) }
+        for l in [sky, airBack, wx.back, scenery, airMid, wx.mid] { backdrop.addSublayer(l) }
+        for l in [ground, wx.ground, backItems, wx.caps, creatures, frontItems, airFront, wx.fall, tankEnds] { content.addSublayer(l) }
+        for l in [backdrop, content, editLayer, tapLayer, sky, scenery, ground] { l.anchorPoint = .zero }
         wx.onThunder = { [weak self] p, loud in self?.thundered(at: p, loud: loud) }
         root.addSublayer(editLayer)
+        root.addSublayer(tapLayer)
         creatures.addSublayer(silk)
         creatures.addSublayer(spiderLayer)
         silk.fillColor = nil
@@ -131,6 +175,17 @@ final class HabitatSceneView: NSView {
             editLayer.addSublayer(h)
             handles.append(h)
         }
+        findButton.translatesAutoresizingMaskIntoConstraints = true
+        findButton.target = self
+        findButton.action = #selector(findSpider)
+        findButton.alphaValue = 0
+        findButton.isHidden = true
+        findButton.wantsLayer = true
+        findButton.layer?.shadowColor = CGColor(gray: 0, alpha: 1)
+        findButton.layer?.shadowOpacity = 0.45
+        findButton.layer?.shadowRadius = 6
+        findButton.layer?.shadowOffset = CGSize(width: 0, height: -1)
+        addSubview(findButton)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect, .cursorUpdate],
                                        owner: self, userInfo: nil))
     }
@@ -141,53 +196,77 @@ final class HabitatSceneView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
 
-    // MARK: Where it is
+    // MARK: Coordinate spaces
+    //
+    // The only conversions between the screen, the glass and the world
+    // (see the top of HabitatCamera.swift). `shown` is the camera as it is
+    // drawn — to the pixel — so a click lands on exactly what is under it.
 
-    /// The scene is the view's bounds; these map the 900 × 540 scene onto it.
-    private var sx: CGFloat { bounds.width / HabitatLayout.width }
-    private var sy: CGFloat { bounds.height / HabitatLayout.height }
-    func toView(_ r: CGRect) -> CGRect { CGRect(x: r.minX * sx, y: r.minY * sy, width: r.width * sx, height: r.height * sy) }
-    func toScene(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x / max(sx, 0.001), y: p.y / max(sy, 0.001)) }
-    var groundY: CGFloat { HabitatLayout.ground * sy }
+    private var shown = V2.zero
 
-    /// Where the scene sits on the screen, as last taken note of — the
-    /// spider (which lives in screen coordinates) and everything drawn of
-    /// it are kept in step with this, not with the window as it moves
-    /// between one notice and the next.
+    /// The glass's bottom-left, on the screen.
     private(set) var screenOrigin = CGPoint.zero
 
-    var screenScene: CGRect { CGRect(origin: screenOrigin, size: bounds.size) }
-    /// The ground line, on the screen.
-    var screenGroundY: CGFloat { screenOrigin.y + groundY }
+    /// The glass, on the screen.
+    var glassOnScreen: CGRect { CGRect(origin: screenOrigin, size: bounds.size) }
+    /// What the glass shows of the world.
+    var visibleWorld: CGRect { CGRect(origin: shown.point, size: bounds.size) }
+
+    func worldPoint(fromView p: CGPoint) -> V2 { V2(p.x + shown.x, p.y + shown.y) }
+    func viewPoint(fromWorld p: V2) -> CGPoint { CGPoint(x: p.x - shown.x, y: p.y - shown.y) }
+    func worldPoint(fromScreen p: V2) -> V2 { V2(p.x - screenOrigin.x + shown.x, p.y - screenOrigin.y + shown.y) }
+    func screenPoint(fromWorld p: V2) -> V2 { V2(p.x - shown.x + screenOrigin.x, p.y - shown.y + screenOrigin.y) }
+    /// How far a point moves going from the world out onto the screen.
+    var worldToScreen: V2 { V2(screenOrigin.x - shown.x, screenOrigin.y - shown.y) }
+
+    private func viewPoint(_ e: NSEvent) -> CGPoint { convert(e.locationInWindow, from: nil) }
+    private func worldPoint(_ e: NSEvent) -> V2 { worldPoint(fromView: viewPoint(e)) }
+    private func screenPoint(_ e: NSEvent) -> V2 {
+        let v = viewPoint(e)
+        return V2(v.x + screenOrigin.x, v.y + screenOrigin.y)
+    }
+    /// A point where the spider is: the world while it is in here, the
+    /// screen once it has been carried out through the glass.
+    private func spiderPoint(fromScreen p: V2) -> V2 { spider?.map === map ? worldPoint(fromScreen: p) : p }
+
+    /// Well within what the glass shows.
+    func isInView(_ p: V2, margin: CGFloat = 0) -> Bool { visibleWorld.insetBy(dx: margin, dy: margin).contains(p.point) }
+
+    /// The backdrop's bottom-left, on the glass, for the camera at `o`: it
+    /// moves half as far as the world does, lined up with the world's middle
+    /// across and with the ground at the bottom.
+    private func backdropOrigin(_ o: V2) -> CGPoint {
+        let k = HabitatSceneView.parallax, W = habitat.size, V = bounds.size, B = backdropSize
+        return CGPoint(x: V.width / 2 - B.width / 2 - (o.x + V.width / 2 - W.width / 2) * k, y: -o.y * k)
+    }
 
     private func liveScreenOrigin() -> CGPoint {
         guard let w = window else { return .zero }
         return w.convertToScreen(convert(bounds, to: nil)).origin
     }
 
-    /// The window moved or the scene was resized: the spider goes along
-    /// with the scenery, and the surfaces are laid out afresh.
+    /// The window moved, or the glass was resized. Moved, the whole tank
+    /// goes with it, and nothing in the world changes. Resized, the world
+    /// stays where it is on the screen and the glass shows more or less of
+    /// it: grown on the left, it shows more to the left.
     func syncToScreen() {
-        let was = CGRect(origin: screenOrigin, size: lastSize)
         let now = CGRect(origin: liveScreenOrigin(), size: bounds.size)
+        let was = CGRect(origin: screenOrigin, size: lastSize)
         screenOrigin = now.origin
-        lastSize = now.size
-        if let spider, spider.inHabitat, spider.map === map, was.width > 50 {
-            if was.size == now.size {
-                let d = V2(now.minX - was.minX, now.minY - was.minY)
-                if d.length > 0.01 { spider.teleportQuietly(to: spider.worldPos + d) }
-            } else {
-                let u = (spider.worldPos.x - was.minX) / max(was.width, 1), v = (spider.worldPos.y - was.minY) / max(was.height, 1)
-                spider.teleportQuietly(to: V2(now.minX + u * now.width, now.minY + v * now.height))
-            }
+        if was.width > 50, now.size != was.size {
+            camera.setView(now.size, shift: V2(now.minX - was.minX, now.minY - was.minY))
+        } else {
+            camera.setView(now.size)
         }
-        rebuildMap()
+        lastSize = now.size
+        applyCamera(force: true)
     }
     private var lastSize = CGSize.zero
 
+    /// The surfaces, laid out afresh for the furniture as it stands — once
+    /// for each change to it; the camera moving changes nothing.
     func rebuildMap() {
-        guard bounds.width > 100 else { return }
-        let built = habitat.surfaces(in: screenScene, standoff: map.standoff)
+        let built = habitat.surfaces(standoff: map.standoff)
         map.rebuild(habitat: built.air, loops: built.loops)
         if let spider, spider.inHabitat, spider.map === map { spider.mapChanged() }
     }
@@ -198,11 +277,214 @@ final class HabitatSceneView: NSView {
         rebuildMap()
     }
 
-    /// Spots along the open ground, left to right, on the screen: the body
-    /// line, where it would stand.
-    func groundSpots() -> [V2] {
-        let floor = screenGroundY + map.standoff
-        return map.sampleSpots(spacing: 24).filter { $0.loop.id == "screen:0" && $0.seg.facing == .up && abs($0.point.y - floor) < 1 }.map(\.point)
+    /// Spots along the open ground, left to right, in the world (in `r`,
+    /// if given): the body line, where it would stand.
+    func groundSpots(in r: CGRect? = nil) -> [V2] {
+        let floor = HabitatLayout.ground + map.standoff
+        return map.sampleSpots(spacing: 24).filter {
+            $0.loop.id == "screen:0" && $0.seg.facing == .up && abs($0.point.y - floor) < 1 && (r?.contains($0.point.point) ?? true)
+        }.map(\.point)
+    }
+
+    /// The top of the ground, on the screen, where the glass shows it —
+    /// the lip it climbs in over. Nil if the ground is out of sight below.
+    var groundLipOnScreen: CGFloat? {
+        let y = HabitatLayout.ground - shown.y
+        return y > 8 ? screenOrigin.y + y : nil
+    }
+
+    /// Open ground the glass shows, on the screen: where it can climb in.
+    func visibleGroundSpotsOnScreen() -> [V2] {
+        groundSpots(in: visibleWorld.insetBy(dx: 30, dy: -40)).map(screenPoint(fromWorld:))
+    }
+
+    // MARK: The camera
+
+    /// The spider, as it was last given to the camera (nil: not in here to follow).
+    private var lastSpider: V2?
+    /// Decorating, the furniture being dragged is taken along to the edge
+    /// of the glass: where the pointer last was on the glass.
+    private var dragView: CGPoint?
+
+    /// Each frame while the tank is open: the camera moves on (after the
+    /// spider, if it is in here to follow and not in your hand), a thing
+    /// dragged to the edge of the glass takes the camera with it, and what
+    /// has come into sight is shown. True if anything moved.
+    @discardableResult
+    func tick(dt: CGFloat, spider s: V2?) -> Bool {
+        lastSpider = s
+        var moved = false
+        if let v = dragView, isDraggingItem {
+            let m: CGFloat = 44
+            var d = V2.zero
+            if v.x < m { d.x = -(m - max(v.x, -40)) } else if v.x > bounds.width - m { d.x = min(v.x, bounds.width + 40) - (bounds.width - m) }
+            if v.y < m { d.y = -(m - max(v.y, -40)) } else if v.y > bounds.height - m { d.y = min(v.y, bounds.height + 40) - (bounds.height - m) }
+            if d.lengthSquared > 0.01 {
+                let before = camera.origin
+                camera.pan(by: d * (11 * dt))
+                if (camera.origin - before).lengthSquared > 1e-4 {
+                    applyCamera()
+                    dragItem(at: v)
+                    moved = true
+                }
+            }
+        }
+        if camera.update(dt: dt, spider: s, follows: !editing && !overviewOpen) { moved = true }
+        let wasShown = shown
+        applyCamera()
+        if (shown - wasShown).lengthSquared > 1e-6 { moved = true }
+        if moved, camera.resting { camera.save() }
+        updateFindButton()
+        overview?.refreshMarkers(spider: s, prey: spider?.inHabitat == true ? spider?.prey ?? [] : [])
+        return moved || !camera.resting
+    }
+
+    /// Where the camera is, drawn: the world and the edit marks moved
+    /// under the glass, the backdrop moved half as far, and the weather and
+    /// the air kept on what shows.
+    private func applyCamera(force: Bool = false) {
+        let s = max(scale, 1)
+        let o = V2((camera.origin.x * s).rounded() / s, (camera.origin.y * s).rounded() / s)
+        guard force || o.x != shown.x || o.y != shown.y else { return }
+        shown = o
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        let r = CGRect(x: o.x, y: o.y, width: bounds.width, height: bounds.height)
+        content.bounds = r
+        content.position = .zero
+        editLayer.bounds = r
+        editLayer.position = .zero
+        var b = backdropOrigin(o)
+        b = CGPoint(x: (b.x * s).rounded() / s, y: (b.y * s).rounded() / s)
+        backdrop.position = b
+        CATransaction.commit()
+        weatherFX.follow(visible: r, backdrop: CGRect(x: -b.x, y: -b.y, width: bounds.width, height: bounds.height))
+        HabitatAtmosphere.follow(atmos, visible: r)
+        cull()
+    }
+
+    /// Only what is near the glass is shown (and painted, the first time
+    /// it comes near); the rest is left out — still there, not drawn.
+    private func cull() {
+        let near = visibleWorld.insetBy(dx: -160, dy: -160)
+        let soon = visibleWorld.insetBy(dx: -bounds.width, dy: -bounds.height * 0.8)
+        let far = visibleWorld.insetBy(dx: -bounds.width * 2.5, dy: -bounds.height * 2)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for l in itemLayers.values {
+            let f = l.frame
+            if f.intersects(soon) {
+                l.paint(biome: habitat.biome, scale: scale, size: l.item.rect.size)
+            } else if !f.intersects(far) {
+                // Well away: its picture goes, until it comes near again.
+                l.unpaint()
+            }
+            let out = !f.intersects(near)
+            if l.isHidden != out { l.isHidden = out }
+        }
+        weatherFX.showCaps(near: near)
+        CATransaction.commit()
+    }
+
+    /// Straight to a spot (opening the tank): `p` in the middle of the glass.
+    func lookAt(_ p: V2) {
+        camera.jump(to: camera.centring(p))
+        applyCamera(force: true)
+    }
+
+    /// Back to the spider, gliding.
+    @objc func findSpider() {
+        guard let s = lastSpider ?? (spider?.inHabitat == true ? spider?.worldPos : nil) else { return }
+        camera.recall(to: s)
+    }
+
+    private static func findTitle(_ name: String) -> String {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        return n.isEmpty || n.count > 16 ? "Find Your Spider" : "Find \(n)"
+    }
+
+    /// Shows the way back to the spider while it is out of sight — at the
+    /// edge of the glass nearest to it, pointing to it.
+    private func updateFindButton() {
+        let want: Bool
+        var toward = V2.zero
+        if let s = lastSpider, !overviewOpen, bounds.width > 200 {
+            let v = visibleWorld.insetBy(dx: -12, dy: -12)
+            want = !v.contains(s.point)
+            toward = s - V2(visibleWorld.midX, visibleWorld.midY)
+        } else {
+            want = false
+        }
+        if want {
+            // Which way: one of eight.
+            let a = atan2(toward.y, toward.x)
+            let names = ["arrow.right", "arrow.up.right", "arrow.up", "arrow.up.left", "arrow.left", "arrow.down.left", "arrow.down", "arrow.down.right"]
+            let i = (Int((a / (.pi / 4)).rounded()) % 8 + 8) % 8
+            if names[i] != findSymbol {
+                findSymbol = names[i]
+                findButton.set(title: HabitatSceneView.findTitle(spiderName), symbol: findSymbol)
+            }
+            let size = CGSize(width: findButton.intrinsicContentSize.width, height: 30)
+            // Along the edge, where a line from the middle toward it meets it.
+            let inner = bounds.insetBy(dx: 16 + size.width / 2, dy: 16 + size.height / 2)
+            let d = toward.normalized
+            let tx = abs(d.x) > 1e-3 ? (inner.width / 2) / abs(d.x) : .greatestFiniteMagnitude
+            let ty = abs(d.y) > 1e-3 ? (inner.height / 2) / abs(d.y) : .greatestFiniteMagnitude
+            let t = min(tx, ty)
+            let c = CGPoint(x: inner.midX + d.x * t, y: inner.midY + d.y * t)
+            let frame = CGRect(x: (c.x - size.width / 2).rounded(), y: (c.y - size.height / 2).rounded(), width: size.width, height: size.height)
+            if abs(findButton.frame.minX - frame.minX) > 2 || abs(findButton.frame.minY - frame.minY) > 2 || findButton.frame.width != frame.width {
+                findButton.frame = frame
+            }
+        }
+        guard want != findShown else { return }
+        findShown = want
+        if want { findButton.isHidden = false }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.3
+            findButton.animator().alphaValue = want ? 1 : 0
+        }, completionHandler: { [weak self] in
+            guard let self, !self.findShown else { return }
+            self.findButton.isHidden = true
+        })
+    }
+
+    /// Whether the spider can be seen through the glass just now.
+    var spiderInSight: Bool { lastSpider.map { isInView($0, margin: -12) } ?? false }
+
+    // MARK: The overview
+
+    func showOverview(_ on: Bool) {
+        if on {
+            let o = overview ?? {
+                let v = HabitatOverviewView(scene: self)
+                v.autoresizingMask = [.width, .height]
+                addSubview(v, positioned: .above, relativeTo: nil)
+                overview = v
+                return v
+            }()
+            o.frame = bounds
+            o.reload()
+            o.refreshMarkers(spider: lastSpider, prey: spider?.inHabitat == true ? spider?.prey ?? [] : [])
+            o.present()
+        } else {
+            overview?.dismiss()
+        }
+        updateFindButton()
+        onOverviewChange?(on)
+    }
+
+    /// Picked in the overview: the glass goes there (and follows the
+    /// spider again if that is where).
+    func goTo(_ p: V2, spider: Bool) {
+        camera.glide(toCentre: p, thenFollow: spider)
+    }
+
+    /// Dragged in the overview: the glass is there, now.
+    func jump(toCentre p: V2) {
+        camera.beginPan()
+        camera.jump(to: camera.centring(p))
+        applyCamera()
     }
 
     // MARK: Laying out
@@ -212,18 +494,14 @@ final class HabitatSceneView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         world.frame = bounds
-        editLayer.frame = bounds
-        for l in [sky, airBack, scenery, airMid, backItems, creatures, frontItems, airFront, glass] { l.frame = bounds }
-        let wx = weatherFX
-        for l in [wx.back, wx.mid, wx.ground, wx.caps, wx.shade, wx.front, wx.flash] { l.frame = bounds }
-        let f = HabitatArt.Frame(rect: bounds)
-        ground.frame = CGRect(x: 0, y: 0, width: bounds.width, height: f.groundY + HabitatArt.groundOverhang(f))
-        placeItems()
+        tapLayer.frame = bounds
+        glass.frame = bounds
         CATransaction.commit()
         if !inLiveResize { repaint() }
         if abs(bounds.width - lastSize.width) > 0.5 || abs(bounds.height - lastSize.height) > 0.5 || screenOrigin != liveScreenOrigin() {
             syncToScreen()
         }
+        overview?.frame = bounds
         refreshSelection()
     }
 
@@ -235,44 +513,126 @@ final class HabitatSceneView: NSView {
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
-        paintedKey = ""
+        backdropKey = ""
+        groundKey = ""
+        glassKey = ""
         for l in itemLayers.values { l.paintedKey = "" }
         repaint()
     }
 
     private var scale: CGFloat { window?.backingScaleFactor ?? 2 }
 
-    /// Paints whatever is out of date: the backdrop for this biome and
-    /// size, the furniture, and the moving air.
+    /// The biggest the glass could be: the largest display's worth, and
+    /// never more than the world. The backdrop is made wide enough for it,
+    /// so resizing the window never has to paint the scenery again.
+    private var glassMax: CGSize {
+        var w = bounds.width, h = bounds.height
+        for s in NSScreen.screens {
+            w = max(w, s.visibleFrame.width)
+            h = max(h, s.visibleFrame.height)
+        }
+        return CGSize(width: min(w, habitat.size.width), height: min(h, habitat.size.height))
+    }
+
+    /// The backdrop for this world: wide and tall enough that, moving half
+    /// as far as the world does, it is behind the glass wherever it is.
+    private var backdropWanted: CGSize {
+        let k = HabitatSceneView.parallax, W = habitat.size, m = glassMax
+        return CGSize(width: (W.width * k + m.width * (1 - k)).rounded(), height: (W.height * k + m.height * (1 - k)).rounded())
+    }
+
+    /// Paints whatever is out of date: the backdrop for this scenery and
+    /// world, the ground, the glass for its size, the furniture near it,
+    /// and the moving air.
     private func repaint() {
         guard bounds.width > 100 else { return }
-        let key = "\(habitat.biome.rawValue)-\(Int(bounds.width))x\(Int(bounds.height))-\(scale)"
-        if key != paintedKey {
-            paintedKey = key
-            let b = habitat.biome
-            let r = CGRect(origin: .zero, size: bounds.size)
-            let f = HabitatArt.Frame(rect: r)
-            // The sky is soft all over: half the pixels do.
-            let skyImg = HabitatArt.image(r.size, scale: max(1, scale / 2)) { HabitatArt.paintSky(b, in: r, $0) }
-            let sceneryImg = HabitatArt.image(r.size, scale: scale) { HabitatArt.paintScenery(b, in: r, $0) }
-            let gh = f.groundY + HabitatArt.groundOverhang(f)
-            let groundImg = HabitatArt.image(CGSize(width: r.width, height: gh), scale: scale) { HabitatArt.paintGround(b, in: r, $0) }
-            let glassImg = HabitatArt.image(r.size, scale: max(1, scale / 2)) { HabitatArt.paintGlass(in: r, $0, dark: b == .night || b == .cave) }
+        let b = habitat.biome, s = scale
+        let bs = backdropWanted, ws = habitat.size
+        let bkey = "\(b.rawValue)-\(Int(bs.width))x\(Int(bs.height))-\(s)"
+        if bkey != backdropKey {
+            backdropKey = bkey
+            backdropSize = bs
+            let f = HabitatArt.Frame(world: CGRect(origin: .zero, size: bs))
+            let top = HabitatArt.sceneryTop(b, f)
+            // The sky is soft all over: half the pixels do. The scenery is
+            // far off, and moves half as far as the world: three-quarters
+            // do. (It is a big picture, and the window server keeps a copy
+            // of every picture a layer shows.)
+            let skyImg = HabitatArt.image(bs, scale: max(1, s / 2)) { HabitatArt.paintSky(b, in: f, $0) }
+            let sceneryImg = HabitatArt.image(CGSize(width: bs.width, height: top), scale: max(1, s * 0.75)) {
+                HabitatArt.paintScenery(b, in: f, $0)
+            }
             CATransaction.begin()
             CATransaction.setDisableActions(true)
+            backdrop.bounds = CGRect(origin: .zero, size: bs)
+            sky.frame = CGRect(origin: .zero, size: bs)
+            scenery.frame = CGRect(x: 0, y: 0, width: bs.width, height: top)
             sky.contents = skyImg
             scenery.contents = sceneryImg
-            ground.contents = groundImg
-            glass.contents = glassImg
             CATransaction.commit()
         }
-        let akey = "\(habitat.biome.rawValue)-\(Int(bounds.width))x\(Int(bounds.height))"
+        let gkey = "\(b.rawValue)-\(Int(ws.width))-\(s)"
+        if gkey != groundKey {
+            groundKey = gkey
+            let fw = HabitatArt.Frame(world: CGRect(origin: .zero, size: ws))
+            let gh = fw.groundY + HabitatArt.groundOverhang(fw)
+            let img = HabitatArt.image(CGSize(width: ws.width, height: gh), scale: s) { HabitatArt.paintGround(b, in: fw, $0) }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            ground.frame = CGRect(x: 0, y: 0, width: ws.width, height: gh)
+            ground.contents = img
+            for l in [backItems, creatures, frontItems] { l.frame = CGRect(origin: .zero, size: ws) }
+            layOutTankEnds(ws)
+            CATransaction.commit()
+        }
+        let dark = b == .night || b == .cave
+        let glkey = "\(Int(bounds.width))x\(Int(bounds.height))-\(dark)-\(s)"
+        if glkey != glassKey {
+            glassKey = glkey
+            let r = CGRect(origin: .zero, size: bounds.size)
+            glass.contents = HabitatArt.image(r.size, scale: max(1, s / 2)) { HabitatArt.paintGlass(in: r, $0, dark: dark) }
+        }
+        // (Painting the big pictures leaves a lot of freed memory about.)
+        defer { malloc_zone_pressure_relief(nil, 0) }
+        let akey = "\(b.rawValue)-\(Int(bs.width))x\(Int(bs.height))-\(Int(ws.width))x\(Int(ws.height))"
         if akey != atmosphereKey {
             atmosphereKey = akey
             buildAtmosphere()
-            weatherFX.build(size: bounds.size, biome: habitat.biome, groundImage: ground.contents)
+            weatherFX.build(backdrop: bs, world: ws, view: bounds.size, biome: b, groundImage: ground.contents)
+            weatherFX.layoutItems(habitat)
+        } else {
+            weatherFX.layoutView(bounds.size)
         }
-        paintItems()
+        applyCamera(force: true)
+    }
+
+    /// The corners of the tank at either end of the world and along its
+    /// lid: a shadow in the glass and a line of light down its edge — so
+    /// the end of the tank looks like the end of it, and not the edge of
+    /// the window.
+    private func layOutTankEnds(_ ws: CGSize) {
+        tankEnds.sublayers?.forEach { $0.removeFromSuperlayer() }
+        tankEnds.frame = CGRect(origin: .zero, size: ws)
+        let shadow = CGColor(gray: 0, alpha: 0.32), clear = CGColor(gray: 0, alpha: 0)
+        func strip(_ r: CGRect, from a: CGPoint, to b: CGPoint) {
+            let g = CAGradientLayer()
+            g.frame = r
+            g.colors = [shadow, clear]
+            g.startPoint = a
+            g.endPoint = b
+            tankEnds.addSublayer(g)
+        }
+        let edge: CGFloat = 30
+        strip(CGRect(x: 0, y: 0, width: edge, height: ws.height), from: CGPoint(x: 0, y: 0.5), to: CGPoint(x: 1, y: 0.5))
+        strip(CGRect(x: ws.width - edge, y: 0, width: edge, height: ws.height), from: CGPoint(x: 1, y: 0.5), to: CGPoint(x: 0, y: 0.5))
+        strip(CGRect(x: 0, y: ws.height - edge * 1.2, width: ws.width, height: edge * 1.2), from: CGPoint(x: 0.5, y: 1), to: CGPoint(x: 0.5, y: 0))
+        for r in [CGRect(x: 1.5, y: 0, width: 1, height: ws.height), CGRect(x: ws.width - 2.5, y: 0, width: 1, height: ws.height),
+                  CGRect(x: 0, y: ws.height - 2.5, width: ws.width, height: 1)] {
+            let line = CALayer()
+            line.frame = r
+            line.backgroundColor = CGColor(gray: 1, alpha: 0.2)
+            tankEnds.addSublayer(line)
+        }
     }
 
     // MARK: The habitat
@@ -286,12 +646,17 @@ final class HabitatSceneView: NSView {
             t.duration = 0.45
             world.add(t, forKey: "fade")
         }
+        let resized = h.size != habitat.size
         habitat = h
+        camera.setWorld(h.size)
+        if resized { applyCamera(force: true) }
         if let s = selected, !h.items.contains(where: { $0.id == s }) { select(nil) }
         syncItemLayers()
         repaint()
+        paintItems()
         rebuildMap()
         refreshSelection()
+        overview?.reload()
     }
 
     /// One layer per thing, in the right container, in order.
@@ -306,6 +671,7 @@ final class HabitatSceneView: NSView {
         for (i, it) in habitat.items.enumerated() {
             let l = itemLayers[it.id] ?? {
                 let n = ItemLayer()
+                n.isHidden = true
                 itemLayers[it.id] = n
                 return n
             }()
@@ -325,7 +691,7 @@ final class HabitatSceneView: NSView {
 
     private func place(_ l: ItemLayer) {
         let it = l.item
-        let r = toView(it.rect)
+        let r = it.rect
         let pad = HabitatArt.itemPad(r.size)
         let full = r.insetBy(dx: -pad, dy: -pad)
         // It sways about its foot (or, hanging, the top it hangs from).
@@ -335,18 +701,19 @@ final class HabitatSceneView: NSView {
         l.position = CGPoint(x: full.minX + full.width * anchor.x, y: full.minY + full.height * anchor.y)
     }
 
+    /// Paints the furniture near the glass (the rest when it comes near),
+    /// and lays out the snow on it and the puddles round it.
     private func paintItems() {
-        for l in itemLayers.values { l.paint(biome: habitat.biome, scale: scale, size: toView(l.item.rect).size) }
-        // Snow settles on the furniture where it now stands; puddles form
-        // round it.
-        if bounds.width > 100, !inLiveResize { weatherFX.layoutItems(habitat) { [unowned self] in self.toView($0) } }
+        cull()
+        if bounds.width > 100, !inLiveResize { weatherFX.layoutItems(habitat) }
+        weatherFX.showCaps(near: visibleWorld.insetBy(dx: -160, dy: -160))
     }
 
     // MARK: The weather
 
     /// The weather as it is now: the layers turned up or down (a dozen or
     /// so times a second is plenty — Core Animation eases between), and
-    /// the plants leaning with the wind.
+    /// the plants in sight leaning with the wind.
     func updateWeather(_ c: WeatherConditions, dt: CGFloat) {
         weatherDue += dt
         guard weatherDue >= 1.0 / 15.0, bounds.width > 100 else { return }
@@ -355,7 +722,7 @@ final class HabitatSceneView: NSView {
         weatherFX.update(c, dt: min(step, 0.5))
         let now = CGFloat(CACurrentMediaTime())
         let gust = c.mix.gust * min(abs(c.windNow), 1.5)
-        for l in itemLayers.values {
+        for l in itemLayers.values where !l.isHidden {
             let k = ItemLayer.windLean(l.item.kind)
             guard k > 0 else { continue }
             let s = CGFloat(abs(l.item.seed % 97))
@@ -364,7 +731,8 @@ final class HabitatSceneView: NSView {
         }
     }
 
-    /// Thunder: the tank shakes with a clap right overhead.
+    /// Thunder: the tank shakes with a clap right overhead. `p` is where
+    /// the lightning came down, in the backdrop.
     private func thundered(at p: CGPoint, loud: CGFloat) {
         if loud > 0.75 {
             let o = world.position
@@ -375,7 +743,9 @@ final class HabitatSceneView: NSView {
             shake.duration = 0.4
             world.add(shake, forKey: "thunder")
         }
-        onThunder?(V2(p.x + screenOrigin.x, p.y + screenOrigin.y), loud)
+        // From the backdrop to the glass to the world: the world under it.
+        let b = backdrop.position
+        onThunder?(worldPoint(fromView: CGPoint(x: p.x + b.x, y: p.y + b.y)), loud)
     }
 
     /// Footprints in the snow, where its feet come down on the floor.
@@ -383,12 +753,12 @@ final class HabitatSceneView: NSView {
         guard pose.grounded > 0.9, abs(angleDelta(pose.heading, 0)) < 0.35 else { return }
         let mirror: CGFloat = pose.facing >= 0 ? 1 : -1
         let g = SpiderRenderer.ground
-        let o = V2(screenOrigin)
+        let floor = HabitatLayout.ground
         for leg in pose.legs where leg.lift < 0.05 {
             let local = V2(leg.foot.x * pose.stretch * mirror, g + (leg.foot.y - g) * pose.fatten)
-            let w = pose.pos + local.rotated(by: pose.heading) * pose.scale - o
-            guard abs(w.y - groundY) < 3 else { continue }
-            weatherFX.footDown(at: CGPoint(x: w.x, y: groundY))
+            let w = pose.pos + local.rotated(by: pose.heading) * pose.scale
+            guard abs(w.y - floor) < 3 else { continue }
+            weatherFX.footDown(at: CGPoint(x: w.x, y: floor))
         }
     }
 
@@ -397,11 +767,15 @@ final class HabitatSceneView: NSView {
     private func buildAtmosphere() {
         for old in [airBack, airMid, airFront] { old.removeFromSuperlayer() }
         airBack = CALayer(); airMid = CALayer(); airFront = CALayer()
-        world.insertSublayer(airBack, above: sky)
-        world.insertSublayer(airMid, above: scenery)
-        world.insertSublayer(airFront, above: frontItems)
-        for l in [airBack, airMid, airFront] { l.frame = bounds }
-        HabitatAtmosphere.build(habitat.biome, size: bounds.size, back: airBack, mid: airMid, front: airFront)
+        backdrop.insertSublayer(airBack, above: sky)
+        backdrop.insertSublayer(airMid, above: scenery)
+        content.insertSublayer(airFront, above: frontItems)
+        airBack.frame = CGRect(origin: .zero, size: backdropSize)
+        airMid.frame = CGRect(origin: .zero, size: backdropSize)
+        airFront.frame = CGRect(origin: .zero, size: habitat.size)
+        atmos = HabitatAtmosphere.build(habitat.biome, backdrop: backdropSize, world: habitat.size, view: bounds.size,
+                                        back: airBack, mid: airMid, front: airFront)
+        HabitatAtmosphere.follow(atmos, visible: visibleWorld)
     }
 
     /// Stops everything moving while no part of the tank can be seen.
@@ -428,21 +802,23 @@ final class HabitatSceneView: NSView {
     private(set) var didRedraw = false
 
     /// Places the spider (nil: it is not in here to be seen — out, or in
-    /// your hand), its line, and anything loose, for this frame.
+    /// your hand), its line, and anything loose, for this frame — all in
+    /// the world. Whatever is out of sight goes on being simulated, but is
+    /// not drawn.
     func showCreatures(_ pose: SpiderPose?, sprite: CGFloat, prey: [Prey]) {
         didRedraw = false
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
-        let o = V2(screenOrigin)
-        if let pose {
+        let seen = visibleWorld.insetBy(dx: -sprite, dy: -sprite)
+        if let pose, seen.contains(pose.pos.point) {
             if spiderLayer.isHidden { spiderLayer.isHidden = false; drawn = nil }
             if spiderLayer.bounds.width != sprite {
                 spiderLayer.bounds = CGRect(x: 0, y: 0, width: sprite, height: sprite)
                 spiderLayer.contentsScale = scale
                 drawn = nil
             }
-            spiderLayer.position = CGPoint(x: pose.pos.x - o.x, y: pose.pos.y - o.y)
+            spiderLayer.position = pose.pos.point
             spiderLayer.pose = pose
             let now = CACurrentMediaTime()
             let hold: CFTimeInterval = pose.outfit.isAnimated || !pose.specks.isEmpty ? 1.0 / 30.0 : 0.5
@@ -453,17 +829,17 @@ final class HabitatSceneView: NSView {
                 spiderLayer.setNeedsDisplay()
             }
             if weatherFX.wantsFootprints { noteFootprints(pose) }
-            if pose.web != nil, let path = SpiderRenderer.silkPath(pose, origin: o) {
-                silk.path = path
-                silk.opacity = Float(pose.web?.alpha ?? 1)
-                silk.isHidden = false
-            } else if !silk.isHidden {
-                silk.isHidden = true
-                silk.path = nil
-            }
-        } else {
+        } else if !spiderLayer.isHidden {
             spiderLayer.isHidden = true
+        }
+        // Its line, even with it out of sight (the line may not be).
+        if let pose, pose.web != nil, let path = SpiderRenderer.silkPath(pose) {
+            silk.path = path
+            silk.opacity = Float(pose.web?.alpha ?? 1)
+            silk.isHidden = false
+        } else if !silk.isHidden {
             silk.isHidden = true
+            silk.path = nil
         }
         // The creatures.
         var live = Set<ObjectIdentifier>()
@@ -479,8 +855,13 @@ final class HabitatSceneView: NSView {
             }()
             l.prey = p
             let side = 52 * p.drawScale
+            guard seen.insetBy(dx: -side, dy: -side).contains(p.pos.point) else {
+                if !l.isHidden { l.isHidden = true }
+                continue
+            }
+            if l.isHidden { l.isHidden = false }
             if l.bounds.width != side { l.bounds = CGRect(x: 0, y: 0, width: side, height: side) }
-            l.position = CGPoint(x: p.pos.x - o.x, y: p.pos.y - o.y)
+            l.position = p.pos.point
             l.setNeedsDisplay()
             didRedraw = true
         }
@@ -490,49 +871,57 @@ final class HabitatSceneView: NSView {
         }
     }
 
-    /// The colour behind a point on the screen, for a camouflaged coat:
-    /// the backdrop at that spot.
+    /// The colour behind a point in the world, for a camouflaged coat: the
+    /// backdrop at that spot.
     func colourBehind(_ p: V2) -> RGB? {
         func image(_ any: Any?) -> CGImage? {
             guard let any, CFGetTypeID(any as CFTypeRef) == CGImage.typeID else { return nil }
             return (any as! CGImage)
         }
         guard let img = image(scenery.contents), let skyImg = image(sky.contents) else { return nil }
-        let local = CGPoint(x: p.x - screenOrigin.x, y: p.y - screenOrigin.y)
-        guard bounds.contains(local) else { return nil }
+        // World to glass to backdrop.
+        let v = viewPoint(fromWorld: p)
+        let b = backdrop.position
+        let local = CGPoint(x: v.x - b.x, y: v.y - b.y)
+        let whole = CGRect(origin: .zero, size: backdropSize)
+        guard whole.contains(local) else { return nil }
         let r: CGFloat = 30
-        let patch = CGRect(x: local.x - r, y: local.y - r, width: r * 2, height: r * 2).intersection(bounds)
+        let patch = CGRect(x: local.x - r, y: local.y - r, width: r * 2, height: r * 2).intersection(whole)
         // Sky and scenery both: draw the two over each other in a patch.
         guard let merged = HabitatArt.image(patch.size, scale: 0.5, { ctx in
             ctx.translateBy(x: -patch.minX, y: -patch.minY)
-            ctx.draw(skyImg, in: bounds)
-            ctx.draw(img, in: bounds)
+            ctx.draw(skyImg, in: whole)
+            ctx.draw(img, in: self.scenery.frame)
         }) else { return nil }
         return AppDelegate.dominant(of: merged)
     }
 
-    // MARK: Mouse: the spider
+    // MARK: Mouse: the spider, and looking round
 
+    /// Recent pointer positions on the screen (the same whichever side of
+    /// the glass the spider is on), for how hard it is thrown.
     private var dragSamples: [(p: V2, t: TimeInterval)] = []
     private var holdingSpider = false
     private var pressedAt = V2.zero
     private var pressTime: TimeInterval = 0
     private var grabbedPrey: Prey?
-
-    private func world(_ e: NSEvent) -> V2 {
-        let p = convert(e.locationInWindow, from: nil)
-        return V2(p.x + screenOrigin.x, p.y + screenOrigin.y)
-    }
+    /// A press on the bare glass: a tap on it if let go where it was, a
+    /// look round the tank if dragged.
+    private var glassPress: (from: CGPoint, last: CGPoint)?
+    private var panning = false
+    private var panSamples: [(p: CGPoint, t: TimeInterval)] = []
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        camera.touched()
         if editing { editMouseDown(event); return }
-        guard let spider else { return }
-        let w = world(event)
-        pressedAt = w
+        guard let spider else { beginGlassPress(event); return }
+        let s = screenPoint(event)
+        let w = worldPoint(fromScreen: s)
+        pressedAt = s
         pressTime = event.timestamp
-        dragSamples = [(w, event.timestamp)]
-        if spider.inHabitat, spider.hitTest(w) {
+        dragSamples = [(s, event.timestamp)]
+        if spider.inHabitat, spider.map === map, spider.hitTest(w) {
             if event.clickCount >= 2 {
                 spider.celebrate()
             } else {
@@ -544,18 +933,21 @@ final class HabitatSceneView: NSView {
             grabbedPrey = p
             spider.beginPreyGrab(p, at: w)
         } else {
-            tapGlass(at: convert(event.locationInWindow, from: nil))
+            beginGlassPress(event)
         }
     }
 
     override func mouseDragged(with event: NSEvent) {
         if editing { editMouseDragged(event); return }
+        if glassPress != nil { glassDragged(event); return }
         guard let spider else { return }
-        let w = world(event)
-        dragSamples.append((w, event.timestamp))
+        let s = screenPoint(event)
+        dragSamples.append((s, event.timestamp))
         if dragSamples.count > 8 { dragSamples.removeFirst(dragSamples.count - 8) }
-        if holdingSpider { spider.moveGrab(to: w) }
-        if let p = grabbedPrey { spider.movePreyGrab(p, to: w) }
+        // (Carried out through the glass mid-drag, it is on the desktop's
+        // screen points from then on.)
+        if holdingSpider { spider.moveGrab(to: spiderPoint(fromScreen: s)) }
+        if let p = grabbedPrey { spider.movePreyGrab(p, to: worldPoint(fromScreen: s)) }
     }
 
     /// A force press on a creature in hand squashes it.
@@ -567,21 +959,22 @@ final class HabitatSceneView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         if editing { editMouseUp(event); return }
+        if glassPress != nil { glassReleased(event); return }
         guard let spider else { return }
-        let w = world(event)
+        let s = screenPoint(event)
         defer { holdingSpider = false; grabbedPrey = nil; dragSamples = [] }
         var v = V2.zero
         if let first = dragSamples.first, dragSamples.count > 1 {
             if event.timestamp - first.t < 0.22 {
-                v = (w - first.p) / CGFloat(max(event.timestamp - first.t, 0.008))
+                v = (s - first.p) / CGFloat(max(event.timestamp - first.t, 0.008))
             } else if let recent = dragSamples.last(where: { event.timestamp - $0.t > 0.04 }) {
-                v = (w - recent.p) / CGFloat(max(event.timestamp - recent.t, 0.008))
+                v = (s - recent.p) / CGFloat(max(event.timestamp - recent.t, 0.008))
             }
         }
         if let p = grabbedPrey { spider.endPreyGrab(p, throwVelocity: v) }
         guard holdingSpider else { return }
         NSCursor.pop()
-        if w.distance(to: pressedAt) < 4 && event.timestamp - pressTime < 0.35 {
+        if s.distance(to: pressedAt) < 4 && event.timestamp - pressTime < 0.35 {
             spider.endGrab(throwVelocity: .zero)
             spider.poke()
         } else {
@@ -589,8 +982,70 @@ final class HabitatSceneView: NSView {
         }
     }
 
+    private func beginGlassPress(_ e: NSEvent) {
+        let v = viewPoint(e)
+        glassPress = (v, v)
+        panning = false
+        panSamples = [(v, e.timestamp)]
+    }
+
+    /// Dragging the bare glass: the world goes with the pointer.
+    private func glassDragged(_ e: NSEvent) {
+        guard var g = glassPress else { return }
+        let v = viewPoint(e)
+        if !panning, hypot(v.x - g.from.x, v.y - g.from.y) > 3 {
+            panning = true
+            camera.beginPan()
+            NSCursor.closedHand.push()
+        }
+        if panning {
+            camera.pan(by: V2(g.last.x - v.x, g.last.y - v.y))
+            applyCamera()
+        }
+        g.last = v
+        glassPress = g
+        panSamples.append((v, e.timestamp))
+        if panSamples.count > 6 { panSamples.removeFirst(panSamples.count - 6) }
+    }
+
+    /// Let go: a flick coasts on; a click without a drag taps the glass.
+    private func glassReleased(_ e: NSEvent) {
+        guard let g = glassPress else { return }
+        glassPress = nil
+        if panning {
+            panning = false
+            NSCursor.pop()
+            let now = e.timestamp
+            if let last = panSamples.last, now - last.t < 0.06, let first = panSamples.first(where: { now - $0.t < 0.12 }), last.t - first.t > 0.008 {
+                let dt = CGFloat(last.t - first.t)
+                camera.endPan(velocity: V2(-(last.p.x - first.p.x) / dt, -(last.p.y - first.p.y) / dt))
+            } else {
+                camera.endPan(velocity: .zero)
+            }
+        } else if !editing {
+            tapGlass(at: g.from)
+        }
+        panSamples = []
+    }
+
+    /// Two fingers along (or shift and the wheel): along the tank. Up and
+    /// down is an order to the spider, as on the desktop — except while
+    /// decorating, when it is all looking round.
     override func scrollWheel(with event: NSEvent) {
-        guard !editing, let spider, spider.inHabitat else { return }
+        let k: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 10
+        let dx = event.scrollingDeltaX * k, dy = event.scrollingDeltaY * k
+        if editing || overviewOpen {
+            guard !overviewOpen else { return }
+            camera.pan(by: V2(-dx, dy))
+            applyCamera()
+            return
+        }
+        if abs(dx) > abs(dy) * 1.5, abs(dx) > 0.3 {
+            camera.pan(by: V2(-dx, 0))
+            applyCamera()
+            return
+        }
+        guard let spider, spider.inHabitat else { return }
         spider.scroll(event.scrollingDeltaY, precise: event.hasPreciseScrollingDeltas, startsGesture: event.startsScrollGesture)
     }
 
@@ -606,7 +1061,7 @@ final class HabitatSceneView: NSView {
         ring.strokeColor = CGColor(gray: 1, alpha: 0.7)
         ring.lineWidth = 1.5
         ring.position = p
-        editLayer.addSublayer(ring)
+        tapLayer.addSublayer(ring)
         let grow = CABasicAnimation(keyPath: "transform.scale")
         grow.fromValue = 0.3
         grow.toValue = 1.4
@@ -629,20 +1084,26 @@ final class HabitatSceneView: NSView {
     private var before: Habitat?
     private var hovered: Int?
 
-    /// The thing at a point in the view, front first.
-    private func itemAt(_ p: CGPoint) -> HabitatItem? {
+    private var isDraggingItem: Bool {
+        if case .none = drag { return false }
+        return true
+    }
+
+    /// The thing at a point in the world, front first.
+    func itemAt(_ p: V2) -> HabitatItem? {
+        let q = p.point
         let ordered = habitat.items.enumerated().sorted { a, b in
             if a.element.inFront != b.element.inFront { return a.element.inFront }
             return a.offset > b.offset
         }
         // A tight box first — its drawn body — then the looser one.
-        for (_, it) in ordered where toView(Habitat.solidRect(it) ?? it.rect).insetBy(dx: -6, dy: -6).contains(p) { return it }
-        for (_, it) in ordered where toView(it.rect).insetBy(dx: -4, dy: -4).contains(p) { return it }
+        for (_, it) in ordered where (Habitat.solidRect(it) ?? it.rect).insetBy(dx: -6, dy: -6).contains(q) { return it }
+        for (_, it) in ordered where it.rect.insetBy(dx: -4, dy: -4).contains(q) { return it }
         return nil
     }
 
     private func handleRects(_ it: HabitatItem) -> [CGRect] {
-        let r = toView(it.rect).insetBy(dx: -5, dy: -5)
+        let r = it.rect.insetBy(dx: -5, dy: -5)
         return [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.minX, y: r.maxY), CGPoint(x: r.maxX, y: r.maxY)]
             .map { CGRect(x: $0.x - 9, y: $0.y - 9, width: 18, height: 18) }
     }
@@ -671,7 +1132,7 @@ final class HabitatSceneView: NSView {
             for h in handles { h.isHidden = true }
         }
         if editing, let id = hovered, id != selected, let it = habitat.items.first(where: { $0.id == id }) {
-            hoverOutline.path = CGPath(roundedRect: toView(it.rect).insetBy(dx: -4, dy: -4), cornerWidth: 6, cornerHeight: 6, transform: nil)
+            hoverOutline.path = CGPath(roundedRect: it.rect.insetBy(dx: -4, dy: -4), cornerWidth: 6, cornerHeight: 6, transform: nil)
             hoverOutline.isHidden = false
         } else {
             hoverOutline.isHidden = true
@@ -680,15 +1141,16 @@ final class HabitatSceneView: NSView {
 
     /// Where a thing is drawn right now, from its layer.
     private func liveRect(_ it: HabitatItem, layer l: ItemLayer) -> CGRect {
-        let pad = HabitatArt.itemPad(toView(it.rect).size)
+        let pad = HabitatArt.itemPad(it.rect.size)
         let f = l.frame
         return f.insetBy(dx: pad * f.width / max(l.bounds.width, 1), dy: pad * f.height / max(l.bounds.height, 1))
     }
 
     override func mouseMoved(with event: NSEvent) {
+        camera.touched()
         guard editing else { return }
-        let p = convert(event.locationInWindow, from: nil)
-        let id = itemAt(p)?.id
+        let p = viewPoint(event)
+        let id = itemAt(worldPoint(fromView: p))?.id
         if id != hovered { hovered = id; refreshSelection() }
         updateCursor(at: p)
     }
@@ -698,12 +1160,13 @@ final class HabitatSceneView: NSView {
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        updateCursor(at: convert(event.locationInWindow, from: nil))
+        updateCursor(at: viewPoint(event))
     }
 
-    private func updateCursor(at p: CGPoint) {
+    private func updateCursor(at v: CGPoint) {
         guard editing else { NSCursor.arrow.set(); return }
-        if let id = selected, let it = habitat.items.first(where: { $0.id == id }), handleRects(it).contains(where: { $0.contains(p) }) {
+        let p = worldPoint(fromView: v)
+        if let id = selected, let it = habitat.items.first(where: { $0.id == id }), handleRects(it).contains(where: { $0.contains(p.point) }) {
             NSCursor.crosshair.set()
         } else if itemAt(p) != nil {
             NSCursor.openHand.set()
@@ -713,46 +1176,59 @@ final class HabitatSceneView: NSView {
     }
 
     private func editMouseDown(_ event: NSEvent) {
-        let p = convert(event.locationInWindow, from: nil)
+        let v = viewPoint(event)
+        let p = worldPoint(fromView: v).point
         before = habitat
         if let id = selected, let it = habitat.items.first(where: { $0.id == id }), handleRects(it).contains(where: { $0.contains(p) }) {
-            let r = toView(it.rect)
+            let r = it.rect
             let anchor = CGPoint(x: r.midX, y: it.kind.hangs ? r.maxY : r.minY)
             drag = .resize(id: id, from: it, anchor: anchor, startDist: max(hypot(p.x - anchor.x, p.y - anchor.y), 8))
+            dragView = v
             return
         }
-        if let it = itemAt(p) {
+        if let it = itemAt(V2(p)) {
             select(it.id)
             // Where on it it was taken hold of, so it does not jump to the pointer.
-            let sp = toScene(p)
-            drag = .move(id: it.id, offset: CGPoint(x: it.x - sp.x, y: it.y - (sp.y - HabitatLayout.ground)))
+            drag = .move(id: it.id, offset: CGPoint(x: it.x - p.x, y: it.y - (p.y - HabitatLayout.ground)))
+            dragView = v
             NSCursor.closedHand.set()
         } else {
             select(nil)
             drag = .none
+            before = nil
+            // The bare glass: dragged, it looks round the tank.
+            beginGlassPress(event)
         }
     }
 
     private func editMouseDragged(_ event: NSEvent) {
-        let p = convert(event.locationInWindow, from: nil)
+        if glassPress != nil { glassDragged(event); return }
+        let v = viewPoint(event)
+        dragView = v
+        dragItem(at: v)
+    }
+
+    /// The thing being dragged, to where the pointer is over the world
+    /// (which moves under it as the camera is taken along).
+    private func dragItem(at v: CGPoint) {
+        let p = worldPoint(fromView: v).point
         switch drag {
         case .none:
             return
         case .move(let id, let offset):
             guard let i = habitat.items.firstIndex(where: { $0.id == id }) else { return }
             var it = habitat.items[i]
-            let sp = toScene(p)
-            it.x = sp.x + offset.x
+            it.x = p.x + offset.x
             if it.kind.hangs {
-                it.y = HabitatLayout.height
+                it.y = habitat.size.height
             } else if HabitatSceneView.liftable(it.kind) {
-                let y = sp.y - HabitatLayout.ground + offset.y
+                let y = p.y - HabitatLayout.ground + offset.y
                 // Near the ground it sits on it.
                 it.y = y < 12 ? 0 : y
             } else {
                 it.y = 0
             }
-            Habitat.clamp(&it)
+            Habitat.clamp(&it, in: habitat.size)
             habitat.items[i] = it
             moveLayer(it)
         case .resize(let id, let from, let anchor, let startDist):
@@ -765,24 +1241,25 @@ final class HabitatSceneView: NSView {
             var it = from
             it.w = from.w * k
             it.h = from.h * k
-            Habitat.clamp(&it)
+            Habitat.clamp(&it, in: habitat.size)
             habitat.items[i] = it
             moveLayer(it)
         }
     }
 
     private func editMouseUp(_ event: NSEvent) {
-        defer { drag = .none; before = nil }
+        if glassPress != nil { glassReleased(event); return }
+        defer { drag = .none; before = nil; dragView = nil }
         switch drag {
         case .none:
             return
         case .move(let id, _):
             settle(id)
             commit()
-            updateCursor(at: convert(event.locationInWindow, from: nil))
+            updateCursor(at: viewPoint(event))
         case .resize:
             commit()
-            updateCursor(at: convert(event.locationInWindow, from: nil))
+            updateCursor(at: viewPoint(event))
         }
     }
 
@@ -803,7 +1280,7 @@ final class HabitatSceneView: NSView {
         guard abs(rest - it.y) > 0.5 else { return }
         let fromY = itemLayers[id]?.position.y
         it.y = rest
-        Habitat.clamp(&it)
+        Habitat.clamp(&it, in: habitat.size)
         habitat.items[i] = it
         moveLayer(it)
         if let l = itemLayers[id], let fromY {
@@ -825,6 +1302,7 @@ final class HabitatSceneView: NSView {
         CATransaction.setDisableActions(true)
         l.item = it
         place(l)
+        if l.isHidden { l.paint(biome: habitat.biome, scale: scale, size: it.rect.size); l.isHidden = false }
         CATransaction.commit()
         refreshSelection()
     }
@@ -837,6 +1315,7 @@ final class HabitatSceneView: NSView {
         paintItems()
         rebuildMap()
         refreshSelection()
+        overview?.reload()
         onEdit?(before, habitat)
     }
 
@@ -854,18 +1333,45 @@ final class HabitatSceneView: NSView {
     /// Changes the chosen thing, as one edit — or `silently`, as part of
     /// one the caller will record when it is done.
     func updateSelected(silently: Bool = false, _ f: (inout HabitatItem) -> Void) {
-        guard let id = selected, let i = habitat.items.firstIndex(where: { $0.id == id }) else { return }
+        guard let id = selected else { return }
+        update(id, silently: silently, f)
+    }
+
+    /// Changes a thing, as one edit (or silently).
+    func update(_ id: Int, silently: Bool = false, _ f: (inout HabitatItem) -> Void) {
+        guard let i = habitat.items.firstIndex(where: { $0.id == id }) else { return }
         let was = habitat
         var it = habitat.items[i]
         f(&it)
-        Habitat.clamp(&it)
+        Habitat.clamp(&it, in: habitat.size)
         habitat.items[i] = it
         guard was != habitat else { return }
         syncItemLayers()
         paintItems()
         rebuildMap()
         refreshSelection()
+        overview?.reload()
         if silently { habitat.save() } else { onEdit?(was, habitat) }
+    }
+
+    /// Moved in the overview: a thing to a new spot in the world, where it
+    /// comes to rest on whatever is under it, as one edit.
+    func moveItem(_ id: Int, to p: V2) {
+        guard let i = habitat.items.firstIndex(where: { $0.id == id }) else { return }
+        before = habitat
+        var it = habitat.items[i]
+        it.x = p.x
+        if it.kind.hangs {
+            it.y = habitat.size.height
+        } else {
+            it.y = HabitatSceneView.liftable(it.kind) ? max(0, p.y - HabitatLayout.ground) : 0
+        }
+        Habitat.clamp(&it, in: habitat.size)
+        habitat.items[i] = it
+        moveLayer(it)
+        settle(id)
+        commit()
+        before = nil
     }
 
     /// Replaces the whole habitat as one edit (a layout, the scenery,
@@ -876,27 +1382,46 @@ final class HabitatSceneView: NSView {
         if was != h { onEdit?(was, h) }
     }
 
-    /// Puts a new thing in, somewhere with room for it, dropping it in
-    /// from a little above.
+    /// Puts a new thing in, somewhere with room for it in what the glass
+    /// shows, dropping it in from a little above. Something that has to
+    /// stand on the ground, or hang from the lid, where the glass doesn't
+    /// show it, the camera goes to.
     func add(_ kind: HabitatItemKind) {
         var h = habitat
         let size = kind.defaultSize
-        // The most open stretch of ground: furthest from everything else.
-        var bestX: CGFloat = HabitatLayout.width / 2
+        let view = visibleWorld
+        let W = h.size.width
+        // The most open stretch of what shows: furthest from everything else.
+        let lo = max(view.minX + size.width / 2 + 20, size.width / 2 + 20)
+        let hi = max(lo, min(view.maxX - size.width / 2 - 20, W - size.width / 2 - 20))
+        var bestX: CGFloat = view.midX
         var best: CGFloat = -1
         for step in 0..<40 {
-            let x = size.width / 2 + 20 + CGFloat(step) / 39 * (HabitatLayout.width - size.width - 40)
+            let x = lo + CGFloat(step) / 39 * (hi - lo)
             let gap = h.items.filter { $0.kind.hangs == kind.hangs }.map { max(0, abs($0.x - x) - ($0.w + size.width) / 2) }.min() ?? 900
-            let score = min(gap, 300) + CGFloat.random(in: 0...20) - abs(x - HabitatLayout.width / 2) * 0.05
+            let score = min(gap, 300) + CGFloat.random(in: 0...20) - abs(x - view.midX) * 0.05
             if score > best { best = score; bestX = x }
         }
-        let it = h.add(kind, at: CGPoint(x: bestX, y: kind.hangs ? HabitatLayout.height : 0))
+        // A branch goes where the glass is looking, even up in the air;
+        // anything else stands on the ground (or hangs from the lid).
+        var y: CGFloat = 0
+        if kind.hangs {
+            y = h.size.height
+        } else if kind == .branch, view.minY > HabitatLayout.ground + 40 {
+            y = max(0, view.midY - HabitatLayout.ground - size.height / 2)
+        }
+        let it = h.add(kind, at: CGPoint(x: bestX, y: y))
         let was = habitat
         setHabitat(h)
         onEdit?(was, h)
         select(it.id)
+        if let placed = habitat.items.first(where: { $0.id == it.id }), !view.insetBy(dx: -20, dy: -20).contains(CGPoint(x: placed.x, y: placed.rect.midY)) {
+            camera.glide(toCentre: V2(placed.x, placed.kind.hangs ? placed.rect.maxY - view.height * 0.35 : placed.rect.minY + view.height * 0.3), thenFollow: false)
+        }
         // In it drops, with a little bounce.
         if let l = itemLayers[it.id] {
+            l.paint(biome: habitat.biome, scale: scale, size: l.item.rect.size)
+            l.isHidden = false
             let fall = CASpringAnimation(keyPath: "position.y")
             fall.fromValue = l.position.y + (kind.hangs ? 60 : 80)
             fall.toValue = l.position.y
@@ -930,9 +1455,9 @@ final class HabitatSceneView: NSView {
         var copy = it
         copy.id = h.nextID
         h.nextID += 1
-        copy.x = it.x + (it.x > HabitatLayout.width - 120 ? -1 : 1) * max(40, it.w * 0.6)
+        copy.x = it.x + (it.x > h.size.width - 120 ? -1 : 1) * max(40, it.w * 0.6)
         copy.seed = Int.random(in: 1...9999)
-        Habitat.clamp(&copy)
+        Habitat.clamp(&copy, in: h.size)
         h.items.append(copy)
         setHabitat(h)
         onEdit?(was, h)
@@ -964,6 +1489,15 @@ final class HabitatSceneView: NSView {
         let cmd = event.modifierFlags.contains(.command)
         let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
         if cmd, chars == "z" { onCommand?(event.modifierFlags.contains(.shift) ? .redo : .undo); return }
+        if event.keyCode == 53, overviewOpen { showOverview(false); return }
+        // With nothing picked, the arrows look round the tank.
+        if (!editing || selected == nil), [123, 124, 125, 126].contains(event.keyCode), !cmd {
+            let step: CGFloat = event.modifierFlags.contains(.shift) ? 0.8 : 0.35
+            let d: V2 = [123: V2(-1, 0), 124: V2(1, 0), 125: V2(0, -1), 126: V2(0, 1)][event.keyCode]!
+            let c = V2(visibleWorld.midX, visibleWorld.midY) + V2(d.x * bounds.width, d.y * bounds.height) * step
+            camera.glide(toCentre: c, thenFollow: false)
+            return
+        }
         guard editing else { super.keyDown(with: event); return }
         if cmd, chars == "d" { duplicateSelected(); return }
         switch event.keyCode {
@@ -981,6 +1515,12 @@ final class HabitatSceneView: NSView {
             super.keyDown(with: event)
         }
     }
+
+    /// Tools only: the layers, for checking what is shown.
+    var debugItemLayers: [Int: CALayer] { itemLayers }
+    var debugSpiderShown: Bool { !spiderLayer.isHidden }
+    var debugBackdropOrigin: CGPoint { backdrop.position }
+    var debugFindShown: Bool { findShown }
 }
 
 // MARK: - A thing in the tank
@@ -1039,6 +1579,14 @@ final class ItemLayer: CALayer {
     required init?(coder: NSCoder) { fatalError() }
 
     override func action(forKey event: String) -> CAAction? { nil }
+
+    /// Lets its picture go (it is far from the glass): painted again when
+    /// it comes near.
+    func unpaint() {
+        guard !paintedKey.isEmpty else { return }
+        paintedKey = ""
+        contents = nil
+    }
 
     /// Paints its picture if its look has changed, and sets it moving.
     func paint(biome: Biome, scale: CGFloat, size: CGSize) {

@@ -77,7 +77,7 @@ enum HabitatItemKind: String, Codable, CaseIterable {
         }
     }
 
-    /// Size in scene points (the scene is `HabitatLayout.width` across).
+    /// Size in world points (the same as the screen's).
     var defaultSize: CGSize {
         switch self {
         case .log: return CGSize(width: 180, height: 50)
@@ -124,9 +124,9 @@ enum HabitatItemKind: String, Codable, CaseIterable {
 struct HabitatItem: Codable, Equatable, Identifiable {
     var id: Int
     var kind: HabitatItemKind
-    /// Centre across. Standing things: `y` is how far above the ground its
-    /// base is (0 on the ground). Hanging things: `y` is its top (the lid
-    /// is `HabitatLayout.height`).
+    /// Centre across, in world points. Standing things: `y` is how far above
+    /// the ground its base is (0 on the ground). Hanging things: `y` is its
+    /// top (the lid is the top of the world).
     var x: CGFloat
     var y: CGFloat
     var w: CGFloat
@@ -136,7 +136,7 @@ struct HabitatItem: Codable, Equatable, Identifiable {
     /// Drawn in front of the spider (foreground foliage), or behind it.
     var front = false
 
-    /// Its rectangle in scene points.
+    /// Its rectangle in the world.
     var rect: CGRect {
         kind.hangs ? CGRect(x: x - w / 2, y: y - h, width: w, height: h)
                    : CGRect(x: x - w / 2, y: HabitatLayout.ground + y, width: w, height: h)
@@ -146,26 +146,64 @@ struct HabitatItem: Codable, Equatable, Identifiable {
     var inFront: Bool { front && kind.canGoInFront }
 }
 
-/// The shape of the tank's scene, in scene points: a fixed aspect, with
-/// the substrate along the bottom and the air above it.
+/// The habitat's measurements. Its world is in points one to one with the
+/// screen's: the spider, what it hunts and the furniture are the same size
+/// in there as they are on the desktop, and the window is a pane of glass
+/// onto part of it (see HabitatCamera.swift).
 enum HabitatLayout {
+    /// The tank as it was when all of it had to fit in its window: a
+    /// 900 × 540 scene. The scenery is still drawn to its proportions, the
+    /// picker's pictures are laid out on it, and a habitat saved back then
+    /// is moved into a world from it.
     static let width: CGFloat = 900
     static let height: CGFloat = 540
+    static var aspect: CGFloat { height / width }
     /// The top of the substrate: what it walks on.
     static let ground: CGFloat = 74
-    static var aspect: CGFloat { height / width }
+
+    /// The world for a display this size: about two and three-quarter
+    /// screens across and a screen and a third high — a good deal more
+    /// than the window shows, but still one tank.
+    static func world(for screen: CGSize) -> CGSize {
+        CGSize(width: clamp((screen.width * 2.75).rounded(), 3000, 5600),
+               height: clamp((screen.height * 1.35).rounded(), 1050, 1600))
+    }
+
+    /// The world a new habitat gets, from the main display. (Kept with the
+    /// habitat after that: moving to another display changes how much of
+    /// it the window shows, not where anything in it is.)
+    static var defaultWorld: CGSize {
+        world(for: NSScreen.main?.visibleFrame.size ?? CGSize(width: 1470, height: 920))
+    }
 }
 
 struct Habitat: Codable, Equatable {
     var biome: Biome = .forest
     var items: [HabitatItem] = []
     var nextID = 1
+    /// How big its world is. Missing from a habitat saved before the tank
+    /// was bigger than its window — `load` moves one of those into a world.
+    var world: CGSize?
+
+    init() {}
+    init(biome: Biome, world: CGSize) {
+        self.biome = biome
+        self.world = world
+    }
+
+    /// The world's size: the old scene's for a habitat not yet moved into one.
+    var size: CGSize { world ?? CGSize(width: HabitatLayout.width, height: HabitatLayout.height) }
+    var bounds: CGRect { CGRect(origin: .zero, size: size) }
 
     static let key = "habitat"
 
     static func load() -> Habitat {
         guard let data = UserDefaults.standard.data(forKey: key),
               var h = try? JSONDecoder().decode(Habitat.self, from: data) else { return .preset(.forestFloor) }
+        if h.world == nil {
+            h = h.movedIntoWorld(HabitatLayout.defaultWorld)
+            h.save()
+        }
         h.clampAll()
         return h
     }
@@ -179,15 +217,16 @@ struct Habitat: Codable, Equatable {
         let size = kind.defaultSize
         var item = HabitatItem(id: nextID, kind: kind, x: p.x, y: p.y, w: size.width * scale, h: size.height * scale,
                                flipped: Bool.random(), seed: Int.random(in: 1...9999), front: false)
-        Habitat.clamp(&item)
+        Habitat.clamp(&item, in: self.size)
         nextID += 1
         items.append(item)
         return item
     }
 
-    /// Keeps a thing inside the tank: on or above the ground, under the lid.
-    static func clamp(_ it: inout HabitatItem) {
-        let W = HabitatLayout.width, H = HabitatLayout.height, G = HabitatLayout.ground
+    /// Keeps a thing inside a world this size: on or above the ground,
+    /// under the lid.
+    static func clamp(_ it: inout HabitatItem, in world: CGSize) {
+        let W = world.width, H = world.height, G = HabitatLayout.ground
         it.w = min(max(it.w, 12), W * 0.8)
         it.h = min(max(it.h, 10), (H - G) * 0.96)
         it.x = min(max(it.x, it.w * 0.2), W - it.w * 0.2)
@@ -199,45 +238,53 @@ struct Habitat: Codable, Equatable {
     }
 
     mutating func clampAll() {
-        for i in items.indices { Habitat.clamp(&items[i]) }
+        let s = size
+        for i in items.indices { Habitat.clamp(&items[i], in: s) }
     }
 
-    // MARK: Presets
+    // MARK: From the old tank
 
-    enum Preset: String, CaseIterable {
-        case forestFloor, jungleCanopy, desertScrub, meadow, cave, beach, tundra, moonlit, empty
-        var label: String {
-            switch self {
-            case .forestFloor: return "Forest Floor"
-            case .jungleCanopy: return "Jungle Canopy"
-            case .desertScrub: return "Desert Scrub"
-            case .meadow: return "Wildflower Meadow"
-            case .cave: return "Crystal Cave"
-            case .beach: return "Beachcomber"
-            case .tundra: return "Winter Hollow"
-            case .moonlit: return "Moonlit Glade"
-            case .empty: return "Bare Tank"
-            }
+    /// A habitat from before the tank was bigger than its window, moved into
+    /// a world. A ready-made layout still just as it came becomes the new
+    /// layout of that name (in whatever scenery it was given); one made its
+    /// own is kept exactly as it was, stood in the middle of the world —
+    /// where the window first opens — with hanging things still hanging
+    /// from the lid, and as far down from it as they were.
+    func movedIntoWorld(_ world: CGSize) -> Habitat {
+        if world == size, self.world != nil { return self }
+        for p in Preset.allCases where !items.isEmpty && Habitat.sameLayout(Habitat.legacyItems(p), items) {
+            var h = Habitat.preset(p, world: world)
+            h.biome = biome
+            return h
         }
-        var biome: Biome {
-            switch self {
-            case .forestFloor, .empty: return .forest
-            case .jungleCanopy: return .jungle
-            case .desertScrub: return .desert
-            case .meadow: return .meadow
-            case .cave: return .cave
-            case .beach: return .beach
-            case .tundra: return .tundra
-            case .moonlit: return .night
-            }
+        var h = Habitat(biome: biome, world: world)
+        h.items = items
+        h.nextID = nextID
+        let dx = ((world.width - size.width) / 2).rounded()
+        let lift = world.height - size.height
+        for i in h.items.indices {
+            h.items[i].x += dx
+            if h.items[i].kind.hangs { h.items[i].y += lift; h.items[i].h += lift }
+        }
+        h.clampAll()
+        return h
+    }
+
+    /// Whether two lists of things are the same layout: the same things, in
+    /// the same order, flipped and layered the same, each within a few
+    /// points of the same place and size (a stray click that nudged
+    /// something doesn't make a tank anyone's own).
+    static func sameLayout(_ a: [HabitatItem], _ b: [HabitatItem]) -> Bool {
+        a.count == b.count && zip(a, b).allSatisfy { p, q in
+            p.kind == q.kind && p.flipped == q.flipped && p.front == q.front
+                && abs(p.x - q.x) < 6 && abs(p.y - q.y) < 6 && abs(p.w - q.w) < 6 && abs(p.h - q.h) < 6
         }
     }
 
-    /// Laid out on the 900 × 540 scene. For a standing thing the second
-    /// number is its height off the ground; for a hanging one, its top.
-    static func preset(_ p: Preset) -> Habitat {
+    /// The ready-made layouts as they were on the old 900 × 540 scene: what
+    /// a saved habitat is checked against, and the middle of each new one.
+    static func legacyItems(_ p: Preset) -> [HabitatItem] {
         var h = Habitat()
-        h.biome = p.biome
         var seed = 11
         func put(_ kind: HabitatItemKind, _ x: CGFloat, _ y: CGFloat = 0, front: Bool = false, scale: CGFloat = 1, flipped: Bool = false) {
             var it = h.add(kind, at: CGPoint(x: x, y: kind.hangs && y == 0 ? HabitatLayout.height : y), scale: scale)
@@ -245,7 +292,7 @@ struct Habitat: Codable, Equatable {
             it.front = front
             seed = (seed * 7919 + 13) % 9973
             it.seed = seed + 1
-            Habitat.clamp(&it)
+            Habitat.clamp(&it, in: h.size)
             h.items[h.items.count - 1] = it
         }
         switch p {
@@ -338,24 +385,464 @@ struct Habitat: Codable, Equatable {
         case .empty:
             break
         }
-        return h
+        return h.items
     }
 
-    /// A fresh take on a layout: the same pieces, shuffled about a little
-    /// and resized, so no two are the same.
-    static func surprise() -> Habitat {
-        let presets = Preset.allCases.filter { $0 != .empty }
-        var h = Habitat.preset(presets.randomElement()!)
-        if Bool.random() { h.biome = Biome.allCases.randomElement()! }
-        for i in h.items.indices {
-            h.items[i].x += CGFloat.random(in: -70...70)
-            h.items[i].seed = Int.random(in: 1...9999)
-            let k = CGFloat.random(in: 0.85...1.2)
-            h.items[i].w *= k; h.items[i].h *= k
-            if Bool.random() { h.items[i].flipped.toggle() }
-            Habitat.clamp(&h.items[i])
+    // MARK: Presets
+
+    enum Preset: String, CaseIterable {
+        case forestFloor, jungleCanopy, desertScrub, meadow, cave, beach, tundra, moonlit, empty
+        var label: String {
+            switch self {
+            case .forestFloor: return "Forest Floor"
+            case .jungleCanopy: return "Jungle Canopy"
+            case .desertScrub: return "Desert Scrub"
+            case .meadow: return "Wildflower Meadow"
+            case .cave: return "Crystal Cave"
+            case .beach: return "Beachcomber"
+            case .tundra: return "Winter Hollow"
+            case .moonlit: return "Moonlit Glade"
+            case .empty: return "Bare Tank"
+            }
         }
-        return h
+        var biome: Biome {
+            switch self {
+            case .forestFloor, .empty: return .forest
+            case .jungleCanopy: return .jungle
+            case .desertScrub: return .desert
+            case .meadow: return .meadow
+            case .cave: return .cave
+            case .beach: return .beach
+            case .tundra: return .tundra
+            case .moonlit: return .night
+            }
+        }
+        /// What lies either side of the old tank's arrangement, from the
+        /// middle outward; the last of each is the part by the glass at that
+        /// end, whatever room there is for the others.
+        var sides: (left: [HabitatRegion.Kind], right: [HabitatRegion.Kind]) {
+            switch self {
+            case .forestFloor: return ([.shelter, .thicket, .canopy], [.clearing, .rocks, .canopy])
+            case .jungleCanopy: return ([.pool, .thicket, .canopy], [.thicket, .clearing, .canopy])
+            case .desertScrub: return ([.clearing, .pool, .canopy], [.thicket, .shelter, .rocks])
+            case .meadow: return ([.clearing, .pool, .canopy], [.thicket, .shelter, .canopy])
+            case .cave: return ([.pool, .rocks, .canopy], [.shelter, .thicket, .rocks])
+            case .beach: return ([.pool, .clearing, .rocks], [.rocks, .thicket, .canopy])
+            case .tundra: return ([.clearing, .rocks, .canopy], [.shelter, .thicket, .canopy])
+            case .moonlit: return ([.clearing, .thicket, .canopy], [.pool, .shelter, .canopy])
+            case .empty: return ([], [])
+            }
+        }
+    }
+
+    /// A ready-made tank across the whole world: the old tank's arrangement
+    /// in the middle, where the window first opens, a branch or two in the
+    /// air above it, and either side of it parts with a character of their
+    /// own (see `HabitatRegion.Kind`), with things to climb up into the air
+    /// of the tank as well as along the ground.
+    static func preset(_ p: Preset, world: CGSize = HabitatLayout.defaultWorld) -> Habitat {
+        var b = LayoutBuilder(world: world, biome: p.biome, seed: UInt64(p.rawValue.unicodeScalars.reduce(7) { $0 &* 31 &+ Int($1.value) }))
+        guard p != .empty else { return b.h }
+        let mid = HabitatLayout.width
+        let x0 = ((world.width - mid) / 2).rounded()
+        for it in legacyItems(p) { b.putOld(it, dx: x0) }
+        b.overhead(x0 + mid * 0.5)
+        let (left, right) = p.sides
+        b.fill(from: x0, to: 0, kinds: left)
+        b.fill(from: x0 + mid, to: world.width, kinds: right)
+        return b.h
+    }
+
+    /// A fresh tank, laid out part by part across the whole world — a
+    /// thicket here, a clearing there, rocks, a pool, a stand of branches
+    /// — never twice the same.
+    static func surprise(world: CGSize = HabitatLayout.defaultWorld, biome: Biome? = nil) -> Habitat {
+        var b = LayoutBuilder(world: world, biome: biome ?? Biome.allCases.randomElement()!, seed: UInt64.random(in: 1...UInt64.max))
+        let n = max(3, Int((world.width / 760).rounded()))
+        var kinds: [HabitatRegion.Kind] = []
+        let all: [HabitatRegion.Kind] = [.thicket, .clearing, .canopy, .shelter, .pool, .rocks]
+        // At least somewhere to hunt and somewhere to climb.
+        let must: [HabitatRegion.Kind] = [.clearing, .canopy]
+        while kinds.count < n {
+            var k = b.dice.pick(all)
+            if let last = kinds.last, k == last { continue }
+            if kinds.count == n - must.count, let missing = must.first(where: { !kinds.contains($0) }) { k = missing }
+            kinds.append(k)
+        }
+        b.fill(from: 0, to: world.width, kinds: kinds, open: true)
+        return b.h
+    }
+
+    /// The parts it has, as they stand: stretches of the world with a
+    /// character of their own, found from what is in them. A place to hang
+    /// what the spider comes to know about its tank — favourite spots,
+    /// where it hunts, where it sleeps — on something that lasts longer
+    /// than a point: a stretch of the world, and the furniture in it by id.
+    var regions: [HabitatRegion] { HabitatRegion.find(in: self) }
+}
+
+// MARK: - Regions
+
+/// A part of the habitat with a character of its own.
+struct HabitatRegion: Equatable {
+    enum Kind: String, CaseIterable {
+        /// Dense planting: somewhere to hide and to lie in wait.
+        case thicket
+        /// Open ground with a little litter on it: somewhere to hunt.
+        case clearing
+        /// A trunk and branches up into the air of the tank.
+        case canopy
+        /// Bark, a hollow log: somewhere to shelter.
+        case shelter
+        /// Water.
+        case pool
+        /// Stone.
+        case rocks
+        /// Bare substrate.
+        case open
+
+        var label: String {
+            switch self {
+            case .thicket: return "Thicket"
+            case .clearing: return "Clearing"
+            case .canopy: return "Branches"
+            case .shelter: return "Shelter"
+            case .pool: return "Pool"
+            case .rocks: return "Rocks"
+            case .open: return "Open Ground"
+            }
+        }
+    }
+    /// "region:<n>", counting from the left.
+    var id: String
+    var kind: Kind
+    /// Across the world, from the ground to the lid.
+    var rect: CGRect
+    /// What stands in it.
+    var items: [Int]
+
+    /// The world cut into parts where the furniture thins out (no part
+    /// wider than about a window and a half), each named for what is in it.
+    static func find(in h: Habitat) -> [HabitatRegion] {
+        let W = h.size.width, H = h.size.height
+        let sorted = h.items.sorted { $0.x < $1.x }
+        var cuts: [CGFloat] = [0]
+        var reach: CGFloat = 0
+        // (What hangs from the lid, and small things, don't join parts up.)
+        for (i, it) in sorted.enumerated() where !it.kind.hangs && it.w > 60 {
+            let lo = it.x - it.w / 2
+            if i > 0, lo - reach > 150 { cuts.append(((lo + reach) / 2).rounded()) }
+            reach = max(reach, it.x + it.w / 2)
+        }
+        cuts.append(W)
+        // Long stretches split evenly.
+        var bands: [(CGFloat, CGFloat)] = []
+        for (a, b) in zip(cuts, cuts.dropFirst()) where b - a > 1 {
+            let n = max(1, Int(ceil((b - a) / 1300)))
+            for k in 0..<n { bands.append((a + (b - a) * CGFloat(k) / CGFloat(n), a + (b - a) * CGFloat(k + 1) / CGFloat(n))) }
+        }
+        return bands.enumerated().map { i, band in
+            let inside = h.items.filter { $0.x >= band.0 && $0.x < band.1 }
+            return HabitatRegion(id: "region:\(i)", kind: character(of: inside),
+                                 rect: CGRect(x: band.0, y: 0, width: band.1 - band.0, height: H), items: inside.map(\.id))
+        }
+    }
+
+    private static func character(of items: [HabitatItem]) -> Kind {
+        func count(_ ks: Set<HabitatItemKind>) -> Int { items.filter { ks.contains($0.kind) }.count }
+        if count([.waterDish]) > 0 { return .pool }
+        if items.contains(where: { ($0.kind == .branch && $0.y > 150) || (!$0.kind.hangs && $0.h > 350) }) { return .canopy }
+        if count([.rock, .boulder]) >= 2 { return .rocks }
+        if count([.hide, .corkBark, .log, .driftwood]) >= 2 { return .shelter }
+        if count([.plant, .fern, .grass, .bamboo, .cactus, .flower, .succulent]) >= 3 { return .thicket }
+        return items.isEmpty ? .open : .clearing
+    }
+}
+
+// MARK: - Laying a tank out
+
+/// A seeded die, so a ready-made layout comes out the same every time.
+struct LayoutDice {
+    private var state: UInt64
+    init(_ seed: UInt64) { state = seed | 1 }
+    mutating func next() -> CGFloat {
+        state ^= state << 13; state ^= state >> 7; state ^= state << 17
+        return CGFloat(state % 1_000_000) / 1_000_000
+    }
+    mutating func range(_ a: CGFloat, _ b: CGFloat) -> CGFloat { a + (b - a) * next() }
+    mutating func chance(_ p: CGFloat) -> Bool { next() < p }
+    mutating func pick<T>(_ xs: [T]) -> T { xs[min(Int(next() * CGFloat(xs.count)), xs.count - 1)] }
+}
+
+/// Puts furniture in a world a part at a time. Heights up into the air are
+/// given for a world 1250 high and scaled to this one, so a taller tank's
+/// branches are further up.
+private struct LayoutBuilder {
+    var h: Habitat
+    var dice: LayoutDice
+    let biome: Biome
+    let W: CGFloat, H: CGFloat
+    /// This world's air over the reference's.
+    let lift: CGFloat
+
+    init(world: CGSize, biome: Biome, seed: UInt64) {
+        h = Habitat(biome: biome, world: world)
+        dice = LayoutDice(seed)
+        self.biome = biome
+        W = world.width
+        H = world.height
+        lift = (world.height - HabitatLayout.ground) / (1250 - HabitatLayout.ground)
+    }
+
+    /// A thing at `x`, `y` up off the ground (hanging: from the lid), at
+    /// `scale` its usual size — or `tall` times as tall, to reach further.
+    @discardableResult
+    mutating func put(_ kind: HabitatItemKind, _ x: CGFloat, _ y: CGFloat = 0, front: Bool = false, scale: CGFloat = 1,
+                      tall: CGFloat? = nil, flipped: Bool? = nil) -> HabitatItem {
+        var it = h.add(kind, at: CGPoint(x: x, y: kind.hangs ? H : y), scale: scale)
+        if let tall { it.h = kind.defaultSize.height * tall }
+        it.flipped = flipped ?? dice.chance(0.5)
+        it.front = front && kind.canGoInFront
+        it.seed = 1 + Int(dice.next() * 9998)
+        Habitat.clamp(&it, in: h.size)
+        h.items[h.items.count - 1] = it
+        return it
+    }
+
+    /// A vine from the lid down to `bottom` above the ground.
+    mutating func vine(_ x: CGFloat, down bottom: CGFloat) {
+        let len = max(H - HabitatLayout.ground - bottom, 160)
+        put(.vine, x, tall: len / HabitatItemKind.vine.defaultSize.height)
+    }
+
+    /// One of the old tank's things, moved `dx` along; hanging ones hang
+    /// from this world's lid, as far down toward the ground as they were.
+    mutating func putOld(_ old: HabitatItem, dx: CGFloat) {
+        var it = old
+        it.id = h.nextID
+        h.nextID += 1
+        it.x += dx
+        if it.kind.hangs {
+            let bottom = old.y - old.h
+            it.y = H
+            it.h = H - bottom
+        }
+        Habitat.clamp(&it, in: h.size)
+        h.items.append(it)
+    }
+
+    /// Something up in the air over the middle: a branch to get up to from
+    /// the glass or a vine, the way up into the rest of the tank.
+    mutating func overhead(_ x: CGFloat) {
+        let high = 420 * lift
+        put(.branch, x - 160, high, scale: 1.45, flipped: false)
+        put(.branch, x + 230, high + 190 * lift, scale: 1.3, flipped: true)
+        put(.branch, x - 60, high + 400 * lift, scale: 1.2, flipped: false)
+        if biome != .desert { vine(x + 60, down: high + 60); vine(x - 250, down: high + 360 * lift) }
+    }
+
+    /// Fills the world from `a` toward `b` (either way) with parts of
+    /// these kinds, in turn, each 600–900 across. `open`: nothing either
+    /// side to lean on — the first part starts right at `a`.
+    mutating func fill(from a: CGFloat, to b: CGFloat, kinds: [HabitatRegion.Kind], open: Bool = false) {
+        let span = abs(b - a)
+        guard span > 200, !kinds.isEmpty else { return }
+        let n = open ? kinds.count : max(1, Int((span / 780).rounded()))
+        // With room for fewer than there are, the one by the glass is kept.
+        let laid = n >= kinds.count ? (0..<n).map { kinds[$0 % kinds.count] } : Array(kinds.prefix(n - 1)) + [kinds.last!]
+        let dir: CGFloat = b > a ? 1 : -1
+        for (k, kind) in laid.enumerated() {
+            let lo = a + dir * span * CGFloat(k) / CGFloat(n), hi = a + dir * span * CGFloat(k + 1) / CGFloat(n)
+            region(kind, from: min(lo, hi), to: max(lo, hi))
+        }
+    }
+
+    // MARK: The parts
+
+    private var dry: Bool { biome == .desert || biome == .beach }
+
+    /// The part being laid out: where it starts, and how wide it is.
+    private var partX: CGFloat = 0, partW: CGFloat = 0
+
+    /// A fraction of the way across the part, give or take a little.
+    private mutating func at(_ f: CGFloat) -> CGFloat { partX + partW * f + dice.range(-1, 1) * partW * 0.03 }
+
+    mutating func region(_ kind: HabitatRegion.Kind, from x0: CGFloat, to x1: CGFloat) {
+        partX = x0
+        partW = x1 - x0
+        switch kind {
+        case .thicket: thicket()
+        case .clearing: clearing()
+        case .canopy: canopy()
+        case .shelter: shelter()
+        case .pool: pool()
+        case .rocks: rocks()
+        case .open: if dice.chance(0.5) { put(.pebbles, at(0.5)) }
+        }
+    }
+
+    private mutating func thicket() {
+        switch biome {
+        case .desert:
+            put(.cactus, at(0.22), scale: dice.range(1.2, 1.6))
+            put(.cactus, at(0.4), scale: dice.range(0.7, 0.9))
+            put(.cactus, at(0.72), scale: dice.range(1.5, 2))
+            put(.succulent, at(0.55))
+            put(.succulent, at(0.86), scale: 0.8)
+            put(.pebbles, at(0.3))
+            put(.succulent, at(0.1), front: true, scale: 0.9)
+        case .beach:
+            put(.grass, at(0.18), scale: 1.3)
+            put(.grass, at(0.34), scale: 1.1)
+            put(.driftwood, at(0.55), scale: 0.9)
+            put(.grass, at(0.74), scale: 1.4)
+            put(.succulent, at(0.86))
+            put(.twigs, at(0.45))
+            put(.grass, at(0.62), front: true, scale: 1.1)
+        case .cave:
+            put(.mushrooms, at(0.18), scale: 1.3)
+            put(.crystal, at(0.34), scale: 1.4)
+            put(.corkBark, at(0.52), scale: 1.3, tall: 2.1)
+            put(.mushrooms, at(0.66), scale: 1)
+            put(.crystal, at(0.82), scale: 1.1)
+            put(.moss, at(0.4))
+            vine(at(0.6), down: 360 * lift)
+            put(.crystal, at(0.1), front: true, scale: 0.8)
+        case .tundra:
+            put(.corkBark, at(0.3), scale: 1.3, tall: 2.4)
+            put(.grass, at(0.15), scale: 0.8)
+            put(.grass, at(0.5), scale: 0.9)
+            put(.boulder, at(0.72), scale: 0.8)
+            put(.twigs, at(0.86))
+            put(.grass, at(0.62), front: true, scale: 0.8)
+        default:
+            put(.plant, at(0.18), scale: dice.range(1.1, 1.4))
+            put(biome == .jungle ? .bamboo : .corkBark, at(0.38), scale: biome == .jungle ? 1.1 : 1.35, tall: dice.range(2.2, 2.8))
+            put(.plant, at(0.6), scale: dice.range(1.2, 1.6))
+            put(.fern, at(0.8), scale: 1.2)
+            put(biome == .meadow ? .flower : .fern, at(0.3), scale: 1.1)
+            put(biome == .meadow ? .flower : .moss, at(0.92))
+            vine(at(0.5), down: 300 * lift)
+            put(.fern, at(0.08), front: true, scale: 1.2)
+            put(.grass, at(0.7), front: true, scale: 1.1)
+        }
+    }
+
+    private mutating func clearing() {
+        switch biome {
+        case .desert, .beach:
+            put(.pebbles, at(0.2))
+            put(.twigs, at(0.45))
+            put(.rock, at(0.66), scale: 0.7)
+            put(.succulent, at(0.85), scale: 0.7)
+        case .cave:
+            put(.pebbles, at(0.25))
+            put(.crystal, at(0.6), scale: 0.6)
+            put(.pebbles, at(0.8), scale: 0.8)
+        case .tundra:
+            put(.twigs, at(0.3))
+            put(.pebbles, at(0.62))
+            put(.rock, at(0.8), scale: 0.6)
+        default:
+            put(.leafPile, at(0.2))
+            put(biome == .meadow ? .flower : .twigs, at(0.42))
+            put(.moss, at(0.62))
+            put(.rock, at(0.8), scale: 0.7)
+            put(biome == .meadow ? .grass : .mushrooms, at(0.5), front: biome == .meadow, scale: 0.8)
+        }
+    }
+
+    /// A trunk up from the ground and branches off it, each a leap up
+    /// from the last, and a vine down from the lid to the highest.
+    private mutating func canopy() {
+        let trunk: HabitatItemKind
+        switch biome {
+        case .jungle: trunk = .bamboo
+        case .desert: trunk = .cactus
+        default: trunk = .corkBark
+        }
+        let tall: CGFloat = trunk == .cactus ? 2.6 : (trunk == .bamboo ? 2.6 * lift : 2.9 * lift)
+        put(trunk, at(0.16), scale: trunk == .corkBark ? 1.45 : 1.2, tall: tall)
+        let b1 = 190 * lift, b2 = 400 * lift, b3 = 610 * lift, b4 = 820 * lift
+        put(.branch, at(0.34), b1, scale: 1.4, flipped: false)
+        put(.branch, at(0.58), b2, scale: 1.5, flipped: true)
+        put(.branch, at(0.82), b3, scale: 1.35, flipped: false)
+        put(.branch, at(0.5), b4, scale: 1.3, flipped: true)
+        if biome == .desert || biome == .beach {
+            put(.driftwood, at(0.5), scale: 1.2)
+        } else {
+            vine(at(0.7), down: b3 - 40)
+            vine(at(0.95), down: b2 + 30)
+            vine(at(0.36), down: b4 - 60)
+            put(biome == .tundra ? .twigs : .leafPile, at(0.5))
+        }
+        put(dry ? .succulent : .fern, at(0.05), front: true, scale: 1.1)
+    }
+
+    private mutating func shelter() {
+        switch biome {
+        case .desert:
+            put(.boulder, at(0.3), scale: 1.4)
+            put(.driftwood, at(0.55), scale: 1.2)
+            put(.rock, at(0.75))
+            put(.succulent, at(0.9), front: true)
+        case .beach:
+            put(.driftwood, at(0.3), scale: 1.5)
+            put(.boulder, at(0.62), scale: 1.1)
+            put(.driftwood, at(0.62), 92, scale: 1.1)
+            put(.pebbles, at(0.85))
+        case .cave:
+            put(.boulder, at(0.25), scale: 1.5)
+            put(.corkBark, at(0.5), tall: 1.4)
+            put(.boulder, at(0.75), scale: 1.1)
+            put(.mushrooms, at(0.62), scale: 0.9)
+        case .tundra:
+            put(.log, at(0.3), scale: 1.3)
+            put(.boulder, at(0.62), scale: 1.2)
+            put(.twigs, at(0.84))
+        default:
+            put(.hide, at(0.28), scale: 1.25)
+            put(.corkBark, at(0.52), scale: 1.2)
+            put(.log, at(0.76), scale: 1.2)
+            put(.mushrooms, at(0.76), 52, scale: 0.8)
+            put(.moss, at(0.1))
+            put(.fern, at(0.92), front: true)
+        }
+    }
+
+    private mutating func pool() {
+        put(.waterDish, at(0.36), scale: 1.3)
+        put(.waterDish, at(0.64), scale: 0.9)
+        put(.pebbles, at(0.18))
+        put(.rock, at(0.82), scale: 0.7)
+        switch biome {
+        case .desert, .beach: put(.succulent, at(0.5), front: true, scale: 0.8)
+        case .cave: put(.crystal, at(0.5), scale: 0.8)
+        case .tundra: put(.moss, at(0.5))
+        default:
+            put(.moss, at(0.5))
+            put(.grass, at(0.08), scale: 1.1)
+            put(biome == .meadow || biome == .jungle ? .flower : .fern, at(0.92), front: true)
+        }
+    }
+
+    private mutating func rocks() {
+        let big = put(.boulder, at(0.28), scale: dice.range(1.3, 1.6))
+        put(.rock, at(0.48))
+        put(.boulder, at(0.68), scale: dice.range(0.9, 1.1))
+        put(.rock, at(0.85), scale: 0.6)
+        put(.pebbles, at(0.12))
+        // Something propped on top of the big one.
+        if let top = Habitat.solidRect(big)?.maxY {
+            put(biome == .desert || biome == .beach ? .driftwood : .log, big.x + big.w * 0.1, top - HabitatLayout.ground, scale: 0.8)
+        }
+        switch biome {
+        case .desert: put(.cactus, at(0.58), scale: 0.7)
+        case .cave: put(.crystal, at(0.58), scale: 1.2); put(.crystal, at(0.94), front: true, scale: 0.7)
+        case .tundra: put(.moss, at(0.58))
+        case .beach: put(.twigs, at(0.58))
+        default: put(.moss, at(0.58)); put(.mushrooms, at(0.94), scale: 0.8)
+        }
     }
 }
 
@@ -387,19 +874,18 @@ extension Habitat {
         }
     }
 
-    /// Everything it can walk on, in screen coordinates, for a scene at
-    /// `scene` (the whole glass, substrate included): one closed loop
-    /// round the inside of the tank — along the ground and up and over
+    /// Everything it can walk on, in world points — offset by `origin`
+    /// (the tools lay a world out somewhere on a mock desktop): one closed
+    /// loop round the inside of the tank — along the ground and up and over
     /// whatever stands on it, up the glass, across under the lid and back
     /// down — and a loop of its own for anything off the ground (a branch,
-    /// a vine, the leafy top of a plant).
-    func surfaces(in scene: CGRect, standoff off: CGFloat) -> (air: CGRect, loops: [SurfaceLoop]) {
-        let sx = scene.width / HabitatLayout.width, sy = scene.height / HabitatLayout.height
-        func toScreen(_ r: CGRect) -> CGRect {
-            CGRect(x: scene.minX + r.minX * sx, y: scene.minY + r.minY * sy, width: r.width * sx, height: r.height * sy)
-        }
-        func pt(_ p: V2) -> V2 { V2(scene.minX + p.x * sx, scene.minY + p.y * sy) }
-        let groundY = scene.minY + HabitatLayout.ground * sy
+    /// a vine, the leafy top of a plant). Built once for the layout: the
+    /// camera moving about the world never changes any of it.
+    func surfaces(at origin: CGPoint = .zero, standoff off: CGFloat) -> (air: CGRect, loops: [SurfaceLoop]) {
+        let scene = CGRect(origin: origin, size: size)
+        func toScreen(_ r: CGRect) -> CGRect { r.offsetBy(dx: origin.x, dy: origin.y) }
+        func pt(_ p: V2) -> V2 { V2(origin.x + p.x, origin.y + p.y) }
+        let groundY = scene.minY + HabitatLayout.ground
         let air = CGRect(x: scene.minX, y: groundY, width: scene.width, height: scene.maxY - groundY)
         let inner = air.insetBy(dx: off, dy: off)
         guard inner.width > 40, inner.height > 40 else { return (air, []) }

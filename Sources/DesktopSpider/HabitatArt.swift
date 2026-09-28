@@ -56,7 +56,9 @@ enum HabitatArt {
     static func image(_ size: CGSize, scale: CGFloat, _ paint: (CGContext) -> Void) -> CGImage? {
         let w = max(1, Int((size.width * scale).rounded(.up))), h = max(1, Int((size.height * scale).rounded(.up)))
         guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: space,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+                                  // (The window server's own pixel layout: set as a layer's
+                                  // contents it is used as it is, not copied into it.)
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
         ctx.scaleBy(x: scale, y: scale)
         ctx.setLineJoin(.round)
         ctx.setLineCap(.round)
@@ -109,13 +111,55 @@ enum HabitatArt {
 
     struct Frame {
         let rect: CGRect
-        /// Points per scene point.
-        var u: CGFloat { rect.width / HabitatLayout.width }
-        var groundY: CGFloat { rect.minY + HabitatLayout.ground * rect.height / HabitatLayout.height }
-        var air: CGFloat { rect.maxY - groundY }
+        /// Points per scene point: 1 in the tank, less in a picker's picture.
+        let u: CGFloat
+        let groundY: CGFloat
+        /// How high the scenery reaches into: the old scene's air. A frame
+        /// taller than that has more sky above it.
+        let air: CGFloat
+
+        /// The old 900 × 540 scene, scaled to fill `rect`: the pictures in
+        /// the picker.
+        init(rect: CGRect) {
+            self.rect = rect
+            u = rect.width / HabitatLayout.width
+            groundY = rect.minY + HabitatLayout.ground * rect.height / HabitatLayout.height
+            air = rect.maxY - groundY
+        }
+
+        /// Part of the tank at one to one — the world, or the backdrop
+        /// behind it: the ground 74 up, the scenery as tall as it was in the
+        /// old scene, and as much sky above it and as many scenes' worth of
+        /// scenery along it as `rect` has room for.
+        init(world rect: CGRect) {
+            self.rect = rect
+            u = 1
+            groundY = rect.minY + HabitatLayout.ground
+            air = HabitatLayout.height - HabitatLayout.ground
+        }
+
         func x(_ f: CGFloat) -> CGFloat { rect.minX + rect.width * f }
         /// A height a fraction of the way up the air.
         func y(_ f: CGFloat) -> CGFloat { groundY + air * f }
+
+        /// One old scene's width.
+        var panelWidth: CGFloat { HabitatLayout.width * u }
+        /// How many old scenes' worth across it is (1 in a picture).
+        var across: CGFloat { max(1, rect.width / panelWidth) }
+        /// Panels of scenery along it, an odd number so one is in the
+        /// middle — where the window first looks — and the rest either side.
+        var panels: Int { Int(ceil((across - 1) / 2)) * 2 + 1 }
+        /// The panel in the middle.
+        var middle: Int { panels / 2 }
+        /// A fraction of the way across panel `i`.
+        func panel(_ i: Int, _ f: CGFloat) -> CGFloat { rect.midX + (CGFloat(i - middle) + f - 0.5) * panelWidth }
+        /// A fraction of the way across the middle panel: where the one of
+        /// a thing (the sun, the cabin) goes.
+        func mid(_ f: CGFloat) -> CGFloat { panel(middle, f) }
+        /// A seed for panel `i`: the middle keeps the scene's own.
+        func seed(_ s: Int, _ i: Int) -> Int { i == middle ? s : s + (i - middle) * 131 }
+        /// So many things spread across the old scene, as many for this width.
+        func count(_ n: Int) -> Int { max(n, Int((CGFloat(n) * across).rounded())) }
     }
 
     // MARK: Palettes
@@ -177,56 +221,71 @@ enum HabitatArt {
     /// Where the sun, or the moon, hangs in the sky, if there is one.
     static func sun(_ b: Biome, _ f: Frame) -> (point: CGPoint, radius: CGFloat)? {
         switch b {
-        case .forest: return (CGPoint(x: f.x(0.8), y: f.y(0.8)), 30 * f.u)
-        case .desert: return (CGPoint(x: f.x(0.72), y: f.y(0.72)), 42 * f.u)
-        case .meadow: return (CGPoint(x: f.x(0.18), y: f.y(0.82)), 32 * f.u)
-        case .beach: return (CGPoint(x: f.x(0.62), y: f.y(0.56)), 36 * f.u)
-        case .night: return (CGPoint(x: f.x(0.8), y: f.y(0.8)), 30 * f.u)
+        case .forest: return (CGPoint(x: f.mid(0.8), y: f.y(0.8)), 30 * f.u)
+        case .desert: return (CGPoint(x: f.mid(0.72), y: f.y(0.72)), 42 * f.u)
+        case .meadow: return (CGPoint(x: f.mid(0.18), y: f.y(0.82)), 32 * f.u)
+        case .beach: return (CGPoint(x: f.mid(0.62), y: f.y(0.56)), 36 * f.u)
+        case .night: return (CGPoint(x: f.mid(0.8), y: f.y(0.8)), 30 * f.u)
         default: return nil
         }
     }
 
     // MARK: The sky
 
-    static func paintSky(_ b: Biome, in rect: CGRect, _ ctx: CGContext) {
-        let f = Frame(rect: rect)
+    static func paintSky(_ b: Biome, in rect: CGRect, _ ctx: CGContext) { paintSky(b, in: Frame(rect: rect), ctx) }
+
+    static func paintSky(_ b: Biome, in f: Frame, _ ctx: CGContext) {
+        let rect = f.rect
         let p = palette(b)
+        let P = f.panelWidth
         ctx.saveGState()
         ctx.clip(to: rect)
-        linear(ctx, [p.skyTop, p.skyMid, p.skyLow], [0, 0.55, 1], from: CGPoint(x: 0, y: rect.maxY), to: CGPoint(x: 0, y: f.groundY + f.air * 0.12))
+        // The old scene's sky, up to where it topped out; higher than that
+        // (a tall tank), deepening a little on up.
+        let top = min(rect.maxY, f.y(1))
+        linear(ctx, [p.skyTop, p.skyMid, p.skyLow], [0, 0.55, 1], from: CGPoint(x: 0, y: top), to: CGPoint(x: 0, y: f.groundY + f.air * 0.12))
+        if rect.maxY > top + 1 {
+            ctx.saveGState()
+            ctx.clip(to: CGRect(x: rect.minX, y: top, width: rect.width, height: rect.maxY - top))
+            linear(ctx, [shade(p.skyTop, -0.14), p.skyTop], from: CGPoint(x: 0, y: rect.maxY), to: CGPoint(x: 0, y: top))
+            ctx.restoreGState()
+        }
         switch b {
         case .night, .tundra:
             // Stars, fainter toward the horizon; the bright ones twinkle
             // on a layer of their own.
-            let n = b == .night ? 170 : 90
+            let low = f.y(0.3), span = max(rect.maxY - low, 1)
+            let n = f.count(b == .night ? 170 : 90) * Int(max(1, (span / (f.air * 0.7)).rounded()))
             for k in 0..<n {
                 let x = rect.minX + rnd(301, k) * rect.width
                 let v = rnd(302, k)
-                let y = f.y(0.3 + v * 0.7)
+                let y = low + v * span
                 let r = (0.4 + rnd(303, k) * rnd(304, k) * 1.3) * f.u
-                ctx.setFillColor(c(1, 1, 0.95, (0.25 + 0.6 * v) * (b == .night ? 1 : 0.7)))
+                ctx.setFillColor(c(1, 1, 0.95, (0.25 + 0.6 * min(v * span / (f.air * 0.7), 1)) * (b == .night ? 1 : 0.7)))
                 ctx.fillEllipse(in: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
             }
             if b == .night {
                 // A faint band of the Milky Way.
                 ctx.saveGState()
-                ctx.translateBy(x: f.x(0.35), y: f.y(0.6))
+                ctx.translateBy(x: f.mid(0.35), y: f.y(0.6))
                 ctx.rotate(by: -0.45)
                 for k in 0..<120 {
-                    let x = (rnd(311, k) - 0.5) * rect.width * 1.1
+                    let x = (rnd(311, k) - 0.5) * P * 1.1
                     let y = (rnd(312, k) - 0.5) * (rnd(313, k) * 70) * f.u
                     glow(ctx, at: CGPoint(x: x, y: y), radius: (10 + rnd(314, k) * 26) * f.u, c(0.75, 0.78, 1, 0.05))
                 }
                 ctx.restoreGState()
-                glow(ctx, at: CGPoint(x: f.x(0.5), y: f.groundY), radius: rect.width * 0.55, c(0.3, 0.36, 0.7, 0.35))
+                for i in 0..<f.panels {
+                    glow(ctx, at: CGPoint(x: f.panel(i, 0.5), y: f.groundY), radius: P * 0.55, c(0.3, 0.36, 0.7, 0.35))
+                }
             }
         case .cave:
             // The back of the cave: rock, lit a little from a hole above.
-            glow(ctx, at: CGPoint(x: f.x(0.56), y: rect.maxY), radius: rect.width * 0.5, c(0.55, 0.52, 0.62, 0.35))
+            glow(ctx, at: CGPoint(x: f.mid(0.56), y: rect.maxY), radius: P * 0.5, c(0.55, 0.52, 0.62, 0.35))
         default:
             // The low sun warms the sky around it.
             if let s = sun(b, f) {
-                glow(ctx, at: s.point, radius: rect.width * 0.55, c(1, 0.97, 0.85, 0.45))
+                glow(ctx, at: s.point, radius: P * 0.55, c(1, 0.97, 0.85, 0.45))
             }
         }
         if let s = sun(b, f) {
@@ -260,9 +319,13 @@ enum HabitatArt {
     // MARK: The distance
 
     /// The far scenery and the near: hills, woods, dunes, the sea — all
-    /// the way down to the back of the substrate.
-    static func paintScenery(_ b: Biome, in rect: CGRect, _ ctx: CGContext) {
-        let f = Frame(rect: rect)
+    /// the way down to the back of the substrate. Laid out on the old
+    /// scene; wider than that, it carries on either way, the middle of it
+    /// just as the old scene was.
+    static func paintScenery(_ b: Biome, in rect: CGRect, _ ctx: CGContext) { paintScenery(b, in: Frame(rect: rect), ctx) }
+
+    static func paintScenery(_ b: Biome, in f: Frame, _ ctx: CGContext) {
+        let rect = f.rect
         let p = palette(b)
         let u = f.u
         ctx.saveGState()
@@ -283,33 +346,49 @@ enum HabitatArt {
             canopy(ctx, f, base: f.y(0.18), height: f.air * 0.38, seed: 6, colour: p.far)
             haze(ctx, f, below: f.y(0.36), p.skyLow, 0.22)
             canopy(ctx, f, base: f.groundY, height: f.air * 0.36, seed: 9, colour: p.mid)
-            for (k, x) in [0.07, 0.93, 0.36].enumerated() {
-                palm(ctx, x: f.x(CGFloat(x)), base: f.groundY, height: f.air * (0.78 - CGFloat(k) * 0.12), lean: x > 0.5 ? -0.12 : 0.1, colour: p.near, u: u, seed: 40 + k)
+            for i in 0..<f.panels {
+                let s = f.seed(40, i)
+                for (k, x) in [0.07, 0.93, 0.36].enumerated() {
+                    let jitter = i == f.middle ? 0 : (rnd(s, 90 + k) - 0.5) * 0.1
+                    palm(ctx, x: f.panel(i, CGFloat(x) + jitter), base: f.groundY, height: f.air * (0.78 - CGFloat(k) * 0.12),
+                         lean: x > 0.5 ? -0.12 : 0.1, colour: p.near, u: u, seed: s + k)
+                }
+                let ls = f.seed(55, i)
+                for k in 0..<5 {
+                    bigLeaf(ctx, at: CGPoint(x: f.panel(i, k < 3 ? 0.02 + CGFloat(k) * 0.05 : 0.9 + CGFloat(k - 3) * 0.07), y: f.groundY),
+                            length: (110 + rnd(ls, k) * 70) * u, angle: k < 3 ? 0.9 - CGFloat(k) * 0.35 : 2.2 + CGFloat(k - 3) * 0.4,
+                            colour: shade(p.near, -0.1), u: u)
+                }
             }
-            for k in 0..<5 {
-                bigLeaf(ctx, at: CGPoint(x: f.x(k < 3 ? 0.02 + CGFloat(k) * 0.05 : 0.9 + CGFloat(k - 3) * 0.07), y: f.groundY),
-                        length: (110 + rnd(55, k) * 70) * u, angle: k < 3 ? 0.9 - CGFloat(k) * 0.35 : 2.2 + CGFloat(k - 3) * 0.4,
-                        colour: shade(p.near, -0.1), u: u)
-            }
-            // Lianas hanging from the canopy.
+            // Lianas hanging from the canopy (in a tall tank, a long way).
+            let extra = max(0, rect.maxY - f.y(1))
             ctx.setStrokeColor(alpha(shade(p.near, 0.05), 0.85))
-            for k in 0..<7 {
-                let x = f.x(0.08 + rnd(61, k) * 0.84)
-                let len = f.air * (0.2 + rnd(62, k) * 0.35)
-                ctx.setLineWidth((1.5 + rnd(63, k) * 1.5) * u)
-                ctx.beginPath()
-                ctx.move(to: CGPoint(x: x, y: rect.maxY + 2))
-                ctx.addCurve(to: CGPoint(x: x + (rnd(64, k) - 0.5) * 30 * u, y: rect.maxY - len),
-                             control1: CGPoint(x: x + 20 * u, y: rect.maxY - len * 0.3), control2: CGPoint(x: x - 20 * u, y: rect.maxY - len * 0.7))
-                ctx.strokePath()
+            for i in 0..<f.panels {
+                let s = f.seed(61, i)
+                for k in 0..<7 {
+                    let x = f.panel(i, 0.08 + rnd(s, k) * 0.84)
+                    let len = f.air * (0.2 + rnd(s + 1, k) * 0.35) + extra
+                    ctx.setLineWidth((1.5 + rnd(s + 2, k) * 1.5) * u)
+                    ctx.beginPath()
+                    ctx.move(to: CGPoint(x: x, y: rect.maxY + 2))
+                    ctx.addCurve(to: CGPoint(x: x + (rnd(s + 3, k) - 0.5) * 30 * u, y: rect.maxY - len),
+                                 control1: CGPoint(x: x + 20 * u, y: rect.maxY - len * 0.3), control2: CGPoint(x: x - 20 * u, y: rect.maxY - len * 0.7))
+                    ctx.strokePath()
+                }
             }
         case .desert:
-            mesas(ctx, f, base: f.y(0.24), colour: mix(p.far, p.skyLow, 0.3), u: u)
+            for i in 0..<f.panels {
+                mesas(ctx, f, panel: i, base: f.y(0.24), colour: mix(p.far, p.skyLow, 0.3), u: u)
+            }
             haze(ctx, f, below: f.y(0.38), p.skyLow, 0.3)
             dunes(ctx, f, base: f.y(0.2), height: f.air * 0.12, seed: 4, light: shade(p.mid, 0.12), dark: p.mid)
             dunes(ctx, f, base: f.groundY + 10 * u, height: f.air * 0.16, seed: 11, light: shade(p.near, 0.14), dark: p.near)
-            for k in 0..<3 {
-                cactusSilhouette(ctx, x: f.x(0.15 + CGFloat(k) * 0.33 + rnd(71, k) * 0.1), base: f.y(0.12), h: (46 + rnd(72, k) * 30) * u, colour: alpha(shade(p.near, -0.35), 0.6), u: u)
+            for i in 0..<f.panels {
+                let s = f.seed(71, i)
+                for k in 0..<3 {
+                    cactusSilhouette(ctx, x: f.panel(i, 0.15 + CGFloat(k) * 0.33 + rnd(s, k) * 0.1), base: f.y(0.12), h: (46 + rnd(s + 1, k) * 30) * u,
+                                     colour: alpha(shade(p.near, -0.35), 0.6), u: u)
+                }
             }
         case .meadow:
             hills(ctx, f, base: f.y(0.32), height: f.air * 0.16, seed: 3, colour: mix(p.far, p.skyLow, 0.3))
@@ -319,7 +398,7 @@ enum HabitatArt {
             hills(ctx, f, base: f.groundY + 6 * u, height: f.air * 0.2, seed: 12, colour: p.mid)
             // Flowers dotted over the near hill.
             let cols = [c(1, 0.85, 0.3), c(1, 1, 1), c(0.95, 0.5, 0.6), c(0.75, 0.6, 1)]
-            for k in 0..<140 {
+            for k in 0..<f.count(140) {
                 let x = rect.minX + rnd(81, k) * rect.width
                 let y = f.groundY + rnd(82, k) * f.air * 0.16
                 ctx.setFillColor(alpha(cols[k % cols.count], 0.85))
@@ -345,7 +424,9 @@ enum HabitatArt {
                     ctx.fill(CGRect(x: s.point.x - w / 2 + (rnd(92, k) - 0.5) * 20 * u, y: y - 1.2 * u, width: w, height: 1.6 * u))
                 }
             }
-            island(ctx, x: f.x(0.2), base: seaTop, u: u, colour: mix(p.near, p.skyLow, 0.45))
+            for i in 0..<f.panels where i == f.middle || rnd(f.seed(93, i), 1) < 0.45 {
+                island(ctx, x: f.panel(i, i == f.middle ? 0.2 : 0.2 + rnd(f.seed(93, i), 2) * 0.6), base: seaTop, u: u, colour: mix(p.near, p.skyLow, 0.45))
+            }
             ctx.setFillColor(alpha(c(1, 1, 1), 0.6))
             ctx.fill(CGRect(x: rect.minX, y: seaTop - 0.8 * u, width: rect.width, height: 1.2 * u))
             // The wet sand at the water's edge.
@@ -353,7 +434,10 @@ enum HabitatArt {
                 f.groundY + (14 + wave($0 / (80 * u), 5) * 8) * u
             }
             fill(ctx, shore, [shade(p.surface, -0.12), p.surface], from: CGPoint(x: 0, y: f.groundY + 26 * u), to: CGPoint(x: 0, y: f.groundY))
-            palm(ctx, x: f.x(0.9), base: f.groundY, height: f.air * 0.74, lean: -0.22, colour: shade(p.near, -0.25), u: u, seed: 7)
+            for i in 0..<f.panels where i == f.middle || rnd(f.seed(94, i), 1) < 0.6 {
+                palm(ctx, x: f.panel(i, i == f.middle ? 0.9 : 0.15 + rnd(f.seed(94, i), 2) * 0.7), base: f.groundY, height: f.air * 0.74,
+                     lean: i >= f.middle ? -0.22 : 0.22, colour: shade(p.near, -0.25), u: u, seed: f.seed(7, i))
+            }
         case .tundra:
             mountains(ctx, f, base: f.y(0.22), height: f.air * 0.5, seed: 21, colour: mix(p.far, p.skyLow, 0.25), snow: c(0.96, 0.95, 1), shade: 0.2)
             mountains(ctx, f, base: f.y(0.14), height: f.air * 0.34, seed: 24, colour: p.far, snow: c(1, 1, 1), shade: 0.22)
@@ -364,13 +448,23 @@ enum HabitatArt {
             hills(ctx, f, base: f.groundY + 2 * u, height: 24 * u, seed: 29, colour: c(0.86, 0.89, 0.97))
         case .night:
             hills(ctx, f, base: f.y(0.3), height: f.air * 0.2, seed: 31, colour: p.far)
-            cabin(ctx, x: f.x(0.3), base: f.y(0.36), u: u, colour: p.far)
+            cabin(ctx, x: f.mid(0.3), base: f.y(0.36), u: u, colour: p.far)
             forestRow(ctx, f, base: f.y(0.14), height: f.air * 0.4, count: 20, seed: 33, colour: mix(p.mid, p.far, 0.4), pine: 0.6)
             haze(ctx, f, below: f.y(0.28), c(0.25, 0.3, 0.55), 0.25)
             forestRow(ctx, f, base: f.groundY, height: f.air * 0.6, count: 12, seed: 35, colour: p.mid, pine: 0.6)
             forestRow(ctx, f, base: f.groundY, height: f.air * 0.36, count: 8, seed: 37, colour: p.near, pine: 0.4)
         }
         ctx.restoreGState()
+    }
+
+    /// How high up a frame the scenery reaches: above that it is clear, and
+    /// needs no painting. (The jungle's lianas and the cave's roof and walls
+    /// come down from the very top.)
+    static func sceneryTop(_ b: Biome, _ f: Frame) -> CGFloat {
+        switch b {
+        case .jungle, .cave: return f.rect.maxY
+        default: return min(f.rect.maxY, f.y(1) + 40 * f.u)
+        }
     }
 
     /// Lifts the colour toward the sky's at the bottom of the distance.
@@ -470,10 +564,11 @@ enum HabitatArt {
         ctx.restoreGState()
     }
 
-    static func mesas(_ ctx: CGContext, _ f: Frame, base: CGFloat, colour: CGColor, u: CGFloat) {
+    static func mesas(_ ctx: CGContext, _ f: Frame, panel i: Int, base: CGFloat, colour: CGColor, u: CGFloat) {
+        let s = f.seed(141, i)
         for k in 0..<3 {
-            let cx = f.x([0.14, 0.52, 0.86][k])
-            let w = (120 + rnd(141, k) * 90) * u, h = (60 + rnd(142, k) * 60) * u
+            let cx = f.panel(i, [0.14, 0.52, 0.86][k])
+            let w = (120 + rnd(s, k) * 90) * u, h = (60 + rnd(s + 1, k) * 60) * u
             let path = CGMutablePath()
             path.move(to: CGPoint(x: cx - w / 2 - 30 * u, y: f.groundY))
             path.addLine(to: CGPoint(x: cx - w / 2, y: base + h * 0.7))
@@ -512,7 +607,8 @@ enum HabitatArt {
 
     /// A row of trees along `base`: pines, round-topped, or a mix
     /// (`pine` is the share of pines).
-    static func forestRow(_ ctx: CGContext, _ f: Frame, base: CGFloat, height: CGFloat, count: Int, seed: Int, colour: CGColor, pine: CGFloat, snow: CGColor? = nil) {
+    static func forestRow(_ ctx: CGContext, _ f: Frame, base: CGFloat, height: CGFloat, count per: Int, seed: Int, colour: CGColor, pine: CGFloat, snow: CGColor? = nil) {
+        let count = f.count(per)
         for k in 0..<count {
             let x = f.rect.minX + (CGFloat(k) + rnd(seed, k) * 0.9 - 0.2) / CGFloat(count) * f.rect.width
             let h = height * (0.6 + rnd(seed + 1, k) * 0.45)
@@ -580,8 +676,8 @@ enum HabitatArt {
         ctx.fillEllipse(in: CGRect(x: x - r * 0.8, y: base + h * 0.72, width: r * 0.9, height: r * 0.5))
     }
 
-    static func treeClumps(_ ctx: CGContext, _ f: Frame, base: CGFloat, seed: Int, colour: CGColor, size: CGFloat, count: Int) {
-        for k in 0..<count {
+    static func treeClumps(_ ctx: CGContext, _ f: Frame, base: CGFloat, seed: Int, colour: CGColor, size: CGFloat, count per: Int) {
+        for k in 0..<f.count(per) {
             let x = f.rect.minX + rnd(seed, k) * f.rect.width
             let n = 1 + Int(rnd(seed + 1, k) * 3)
             for j in 0..<n {
@@ -694,27 +790,35 @@ enum HabitatArt {
             ctx.addPath(roof)
             ctx.setFillColor(col)
             ctx.fillPath()
-            for side in [0, 1] {
-                let w = r.width * (0.1 + CGFloat(layer) * 0.05 + inset)
-                let path = CGMutablePath()
-                let x0 = side == 0 ? r.minX : r.maxX
-                path.move(to: CGPoint(x: x0, y: f.groundY - 4))
-                var y = f.groundY - 4
-                var k = 0
-                while y < r.maxY + 10 {
-                    let reach = w * (0.6 + 0.4 * wave(y / (50 * u), 60 + layer * 3 + side))
-                    path.addLine(to: CGPoint(x: side == 0 ? x0 + reach : x0 - reach, y: y))
-                    y += (14 + rnd(61 + layer, k) * 20) * u
-                    k += 1
+            // Walls of rock either side of each old scene's width — the
+            // outermost the cave's ends, the rest great pillars between.
+            for edge in 0...f.panels {
+                let at = f.panel(edge, 0)
+                for side in [0, 1] {
+                    let w = f.panelWidth * (0.1 + CGFloat(layer) * 0.05 + inset) * (edge == 0 || edge == f.panels ? 1 : 0.8)
+                    let path = CGMutablePath()
+                    let x0 = at
+                    let sgn: CGFloat = side == 0 ? 1 : -1
+                    let own = edge == f.middle || edge == f.middle + 1
+                    let seed = 60 + layer * 3 + side + (own ? 0 : edge * 17)
+                    path.move(to: CGPoint(x: x0, y: f.groundY - 4))
+                    var y = f.groundY - 4
+                    var k = 0
+                    while y < r.maxY + 10 {
+                        let reach = w * (0.6 + 0.4 * wave(y / (50 * u), seed))
+                        path.addLine(to: CGPoint(x: x0 + sgn * reach, y: y))
+                        y += (14 + rnd(61 + layer + (own ? 0 : edge * 7), k) * 20) * u
+                        k += 1
+                    }
+                    path.addLine(to: CGPoint(x: x0, y: r.maxY + 10))
+                    path.closeSubpath()
+                    ctx.addPath(path)
+                    ctx.setFillColor(col)
+                    ctx.fillPath()
                 }
-                path.addLine(to: CGPoint(x: x0, y: r.maxY + 10))
-                path.closeSubpath()
-                ctx.addPath(path)
-                ctx.setFillColor(col)
-                ctx.fillPath()
             }
             // Stalactites off the roof.
-            for k in 0..<(8 + layer * 3) {
+            for k in 0..<f.count(8 + layer * 3) {
                 let x = r.minX + rnd(70 + layer, k) * r.width
                 let top = r.maxY - f.air * 0.1
                 let len = (20 + rnd(71 + layer, k) * 60) * u * (0.6 + CGFloat(layer) * 0.25)
@@ -729,7 +833,7 @@ enum HabitatArt {
             }
             // Stalagmites at the back of the floor.
             if layer < 2 {
-                for k in 0..<6 {
+                for k in 0..<f.count(6) {
                     let x = r.minX + rnd(80 + layer, k) * r.width
                     let len = (26 + rnd(81 + layer, k) * 50) * u
                     let w = (10 + rnd(82 + layer, k) * 10) * u
@@ -751,12 +855,19 @@ enum HabitatArt {
         }
     }
 
-    /// Where the glowing crystals in the cave's walls are.
+    /// Where the glowing crystals in the cave's walls are: four to each
+    /// old scene's width.
     static func crystalSpots(_ f: Frame) -> [(point: CGPoint, size: CGFloat, colour: CGColor)] {
-        [(CGPoint(x: f.x(0.07), y: f.y(0.42)), 34 * f.u, c(0.45, 0.85, 1)),
-         (CGPoint(x: f.x(0.9), y: f.y(0.3)), 44 * f.u, c(0.78, 0.55, 1)),
-         (CGPoint(x: f.x(0.95), y: f.y(0.66)), 26 * f.u, c(0.45, 0.85, 1)),
-         (CGPoint(x: f.x(0.04), y: f.y(0.72)), 22 * f.u, c(0.78, 0.55, 1))]
+        var out: [(point: CGPoint, size: CGFloat, colour: CGColor)] = []
+        let spots: [(CGFloat, CGFloat, CGFloat, Bool)] = [(0.07, 0.42, 34, true), (0.9, 0.3, 44, false), (0.95, 0.66, 26, true), (0.04, 0.72, 22, false)]
+        for i in 0..<f.panels {
+            let s = f.seed(95, i)
+            for (k, spot) in spots.enumerated() {
+                let dx = i == f.middle ? 0 : (rnd(s, k) - 0.5) * 0.2, dy = i == f.middle ? 0 : (rnd(s + 1, k) - 0.5) * 0.3
+                out.append((CGPoint(x: f.panel(i, spot.0 + dx), y: f.y(spot.1 + dy)), spot.2 * f.u, spot.3 ? c(0.45, 0.85, 1) : c(0.78, 0.55, 1)))
+            }
+        }
+        return out
     }
 
     static func crystalCluster(_ ctx: CGContext, at p: CGPoint, size: CGFloat, hue: CGColor, u: CGFloat) {
@@ -788,8 +899,10 @@ enum HabitatArt {
     /// The substrate through the front of the tank: drainage stones at the
     /// bottom, soil, and the biome's own top layer, with the top of it seen
     /// a little from above as a band the spider walks along.
-    static func paintGround(_ b: Biome, in rect: CGRect, _ ctx: CGContext) {
-        let f = Frame(rect: rect)
+    static func paintGround(_ b: Biome, in rect: CGRect, _ ctx: CGContext) { paintGround(b, in: Frame(rect: rect), ctx) }
+
+    static func paintGround(_ b: Biome, in f: Frame, _ ctx: CGContext) {
+        let rect = f.rect
         let p = palette(b)
         let u = f.u
         let g = f.groundY
@@ -921,14 +1034,14 @@ enum HabitatArt {
                 ctx.strokePath()
             }
         case .desert, .beach:
-            for k in 0..<18 {
+            for k in 0..<f.count(18) {
                 let x = f.rect.minX + rnd(511, k) * f.rect.width
                 let r = (2 + rnd(512, k) * 4) * u
                 ctx.setFillColor(shade(p.gravel, (rnd(513, k) - 0.5) * 0.3))
                 ctx.fillEllipse(in: CGRect(x: x - r * 1.3, y: g + 2 * u, width: r * 2.6, height: r * 1.6))
             }
         case .cave:
-            for k in 0..<22 {
+            for k in 0..<f.count(22) {
                 let x = f.rect.minX + rnd(521, k) * f.rect.width
                 let r = (2 + rnd(522, k) * 6) * u
                 ctx.setFillColor(shade(p.gravel, -0.2 + (rnd(523, k) - 0.5) * 0.2))
@@ -1111,10 +1224,12 @@ enum HabitatArt {
 
     /// Beams of light slanting down from the top.
     static func lightShafts(_ size: CGSize, seed: Int, colour: CGColor) -> CGImage? {
-        image(size, scale: 0.5) { ctx in
-            for k in 0..<4 {
+        // Four to each old scene's width.
+        let unit = min(size.width, HabitatLayout.width)
+        return image(size, scale: 0.5) { ctx in
+            for k in 0..<max(4, Int((size.width / unit * 4).rounded())) {
                 let x = size.width * (0.1 + rnd(seed, k) * 0.7)
-                let w = size.width * (0.04 + rnd(seed + 1, k) * 0.07)
+                let w = unit * (0.04 + rnd(seed + 1, k) * 0.07)
                 let p = CGMutablePath()
                 p.move(to: CGPoint(x: x, y: size.height))
                 p.addLine(to: CGPoint(x: x + w, y: size.height))
@@ -1129,8 +1244,9 @@ enum HabitatArt {
 
     /// A band of soft mist, wider than the tank, to drift across it.
     static func mist(_ size: CGSize, seed: Int, colour: CGColor, density: CGFloat) -> CGImage? {
+        // As thick for every width of the old tank's.
         image(size, scale: 0.5) { ctx in
-            for k in 0..<Int(22 * density) {
+            for k in 0..<Int(22 * density * max(1, size.width / 1620)) {
                 let x = rnd(seed, k) * size.width
                 let y = size.height * (0.25 + rnd(seed + 1, k) * 0.5)
                 let r = size.height * (0.3 + rnd(seed + 2, k) * 0.4)

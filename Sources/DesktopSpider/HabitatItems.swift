@@ -940,26 +940,39 @@ extension HabitatArt {
         return NSImage(cgImage: img!, size: size)
     }
 
-    /// A whole layout, for the Layout tiles.
+    /// A whole layout, for the Layout tiles: the world, small, fitted
+    /// into `size` and centred on a strip of its own sky.
     static func habitatThumbnail(_ h: Habitat, size: CGSize) -> NSImage {
-        let img = image(size, scale: 2) { ctx in
-            let r = CGRect(origin: .zero, size: size)
-            paintSky(h.biome, in: r, ctx)
-            paintScenery(h.biome, in: r, ctx)
-            paintGround(h.biome, in: r, ctx)
-            let sx = size.width / HabitatLayout.width, sy = size.height / HabitatLayout.height
+        let img = worldPicture(h, size: size, scale: 2)
+        return NSImage(cgImage: img!, size: size)
+    }
+
+    /// The whole world at a small scale — sky, scenery, the substrate and
+    /// everything standing in it — fitted into `size` (the rest of it sky,
+    /// if the shapes differ). For the overview and the Layouts tiles.
+    static func worldPicture(_ h: Habitat, size: CGSize, scale: CGFloat) -> CGImage? {
+        let W = h.size.width, H = h.size.height
+        let k = min(size.width / W, size.height / H)
+        return image(size, scale: scale) { ctx in
+            let f = Frame(world: CGRect(x: 0, y: 0, width: W, height: H))
+            ctx.setFillColor(palette(h.biome).skyTop)
+            ctx.fill(CGRect(origin: .zero, size: size))
+            ctx.translateBy(x: (size.width - W * k) / 2, y: (size.height - H * k) / 2)
+            ctx.scaleBy(x: k, y: k)
+            paintSky(h.biome, in: f, ctx)
+            paintScenery(h.biome, in: f, ctx)
+            paintGround(h.biome, in: f, ctx)
             for it in h.items.sorted(by: { !$0.inFront && $1.inFront }) {
-                let ir = it.rect
-                let vr = CGRect(x: ir.minX * sx, y: ir.minY * sy, width: ir.width * sx, height: ir.height * sy)
+                let r = it.rect
                 ctx.saveGState()
+                if it.onGround { contactShadow(ctx, r, it.kind) }
                 if it.flipped {
-                    ctx.translateBy(x: vr.midX * 2, y: 0)
+                    ctx.translateBy(x: r.midX * 2, y: 0)
                     ctx.scaleBy(x: -1, y: 1)
                 }
-                paintItem(it.kind, seed: it.seed, in: vr, biome: h.biome, ctx)
+                paintItem(it.kind, seed: it.seed, in: r, biome: h.biome, ctx)
                 ctx.restoreGState()
             }
         }
-        return NSImage(cgImage: img!, size: size)
     }
 }
