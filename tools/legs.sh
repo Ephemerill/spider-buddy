@@ -13,7 +13,7 @@ if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Develope
   export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 fi
 mkdir -p build
-FILES="Math Surfaces WindowTracker Spider Beat Memory SpiderRenderer AppIcon SpiderDesign Skin Prey Toys Traces Habitat Studio"
+FILES="Math Surfaces WindowTracker Spider Beat Memory SpiderRenderer AppIcon SpiderDesign Skin Prey Toys Traces Habitat HabitatObjects HabitatGeometry Studio"
 
 # build <sources dir> <binary>: `Bool.random()` has no seedable overload to
 # shadow, so it is swapped for the seeded one in a copy of the sources.
@@ -22,7 +22,10 @@ build() {
   tmp="$(mktemp -d)"
   # (Older trees may lack a file; they do not use it either.)
   for f in $FILES; do [ -f "$1/$f.swift" ] || continue; sed -e 's/Bool\.random()/seededBool()/g' "$1/$f.swift" > "$tmp/$f.swift"; done
-  xcrun swiftc -O -swift-version 5 -framework AppKit -o "$2" "$tmp"/*.swift tools/legs/Seeded.swift tools/legs/main.swift
+  # (Trees with shaped furniture — HabitatGeometry.swift — build with SHAPED.)
+  local shaped=""
+  [ -f "$1/HabitatGeometry.swift" ] && shaped="-DSHAPED"
+  xcrun swiftc -O -swift-version 5 $shaped -framework AppKit -o "$2" "$tmp"/*.swift tools/legs/Seeded.swift tools/legs/main.swift
   rm -rf "$tmp"
 }
 

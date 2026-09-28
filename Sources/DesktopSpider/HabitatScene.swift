@@ -79,6 +79,10 @@ final class HabitatSceneView: NSView {
     private let editLayer = CALayer()
     /// Taps on the glass, on the glass.
     private let tapLayer = CALayer()
+    /// Developer only: the physical shape of things (see "Debug: shapes").
+    private let geometryLayer = CALayer()
+    private let geometryFooting = CAShapeLayer()
+    private let geometryHUD = CATextLayer()
     private let selectionOutline = CAShapeLayer()
     private let hoverOutline = CAShapeLayer()
     private var handles: [CALayer] = []
@@ -122,11 +126,15 @@ final class HabitatSceneView: NSView {
         let wx = weatherFX
         for l in [backdrop, content, wx.shade, wx.front, wx.flash, glass] { world.addSublayer(l) }
         for l in [sky, airBack, wx.back, scenery, airMid, wx.mid] { backdrop.addSublayer(l) }
-        for l in [ground, wx.ground, backItems, wx.caps, creatures, frontItems, airFront, wx.fall, tankEnds] { content.addSublayer(l) }
+        for l in [ground, wx.ground, backItems, wx.caps, creatures, frontItems, airFront, wx.fall, tankEnds, geometryLayer] { content.addSublayer(l) }
         for l in [backdrop, content, editLayer, tapLayer, sky, scenery, ground] { l.anchorPoint = .zero }
         wx.onThunder = { [weak self] p, loud in self?.thundered(at: p, loud: loud) }
         root.addSublayer(editLayer)
         root.addSublayer(tapLayer)
+        root.addSublayer(geometryHUD)
+        geometryLayer.isHidden = true
+        geometryHUD.isHidden = true
+        showsGeometry = ProcessInfo.processInfo.environment["SPIDER_HABITAT_GEOMETRY"] == "1"
         creatures.addSublayer(silk)
         creatures.addSublayer(spiderLayer)
         silk.fillColor = nil
@@ -266,9 +274,9 @@ final class HabitatSceneView: NSView {
     /// The surfaces, laid out afresh for the furniture as it stands — once
     /// for each change to it; the camera moving changes nothing.
     func rebuildMap() {
-        let built = habitat.surfaces(standoff: map.standoff)
-        map.rebuild(habitat: built.air, loops: built.loops)
+        map.rebuild(habitat: habitat.surfaces(standoff: map.standoff))
         if let spider, spider.inHabitat, spider.map === map { spider.mapChanged() }
+        refreshGeometryOverlay()
     }
 
     func setStandoff(_ s: CGFloat) {
@@ -282,7 +290,7 @@ final class HabitatSceneView: NSView {
     func groundSpots(in r: CGRect? = nil) -> [V2] {
         let floor = HabitatLayout.ground + map.standoff
         return map.sampleSpots(spacing: 24).filter {
-            $0.loop.id == "screen:0" && $0.seg.facing == .up && abs($0.point.y - floor) < 1 && (r?.contains($0.point.point) ?? true)
+            $0.loop.id.hasPrefix("screen:") && $0.seg.facing == .up && abs($0.point.y - floor) < 1 && (r?.contains($0.point.point) ?? true)
         }.map(\.point)
     }
 
@@ -832,6 +840,10 @@ final class HabitatSceneView: NSView {
         } else if !spiderLayer.isHidden {
             spiderLayer.isHidden = true
         }
+        let inHere = pose != nil && spider?.map === map
+        let footing = inHere ? spider?.standingOn : nil
+        holdStill(footing.flatMap { map.owner(of: $0) }, near: inHere ? pose?.pos : nil)
+        if showsGeometry { showFooting(footing, at: pose?.pos) }
         // Its line, even with it out of sight (the line may not be).
         if let pose, pose.web != nil, let path = SpiderRenderer.silkPath(pose) {
             silk.path = path
@@ -1096,8 +1108,9 @@ final class HabitatSceneView: NSView {
             if a.element.inFront != b.element.inFront { return a.element.inFront }
             return a.offset > b.offset
         }
-        // A tight box first — its drawn body — then the looser one.
-        for (_, it) in ordered where (Habitat.solidRect(it) ?? it.rect).insetBy(dx: -6, dy: -6).contains(q) { return it }
+        // What is really there first — its solid parts, or its foliage —
+        // then the box round it.
+        for (_, it) in ordered where it.rect.insetBy(dx: -8, dy: -8).contains(q) && it.geometry.contains(p, slack: 6) { return it }
         for (_, it) in ordered where it.rect.insetBy(dx: -4, dy: -4).contains(q) { return it }
         return nil
     }
@@ -1221,7 +1234,7 @@ final class HabitatSceneView: NSView {
             it.x = p.x + offset.x
             if it.kind.hangs {
                 it.y = habitat.size.height
-            } else if HabitatSceneView.liftable(it.kind) {
+            } else if it.kind.liftable {
                 let y = p.y - HabitatLayout.ground + offset.y
                 // Near the ground it sits on it.
                 it.y = y < 12 ? 0 : y
@@ -1269,12 +1282,11 @@ final class HabitatSceneView: NSView {
     private func settle(_ id: Int) {
         guard let i = habitat.items.firstIndex(where: { $0.id == id }) else { return }
         var it = habitat.items[i]
-        guard !it.kind.hangs, it.kind != .branch, it.y > 0 else { return }
+        guard !it.kind.hangs, it.kind.definition.placement != .wedged, it.y > 0 else { return }
         let lo = it.x - it.w * 0.25, hi = it.x + it.w * 0.25
         var rest: CGFloat = 0
-        for o in habitat.items where o.id != id && !o.kind.hangs {
-            guard let s = Habitat.solidRect(o), s.maxX > lo, s.minX < hi else { continue }
-            let top = s.maxY - HabitatLayout.ground
+        for o in habitat.items where o.id != id && !o.kind.hangs && o.rect.maxX > lo && o.rect.minX < hi {
+            guard let top = Habitat.restingTop(o, from: lo, to: hi).map({ $0 - HabitatLayout.ground }) else { continue }
             if top <= it.y + 8 { rest = max(rest, top) }
         }
         guard abs(rest - it.y) > 0.5 else { return }
@@ -1319,15 +1331,6 @@ final class HabitatSceneView: NSView {
         onEdit?(before, habitat)
     }
 
-    /// Things that may be put up off the ground: what is propped or rests
-    /// on other things. Rocks and pots and the like stand on the ground.
-    static func liftable(_ kind: HabitatItemKind) -> Bool {
-        switch kind {
-        case .branch, .driftwood, .log, .moss, .mushrooms, .leafPile, .pebbles, .twigs, .flower, .fern, .grass, .succulent, .crystal: return true
-        default: return false
-        }
-    }
-
     // MARK: Editing from outside
 
     /// Changes the chosen thing, as one edit — or `silently`, as part of
@@ -1364,7 +1367,7 @@ final class HabitatSceneView: NSView {
         if it.kind.hangs {
             it.y = habitat.size.height
         } else {
-            it.y = HabitatSceneView.liftable(it.kind) ? max(0, p.y - HabitatLayout.ground) : 0
+            it.y = it.kind.liftable ? max(0, p.y - HabitatLayout.ground) : 0
         }
         Habitat.clamp(&it, in: habitat.size)
         habitat.items[i] = it
@@ -1454,6 +1457,7 @@ final class HabitatSceneView: NSView {
         var h = habitat
         var copy = it
         copy.id = h.nextID
+        copy.uid = HabitatItem.newUID()
         h.nextID += 1
         copy.x = it.x + (it.x > h.size.width - 120 ? -1 : 1) * max(40, it.w * 0.6)
         copy.seed = Int.random(in: 1...9999)
@@ -1488,6 +1492,11 @@ final class HabitatSceneView: NSView {
     override func keyDown(with event: NSEvent) {
         let cmd = event.modifierFlags.contains(.command)
         let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        // (Developer only, and on no menu: the physical shape of things.)
+        if event.modifierFlags.intersection([.command, .control, .option]) == [.command, .control, .option], chars == "g" {
+            showsGeometry.toggle()
+            return
+        }
         if cmd, chars == "z" { onCommand?(event.modifierFlags.contains(.shift) ? .redo : .undo); return }
         if event.keyCode == 53, overviewOpen { showOverview(false); return }
         // With nothing picked, the arrows look round the tank.
@@ -1508,12 +1517,185 @@ final class HabitatSceneView: NSView {
             let d: CGPoint = [123: CGPoint(x: -step, y: 0), 124: CGPoint(x: step, y: 0), 125: CGPoint(x: 0, y: -step), 126: CGPoint(x: 0, y: step)][event.keyCode]!
             updateSelected { it in
                 it.x += d.x
-                if !it.kind.hangs, HabitatSceneView.liftable(it.kind) { it.y = max(0, it.y + d.y) }
+                if !it.kind.hangs, it.kind.liftable { it.y = max(0, it.y + d.y) }
             }
         default:
             if chars == "f", selected != nil { updateSelected { $0.flipped.toggle() }; return }
             super.keyDown(with: event)
         }
+    }
+
+    // MARK: Holding still what it is on
+
+    /// Swaying things held still: what it is on, and any it is close to.
+    private var heldStill = Set<Int>()
+
+    /// Something swaying that it can climb — a vine, a leafy plant, bamboo
+    /// — goes still while the spider is on it or right by it (its surfaces
+    /// are where it stands at rest, and in a gale a long vine's picture can
+    /// lean a good way off them), so it has settled upright by the time the
+    /// spider steps or jumps onto it; it sways again once it has gone.
+    private func holdStill(_ on: Int?, near p: V2?) {
+        var want = Set<Int>()
+        if let on, itemLayers[on]?.item.kind.sways == true { want.insert(on) }
+        if let p {
+            for (id, l) in itemLayers where l.item.kind.sways && l.item.kind.climbable
+                && l.item.rect.insetBy(dx: -60, dy: -60).contains(p.point) { want.insert(id) }
+        }
+        guard want != heldStill else { return }
+        for id in heldStill.subtracting(want) { itemLayers[id]?.setHeld(false) }
+        for id in want.subtracting(heldStill) { itemLayers[id]?.setHeld(true) }
+        heldStill = want
+    }
+
+    // MARK: Debug: shapes
+    //
+    // Developer only — ⌃⌥⌘G in the tank, or SPIDER_HABITAT_GEOMETRY=1 — and
+    // on no menu: everything the spider's footing is worked out from, drawn
+    // over the tank.
+    //
+    //   thin orange / green   each thing's solid parts: bulk / limbs
+    //   red haze              parts only to look at (foliage, flowers)
+    //   grey dashes           each thing's box, and its number and kind
+    //   yellow                the edges its feet go on
+    //   blue / cyan           the line its body follows: round the tank and
+    //                         what is run into it / round a thing of its own
+    //   magenta dots          junctions: where it can step from one onto
+    //                         another
+    //   green squares         perches; white rings: places to tie silk;
+    //                         orange: a way in, and the hollow inside
+    //   white                 the surface it is on now, and where on it
+    //
+    // With the corner readout: which surface, which thing, which way.
+
+    var showsGeometry = false {
+        didSet {
+            guard showsGeometry != oldValue else { return }
+            refreshGeometryOverlay()
+        }
+    }
+
+    private func shapeLayer(_ path: CGPath, stroke: CGColor?, width: CGFloat = 1, fill: CGColor? = nil, dash: [NSNumber]? = nil) -> CAShapeLayer {
+        let l = CAShapeLayer()
+        l.path = path
+        l.strokeColor = stroke
+        l.fillColor = fill
+        l.lineWidth = width
+        l.lineDashPattern = dash
+        l.lineJoin = .round
+        return l
+    }
+
+    private func refreshGeometryOverlay() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        geometryLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
+        geometryLayer.isHidden = !showsGeometry
+        geometryHUD.isHidden = !showsGeometry
+        footingLoop = nil
+        guard showsGeometry else { return }
+        geometryLayer.frame = CGRect(origin: .zero, size: habitat.size)
+        func poly(_ into: CGMutablePath, _ pts: [V2], closed: Bool = true) {
+            guard let f = pts.first else { return }
+            into.move(to: f.point)
+            for p in pts.dropFirst() { into.addLine(to: p.point) }
+            if closed { into.closeSubpath() }
+        }
+        let boxes = CGMutablePath(), bulk = CGMutablePath(), limbs = CGMutablePath(), visual = CGMutablePath()
+        let hollows = CGMutablePath(), perches = CGMutablePath(), ties = CGMutablePath(), ways = CGMutablePath()
+        for it in habitat.items {
+            boxes.addRect(it.rect)
+            let g = it.geometry
+            for part in g.parts { poly(part.role == .bulk ? bulk : limbs, part.outline) }
+            for v in g.visual { poly(visual, v) }
+            for h in g.hollows { poly(hollows, h.cavity) }
+            for a in g.anchors {
+                let p = a.point
+                switch a.kind {
+                case .perch: perches.addRect(CGRect(x: p.x - 3, y: p.y - 3, width: 6, height: 6))
+                case .tie: ties.addEllipse(in: CGRect(x: p.x - 3.5, y: p.y - 3.5, width: 7, height: 7))
+                case .entrance:
+                    ways.move(to: CGPoint(x: p.x + a.normal.x * 9, y: p.y + 5))
+                    ways.addLine(to: CGPoint(x: p.x + a.normal.x * 9, y: p.y - 5))
+                    ways.addLine(to: p.point)
+                    ways.closeSubpath()
+                }
+            }
+            let label = CATextLayer()
+            label.string = "#\(it.id) \(it.kind.label)"
+            label.fontSize = 10
+            label.foregroundColor = CGColor(gray: 1, alpha: 0.85)
+            label.backgroundColor = CGColor(gray: 0, alpha: 0.45)
+            label.contentsScale = scale
+            label.frame = CGRect(x: it.rect.minX, y: it.rect.maxY + 1, width: 120, height: 13)
+            geometryLayer.addSublayer(label)
+        }
+        let rim = CGMutablePath(), own = CGMutablePath(), edges = CGMutablePath(), dots = CGMutablePath()
+        for loop in map.loops {
+            let body = loop.kind == .screenBorder ? rim : own
+            for seg in loop.segs { body.move(to: seg.a.point); body.addLine(to: seg.b.point) }
+            for e in loop.edge { edges.move(to: e.a.point); edges.addLine(to: e.b.point) }
+        }
+        for j in map.junctions { dots.addEllipse(in: CGRect(x: j.at.x - 3, y: j.at.y - 3, width: 6, height: 6)) }
+        let c = { (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat) in CGColor(srgbRed: r, green: g, blue: b, alpha: a) }
+        for l in [shapeLayer(boxes, stroke: c(1, 1, 1, 0.3), dash: [3, 4]),
+                  shapeLayer(visual, stroke: c(1, 0.3, 0.3, 0.45), fill: c(1, 0.2, 0.2, 0.14)),
+                  shapeLayer(hollows, stroke: c(1, 0.6, 0.1, 0.9), width: 1.2, dash: [4, 3]),
+                  shapeLayer(bulk, stroke: c(1, 0.62, 0.25, 0.9)),
+                  shapeLayer(limbs, stroke: c(0.5, 1, 0.4, 0.9)),
+                  shapeLayer(edges, stroke: c(1, 0.92, 0.2, 0.95), width: 1.3),
+                  shapeLayer(rim, stroke: c(0.35, 0.6, 1, 0.9), width: 1.5),
+                  shapeLayer(own, stroke: c(0.3, 0.95, 1, 0.9), width: 1.5),
+                  shapeLayer(dots, stroke: nil, fill: c(1, 0.2, 0.9, 1)),
+                  shapeLayer(perches, stroke: nil, fill: c(0.4, 1, 0.3, 1)),
+                  shapeLayer(ties, stroke: c(1, 1, 1, 1), width: 1.5),
+                  shapeLayer(ways, stroke: nil, fill: c(1, 0.6, 0.1, 1)),
+                  geometryFooting] {
+            geometryLayer.addSublayer(l)
+        }
+        geometryFooting.strokeColor = c(1, 1, 1, 1)
+        geometryFooting.fillColor = nil
+        geometryFooting.lineWidth = 3
+        geometryFooting.lineJoin = .round
+        geometryHUD.fontSize = 11
+        geometryHUD.foregroundColor = CGColor(gray: 1, alpha: 1)
+        geometryHUD.backgroundColor = CGColor(gray: 0, alpha: 0.6)
+        geometryHUD.contentsScale = scale
+        geometryHUD.anchorPoint = .zero
+        geometryHUD.frame = CGRect(x: 10, y: 10, width: 560, height: 30)
+        geometryHUD.string = "shapes: \(map.loops.count) surfaces, \(map.junctions.count / 2) junctions"
+    }
+
+    /// The loop last drawn as the one it is on.
+    private var footingLoop: String?
+
+    /// Where it is standing, for the overlay: the whole surface it is on,
+    /// and a readout of what that is.
+    private func showFooting(_ a: Anchor?, at p: V2?) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        guard let a, let loop = map.loop(a.loopID) else {
+            if footingLoop != nil { footingLoop = nil; geometryFooting.path = nil }
+            geometryHUD.string = spider?.map === map ? "in the air · \(spider?.debugState ?? "")" : "not in the tank"
+            return
+        }
+        if footingLoop != a.loopID {
+            footingLoop = a.loopID
+            let path = CGMutablePath()
+            for seg in loop.segs { path.move(to: seg.a.point); path.addLine(to: seg.b.point) }
+            geometryFooting.path = path
+        }
+        let owner = map.owner(of: a).flatMap { habitat.item(id: $0) }
+        let what = owner.map { "#\($0.id) \($0.kind.label) (\($0.uid.prefix(8)))" } ?? "the tank"
+        let seg = a.segIdx < loop.segs.count ? loop.segs[a.segIdx] : nil
+        let vertex = a.dir > 0 ? a.segIdx + 1 : a.segIdx
+        let ahead = map.junctions(from: a.loopID, at: vertex).count
+        geometryHUD.string = String(format: "%@ seg %d/%d t %.0f %@ · %@ · facing %@ · %d junction%@ ahead",
+                                    a.loopID, a.segIdx, loop.segs.count, a.t, a.dir > 0 ? "→" : "←", what,
+                                    seg.map { "\($0.facing)" } ?? "?", ahead, ahead == 1 ? "" : "s")
+        _ = p
     }
 
     /// Tools only: the layers, for checking what is shown.
@@ -1537,17 +1719,7 @@ final class ItemLayer: CALayer {
     private var lean: CGFloat = 0
 
     /// How far each kind of thing leans in a gale.
-    static func windLean(_ kind: HabitatItemKind) -> CGFloat {
-        switch kind {
-        case .grass: return 0.16
-        case .flower: return 0.13
-        case .vine: return 0.14
-        case .fern: return 0.1
-        case .plant: return 0.05
-        case .bamboo: return 0.035
-        default: return 0
-        }
-    }
+    static func windLean(_ kind: HabitatItemKind) -> CGFloat { kind.definition.windLean }
 
     private static func shear(_ k: CGFloat) -> CATransform3D {
         var t = CATransform3DIdentity
@@ -1555,8 +1727,34 @@ final class ItemLayer: CALayer {
         return t
     }
 
+    /// Held still (the spider is on it): no sway, no lean.
+    private(set) var held = false
+
+    /// Stills it — its sway and lean eased out — or lets it go again.
+    func setHeld(_ on: Bool) {
+        guard on != held, item.kind.sways else { return }
+        held = on
+        let now = presentation()?.transform ?? transform
+        if on {
+            // From however it is leaning this moment, back upright.
+            removeAnimation(forKey: "sway")
+            removeAnimation(forKey: "lean")
+            lean = 0
+            transform = CATransform3DIdentity
+            let ease = CABasicAnimation(keyPath: "transform")
+            ease.fromValue = NSValue(caTransform3D: now)
+            ease.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+            ease.duration = 0.45
+            ease.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            add(ease, forKey: "still")
+        } else {
+            startSway(fromRest: true)
+        }
+    }
+
     /// Leans it over to `k`, easing there over `d` seconds.
     func setLean(_ k: CGFloat, over d: CFTimeInterval) {
+        let k = held ? 0 : k
         guard abs(k - lean) > 0.0004 else { return }
         let from = lean
         lean = k
@@ -1603,37 +1801,47 @@ final class ItemLayer: CALayer {
         }
     }
 
+    /// A gentle lean to and fro, about its foot: bent, not turned, so the
+    /// foot stays put. `fromRest`: starting from upright (let go of), eased
+    /// in rather than jumping to wherever in its sway it would be.
+    private func startSway(fromRest: Bool) {
+        let s = CGFloat(abs(item.seed % 997)) / 997
+        let amount = item.kind.definition.sway
+        let sway = CAKeyframeAnimation(keyPath: "transform")
+        func shear(_ k: CGFloat) -> CATransform3D {
+            var t = CATransform3DIdentity
+            t.m21 = item.kind.hangs ? -k : k
+            return t
+        }
+        sway.values = [shear(-amount), shear(amount * 0.6), shear(-amount * 0.4), shear(amount), shear(-amount)].map { NSValue(caTransform3D: $0) }
+        sway.keyTimes = [0, 0.3, 0.5, 0.75, 1]
+        sway.duration = CFTimeInterval(4.5 + s * 3)
+        sway.repeatCount = .infinity
+        sway.timingFunctions = Array(repeating: CAMediaTimingFunction(name: .easeInEaseOut), count: 4)
+        // (On top of any lean the wind gives it.)
+        sway.isAdditive = true
+        if fromRest {
+            // From the start of its sway, less that much, eased away.
+            sway.beginTime = convertTime(CACurrentMediaTime(), from: nil)
+            let ease = CABasicAnimation(keyPath: "transform")
+            ease.fromValue = NSValue(caTransform3D: shear(amount))
+            ease.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+            ease.duration = 1.4
+            ease.isAdditive = true
+            ease.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            add(ease, forKey: "unstill")
+        } else {
+            sway.timeOffset = CFTimeInterval(s) * sway.duration
+        }
+        add(sway, forKey: "sway")
+    }
+
     private func animate(biome: Biome, pad: CGFloat) {
         removeAllAnimations()
         for e in extras { e.removeFromSuperlayer() }
         extras = []
         let s = CGFloat(abs(item.seed % 997)) / 997
-        if item.kind.sways {
-            // A gentle lean to and fro, about its foot: bent, not turned,
-            // so the foot stays put.
-            let amount: CGFloat
-            switch item.kind {
-            case .bamboo: amount = 0.012
-            case .plant: amount = 0.018
-            case .vine: amount = 0.05
-            default: amount = 0.035
-            }
-            let sway = CAKeyframeAnimation(keyPath: "transform")
-            func shear(_ k: CGFloat) -> NSValue {
-                var t = CATransform3DIdentity
-                t.m21 = item.kind.hangs ? -k : k
-                return NSValue(caTransform3D: t)
-            }
-            sway.values = [shear(-amount), shear(amount * 0.6), shear(-amount * 0.4), shear(amount), shear(-amount)]
-            sway.keyTimes = [0, 0.3, 0.5, 0.75, 1]
-            sway.duration = CFTimeInterval(4.5 + s * 3)
-            sway.repeatCount = .infinity
-            sway.timingFunctions = Array(repeating: CAMediaTimingFunction(name: .easeInEaseOut), count: 4)
-            sway.timeOffset = CFTimeInterval(s) * sway.duration
-            // (On top of any lean the wind gives it.)
-            sway.isAdditive = true
-            add(sway, forKey: "sway")
-        }
+        if item.kind.sways, !held { startSway(fromRest: false) }
         let r = CGRect(x: pad, y: pad, width: bounds.width - pad * 2, height: bounds.height - pad * 2)
         if let glow = HabitatArt.glowColour(item.kind, seed: item.seed, biome: biome) {
             // A soft light that breathes.

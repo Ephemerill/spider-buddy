@@ -52,10 +52,26 @@ let kinds = ["stretch", "reach", "off", "sunk", "through", "flip", "pop"]
 
 // MARK: - Worlds
 
-struct Solid { var rect: CGRect; var radius: CGFloat; var depth: Int; var id: String }
+struct Solid {
+    var rect: CGRect; var radius: CGFloat; var depth: Int; var id: String
+    /// Shaped (the habitat's furniture): its outline, not the rect.
+    var outline: [V2] = []
+}
 
-/// Signed distance to a rounded rect: negative inside.
+/// Signed distance to a rounded rect (or an outline): negative inside.
 func sdf(_ p: V2, _ s: Solid) -> CGFloat {
+    if !s.outline.isEmpty {
+        var d = CGFloat.greatestFiniteMagnitude
+        var inside = false
+        var j = s.outline.count - 1
+        for i in s.outline.indices {
+            let a = s.outline[i], b = s.outline[j]
+            d = min(d, projectOnSegment(p, a, b).dist)
+            if (a.y > p.y) != (b.y > p.y), p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x { inside.toggle() }
+            j = i
+        }
+        return inside ? -d : d
+    }
     let r = min(s.radius, s.rect.width / 2, s.rect.height / 2)
     let hx = s.rect.width / 2 - r, hy = s.rect.height / 2 - r
     let qx = abs(p.x - s.rect.midX) - hx, qy = abs(p.y - s.rect.midY) - hy
@@ -129,12 +145,22 @@ func hab(_ p: Habitat.Preset) -> World {
     let m = SurfaceMap()
     m.standoff = 22 * S
     let built = h.surfaces(standoff: m.standoff)
-    m.rebuild(habitat: built.air, loops: built.loops)
     let w = World(name: "hab:\(p.rawValue)", map: m, habitat: true, start: V2(scene.midX, 300))
+    #if SHAPED
+    // (The furniture as it is shaped: see HabitatGeometry.swift.)
+    m.rebuild(habitat: built)
+    for it in h.items where it.kind.climbable {
+        for part in it.geometry.parts {
+            w.solids.append(Solid(rect: Poly.bounds(part.outline), radius: 0, depth: 0, id: "item:\(it.id)", outline: part.outline))
+        }
+    }
+    #else
+    m.rebuild(habitat: built.air, loops: built.loops)
     for it in h.items where it.kind.climbable {
         guard let r = Habitat.solidRect(it) else { continue }
         w.solids.append(Solid(rect: r, radius: 0, depth: 0, id: "item:\(it.id)"))
     }
+    #endif
     w.groundY = built.air.minY
     return w
 }
@@ -325,7 +351,13 @@ final class Checker {
 func drawScene(_ c: CGContext, pose: SpiderPose, world: World) {
     for s in world.solids.sorted(by: { $0.depth > $1.depth }) {
         c.setFillColor(NSColor(calibratedWhite: world.habitat ? 0.3 : 0.14, alpha: 1).cgColor)
-        c.addPath(CGPath(roundedRect: s.rect, cornerWidth: s.radius, cornerHeight: s.radius, transform: nil))
+        if let f = s.outline.first {
+            c.move(to: f.point)
+            for q in s.outline.dropFirst() { c.addLine(to: q.point) }
+            c.closePath()
+        } else {
+            c.addPath(CGPath(roundedRect: s.rect, cornerWidth: s.radius, cornerHeight: s.radius, transform: nil))
+        }
         c.fillPath()
     }
     c.setStrokeColor(NSColor(calibratedRed: 0.35, green: 0.55, blue: 0.9, alpha: 1).cgColor)

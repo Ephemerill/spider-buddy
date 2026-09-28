@@ -34,118 +34,6 @@ enum Biome: String, Codable, CaseIterable {
     }
 }
 
-/// Things to put in the habitat. Some are furniture it can climb on; some
-/// are just scenery.
-enum HabitatItemKind: String, Codable, CaseIterable {
-    // Perches, in the order the picker shows them.
-    case log, branch, driftwood, corkBark, hide, rock, boulder, bamboo, cactus, plant, vine, waterDish
-    // Plants and details.
-    case fern, grass, flower, succulent, mushrooms, moss, leafPile, pebbles, twigs, crystal
-
-    var label: String {
-        switch self {
-        case .log: return "Log"
-        case .branch: return "Branch"
-        case .driftwood: return "Driftwood"
-        case .corkBark: return "Cork Bark"
-        case .hide: return "Hollow Log"
-        case .rock: return "Rock"
-        case .boulder: return "Boulder"
-        case .bamboo: return "Bamboo"
-        case .cactus: return "Cactus"
-        case .plant: return "Leafy Plant"
-        case .vine: return "Hanging Vine"
-        case .waterDish: return "Water Dish"
-        case .fern: return "Fern"
-        case .grass: return "Tall Grass"
-        case .flower: return "Flowers"
-        case .succulent: return "Succulent"
-        case .mushrooms: return "Mushrooms"
-        case .moss: return "Moss"
-        case .leafPile: return "Leaf Litter"
-        case .pebbles: return "Pebbles"
-        case .twigs: return "Twigs"
-        case .crystal: return "Crystals"
-        }
-    }
-
-    /// Climbable, or just to look at.
-    var climbable: Bool {
-        switch self {
-        case .log, .branch, .driftwood, .corkBark, .hide, .rock, .boulder, .bamboo, .cactus, .plant, .vine, .waterDish: return true
-        default: return false
-        }
-    }
-
-    /// Size in world points (the same as the screen's).
-    var defaultSize: CGSize {
-        switch self {
-        case .log: return CGSize(width: 180, height: 50)
-        case .branch: return CGSize(width: 230, height: 130)
-        case .driftwood: return CGSize(width: 200, height: 56)
-        case .corkBark: return CGSize(width: 74, height: 210)
-        case .hide: return CGSize(width: 130, height: 66)
-        case .rock: return CGSize(width: 76, height: 44)
-        case .boulder: return CGSize(width: 140, height: 92)
-        case .bamboo: return CGSize(width: 60, height: 250)
-        case .cactus: return CGSize(width: 70, height: 150)
-        case .plant: return CGSize(width: 120, height: 150)
-        case .vine: return CGSize(width: 40, height: 230)
-        case .waterDish: return CGSize(width: 96, height: 26)
-        case .fern: return CGSize(width: 130, height: 90)
-        case .grass: return CGSize(width: 90, height: 84)
-        case .flower: return CGSize(width: 80, height: 80)
-        case .succulent: return CGSize(width: 64, height: 46)
-        case .mushrooms: return CGSize(width: 66, height: 46)
-        case .moss: return CGSize(width: 120, height: 24)
-        case .leafPile: return CGSize(width: 130, height: 26)
-        case .pebbles: return CGSize(width: 90, height: 20)
-        case .twigs: return CGSize(width: 96, height: 30)
-        case .crystal: return CGSize(width: 64, height: 70)
-        }
-    }
-
-    /// Hangs from the lid rather than standing on the ground.
-    var hangs: Bool { self == .vine }
-
-    /// Moves on its own — sways in the air of the tank, glows or ripples.
-    var sways: Bool {
-        switch self {
-        case .vine, .plant, .fern, .grass, .flower, .bamboo: return true
-        default: return false
-        }
-    }
-
-    /// Where it goes by default: low things and foliage can go in front of
-    /// the spider; furniture it climbs is always behind it.
-    var canGoInFront: Bool { !climbable }
-}
-
-struct HabitatItem: Codable, Equatable, Identifiable {
-    var id: Int
-    var kind: HabitatItemKind
-    /// Centre across, in world points. Standing things: `y` is how far above
-    /// the ground its base is (0 on the ground). Hanging things: `y` is its
-    /// top (the lid is the top of the world).
-    var x: CGFloat
-    var y: CGFloat
-    var w: CGFloat
-    var h: CGFloat
-    var flipped = false
-    var seed = 0
-    /// Drawn in front of the spider (foreground foliage), or behind it.
-    var front = false
-
-    /// Its rectangle in the world.
-    var rect: CGRect {
-        kind.hangs ? CGRect(x: x - w / 2, y: y - h, width: w, height: h)
-                   : CGRect(x: x - w / 2, y: HabitatLayout.ground + y, width: w, height: h)
-    }
-
-    var onGround: Bool { !kind.hangs && y < 2 }
-    var inFront: Bool { front && kind.canGoInFront }
-}
-
 /// The habitat's measurements. Its world is in points one to one with the
 /// screen's: the spider, what it hunts and the furniture are the same size
 /// in there as they are on the desktop, and the window is a pane of glass
@@ -200,13 +88,36 @@ struct Habitat: Codable, Equatable {
     static func load() -> Habitat {
         guard let data = UserDefaults.standard.data(forKey: key),
               var h = try? JSONDecoder().decode(Habitat.self, from: data) else { return .preset(.forestFloor) }
+        var changed = h.giveIdentities()
         if h.world == nil {
             h = h.movedIntoWorld(HabitatLayout.defaultWorld)
-            h.save()
+            changed = true
         }
+        if changed { h.save() }
         h.clampAll()
         return h
     }
+
+    /// Gives anything without a `uid` of its own one (a habitat saved before
+    /// things had them), and makes sure no two share one. True if it had to.
+    @discardableResult
+    mutating func giveIdentities() -> Bool {
+        var seen = Set<String>()
+        var changed = false
+        for i in items.indices {
+            if items[i].uid.isEmpty || seen.contains(items[i].uid) {
+                items[i].uid = HabitatItem.newUID()
+                changed = true
+            }
+            seen.insert(items[i].uid)
+        }
+        return changed
+    }
+
+    /// A thing by its lasting identity.
+    func item(uid: String) -> HabitatItem? { items.first { $0.uid == uid } }
+    /// A thing by its number in this habitat.
+    func item(id: Int) -> HabitatItem? { items.first { $0.id == id } }
 
     func save() {
         if let data = try? JSONEncoder().encode(self) { UserDefaults.standard.set(data, forKey: Habitat.key) }
@@ -620,6 +531,7 @@ private struct LayoutBuilder {
     mutating func putOld(_ old: HabitatItem, dx: CGFloat) {
         var it = old
         it.id = h.nextID
+        it.uid = HabitatItem.newUID()
         h.nextID += 1
         it.x += dx
         if it.kind.hangs {
@@ -832,9 +744,11 @@ private struct LayoutBuilder {
         put(.boulder, at(0.68), scale: dice.range(0.9, 1.1))
         put(.rock, at(0.85), scale: 0.6)
         put(.pebbles, at(0.12))
-        // Something propped on top of the big one.
-        if let top = Habitat.solidRect(big)?.maxY {
-            put(biome == .desert || biome == .beach ? .driftwood : .log, big.x + big.w * 0.1, top - HabitatLayout.ground, scale: 0.8)
+        // Something propped on top of the big one, resting on the top of it.
+        let prop: HabitatItemKind = biome == .desert || biome == .beach ? .driftwood : .log
+        let px = big.x + big.w * 0.1, half = prop.defaultSize.width * 0.8 * 0.25
+        if let top = Habitat.restingTop(big, from: px - half, to: px + half) {
+            put(prop, px, top - HabitatLayout.ground, scale: 0.8)
         }
         switch biome {
         case .desert: put(.cactus, at(0.58), scale: 0.7)
@@ -843,165 +757,5 @@ private struct LayoutBuilder {
         case .beach: put(.twigs, at(0.58))
         default: put(.moss, at(0.58)); put(.mushrooms, at(0.94), scale: 0.8)
         }
-    }
-}
-
-// MARK: - Surfaces
-
-extension Habitat {
-    /// The part of a thing it can stand on as a block, in scene points —
-    /// inside the drawing, so its feet go on the wood or the stone and not
-    /// on the air around a rounded top.
-    static func solidRect(_ it: HabitatItem) -> CGRect? {
-        let r = it.rect
-        func inset(_ l: CGFloat, _ rgt: CGFloat, top: CGFloat) -> CGRect {
-            let a = it.flipped ? rgt : l, b = it.flipped ? l : rgt
-            return CGRect(x: r.minX + r.width * a, y: r.minY, width: r.width * (1 - a - b), height: r.height * top)
-        }
-        switch it.kind {
-        case .log: return inset(0.04, 0.04, top: 0.92)
-        case .hide: return inset(0.04, 0.04, top: 0.9)
-        case .driftwood: return inset(0.08, 0.1, top: 0.62)
-        case .rock: return inset(0.14, 0.14, top: 0.86)
-        case .boulder: return inset(0.12, 0.12, top: 0.9)
-        case .corkBark: return inset(0.1, 0.1, top: 0.98)
-        case .cactus: return inset(0.3, 0.3, top: 0.97)
-        case .bamboo: return inset(0.32, 0.32, top: 0.94)
-        case .waterDish: return inset(0.02, 0.02, top: 0.72)
-        case .plant: return CGRect(x: r.midX - r.width * 0.18, y: r.minY, width: r.width * 0.36, height: r.height * 0.2)   // the pot
-        case .vine: return CGRect(x: r.midX - max(r.width * 0.18, 4), y: r.minY + 8, width: max(r.width * 0.36, 8), height: r.height - 8)
-        default: return nil
-        }
-    }
-
-    /// Everything it can walk on, in world points — offset by `origin`
-    /// (the tools lay a world out somewhere on a mock desktop): one closed
-    /// loop round the inside of the tank — along the ground and up and over
-    /// whatever stands on it, up the glass, across under the lid and back
-    /// down — and a loop of its own for anything off the ground (a branch,
-    /// a vine, the leafy top of a plant). Built once for the layout: the
-    /// camera moving about the world never changes any of it.
-    func surfaces(at origin: CGPoint = .zero, standoff off: CGFloat) -> (air: CGRect, loops: [SurfaceLoop]) {
-        let scene = CGRect(origin: origin, size: size)
-        func toScreen(_ r: CGRect) -> CGRect { r.offsetBy(dx: origin.x, dy: origin.y) }
-        func pt(_ p: V2) -> V2 { V2(origin.x + p.x, origin.y + p.y) }
-        let groundY = scene.minY + HabitatLayout.ground
-        let air = CGRect(x: scene.minX, y: groundY, width: scene.width, height: scene.maxY - groundY)
-        let inner = air.insetBy(dx: off, dy: off)
-        guard inner.width > 40, inner.height > 40 else { return (air, []) }
-
-        // The skyline of what stands on the ground, stood off by the body.
-        var blocks: [CGRect] = []
-        var loose: [SurfaceLoop] = []
-        for (i, it) in items.enumerated() where it.kind.climbable {
-            let id = "item:\(it.id)"
-            let depth = items.count - i
-            if it.kind == .branch {
-                let pts = Habitat.branchPoints(it.rect, flipped: it.flipped).map(pt)
-                loose += SurfaceMap.stripLoops(id: id, points: pts, standoff: off, depth: depth, rect: toScreen(it.rect))
-                continue
-            }
-            if it.kind == .plant {
-                // The pot stands on the ground; the broad leaves up top are a perch.
-                let r = it.rect
-                let pad = CGRect(x: r.minX + r.width * 0.2, y: r.maxY - r.height * 0.24, width: r.width * 0.6, height: r.height * 0.16)
-                loose.append(SurfaceMap.boxLoop(id: id + ":top", rect: toScreen(pad), standoff: off, depth: depth))
-            }
-            guard let solid = Habitat.solidRect(it) else { continue }
-            let s = toScreen(solid)
-            if it.onGround {
-                blocks.append(s)
-            } else {
-                loose.append(SurfaceMap.boxLoop(id: id, rect: s, standoff: off, depth: depth))
-            }
-        }
-
-        let floor = Habitat.skyline(blocks, from: inner.minX, to: inner.maxX, feetFrom: air.minX, feetTo: air.maxX,
-                                    base: groundY, standoff: off, ceiling: inner.maxY - 24)
-        let hl = floor.heights.first ?? inner.minY, hr = floor.heights.last ?? inner.minY
-        let bl = V2(inner.minX, hl), br = V2(inner.maxX, hr)
-        let tr = V2(inner.maxX, inner.maxY), tl = V2(inner.minX, inner.maxY)
-        var rim = SurfaceLoop(id: "screen:0", kind: .screenBorder,
-                              segs: floor.segs + [Seg(br, tr, .left), Seg(tr, tl, .down), Seg(tl, bl, .right)],
-                              closed: true, depth: 1_000_000, rect: inner)
-        rim.edge = floor.edge + Array(SurfaceMap.rectEdge(air, inside: true).dropFirst())
-        return (air, [rim] + loose)
-    }
-
-    /// The ground as it walks it, left to right: flat where there is
-    /// nothing, and up the near side, over the top and down the far side
-    /// of anything standing on it — as the desktop's floor does the Dock.
-    /// `heights` are the body's height at the two ends, for the walls.
-    /// The body's line runs `x0`…`x1`, stood off the walls; the ground its
-    /// feet go on runs `feetFrom`…`feetTo`, right up to the glass, so a
-    /// foot in a bottom corner has the floor under it.
-    static func skyline(_ blocks: [CGRect], from x0: CGFloat, to x1: CGFloat, feetFrom: CGFloat, feetTo: CGFloat,
-                        base: CGFloat, standoff off: CGFloat,
-                        ceiling: CGFloat) -> (segs: [Seg], edge: [Seg], heights: [CGFloat]) {
-        // The body's line: each block grown by the body's height.
-        func profile(_ rects: [CGRect], lift: CGFloat, grow: CGFloat, from x0: CGFloat, to x1: CGFloat) -> [(x0: CGFloat, x1: CGFloat, y: CGFloat)] {
-            let grown = rects.map { CGRect(x: $0.minX - grow, y: $0.minY, width: $0.width + grow * 2, height: $0.height + lift) }
-            var xs = Set<CGFloat>([x0, x1])
-            for g in grown {
-                if g.minX > x0 && g.minX < x1 { xs.insert(g.minX) }
-                if g.maxX > x0 && g.maxX < x1 { xs.insert(g.maxX) }
-            }
-            let sorted = xs.sorted()
-            var runs: [(x0: CGFloat, x1: CGFloat, y: CGFloat)] = []
-            for i in 0..<(sorted.count - 1) {
-                let a = sorted[i], b = sorted[i + 1]
-                guard b - a > 0.01 else { continue }
-                let m = (a + b) / 2
-                var y = base + lift
-                for g in grown where g.minX < m && g.maxX > m { y = max(y, g.maxY) }
-                y = min(y, ceiling)
-                if let last = runs.last, abs(last.y - y) < 0.5 {
-                    runs[runs.count - 1].x1 = b
-                } else {
-                    runs.append((a, b, y))
-                }
-            }
-            // A gap narrower than the spider between two blocks is filled
-            // in: it steps across, not down into a crack.
-            var i = 1
-            while i < runs.count - 1 {
-                let r = runs[i]
-                if r.x1 - r.x0 < max(off * 1.2, 10), r.y < runs[i - 1].y, r.y < runs[i + 1].y {
-                    runs[i].y = min(runs[i - 1].y, runs[i + 1].y)
-                    // Merge with whichever neighbour now matches.
-                    if abs(runs[i].y - runs[i - 1].y) < 0.5 { runs[i - 1].x1 = runs[i].x1; runs.remove(at: i); continue }
-                    if abs(runs[i].y - runs[i + 1].y) < 0.5 { runs[i + 1].x0 = runs[i].x0; runs.remove(at: i); continue }
-                }
-                i += 1
-            }
-            return runs
-        }
-        func segs(_ runs: [(x0: CGFloat, x1: CGFloat, y: CGFloat)]) -> [Seg] {
-            var out: [Seg] = []
-            for (i, r) in runs.enumerated() {
-                if i > 0 {
-                    let prev = runs[i - 1]
-                    if r.y > prev.y + 0.5 {
-                        out.append(Seg(V2(r.x0, prev.y), V2(r.x0, r.y), .left))
-                    } else if r.y < prev.y - 0.5 {
-                        out.append(Seg(V2(r.x0, prev.y), V2(r.x0, r.y), .right))
-                    }
-                }
-                out.append(Seg(V2(r.x0, r.y), V2(r.x1, r.y), .up))
-            }
-            return out
-        }
-        let body = profile(blocks, lift: off, grow: off, from: x0, to: x1)
-        let feet = profile(blocks, lift: 0, grow: 0, from: feetFrom, to: feetTo)
-        return (segs(body), segs(feet), [body.first?.y ?? base + off, body.last?.y ?? base + off])
-    }
-
-    /// The line of a branch: from its low end up to its tip, with a bend.
-    static func branchPoints(_ r: CGRect, flipped: Bool) -> [V2] {
-        let a = V2(r.minX + r.width * 0.04, r.minY + r.height * 0.1)
-        let m = V2(r.minX + r.width * 0.48, r.minY + r.height * 0.52)
-        let b = V2(r.maxX - r.width * 0.05, r.minY + r.height * 0.86)
-        let pts = [a, m, b]
-        return flipped ? pts.map { V2(r.maxX + r.minX - $0.x, $0.y) }.reversed() : pts
     }
 }

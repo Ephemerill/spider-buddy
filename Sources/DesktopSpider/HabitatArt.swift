@@ -16,10 +16,7 @@ import AppKit
 enum HabitatArt {
     // MARK: Helpers
 
-    static func rnd(_ seed: Int, _ i: Int) -> CGFloat {
-        let x = sin(CGFloat(seed) * 12.9898 + CGFloat(i) * 78.233) * 43758.5453
-        return x - floor(x)
-    }
+    static func rnd(_ seed: Int, _ i: Int) -> CGFloat { HabitatShape.rnd(seed, i) }
 
     static func c(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> CGColor {
         CGColor(srgbRed: r, green: g, blue: b, alpha: a)

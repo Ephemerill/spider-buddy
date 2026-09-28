@@ -145,6 +145,9 @@ struct SurfaceLoop {
     /// window on the square outline, only on the curve inside it. 0 for
     /// anything square.
     var cornerRadius: CGFloat = 0
+    /// In the habitat, what each segment is the surface of: a thing's `id`,
+    /// or 0 for the tank itself. Empty on the desktop.
+    var owners: [Int] = []
 
     var perimeter: CGFloat { segs.reduce(0) { $0 + $1.len } }
 
@@ -164,6 +167,20 @@ struct SurfaceLoop {
         let n = d / d.length
         return (c + n * R, n)
     }
+}
+
+/// Where two surfaces meet and it can walk from one onto the other (in the
+/// habitat: a branch across another, a vine's end on a stone). One way
+/// round: from vertex `fromVertex` of loop `from` — the point where its
+/// segment `fromVertex - 1` ends and `fromVertex` starts; an open run's
+/// ends are 0 and `segs.count` — onto vertex `toVertex` of loop `to`.
+struct SurfaceJunction {
+    var from: String
+    var fromVertex: Int
+    var to: String
+    var toVertex: Int
+    /// Where it is.
+    var at: V2
 }
 
 /// A resolved spot on a surface.
@@ -286,6 +303,37 @@ final class SurfaceMap {
         if let box = confine { ls = SurfaceMap.clip(ls, to: box, standoff: standoff) }
         loops = ls
         byID = Dictionary(uniqueKeysWithValues: ls.map { ($0.id, $0) })
+        // (Cut down to a box, the loops' segments are numbered afresh: the
+        // junctions no longer line up with them, and are left out.)
+        junctionTable = [:]
+        guard confine == nil else { return }
+        for j in allJunctions {
+            guard let l = byID[j.from], let m = byID[j.to],
+                  j.fromVertex >= 0, j.fromVertex <= l.segs.count, j.toVertex >= 0, j.toVertex <= m.segs.count else { continue }
+            let v = l.closed ? j.fromVertex % max(l.segs.count, 1) : j.fromVertex
+            junctionTable[j.from, default: [:]][v, default: []].append(j)
+        }
+    }
+
+    /// Junctions between loops (the habitat's; none on the desktop).
+    private var allJunctions: [SurfaceJunction] = []
+    private var junctionTable: [String: [Int: [SurfaceJunction]]] = [:]
+    var junctions: [SurfaceJunction] { junctionTable.values.flatMap { $0.values.flatMap { $0 } } }
+    var hasJunctions: Bool { !junctionTable.isEmpty }
+
+    /// Where it can go from vertex `vertex` of a loop onto another: see
+    /// `SurfaceJunction`.
+    func junctions(from loopID: String, at vertex: Int) -> [SurfaceJunction] {
+        guard let byVertex = junctionTable[loopID], let l = byID[loopID] else { return [] }
+        return byVertex[l.closed ? vertex % max(l.segs.count, 1) : vertex] ?? []
+    }
+
+    /// In the habitat, the thing (its `id`) under an anchor; nil for the
+    /// tank itself, or anywhere on the desktop.
+    func owner(of a: Anchor) -> Int? {
+        guard let l = byID[a.loopID], a.segIdx >= 0, a.segIdx < l.owners.count else { return nil }
+        let o = l.owners[a.segIdx]
+        return o == 0 ? nil : o
     }
 
     /// Displays some app has taken whole. On those only the rim of the
@@ -435,6 +483,7 @@ final class SurfaceMap {
 
         applyBlocks(to: &newLoops)
         unclipped = newLoops
+        allJunctions = []
         reclip()
     }
 
@@ -496,52 +545,18 @@ final class SurfaceMap {
     /// (its "screen"), and `given` is everything in it to walk on, rim
     /// included. Nothing in there hides anything else: the spider is drawn
     /// in front of all the furniture it can climb.
-    func rebuild(habitat air: CGRect, loops given: [SurfaceLoop]) {
+    func rebuild(habitat air: CGRect, loops given: [SurfaceLoop], junctions: [SurfaceJunction] = []) {
         occluders = []
         dockRects = []
         screenFrames = [air]
         worldBounds = air
         cinemaScreens = []
         unclipped = given
+        allJunctions = junctions
         reclip()
     }
 
-    /// A closed loop round a box, the body stood off the edge, as for a
-    /// window: walk on top, round the sides, hang beneath.
-    static func boxLoop(id: String, rect: CGRect, standoff off: CGFloat, depth: Int) -> SurfaceLoop {
-        var loop = SurfaceLoop(id: id, kind: .windowEdge,
-                               segs: rectEdge(rect.insetBy(dx: -off, dy: -off), inside: false),
-                               closed: true, depth: depth, rect: rect)
-        loop.edge = rectEdge(rect, inside: false)
-        return loop
-    }
-
-    /// An open run along a polyline (a branch, say): one loop along the top
-    /// and one beneath, each stood off by the body's height. Facings are
-    /// by the nearest axis, which is what the rest of the map understands.
-    static func stripLoops(id: String, points: [V2], standoff off: CGFloat, depth: Int, rect: CGRect) -> [SurfaceLoop] {
-        guard points.count >= 2 else { return [] }
-        func facing(_ n: V2) -> EdgeFacing {
-            if abs(n.y) >= abs(n.x) { return n.y >= 0 ? .up : .down }
-            return n.x >= 0 ? .right : .left
-        }
-        var top: [Seg] = [], under: [Seg] = [], topEdge: [Seg] = [], underEdge: [Seg] = []
-        for i in 0..<(points.count - 1) {
-            let a = points[i], b = points[i + 1]
-            let d = (b - a).normalized
-            let n = V2(-d.y, d.x)                     // left-hand normal: "up" for a left-to-right run
-            let up = n.y >= 0 ? n : -n
-            top.append(Seg(a + up * off, b + up * off, facing(up)))
-            topEdge.append(Seg(a, b, facing(up)))
-            under.append(Seg(b - up * off, a - up * off, facing(-up)))
-            underEdge.append(Seg(b, a, facing(-up)))
-        }
-        var t = SurfaceLoop(id: id, kind: .windowEdge, segs: top, closed: false, depth: depth, rect: rect)
-        t.edge = topEdge
-        var u = SurfaceLoop(id: id + ":under", kind: .windowEdge, segs: under.reversed(), closed: false, depth: depth, rect: rect)
-        u.edge = underEdge
-        return [t, u]
-    }
+    func rebuild(habitat s: HabitatSurfaces) { rebuild(habitat: s.air, loops: s.loops, junctions: s.junctions) }
 
     /// Builds a map for an arbitrary rectangle instead of the real displays,
     /// so tooling can lay the spider out on a mock desktop.
@@ -555,6 +570,7 @@ final class SurfaceMap {
             screenFrames = [screen]
             worldBounds = screen
             unclipped = cl
+            allJunctions = []
             reclip()
             return
         }
@@ -587,6 +603,7 @@ final class SurfaceMap {
         worldBounds = screen
         applyBlocks(to: &newLoops)
         unclipped = newLoops
+        allJunctions = []
         reclip()
     }
 

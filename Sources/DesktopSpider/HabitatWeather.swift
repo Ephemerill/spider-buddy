@@ -1274,40 +1274,17 @@ enum WeatherArt {
             let depth: CGFloat = (thick ? 4.6 : 1.7) * u
             for it in items where !it.inFront {
                 let r = toView(it.rect)
-                let solid = Habitat.solidRect(it).map(toView)
-                var line: [CGPoint] = []
                 var t = depth
                 switch it.kind {
-                case .branch:
-                    let pts = Habitat.branchPoints(it.rect, flipped: it.flipped).map(point)
-                    for i in 0..<(pts.count - 1) {
-                        for k in 0..<6 {
-                            let a = CGFloat(k) / 6
-                            line.append(CGPoint(x: pts[i].x + (pts[i + 1].x - pts[i].x) * a, y: pts[i].y + (pts[i + 1].y - pts[i].y) * a))
-                        }
+                case .branch, .rock, .boulder, .log, .driftwood, .hide, .corkBark, .cactus, .bamboo, .plant:
+                    // Along the tops of what is solid of it, as it is shaped.
+                    switch it.kind {
+                    case .branch: t *= 0.75
+                    case .corkBark, .cactus, .bamboo, .plant: t *= 0.8
+                    default: break
                     }
-                    line.append(pts[pts.count - 1])
-                    t *= 0.75
-                case .rock, .boulder:
-                    guard let s = solid else { continue }
-                    for k in 0...14 {
-                        let q = -0.86 + 1.72 * CGFloat(k) / 14
-                        line.append(CGPoint(x: s.midX + q * s.width / 2, y: s.minY + s.height * (0.52 + 0.48 * (1 - q * q).squareRoot())))
-                    }
-                case .log, .driftwood, .hide, .corkBark, .cactus, .bamboo:
-                    guard let s = solid else { continue }
-                    let inset = s.width * (it.kind == .cactus || it.kind == .bamboo ? 0.05 : 0.03)
-                    for k in 0...12 {
-                        line.append(CGPoint(x: s.minX + inset + (s.width - inset * 2) * CGFloat(k) / 12, y: s.maxY))
-                    }
-                    if it.kind == .corkBark || it.kind == .cactus || it.kind == .bamboo { t *= 0.8 }
-                case .plant:
-                    // Along the leafy top, drooping at the edges.
-                    for k in 0...10 {
-                        let q = CGFloat(k) / 10
-                        line.append(CGPoint(x: r.minX + r.width * (0.2 + 0.6 * q), y: r.maxY - r.height * (0.08 + abs(q - 0.5) * 0.16)))
-                    }
-                    t *= 0.8
+                    for line in it.geometry.topLines(step: 6) { cap(ctx, along: line.map(point), depth: t, seed: it.seed, u: u) }
+                    continue
                 case .mushrooms, .crystal, .succulent, .fern, .grass, .flower, .twigs, .leafPile, .moss, .pebbles:
                     // A sprinkle over the top of it.
                     let n = Int(r.width / (4 * u))
@@ -1322,7 +1299,6 @@ enum WeatherArt {
                 case .vine, .waterDish:
                     continue
                 }
-                cap(ctx, along: line, depth: t, seed: it.seed, u: u)
             }
         }
     }

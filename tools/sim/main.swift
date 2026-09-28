@@ -869,7 +869,7 @@ do {
     let hab = Habitat.preset(.forestFloor, world: CGSize(width: 4000, height: 1250))
     let scene = hab.bounds
     let built = hab.surfaces(standoff: tank.standoff)
-    tank.rebuild(habitat: built.air, loops: built.loops)
+    tank.rebuild(habitat: built)
     let s = Spider(map: map)
     s.config.followCursor = false
     _ = settleUntilAttached(s)
@@ -911,7 +911,7 @@ do {
     tankHab.items = Habitat.legacyItems(.forestFloor)
     let scene = tankHab.bounds
     let built = tankHab.surfaces(standoff: tank.standoff)
-    tank.rebuild(habitat: built.air, loops: built.loops)
+    tank.rebuild(habitat: built)
     let verbose = ProcessInfo.processInfo.environment["SIM_WEATHER"] != nil
     /// A spider standing on the open floor of the tank at `x`.
     func inTank(_ x: CGFloat) -> Spider {

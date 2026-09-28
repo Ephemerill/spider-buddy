@@ -462,6 +462,15 @@ final class Spider {
     /// things — the hammock, the box, full-screen manners, the laser — do
     /// not apply in there.
     private(set) var inHabitat = false
+    /// What it is standing on — the loop, the segment, how far along, and
+    /// which way it is walking — while it stands on something; nil in the
+    /// air, on a line, or in your hand.
+    var standingOn: Anchor? {
+        guard mode == .attached, !isHeld else { return nil }
+        var a = anchor
+        a.dir = walkDir
+        return a
+    }
     /// The studio's design: how it looks, who it is, how it walks.
     var look = SpiderLook()
     /// What is behind it right now, as told by whoever can see the screen;
@@ -8110,7 +8119,8 @@ final class Spider {
         }
     }
 
-    private func advanceAlong(loop: SurfaceLoop, dt: CGFloat) {
+    private func advanceAlong(loop start: SurfaceLoop, dt: CGFloat) {
+        var loop = start
         var remaining = speed * dt
         var guardCount = 0
         while remaining > 0.0001 && guardCount < 8 {
@@ -8140,6 +8150,22 @@ final class Spider {
             let n = loop.segs.count
             let nextIdx = walkDir > 0 ? anchor.segIdx + 1 : anchor.segIdx - 1
             let canContinue = loop.closed || (nextIdx >= 0 && nextIdx < n)
+            // Where this surface meets another (in the habitat), it may go
+            // on onto that one instead — and at the end of its own, must.
+            if map.hasJunctions {
+                let own = canContinue ? loop.segs[(nextIdx + n) % n] : nil
+                let ownOn = own.map { o in
+                    (activity != .roll || o.normal.y > Spider.rollFloor)
+                        && (through || o.isOpen(at: (walkDir > 0 ? 0.5 : o.len - 0.5)))
+                } ?? false
+                if let onto = crossJunction(from: loop, at: walkDir > 0 ? anchor.segIdx + 1 : anchor.segIdx, ownWayOn: ownOn),
+                   let other = map.loop(onto.loopID) {
+                    anchor = onto
+                    loop = other
+                    lastLoopRect = nil
+                    continue
+                }
+            }
             guard canContinue else { reachedEnd = true; speed = 0; break }
             let wrapped = (nextIdx + n) % n
             let next = loop.segs[wrapped]
@@ -8160,6 +8186,56 @@ final class Spider {
         }
         let seg = loop.segs[anchor.segIdx]
         anchor.t = clamp(anchor.t, 0, seg.len)
+    }
+
+    /// How often, walking past where another surface meets its own, it
+    /// goes off along that one instead.
+    private static let junctionChance: CGFloat = 0.3
+
+    /// Where it goes at vertex `vertex` of the loop it is walking, if not on
+    /// along that loop: onto a surface that meets it there (in the habitat:
+    /// the end of a vine on a stone, one branch across another, a stem off
+    /// the rim of a pot) — the same way round, so its belly stays to what it
+    /// is on, as round any corner. At the end of its own surface it must;
+    /// where its own goes on, now and then it takes the other instead —
+    /// though not on its way somewhere, and never rolling.
+    private func crossJunction(from loop: SurfaceLoop, at vertex: Int, ownWayOn: Bool) -> Anchor? {
+        guard activity != .roll, activity != .peekaboo, anchor.segIdx < loop.segs.count else { return nil }
+        let meets = map.junctions(from: loop.id, at: vertex)
+        guard !meets.isEmpty else { return nil }
+        let heading = loop.segs[anchor.segIdx].dir * walkDir
+        var ways: [(anchor: Anchor, along: V2)] = []
+        for j in meets {
+            guard let l = map.loop(j.to), !l.segs.isEmpty else { continue }
+            let n = l.segs.count
+            let idx: Int
+            if walkDir > 0 {
+                guard l.closed || j.toVertex < n else { continue }
+                idx = j.toVertex % n
+            } else {
+                guard l.closed || j.toVertex > 0 else { continue }
+                idx = (j.toVertex - 1 + n) % n
+            }
+            let seg = l.segs[idx]
+            let t: CGFloat = walkDir > 0 ? 0 : seg.len
+            guard seg.isOpen(at: walkDir > 0 ? min(0.5, seg.len) : max(seg.len - 0.5, 0)) else { continue }
+            ways.append((Anchor(loopID: l.id, segIdx: idx, t: t, dir: walkDir), seg.dir * walkDir))
+        }
+        guard !ways.isEmpty else { return nil }
+        if ownWayOn {
+            let onItsWay = huntTarget != nil || laser != nil || homing != nil || build != nil || towLine != nil || mealCarry != nil
+                || departing != nil || cursorHunt != .none || coverGoal != nil || toyPlay != nil || friendChase != nil || friendFlee != nil
+                || caught != nil || pendingDemo != nil
+            guard !onItsWay, chance(Spider.junctionChance) else { return nil }
+        }
+        // Mostly the way that turns it least.
+        let weights = ways.map { max(0.05, 1 + $0.along.dot(heading)) }
+        var pick = randRange(0, weights.reduce(0, +))
+        for (w, way) in zip(weights, ways) {
+            if pick < w { return way.anchor }
+            pick -= w
+        }
+        return ways.last?.anchor
     }
 
     // MARK: Cursor reactions

@@ -2686,7 +2686,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 check("clicked piece is selected", scene.selected == log.id)
                 check("dragged along, one to one", abs(moved.x - log.x - 120) < 3, String(format: "x %.0f -> %.0f", log.x, moved.x))
                 check("let go in the air, it comes to rest on what is under it", moved.y < 40 && (moved.y == 0 || scene.habitat.items.contains { o in
-                    o.id != log.id && (Habitat.solidRect(o).map { abs($0.maxY - HabitatLayout.ground - moved.y) < 0.5 } ?? false) }), String(format: "y %.1f", moved.y))
+                    o.id != log.id && (Habitat.restingTop(o, from: moved.x - moved.w * 0.25, to: moved.x + moved.w * 0.25)
+                        .map { abs($0 - HabitatLayout.ground - moved.y) < 0.5 } ?? false) }), String(format: "y %.1f", moved.y))
                 // Its top-right handle, pulled out.
                 let r2 = moved.rect.insetBy(dx: -5, dy: -5).offsetBy(dx: -scene.visibleWorld.minX, dy: -scene.visibleWorld.minY)
                 drag(CGPoint(x: r2.maxX, y: r2.maxY), CGPoint(x: r2.maxX + 80, y: r2.maxY + 30), steps: 15) {

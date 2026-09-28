@@ -9,7 +9,7 @@ import AppKit
 extension HabitatArt {
     /// Room around a thing's rectangle in its image: for leaves that
     /// spill over, its shadow, and its sway.
-    static func itemPad(_ size: CGSize) -> CGFloat { max(10, min(size.width, size.height) * 0.14) }
+    static func itemPad(_ size: CGSize) -> CGFloat { HabitatShape.pad(size) }
 
     /// A thing's picture, `size` points across (its rectangle), painted
     /// with `pad` points of room round it.
@@ -52,13 +52,7 @@ extension HabitatArt {
     }
 
     static func contactShadow(_ ctx: CGContext, _ r: CGRect, _ kind: HabitatItemKind) {
-        let w: CGFloat
-        switch kind {
-        case .plant: w = r.width * 0.5
-        case .cactus, .corkBark, .bamboo: w = r.width * 0.8
-        case .grass, .fern, .flower: w = r.width * 0.6
-        default: w = r.width * 0.96
-        }
+        let w = r.width * kind.definition.shadow
         let h = min(max(r.height * 0.12, 5), 12)
         ctx.saveGState()
         ctx.translateBy(x: r.midX, y: r.minY + 1)
@@ -127,7 +121,7 @@ extension HabitatArt {
 
     static func paintLog(_ r: CGRect, _ s: Int, _ u: CGFloat, _ biome: Biome, _ ctx: CGContext, hollow: Bool) {
         let (light, mid, dark) = woodColours(s)
-        let body = CGPath(roundedRect: r, cornerWidth: r.height / 2, cornerHeight: r.height / 2, transform: nil)
+        let body = HabitatShape.logBody(r)
         fill(ctx, body, [light, mid, dark], [0, 0.45, 1], from: CGPoint(x: 0, y: r.maxY), to: CGPoint(x: 0, y: r.minY))
         ctx.saveGState()
         ctx.addPath(body)
@@ -178,10 +172,9 @@ extension HabitatArt {
         ctx.strokePath()
         outline(ctx, face, mid, u)
         if hollow {
-            let hole = CGRect(x: r.minX + 2 * u, y: r.minY + r.height * 0.06, width: endW, height: r.height * 0.88)
+            let (hole, inside) = HabitatShape.logHole(r, u: u)
             let rim = CGPath(ellipseIn: hole, transform: nil)
             fill(ctx, rim, [c(0.86, 0.7, 0.48), c(0.66, 0.5, 0.32)], from: CGPoint(x: hole.minX, y: hole.maxY), to: CGPoint(x: hole.maxX, y: hole.minY))
-            let inside = hole.insetBy(dx: hole.width * 0.14, dy: hole.height * 0.12)
             fill(ctx, CGPath(ellipseIn: inside, transform: nil), [c(0.04, 0.03, 0.02), c(0.2, 0.13, 0.08)],
                  from: CGPoint(x: inside.midX, y: inside.maxY), to: CGPoint(x: inside.midX, y: inside.minY))
             outline(ctx, rim, mid, u)
@@ -193,29 +186,10 @@ extension HabitatArt {
 
     static func paintBranch(_ r: CGRect, _ s: Int, _ u: CGFloat, _ ctx: CGContext) {
         let (light, mid, dark) = woodColours(s)
-        let pts = Habitat.branchPoints(r, flipped: false).map(\.point)
-        let base = max(6 * u, r.height * 0.1), tip = max(3 * u, r.height * 0.045)
+        let pts = HabitatShape.branchLine(r).map(\.point)
+        let base = HabitatShape.branchWidths(r, u: u).base
         // A tapering limb: offset each side of the line, smoothed.
-        func side(_ sign: CGFloat) -> [CGPoint] {
-            var out: [CGPoint] = []
-            for (i, p) in pts.enumerated() {
-                let a = i == 0 ? pts[0] : pts[i - 1], b = i == pts.count - 1 ? pts[i] : pts[i + 1]
-                let d = CGPoint(x: b.x - a.x, y: b.y - a.y)
-                let len = max(hypot(d.x, d.y), 0.001)
-                let n = CGPoint(x: -d.y / len, y: d.x / len)
-                let w = (base + (tip - base) * CGFloat(i) / CGFloat(pts.count - 1)) / 2
-                out.append(CGPoint(x: p.x + n.x * w * sign, y: p.y + n.y * w * sign))
-            }
-            return out
-        }
-        let top = side(1), bottom = side(-1)
-        let limb = CGMutablePath()
-        limb.move(to: bottom[0])
-        limb.addLine(to: top[0])
-        limb.addQuadCurve(to: top[2], control: top[1])
-        limb.addArc(center: pts[2], radius: tip / 2, startAngle: .pi / 2, endAngle: -.pi / 2, clockwise: true)
-        limb.addQuadCurve(to: bottom[0], control: bottom[1])
-        limb.closeSubpath()
+        let limb = HabitatShape.branchLimb(r, u: u)
         // Twigs first, behind.
         for k in 0..<4 {
             let t = 0.3 + CGFloat(k) * 0.17
@@ -272,32 +246,10 @@ extension HabitatArt {
     static func paintDriftwood(_ r: CGRect, _ s: Int, _ u: CGFloat, _ ctx: CGContext) {
         let light = c(0.86, 0.81, 0.73), mid = c(0.7, 0.65, 0.58), dark = c(0.5, 0.46, 0.41)
         // A bleached trunk lying on its side: thick and knobbly at the root
-        // end, tapering off to a broken tip.
-        let body = CGMutablePath()
+        // end, tapering off to a broken tip, and a stub of a branch sticking up.
         let h = r.height * 0.6
-        body.move(to: CGPoint(x: r.minX + r.width * 0.03, y: r.minY + h * 0.12))
-        // The root end: a couple of knuckles.
-        body.addQuadCurve(to: CGPoint(x: r.minX, y: r.minY + h * 0.55), control: CGPoint(x: r.minX - r.width * 0.02, y: r.minY + h * 0.3))
-        body.addQuadCurve(to: CGPoint(x: r.minX + r.width * 0.05, y: r.minY + h * 0.98), control: CGPoint(x: r.minX - r.width * 0.01, y: r.minY + h * 0.85))
-        body.addQuadCurve(to: CGPoint(x: r.minX + r.width * 0.14, y: r.minY + h * 0.92), control: CGPoint(x: r.minX + r.width * 0.1, y: r.minY + h * 1.08))
-        // Along the top to the tip.
-        body.addCurve(to: CGPoint(x: r.maxX - r.width * 0.02, y: r.minY + h * 0.5),
-                      control1: CGPoint(x: r.minX + r.width * 0.45, y: r.minY + h * 0.95), control2: CGPoint(x: r.minX + r.width * 0.75, y: r.minY + h * 0.62))
-        // A splintered end.
-        body.addLine(to: CGPoint(x: r.maxX, y: r.minY + h * 0.4))
-        body.addLine(to: CGPoint(x: r.maxX - r.width * 0.03, y: r.minY + h * 0.33))
-        body.addLine(to: CGPoint(x: r.maxX - r.width * 0.01, y: r.minY + h * 0.24))
-        body.addCurve(to: CGPoint(x: r.minX + r.width * 0.03, y: r.minY + h * 0.12),
-                      control1: CGPoint(x: r.minX + r.width * 0.7, y: r.minY + h * 0.05), control2: CGPoint(x: r.minX + r.width * 0.3, y: r.minY - h * 0.04))
-        body.closeSubpath()
-        // A stub of a branch sticking up.
-        let stub = CGMutablePath()
+        let (body, stub) = HabitatShape.driftwood(r, s, u: u)
         let sx = r.minX + r.width * (0.3 + rnd(s, 1) * 0.2)
-        stub.move(to: CGPoint(x: sx, y: r.minY + h * 0.7))
-        stub.addLine(to: CGPoint(x: sx - r.width * 0.06, y: r.maxY))
-        stub.addLine(to: CGPoint(x: sx - r.width * 0.02, y: r.maxY - 2 * u))
-        stub.addLine(to: CGPoint(x: sx + r.width * 0.05, y: r.minY + h * 0.75))
-        stub.closeSubpath()
         fill(ctx, stub, [light, mid], from: CGPoint(x: sx - 10 * u, y: 0), to: CGPoint(x: sx + 10 * u, y: 0))
         outline(ctx, stub, mid, u)
         fill(ctx, body, [light, mid, dark], [0, 0.5, 1], from: CGPoint(x: 0, y: r.minY + h), to: CGPoint(x: 0, y: r.minY))
@@ -326,12 +278,7 @@ extension HabitatArt {
 
     static func paintBark(_ r: CGRect, _ s: Int, _ u: CGFloat, _ biome: Biome, _ ctx: CGContext) {
         let (light, mid, dark) = woodColours(s + 3)
-        let slab = CGMutablePath()
-        slab.move(to: CGPoint(x: r.minX, y: r.minY))
-        slab.addLine(to: CGPoint(x: r.minX + r.width * 0.04, y: r.maxY - r.width * 0.3))
-        slab.addQuadCurve(to: CGPoint(x: r.maxX - r.width * 0.1, y: r.maxY - r.width * 0.12), control: CGPoint(x: r.midX, y: r.maxY + r.width * 0.05))
-        slab.addLine(to: CGPoint(x: r.maxX, y: r.minY))
-        slab.closeSubpath()
+        let slab = HabitatShape.barkSlab(r)
         // Round like a split trunk: dark at the edges, light down the middle.
         fill(ctx, slab, [dark, mid, light, mid, shade(dark, -0.1)], [0, 0.2, 0.42, 0.75, 1],
              from: CGPoint(x: r.minX, y: 0), to: CGPoint(x: r.maxX, y: 0))
@@ -369,25 +316,7 @@ extension HabitatArt {
 
     // MARK: Stone
 
-    static func rockPath(_ r: CGRect, _ s: Int) -> CGPath {
-        let n = 9
-        var pts: [CGPoint] = []
-        for k in 0..<n {
-            let a = CGFloat(k) / CGFloat(n) * 2 * .pi + 0.2
-            let rad = 1 - rnd(s, k) * 0.16
-            // A flat-bottomed stone: the lower half squashed onto the ground.
-            pts.append(CGPoint(x: r.midX + cos(a) * r.width / 2 * rad,
-                               y: r.minY + r.height * 0.3 + sin(a) * r.height * (sin(a) < 0 ? 0.3 : 0.7) * rad))
-        }
-        let p = CGMutablePath()
-        p.move(to: CGPoint(x: (pts[n - 1].x + pts[0].x) / 2, y: (pts[n - 1].y + pts[0].y) / 2))
-        for k in 0..<n {
-            let nx = pts[(k + 1) % n]
-            p.addQuadCurve(to: CGPoint(x: (pts[k].x + nx.x) / 2, y: (pts[k].y + nx.y) / 2), control: pts[k])
-        }
-        p.closeSubpath()
-        return p
-    }
+    static func rockPath(_ r: CGRect, _ s: Int) -> CGPath { HabitatShape.rockPath(r, s) }
 
     static func rockColour(_ biome: Biome, _ s: Int) -> CGColor {
         let v = (rnd(s, 1) - 0.5) * 0.08
@@ -460,13 +389,10 @@ extension HabitatArt {
     // MARK: Plants
 
     static func paintBamboo(_ r: CGRect, _ s: Int, _ u: CGFloat, _ ctx: CGContext) {
-        let stalks = 3
-        for k in 0..<stalks {
-            let w = r.width * 0.2
-            let x = r.minX + r.width * (0.2 + CGFloat(k) * 0.3) - w / 2
-            let h = r.height * (k == 1 ? 1 : 0.7 + rnd(s, k) * 0.2)
+        for (k, st) in HabitatShape.bambooStalks(r, s).enumerated() {
+            let w = st.rect.width, x = st.rect.minX, h = st.rect.height
             let col = k == 1 ? c(0.56, 0.72, 0.3) : c(0.5, 0.66, 0.28)
-            let stalk = CGPath(roundedRect: CGRect(x: x, y: r.minY, width: w, height: h), cornerWidth: w * 0.3, cornerHeight: w * 0.3, transform: nil)
+            let stalk = CGPath(roundedRect: st.rect, cornerWidth: st.radius, cornerHeight: st.radius, transform: nil)
             fill(ctx, stalk, [shade(col, -0.25), shade(col, 0.2), col, shade(col, -0.3)], [0, 0.3, 0.6, 1],
                  from: CGPoint(x: x, y: 0), to: CGPoint(x: x + w, y: 0))
             // Nodes.
@@ -494,16 +420,9 @@ extension HabitatArt {
     static func paintCactus(_ r: CGRect, _ s: Int, _ u: CGFloat, _ ctx: CGContext) {
         let green = c(0.4, 0.64, 0.4)
         let w = r.width * 0.4
-        let trunk = CGPath(roundedRect: CGRect(x: r.midX - w / 2, y: r.minY, width: w, height: r.height * 0.97), cornerWidth: w / 2, cornerHeight: w / 2, transform: nil)
+        let (trunk, armRects) = HabitatShape.cactus(r)
         let arms = CGMutablePath()
-        for (side, lift, len) in [(CGFloat(-1), CGFloat(0.35), CGFloat(0.35)), (1, 0.5, 0.3)] {
-            let aw = w * 0.62
-            let elbowX = side > 0 ? r.midX + w * 0.3 : r.midX - w * 0.3
-            let outX = side > 0 ? r.midX + w / 2 + aw * 0.55 : r.midX - w / 2 - aw * 0.55
-            let y = r.minY + r.height * lift
-            arms.addRoundedRect(in: CGRect(x: min(elbowX, outX) - aw * 0.1, y: y, width: abs(outX - elbowX) + aw * 0.5, height: aw), cornerWidth: aw / 2, cornerHeight: aw / 2)
-            arms.addRoundedRect(in: CGRect(x: outX - aw / 2, y: y, width: aw, height: r.height * len + aw), cornerWidth: aw / 2, cornerHeight: aw / 2)
-        }
+        for a in armRects { arms.addRoundedRect(in: a.rect, cornerWidth: a.radius, cornerHeight: a.radius) }
         // The arms, outlined, then the trunk over where they join it.
         fill(ctx, arms, [shade(green, -0.25), shade(green, 0.18), green, shade(green, -0.3)], [0, 0.35, 0.6, 1],
              from: CGPoint(x: r.minX, y: 0), to: CGPoint(x: r.maxX, y: 0))
@@ -551,39 +470,27 @@ extension HabitatArt {
 
     static func paintPlant(_ r: CGRect, _ s: Int, _ u: CGFloat, _ ctx: CGContext) {
         // Terracotta pot.
-        let pot = CGMutablePath()
         let pw = r.width * 0.4, ph = r.height * 0.2
-        pot.move(to: CGPoint(x: r.midX - pw * 0.4, y: r.minY))
-        pot.addLine(to: CGPoint(x: r.midX + pw * 0.4, y: r.minY))
-        pot.addLine(to: CGPoint(x: r.midX + pw * 0.5, y: r.minY + ph * 0.8))
-        pot.addLine(to: CGPoint(x: r.midX - pw * 0.5, y: r.minY + ph * 0.8))
-        pot.closeSubpath()
+        let (pot, rim) = HabitatShape.plantPot(r, u: u)
         let potCol = c(0.78, 0.46, 0.3)
         fill(ctx, pot, [shade(potCol, -0.2), shade(potCol, 0.15), shade(potCol, -0.25)], [0, 0.4, 1], from: CGPoint(x: r.midX - pw / 2, y: 0), to: CGPoint(x: r.midX + pw / 2, y: 0))
         outline(ctx, pot, potCol, u)
-        let rim = CGPath(roundedRect: CGRect(x: r.midX - pw * 0.56, y: r.minY + ph * 0.76, width: pw * 1.12, height: ph * 0.28), cornerWidth: 2 * u, cornerHeight: 2 * u, transform: nil)
         fill(ctx, rim, [shade(potCol, 0.2), potCol], from: CGPoint(x: 0, y: r.minY + ph), to: CGPoint(x: 0, y: r.minY + ph * 0.76))
         outline(ctx, rim, potCol, u)
-        let stemBase = CGPoint(x: r.midX, y: r.minY + ph)
         let greens = [c(0.3, 0.56, 0.3), c(0.38, 0.64, 0.34), c(0.26, 0.5, 0.28)]
         // Stems and big leaves fanning out.
-        for k in 0..<7 {
-            let a = CGFloat(k - 3) * 0.3 + (rnd(s, k) - 0.5) * 0.15
-            let len = r.height * (0.45 + rnd(s + 1, k) * 0.25)
-            let tip = CGPoint(x: stemBase.x + sin(a) * len * 0.9, y: stemBase.y + cos(a) * len)
+        for (k, st) in HabitatShape.plantStems(r, s).enumerated() {
             ctx.setStrokeColor(c(0.28, 0.46, 0.24))
             ctx.setLineWidth(2 * u)
             ctx.beginPath()
-            ctx.move(to: stemBase)
-            ctx.addQuadCurve(to: tip, control: CGPoint(x: stemBase.x + sin(a) * len * 0.2, y: stemBase.y + len * 0.7))
+            ctx.move(to: st.base)
+            ctx.addQuadCurve(to: st.tip, control: st.control)
             ctx.strokePath()
-            bigPlantLeaf(ctx, at: tip, size: r.width * (0.26 + rnd(s + 2, k) * 0.08), angle: .pi / 2 - a * 1.4, colour: greens[k % 3], u: u)
+            bigPlantLeaf(ctx, at: st.tip, size: st.leaf, angle: st.angle, colour: greens[k % 3], u: u)
         }
         // The broad leaves on top it can sit on.
-        for k in 0..<3 {
-            let x = r.minX + r.width * (0.3 + CGFloat(k) * 0.2)
-            bigPlantLeaf(ctx, at: CGPoint(x: x, y: r.maxY - r.height * 0.16), size: r.width * 0.3,
-                         angle: CGFloat(k - 1) * 0.35 + .pi / 2 - 0.1, colour: greens[(k + 1) % 3], u: u, flat: true)
+        for (k, pad) in HabitatShape.plantPads(r).enumerated() {
+            bigPlantLeaf(ctx, at: pad.at, size: pad.size, angle: pad.angle, colour: greens[(k + 1) % 3], u: u, flat: true)
         }
     }
 
@@ -591,15 +498,7 @@ extension HabitatArt {
         ctx.saveGState()
         ctx.translateBy(x: p.x, y: p.y)
         ctx.rotate(by: flat ? 0 : angle - .pi / 2)
-        let w = flat ? l * 0.9 : l * 0.62, h = flat ? l * 0.34 : l
-        let leaf = CGMutablePath()
-        leaf.move(to: CGPoint(x: 0, y: flat ? 0 : -h * 0.1))
-        if flat {
-            leaf.addEllipse(in: CGRect(x: -w / 2, y: -h / 2, width: w, height: h))
-        } else {
-            leaf.addCurve(to: CGPoint(x: 0, y: h), control1: CGPoint(x: -w * 0.8, y: h * 0.2), control2: CGPoint(x: -w * 0.5, y: h * 0.9))
-            leaf.addCurve(to: CGPoint(x: 0, y: -h * 0.1), control1: CGPoint(x: w * 0.5, y: h * 0.9), control2: CGPoint(x: w * 0.8, y: h * 0.2))
-        }
+        let (leaf, w, h) = HabitatShape.bigLeaf(l, flat: flat)
         fill(ctx, leaf, [shade(colour, 0.22), colour, shade(colour, -0.2)], [0, 0.5, 1], from: CGPoint(x: -w / 2, y: h), to: CGPoint(x: w / 2, y: 0))
         ctx.setStrokeColor(alpha(shade(colour, 0.35), 0.8))
         ctx.setLineWidth(0.9 * u)
@@ -625,24 +524,16 @@ extension HabitatArt {
 
     static func paintVine(_ r: CGRect, _ s: Int, _ u: CGFloat, _ ctx: CGContext) {
         let green = c(0.3, 0.55, 0.3), dark = c(0.2, 0.4, 0.22)
-        for (col, w, off) in [(dark, 3.2 * u, -2 * u), (green, 2.6 * u, 2 * u)] {
+        for (col, st) in zip([dark, green], HabitatShape.vineStrands(r, u: u)) {
             ctx.setStrokeColor(col)
-            ctx.setLineWidth(w)
+            ctx.setLineWidth(st.width)
             ctx.beginPath()
-            ctx.move(to: CGPoint(x: r.midX + off, y: r.maxY))
-            ctx.addCurve(to: CGPoint(x: r.midX - off, y: r.minY),
-                         control1: CGPoint(x: r.midX + off * 4, y: r.maxY - r.height * 0.33),
-                         control2: CGPoint(x: r.midX - off * 4, y: r.maxY - r.height * 0.66))
+            ctx.move(to: st.from)
+            ctx.addCurve(to: st.to, control1: st.c1, control2: st.c2)
             ctx.strokePath()
         }
-        let n = max(3, Int(r.height / (18 * u)))
-        for k in 0..<n {
-            let t = (CGFloat(k) + 0.5) / CGFloat(n)
-            let y = r.maxY - t * r.height
-            let side: CGFloat = k % 2 == 0 ? 1 : -1
-            let x = r.midX + side * 2 * u + sin(t * 6) * 3 * u
-            heartLeaf(ctx, at: CGPoint(x: x, y: y), size: (11 + rnd(s, k) * 5) * u * (1 - t * 0.3),
-                      angle: side > 0 ? -0.5 - rnd(s + 1, k) * 0.4 : .pi + 0.5 + rnd(s + 1, k) * 0.4,
+        for (k, leaf) in HabitatShape.vineLeaves(r, s, u: u).enumerated() {
+            heartLeaf(ctx, at: leaf.at, size: leaf.size, angle: leaf.angle,
                       colour: k % 3 == 0 ? c(0.36, 0.62, 0.34) : c(0.28, 0.52, 0.28), u: u)
         }
     }
@@ -668,16 +559,9 @@ extension HabitatArt {
     static func paintDish(_ r: CGRect, _ s: Int, _ u: CGFloat, _ ctx: CGContext) {
         let stone = c(0.6, 0.58, 0.55)
         // The front of the bowl, then its rim seen from above, then water.
-        let front = CGMutablePath()
-        front.move(to: CGPoint(x: r.minX, y: r.minY + r.height * 0.6))
-        front.addLine(to: CGPoint(x: r.maxX, y: r.minY + r.height * 0.6))
-        front.addQuadCurve(to: CGPoint(x: r.maxX - r.width * 0.1, y: r.minY), control: CGPoint(x: r.maxX, y: r.minY + r.height * 0.1))
-        front.addLine(to: CGPoint(x: r.minX + r.width * 0.1, y: r.minY))
-        front.addQuadCurve(to: CGPoint(x: r.minX, y: r.minY + r.height * 0.6), control: CGPoint(x: r.minX, y: r.minY + r.height * 0.1))
-        front.closeSubpath()
+        let (front, rim) = HabitatShape.dish(r)
         fill(ctx, front, [shade(stone, -0.25), shade(stone, 0.12), shade(stone, -0.3)], [0, 0.35, 1], from: CGPoint(x: r.minX, y: 0), to: CGPoint(x: r.maxX, y: 0))
         outline(ctx, front, stone, u)
-        let rim = CGRect(x: r.minX, y: r.minY + r.height * 0.34, width: r.width, height: r.height * 0.56)
         let rimPath = CGPath(ellipseIn: rim, transform: nil)
         fill(ctx, rimPath, [shade(stone, 0.3), stone], from: CGPoint(x: 0, y: rim.maxY), to: CGPoint(x: 0, y: rim.minY))
         outline(ctx, rimPath, stone, u)

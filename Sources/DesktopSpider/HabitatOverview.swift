@@ -298,7 +298,7 @@ final class HabitatOverviewView: NSView {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             let dx = (at.x - it.x) * k
-            let dy = it.kind.hangs ? 0 : (HabitatSceneView.liftable(it.kind) ? (max(at.y, HabitatLayout.ground) - r.minY) * k : 0)
+            let dy = it.kind.hangs ? 0 : (it.kind.liftable ? (max(at.y, HabitatLayout.ground) - r.minY) * k : 0)
             let pad = HabitatArt.itemPad(r.size)
             l.frame = mapRect(r).insetBy(dx: -pad * k, dy: -pad * k).offsetBy(dx: dx, dy: dy)
             pickLayer.isHidden = true
