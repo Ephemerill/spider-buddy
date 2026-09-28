@@ -14,8 +14,11 @@ NOTES=notes.md tools/release.sh --publish    # notes.md = the "What's new" (opti
 Run `tools/release.sh` without `--publish` first to build, notarize and package
 locally without making anything public. The tag is always `v<VERSION>`.
 
-Commit the version bump and built binaries as usual (`git add -A`); the `.dmg`,
-`Spider Buddy.app` and `build/appcast.xml` are git-ignored.
+**Commit and push before `--publish`.** `gh release create` tags whatever
+`main` is on GitHub at that moment, so an unpushed release gets tagged on the
+previous version's commit. Commit the version bump, sources and built binaries
+as usual (`git add -A`), push, then publish. The `.dmg`, `Spider Buddy.app` and
+`build/appcast.xml` are git-ignored.
 
 ## The pipeline
 
@@ -31,8 +34,10 @@ Commit the version bump and built binaries as usual (`git add -A`); the `.dmg`,
 4. **Notarize the app.** Zips it, submits it to Apple with
    `notarytool submit --wait`, then staples the ticket to the app, so the copy
    dragged out of the `.dmg` (or installed by Sparkle) works offline.
-5. **Package.** Builds `build/SpiderBuddy-<VERSION>.dmg` (app and an
-   Applications link).
+5. **Package.** `tools/dmg.sh` builds `build/SpiderBuddy-<VERSION>.dmg`: the
+   app and an Applications link, set out by Finder (through AppleScript) on the
+   backdrop in `Resources/dmg-background.tiff`, with the app's icon on the
+   volume. The first run asks to let the terminal control Finder.
 6. **Notarize the .dmg.** Signs it, submits it, staples it, and checks both
    the `.dmg` and the app with `spctl` (Gatekeeper).
 7. **Appcast.** Signs the `.dmg` with the Sparkle EdDSA key, writes
@@ -91,6 +96,9 @@ SPARKLE_KEY_FILE=key tools/release.sh   # use an exported EdDSA key instead of t
 - Changing from ad-hoc signing to Developer ID (0.8.0 → 0.9.0) changes the
   app's signing identity, so users grant Screen Recording and Accessibility
   once more after that update.
+- The app's icon (`Resources/AppIcon.icns`) and the .dmg's backdrop are
+  drawn by `tools/art.sh` from `AppIcon.swift`; rerun it after changing
+  either, and commit what it writes to `Resources/`.
 - `./run.sh` / `./build.sh` (the `spiders.app` testing build) stay ad-hoc
   signed. Only releases are signed and notarized.
 - Signing and notarizing use the keychain, so the script can't run inside a

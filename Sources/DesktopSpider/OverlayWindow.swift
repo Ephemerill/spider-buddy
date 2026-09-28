@@ -82,7 +82,8 @@ final class SpiderView: NSView {
         // steady rate whatever the shape is doing; a change of outfit is a
         // new picture at once.
         let now = CACurrentMediaTime()
-        let hold: CFTimeInterval = pose.outfit.isAnimated ? 1.0 / 30.0 : 0.5
+        // (Drips falling off it too.)
+        let hold: CFTimeInterval = pose.outfit.isAnimated || !pose.specks.isEmpty ? 1.0 / 30.0 : 0.5
         if let old = drawn, now - sinceDraw < hold, old.outfit == pose.outfit, SpiderView.shapeDelta(old, pose) < 0.04 {
             return
         }
@@ -99,7 +100,11 @@ final class SpiderView: NSView {
         // Partly behind a window: the cut-out moves with it, so every move
         // is a new picture.
         if a.hiddenBy != b.hiddenBy || (!b.hiddenBy.isEmpty && (a.pos - b.pos).length > 0.3) { return .infinity }
+        // A drip coming or going is a new picture at once (while they fall,
+        // the callers repaint it at a steady rate: see `specks`).
+        if a.specks.count != b.specks.count { return .infinity }
         var d = abs(angleDelta(a.heading, b.heading)) * 45
+        d += (abs(a.wet - b.wet) + abs(a.snow - b.snow) + abs(a.dust - b.dust) + abs(a.chill - b.chill)) * 60
         d += (abs(a.stretch - b.stretch) + abs(a.fatten - b.fatten)) * 40
         d += (a.look - b.look).length * 7
         d += (abs(a.blink - b.blink) + abs(a.happy - b.happy)) * 9
@@ -109,6 +114,8 @@ final class SpiderView: NSView {
         // tag fading — each a fraction of a point a frame, and each has to
         // be drawn every frame or it comes in steps.
         d += abs(a.headTilt - b.headTilt) * 45
+        d += abs(a.headTurn - b.headTurn) * 40
+        d += abs(a.abdomenTilt - b.abdomenTilt) * 45
         d += abs(a.bodyPitch - b.bodyPitch) * 45
         d += (a.bodyShift - b.bodyShift).length
         d += abs(a.spin - b.spin) * 30

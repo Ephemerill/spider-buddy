@@ -37,6 +37,11 @@ SPARKLE="$(tools/sparkle.sh)"
 FEED_URL="https://ephemerill.github.io/spider-buddy/appcast.xml"
 SPARKLE_PUBLIC_KEY="XOyzaJD04viRmPjvWSW7qP2/DWJhofgLGDLXi0+Bcv4="
 
+# Bug reports go through a Cloudflare Worker (tools/report-worker), which
+# holds the Discord webhook as a secret and passes reports on to it. The
+# Worker's own address isn't secret: every build reports to it.
+REPORT_URL="https://spider-buddy-reports.ephemerill.workers.dev"
+
 echo "==> Compiling $VERSION ($CONF)  [$(xcrun swiftc --version | head -1)]"
 mkdir -p build
 # shellcheck disable=SC2086
@@ -50,6 +55,8 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp "build/$BIN" "$APP/Contents/MacOS/$BIN"
 ditto "$SPARKLE/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
+# Its icon, drawn by tools/art.sh (the menu bar spider on a tile).
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -61,6 +68,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>com.gabriel.desktopspider</string>
   <key>CFBundleExecutable</key><string>DesktopSpider</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
@@ -74,6 +82,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>SUVerifyUpdateBeforeExtraction</key><true/>
   <key>SUEnableAutomaticChecks</key><true/>
   <key>SUScheduledCheckInterval</key><integer>86400</integer>
+  <key>SpiderReportEndpoint</key><string>$REPORT_URL</string>
+  <key>NSAudioCaptureUsageDescription</key><string>Your spider listens for the beat of whatever music is playing, so it can dance along. Nothing is recorded or kept.</string>
 </dict>
 </plist>
 PLIST

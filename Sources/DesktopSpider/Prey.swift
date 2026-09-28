@@ -128,7 +128,7 @@ enum PreyKind: Int, CaseIterable {
 }
 
 final class Prey {
-    enum State { case loose, caught, eaten }
+    enum State { case loose, caught, eaten, squashed }
 
     let kind: PreyKind
     let id: Int
@@ -147,6 +147,9 @@ final class Prey {
     var fear: CGFloat = 0
     /// How much of it has been eaten, 0..1 — it shrinks away.
     var eaten: CGFloat = 0
+    /// How flat it has been pressed, 0..1.
+    private(set) var squash: CGFloat = 0
+    private var squashedFor: CGFloat = 0
     var alpha: CGFloat = 1
     private var nextMove: CGFloat = 0
     private var restUntil: CGFloat = 0
@@ -278,6 +281,18 @@ final class Prey {
         if kind.takesOff { takeOff(map: map, awayFrom: spider) }
     }
 
+    /// Pressed flat under the pointer: it stays a splat where it is for a
+    /// moment, then fades away.
+    func squashFlat() {
+        state = .squashed
+        held = false
+        anchor = nil
+        vel = .zero
+        flying = false
+        dartTo = nil
+        squashedFor = 0
+    }
+
     /// A bite bounced off its shell: it clamps up tighter, and has had
     /// about enough of this place.
     func knock() {
@@ -387,13 +402,21 @@ final class Prey {
 
     func update(dt: CGFloat, t: CGFloat, map: SurfaceMap, spider: V2, spiderLoop: String? = nil, cursor: V2? = nil) {
         age += dt
-        phase += dt
+        if state != .squashed { phase += dt }
         lastDt = dt
         lastSpider = spider
         astir = false
         switch state {
         case .eaten:
             alpha = max(0, alpha - dt * 3)
+            return
+        case .squashed:
+            // Flat in a blink, left lying a while, then fading.
+            squashedFor += dt
+            squash = min(1, squashedFor / 0.07)
+            if squashedFor > 1.6 { alpha = max(0, alpha - dt * 1.4) }
+            if alpha <= 0 { gone = true }
+            astir = !gone
             return
         case .caught:
             return
@@ -955,6 +978,11 @@ enum PreyRenderer {
         ctx.saveGState()
         ctx.setAllowsAntialiasing(true)
         let s = p.drawScale * (1 - p.eaten * 0.85)
+        if p.squash > 0 {
+            drawSplat(p, in: ctx)
+            // Pressed flat against the screen, whichever way up it was.
+            ctx.scaleBy(x: 1 + 0.35 * p.squash, y: 1 - 0.72 * p.squash)
+        }
         ctx.rotate(by: p.heading)
         ctx.scaleBy(x: s * p.facing, y: s)
         ctx.setAlpha(p.alpha)
@@ -974,6 +1002,38 @@ enum PreyRenderer {
     }
 
     private static let outline = CGColor(red: 0.16, green: 0.12, blue: 0.06, alpha: 1)
+
+    /// What comes out of it when it is squashed: a blot and a few drops,
+    /// spread the same way every time for the same creature.
+    private static func drawSplat(_ p: Prey, in ctx: CGContext) {
+        let green = CGColor(red: 0.6, green: 0.64, blue: 0.26, alpha: 1)
+        let (juice, size): (CGColor, CGFloat)
+        switch p.kind {
+        case .cricket, .beetle: (juice, size) = (green, 1)
+        case .worm: (juice, size) = (CGColor(red: 0.6, green: 0.36, blue: 0.3, alpha: 1), 0.9)
+        case .moth: (juice, size) = (green, 0.85)
+        case .ladybug: (juice, size) = (CGColor(red: 0.8, green: 0.62, blue: 0.16, alpha: 1), 0.65)
+        case .fruitFly, .ant: (juice, size) = (green, 0.5)
+        case .mosquito: (juice, size) = (CGColor(red: 0.62, green: 0.1, blue: 0.08, alpha: 1), 0.55)
+        }
+        let r = 7 * size * p.drawScale * (0.4 + 0.6 * p.squash)
+        ctx.saveGState()
+        ctx.setAlpha(p.alpha * 0.75)
+        ctx.setFillColor(juice)
+        ctx.fillEllipse(in: CGRect(x: -r * 1.3, y: -r * 0.8, width: r * 2.6, height: r * 1.6))
+        var seed = UInt64(truncatingIfNeeded: p.id) &* 0x9E37_79B9_7F4A_7C15 | 1
+        func next() -> CGFloat {
+            seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17
+            return CGFloat(seed % 10_000) / 10_000
+        }
+        for i in 0..<6 {
+            let a = CGFloat(i) / 6 * 2 * .pi + next() * 0.8
+            let d = r * (1.3 + next() * 0.9)
+            let dr = r * (0.18 + next() * 0.22)
+            ctx.fillEllipse(in: CGRect(x: cos(a) * d * 1.2 - dr, y: sin(a) * d * 0.75 - dr, width: dr * 2, height: dr * 2))
+        }
+        ctx.restoreGState()
+    }
 
     private static func drawCricket(_ p: Prey, in ctx: CGContext) {
         let body = CGColor(red: 0.55, green: 0.47, blue: 0.24, alpha: 1)
@@ -1358,8 +1418,10 @@ final class PreyView: NSView {
     private var grabbedAt = V2.zero
     /// The toy has been lifted on this drag (as against a click, a poke).
     private var toyLifted = false
+    /// Squashed on this press: the press stays ours until it is let go.
+    private var squashing = false
     /// Something is in hand here: a drag on it goes on until it is let go.
-    var busy: Bool { grabbed != nil || grabbedToy != nil }
+    var busy: Bool { grabbed != nil || grabbedToy != nil || squashing }
     private var dragSamples: [(p: V2, t: TimeInterval)] = []
     override var isFlipped: Bool { false }
 
@@ -1370,7 +1432,7 @@ final class PreyView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let spider else { return nil }
-        if grabbed != nil || grabbedToy != nil { return self }
+        if busy { return self }
         let w = V2(point.x + worldOrigin.x, point.y + worldOrigin.y)
         return spider.preyHit(w) != nil || toyBox?.hit(w) != nil ? self : nil
     }
@@ -1406,7 +1468,16 @@ final class PreyView: NSView {
         }
     }
 
+    /// A force press on something in hand squashes it.
+    override func pressureChange(with event: NSEvent) {
+        guard event.stage >= 2, let p = grabbed, let spider else { return }
+        spider.squashPrey(p)
+        grabbed = nil
+        squashing = true
+    }
+
     override func mouseUp(with event: NSEvent) {
+        squashing = false
         guard let spider else { return }
         let w = world(event)
         var v = V2.zero

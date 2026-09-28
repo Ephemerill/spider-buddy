@@ -22,6 +22,10 @@ final class SystemSense {
     var onPluggedIn: (() -> Void)?
     /// It started or stopped raining.
     var onRain: ((Bool) -> Void)?
+    /// What it is doing outside, every time it is looked up: the WMO
+    /// weather code, the wind in km/h, whether it is day, and the
+    /// temperature in °C (for the habitat's weather to follow).
+    var onOutside: ((Int, Double, Bool, Double?) -> Void)?
 
     private(set) var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
     private(set) var onAC = SystemSense.readOnAC()
@@ -256,7 +260,11 @@ final class SystemSense {
     }
 
     private func checkWeather() {
-        if fakeRain { setRaining(true); return }
+        if fakeRain {
+            setRaining(true)
+            onOutside?(63, 12, true, 14)
+            return
+        }
         if let p = place, Date().timeIntervalSince(p.at) < 6 * 3600 {
             fetchRain(lat: p.lat, lon: p.lon)
             return
@@ -285,11 +293,13 @@ final class SystemSense {
     private func fetchRain(lat: Double, lon: Double) {
         // A tenth of a degree (a few miles) is plenty for rain.
         let q = String(format: "latitude=%.1f&longitude=%.1f", lat, lon)
-        guard let url = URL(string: "https://api.open-meteo.com/v1/forecast?\(q)&current=precipitation,weather_code") else { return }
+        guard let url = URL(string: "https://api.open-meteo.com/v1/forecast?\(q)&current=precipitation,weather_code,wind_speed_10m,is_day,temperature_2m") else { return }
         fetchJSON(url) { [weak self] json in
             guard let cur = json?["current"] as? [String: Any] else { return }
             let code = Int(SystemSense.number(cur["weather_code"]) ?? 0)
             let mm = SystemSense.number(cur["precipitation"]) ?? 0
+            self?.onOutside?(code, SystemSense.number(cur["wind_speed_10m"]) ?? 0,
+                             (SystemSense.number(cur["is_day"]) ?? 1) != 0, SystemSense.number(cur["temperature_2m"]))
             // Drizzle, rain, freezing rain, showers and thunderstorms.
             let wet = (51...67).contains(code) || (80...82).contains(code) || (95...99).contains(code)
             self?.setRaining(wet || (mm > 0.05 && !(71...77).contains(code) && !(85...86).contains(code)))

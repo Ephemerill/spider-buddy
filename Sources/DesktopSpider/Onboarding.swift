@@ -3,11 +3,24 @@ import QuartzCore
 
 // MARK: - Welcome
 
-/// The first thing anyone sees: three pages in one window. A hello, with
-/// the spider sitting still on the left and only its eyes following the
-/// pointer; where it lives (the menu bar icon, and what its menu does);
-/// and then the Studio, to make it their own before it comes out. Done in
-/// the Studio, and it lets itself down into the desktop from its icon.
+/// One of the settings the welcome asks about before it moves in: what it
+/// is, a line on what it means, and a switch.
+struct WelcomeChoice {
+    var title: String
+    var detail: String
+    var symbol: String
+    /// Small print under it, always there.
+    var note: String? = nil
+    var get: () -> Bool
+    var set: (Bool) -> Void
+}
+
+/// The first thing anyone sees: pages in one window. A hello, with the
+/// spider sitting still on the left and only its eyes following the
+/// pointer; where it will live (the menu bar icon, and the panel that drops
+/// down from it); a few house rules, set before it moves in; and then the
+/// Studio, to make it their own before it comes out. Done in the Studio,
+/// and it makes its entrance from its icon.
 final class OnboardingController: NSObject, NSWindowDelegate {
     let window: NSWindow
     private let pages = NSView()
@@ -17,10 +30,11 @@ final class OnboardingController: NSObject, NSWindowDelegate {
     private let skipButton = NSButton(title: "Skip", target: nil, action: nil)
     private var sitter: SittingSpiderView!
     private let design: SpiderDesign
-    private let menu: NSMenu
+    private let panelPicture: (_ dark: Bool) -> NSImage?
+    private let choices: [WelcomeChoice]
     private var finished = false
 
-    /// Page two's "Open the Menu": the real menu, from the real icon.
+    /// Page two's "Show Me": the real panel, from the real icon.
     var onOpenMenu: (() -> Void)?
     /// On to the Studio: handed the window's frame, so the Studio can open
     /// exactly where this one is and take its place.
@@ -32,9 +46,12 @@ final class OnboardingController: NSObject, NSWindowDelegate {
     /// the other rather than a jump.
     static let size = NSSize(width: 920, height: 600)
 
-    init(design: SpiderDesign, menu: NSMenu) {
+    /// `panelPicture`: the panel as it drops down from the icon, drawn light
+    /// or dark. `choices`: the house rules.
+    init(design: SpiderDesign, panelPicture: @escaping (_ dark: Bool) -> NSImage?, choices: [WelcomeChoice]) {
         self.design = design
-        self.menu = menu
+        self.panelPicture = panelPicture
+        self.choices = choices
         window = NSWindow(contentRect: NSRect(origin: .zero, size: OnboardingController.size),
                           styleMask: [.titled, .closable, .fullSizeContentView], backing: .buffered, defer: false)
         super.init()
@@ -44,6 +61,9 @@ final class OnboardingController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.title = "Welcome"
+        // (However its pages lay out, it stays the Studio's size.)
+        window.contentMinSize = OnboardingController.size
+        window.contentMaxSize = OnboardingController.size
         build()
     }
 
@@ -87,7 +107,8 @@ final class OnboardingController: NSObject, NSWindowDelegate {
         skipButton.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(skipButton)
 
-        dots.count = 3
+        // One dot for each page here, and one for the Studio after them.
+        dots.count = built.count + 1
         dots.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(dots)
 
@@ -103,11 +124,14 @@ final class OnboardingController: NSObject, NSWindowDelegate {
             skipButton.centerYAnchor.constraint(equalTo: nextButton.centerYAnchor),
             dots.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             dots.centerYAnchor.constraint(equalTo: nextButton.centerYAnchor),
-            dots.widthAnchor.constraint(equalToConstant: 60),
+            dots.widthAnchor.constraint(equalToConstant: 80),
             dots.heightAnchor.constraint(equalToConstant: 10),
         ])
         show(page: 0, animated: false)
     }
+
+    /// The same tour for everyone: no one's spider's name in it.
+    private let name = "your spider"
 
     private func welcomePage() -> NSView {
         let v = NSView()
@@ -115,11 +139,10 @@ final class OnboardingController: NSObject, NSWindowDelegate {
         sitter.translatesAutoresizingMaskIntoConstraints = false
         v.addSubview(sitter)
 
-        let name = design.name.isEmpty ? "your spider" : design.name
         let title = label("Say hello to \(name).", size: 34, weight: .bold)
         let body = label("""
-            A little jumping spider is moving onto your screen. It walks along the edges of your \
-            windows, leaps between them, swings on silk, naps in a hammock it spins itself, and \
+            A little jumping spider is about to move onto your screen. It walks along the edges of \
+            your windows, leaps between them, swings on silk, naps in a hammock it spins itself, and \
             keeps an eye on you the whole time.
 
             You can pick it up and throw it, stroke it with the pointer, feed it, or just let it \
@@ -142,24 +165,26 @@ final class OnboardingController: NSObject, NSWindowDelegate {
 
     private func menuPage() -> NSView {
         let v = NSView()
-        let picture = MenuBarPicture(menu: menu)
+        let picture = MenuBarPicture(panel: panelPicture)
         picture.translatesAutoresizingMaskIntoConstraints = false
         v.addSubview(picture)
 
-        let title = label("It lives in your menu bar.", size: 30, weight: .bold)
+        let title = label("It'll live in your menu bar.", size: 30, weight: .bold)
         let intro = label("""
-            Up at the top of your screen, next to the clock, there is a little spider. \
-            Click it for everything your spider can do.
+            Up by the clock there's a little spider. Click it and a panel drops down with \
+            everything \(name) can do, a page for each.
             """, size: 14, weight: .regular, colour: .secondaryLabelColor)
         let rows = stack([
-            bullet("Spider Studio", "Change how it looks, how it walks, and who it is."),
-            bullet("Behavior", "Ask it to say hi, swing, play peek-a-boo — or feed it a cricket."),
-            bullet("Hide and Pause", "Put it away for a while. It waits for you."),
-            bullet("Right-click the spider", "The same menu, right where it is."),
+            bullet("Spider, Play and Feed", "Hide it or pause it, ask it to say hi or swing, hand it a toy, or let a cricket loose."),
+            bullet("Behavior, Visitors and Your Mac", "What it makes of your pointer, its silk, other spiders, and the world outside."),
+            bullet("Spider Studio", "Along the bottom: how it looks, how it walks, and who it is."),
+            bullet("Right-click the spider", "A quick menu, right where it is."),
         ], spacing: 12)
-        let open = NSButton(title: "Open the Menu", target: self, action: #selector(openMenu))
+        let soon = label("Any moment now, it'll let itself down from up there and move in.",
+                         size: 14, weight: .regular, colour: .secondaryLabelColor)
+        let open = NSButton(title: "Show Me", target: self, action: #selector(openMenu))
         open.bezelStyle = .rounded
-        let text = stack([title, intro, rows, open], spacing: 16)
+        let text = stack([title, intro, rows, soon, open], spacing: 16)
         v.addSubview(text)
 
         NSLayoutConstraint.activate([
@@ -174,9 +199,58 @@ final class OnboardingController: NSObject, NSWindowDelegate {
         return v
     }
 
+    /// Before it moves in: the settings that most change what having it
+    /// about is like, each a switch, set as they are now.
+    private func rulesPage() -> NSView {
+        let v = NSView()
+        let title = label("But first, a few house rules.", size: 30, weight: .bold)
+        let intro = label("How lively would you like things? Pick what suits you, and it'll move in just so.",
+                          size: 14, weight: .regular, colour: .secondaryLabelColor)
+        let inset: CGFloat = 64, gap: CGFloat = 12
+        let width = OnboardingController.size.width - inset * 2
+        title.preferredMaxLayoutWidth = width
+        intro.preferredMaxLayoutWidth = width
+        let head = stack([title, intro], spacing: 8)
+
+        // Two to a row.
+        let grid = NSStackView()
+        grid.orientation = .vertical
+        grid.alignment = .leading
+        grid.spacing = gap
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        var i = 0
+        while i < choices.count {
+            let row = NSStackView()
+            row.spacing = gap
+            row.alignment = .top
+            row.translatesAutoresizingMaskIntoConstraints = false
+            // (A pair are as tall as the taller of them.)
+            let pair = choices[i..<min(i + 2, choices.count)].map { ChoiceCard($0, width: (width - gap) / 2) }
+            for c in pair { row.addArrangedSubview(c) }
+            if pair.count == 2 { pair[0].heightAnchor.constraint(equalTo: pair[1].heightAnchor).isActive = true }
+            grid.addArrangedSubview(row)
+            i += 2
+        }
+
+        let footnote = NSTextField(labelWithString: "You can change any of these at any time from the menu bar.")
+        footnote.font = .systemFont(ofSize: 12)
+        footnote.textColor = .tertiaryLabelColor
+        footnote.translatesAutoresizingMaskIntoConstraints = false
+
+        let column = stack([head, grid, footnote], spacing: 24)
+        column.setCustomSpacing(14, after: grid)
+        v.addSubview(column)
+        NSLayoutConstraint.activate([
+            column.leadingAnchor.constraint(equalTo: v.leadingAnchor, constant: inset),
+            head.widthAnchor.constraint(equalToConstant: width),
+            column.centerYAnchor.constraint(equalTo: v.centerYAnchor, constant: -6),
+        ])
+        return v
+    }
+
     // MARK: Paging
 
-    private lazy var built: [NSView] = [welcomePage(), menuPage()]
+    private lazy var built: [NSView] = [welcomePage(), menuPage(), rulesPage()]
 
     private func show(page i: Int, animated: Bool) {
         page = i
@@ -199,11 +273,11 @@ final class OnboardingController: NSObject, NSWindowDelegate {
             incoming.bottomAnchor.constraint(equalTo: pages.bottomAnchor),
         ])
         dots.current = i
-        nextButton.title = i == 0 ? "Next" : "Design Your Spider"
+        nextButton.title = i < built.count - 1 ? "Next" : "Design Your Spider"
     }
 
     @objc private func next() {
-        if page == 0 { show(page: 1, animated: true); return }
+        if page < built.count - 1 { show(page: page + 1, animated: true); return }
         // On to the Studio: this window fades as the Studio opens in its
         // place, and the rest happens there.
         finished = true
@@ -235,7 +309,8 @@ final class OnboardingController: NSObject, NSWindowDelegate {
         view.cacheDisplay(in: view.bounds, to: rep)
         try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
     }
-    func debugNextPage() { if page == 0 { show(page: 1, animated: false) } }
+    func debugNextPage() { if page < built.count - 1 { show(page: page + 1, animated: false) } }
+    var debugPageCount: Int { built.count }
     func debugAdvance() { next() }
 
     // MARK: Bits
@@ -265,6 +340,92 @@ final class OnboardingController: NSObject, NSWindowDelegate {
     }
 }
 
+// MARK: - A house rule
+
+/// One setting on the house rules page: its icon, name and a line on what
+/// it means, and a switch, on a soft card.
+final class ChoiceCard: NSView {
+    private let choice: WelcomeChoice
+    private let toggle = NSSwitch()
+
+    init(_ choice: WelcomeChoice, width: CGFloat) {
+        self.choice = choice
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        widthAnchor.constraint(equalToConstant: width).isActive = true
+        toggle.controlSize = .small
+        // Icon 16 + 24 + 10 in, the switch and 12 + 16 out.
+        let textWidth = width - 50 - 28 - 32
+
+        let icon = NSImageView(image: NSImage(systemSymbolName: choice.symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 17, weight: .medium)) ?? NSImage())
+        icon.contentTintColor = .controlAccentColor
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(icon)
+
+        let title = NSTextField(labelWithString: choice.title)
+        title.font = .systemFont(ofSize: 14, weight: .semibold)
+        var lines: [NSView] = [title]
+        let detail = NSTextField(wrappingLabelWithString: choice.detail)
+        detail.font = .systemFont(ofSize: 12.5)
+        detail.textColor = .secondaryLabelColor
+        detail.preferredMaxLayoutWidth = textWidth
+        lines.append(detail)
+        if let note = choice.note {
+            let n = NSTextField(wrappingLabelWithString: note)
+            n.font = .systemFont(ofSize: 11)
+            n.textColor = .tertiaryLabelColor
+            n.preferredMaxLayoutWidth = textWidth
+            lines.append(n)
+        }
+        let text = NSStackView(views: lines)
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 3
+        text.setCustomSpacing(5, after: detail)
+        text.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(text)
+
+        toggle.state = choice.get() ? .on : .off
+        toggle.target = self
+        toggle.action = #selector(flipped)
+        toggle.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(toggle)
+
+        // As short as its words let it be (or as its neighbour is).
+        let snug = bottomAnchor.constraint(equalTo: text.bottomAnchor, constant: 14)
+        snug.priority = .defaultLow
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+            icon.topAnchor.constraint(equalTo: topAnchor, constant: 16),
+            icon.widthAnchor.constraint(equalToConstant: 24),
+            text.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
+            text.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            text.widthAnchor.constraint(equalToConstant: textWidth),
+            bottomAnchor.constraint(greaterThanOrEqualTo: text.bottomAnchor, constant: 14),
+            snug,
+            toggle.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            toggle.topAnchor.constraint(equalTo: topAnchor, constant: 15),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func flipped() {
+        choice.set(toggle.state == .on)
+        // As it really is now (turning something on may not take).
+        toggle.state = choice.get() ? .on : .off
+    }
+
+    override var isFlipped: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 12, yRadius: 12)
+        NSColor.labelColor.withAlphaComponent(0.05).setFill()
+        path.fill()
+        NSColor.labelColor.withAlphaComponent(0.09).setStroke()
+        path.stroke()
+    }
+}
+
 // MARK: - The spider sitting still
 
 /// The welcome page's spider: sitting on a little ledge, three-quarters
@@ -278,10 +439,13 @@ final class SittingSpiderView: NSView {
     private var blinkIn: CGFloat = 2
     private var blinkT: CGFloat = -1
     private var time: CGFloat = 0
-    private let scale: CGFloat = 3.1
+    private let scale: CGFloat
+    /// How much bigger or smaller than the welcome's it is drawn.
+    private var k: CGFloat { scale / 3.1 }
 
-    init(look: SpiderLook) {
+    init(look: SpiderLook, scale: CGFloat = 3.1) {
         self.look = look
+        self.scale = scale
         super.init(frame: .zero)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -299,7 +463,7 @@ final class SittingSpiderView: NSView {
     }
 
     /// Where the body sits in the view, and the head within that.
-    private var bodyOrigin: V2 { V2(bounds.midX + 10, bounds.midY - 30) }
+    private var bodyOrigin: V2 { V2(bounds.midX + 10 * k, bounds.midY - 30 * k) }
 
     private func tick() {
         let dt: CGFloat = 1.0 / 60.0
@@ -333,9 +497,9 @@ final class SittingSpiderView: NSView {
         let o = bodyOrigin
         // A soft ledge to sit on.
         let ledgeY = o.y + SpiderRenderer.ground * scale
-        let ledge = CGRect(x: o.x - 150, y: ledgeY - 16, width: 300, height: 16)
+        let ledge = CGRect(x: o.x - 150 * k, y: ledgeY - 16 * k, width: 300 * k, height: 16 * k)
         ctx.setFillColor(NSColor.labelColor.withAlphaComponent(0.07).cgColor)
-        ctx.addPath(CGPath(roundedRect: ledge, cornerWidth: 8, cornerHeight: 8, transform: nil))
+        ctx.addPath(CGPath(roundedRect: ledge, cornerWidth: 8 * k, cornerHeight: 8 * k, transform: nil))
         ctx.fillPath()
 
         var pose = SpiderRenderer.restPose(look: look, yaw: 0.45, scale: scale)
@@ -353,20 +517,27 @@ final class SittingSpiderView: NSView {
     }
 }
 
-// MARK: - The menu, pictured
+// MARK: - The panel, pictured
 
-/// A strip of menu bar with the spider's icon lit, and its real menu
-/// hanging from it — drawn from the menu itself, so it is never out of date.
+/// A strip of menu bar with the spider's icon lit, and its real panel
+/// hanging from it — a picture of the panel itself, so it is never out of
+/// date.
 final class MenuBarPicture: NSView {
-    private let shownMenu: NSMenu
+    private let panel: (_ dark: Bool) -> NSImage?
+    private var cached: (dark: Bool, image: NSImage?)?
 
-    init(menu: NSMenu) {
-        self.shownMenu = menu
+    init(panel: @escaping (_ dark: Bool) -> NSImage?) {
+        self.panel = panel
         super.init(frame: .zero)
     }
     required init?(coder: NSCoder) { fatalError() }
 
     override var isFlipped: Bool { true }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
@@ -388,63 +559,48 @@ final class MenuBarPicture: NSView {
                 tint(img, fg).draw(in: r)
             }
         }
-        // The spider's icon, lit, as it is when its menu is open.
+        // The spider's icon, lit, as it is when its panel is open.
         let iconX = bounds.width - clock.size().width - 40 - 3 * 26 - 12
         let lit = CGRect(x: iconX - 5, y: 3, width: 28, height: barH - 6)
-        ctx.setFillColor(NSColor.controlAccentColor.withAlphaComponent(0.85).cgColor)
+        ctx.setFillColor(NSColor.labelColor.withAlphaComponent(0.16).cgColor)
         ctx.addPath(CGPath(roundedRect: lit, cornerWidth: 5, cornerHeight: 5, transform: nil))
         ctx.fillPath()
         let icon = SpiderRenderer.statusItemImage(size: 17)
-        tint(icon, .white).draw(in: CGRect(x: iconX, y: 4.5, width: 17, height: 17))
+        tint(icon, fg).draw(in: CGRect(x: iconX, y: 4.5, width: 17, height: 17))
 
-        // The menu hanging from it.
-        let items = shownMenu.items
-        let rowH: CGFloat = 19, sepH: CGFloat = 9
-        let height = items.reduce(CGFloat(10)) { $0 + ($1.isSeparatorItem ? sepH : rowH) }
-        let width: CGFloat = 250
-        let menuRect = CGRect(x: max(6, min(iconX - 8, bounds.width - width - 6)), y: barH + 6, width: width, height: min(height, bounds.height - barH - 10))
+        // The panel hanging from it, as small as it has to be to fit.
+        if cached?.dark != dark { cached = (dark, panel(dark)) }
+        guard let image = cached?.image, image.size.width > 0 else { return }
+        let arrow: CGFloat = 8
+        let top = barH + 4 + arrow
+        let s = min(1, (bounds.height - top - 4) / image.size.height, (bounds.width - 12) / image.size.width)
+        let w = image.size.width * s, h = image.size.height * s
+        let iconMid = iconX + 8.5
+        let rect = CGRect(x: clamp(iconMid - w / 2, 6, bounds.width - w - 6), y: top, width: w, height: h)
+        let radius: CGFloat = 12
+        let shape = CGMutablePath()
+        shape.addRoundedRect(in: rect, cornerWidth: radius, cornerHeight: radius)
+        // (The popover's little arrow, up to the icon.)
+        shape.move(to: CGPoint(x: iconMid - arrow, y: top + 0.5))
+        shape.addLine(to: CGPoint(x: iconMid, y: top - arrow))
+        shape.addLine(to: CGPoint(x: iconMid + arrow, y: top + 0.5))
+        shape.closeSubpath()
+        let fill = dark ? NSColor(white: 0.16, alpha: 1) : NSColor(white: 0.96, alpha: 1)
         ctx.saveGState()
-        ctx.setShadow(offset: CGSize(width: 0, height: 6), blur: 18, color: NSColor.black.withAlphaComponent(0.28).cgColor)
-        ctx.setFillColor((dark ? NSColor(white: 0.20, alpha: 0.98) : NSColor(white: 0.97, alpha: 0.98)).cgColor)
-        ctx.addPath(CGPath(roundedRect: menuRect, cornerWidth: 10, cornerHeight: 10, transform: nil))
+        ctx.setShadow(offset: CGSize(width: 0, height: 6), blur: 20, color: NSColor.black.withAlphaComponent(0.3).cgColor)
+        ctx.setFillColor(fill.cgColor)
+        ctx.addPath(shape)
         ctx.fillPath()
+        ctx.restoreGState()
+        ctx.saveGState()
+        ctx.addPath(CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil))
+        ctx.clip()
+        image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: [.interpolation: NSImageInterpolation.high])
         ctx.restoreGState()
         ctx.setStrokeColor(NSColor.separatorColor.cgColor)
         ctx.setLineWidth(0.5)
-        ctx.addPath(CGPath(roundedRect: menuRect, cornerWidth: 10, cornerHeight: 10, transform: nil))
+        ctx.addPath(CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil))
         ctx.strokePath()
-
-        ctx.saveGState()
-        ctx.clip(to: menuRect)
-        var y = menuRect.minY + 5
-        let font = NSFont.menuFont(ofSize: 12.5)
-        for item in items {
-            if item.isSeparatorItem {
-                ctx.setFillColor(NSColor.separatorColor.cgColor)
-                ctx.fill(CGRect(x: menuRect.minX + 12, y: y + sepH / 2, width: width - 24, height: 1))
-                y += sepH
-                continue
-            }
-            let colour: NSColor = item.isEnabled ? .labelColor : .tertiaryLabelColor
-            NSAttributedString(string: item.title, attributes: [.font: font, .foregroundColor: colour])
-                .draw(at: CGPoint(x: menuRect.minX + 24, y: y + 2))
-            if item.state == .on {
-                NSAttributedString(string: "✓", attributes: [.font: font, .foregroundColor: colour])
-                    .draw(at: CGPoint(x: menuRect.minX + 9, y: y + 2))
-            }
-            if item.hasSubmenu {
-                NSAttributedString(string: "›", attributes: [.font: NSFont.menuFont(ofSize: 15), .foregroundColor: NSColor.secondaryLabelColor])
-                    .draw(at: CGPoint(x: menuRect.maxX - 20, y: y))
-            } else if !item.keyEquivalent.isEmpty {
-                let m = item.keyEquivalentModifierMask
-                let key = (m.contains(.control) ? "⌃" : "") + (m.contains(.option) ? "⌥" : "") + (m.contains(.shift) ? "⇧" : "")
-                    + (m.contains(.command) ? "⌘" : "") + item.keyEquivalent.uppercased()
-                let k = NSAttributedString(string: key, attributes: [.font: font, .foregroundColor: NSColor.tertiaryLabelColor])
-                k.draw(at: CGPoint(x: menuRect.maxX - 14 - k.size().width, y: y + 2))
-            }
-            y += rowH
-        }
-        ctx.restoreGState()
     }
 
     private func tint(_ img: NSImage, _ colour: NSColor) -> NSImage {
@@ -458,7 +614,7 @@ final class MenuBarPicture: NSView {
     }
 }
 
-/// Three little dots: which page this is.
+/// A little dot for each page: which page this is.
 final class PageDots: NSView {
     var count = 3 { didSet { needsDisplay = true } }
     var current = 0 { didSet { needsDisplay = true } }

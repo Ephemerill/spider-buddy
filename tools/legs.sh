@@ -13,14 +13,15 @@ if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Develope
   export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 fi
 mkdir -p build
-FILES="Math Surfaces WindowTracker Spider Memory SpiderRenderer SpiderDesign Skin Prey Toys Traces Habitat Studio"
+FILES="Math Surfaces WindowTracker Spider Beat Memory SpiderRenderer AppIcon SpiderDesign Skin Prey Toys Traces Habitat Studio"
 
 # build <sources dir> <binary>: `Bool.random()` has no seedable overload to
 # shadow, so it is swapped for the seeded one in a copy of the sources.
 build() {
   local tmp
   tmp="$(mktemp -d)"
-  for f in $FILES; do sed -e 's/Bool\.random()/seededBool()/g' "$1/$f.swift" > "$tmp/$f.swift"; done
+  # (Older trees may lack a file; they do not use it either.)
+  for f in $FILES; do [ -f "$1/$f.swift" ] || continue; sed -e 's/Bool\.random()/seededBool()/g' "$1/$f.swift" > "$tmp/$f.swift"; done
   xcrun swiftc -O -swift-version 5 -framework AppKit -o "$2" "$tmp"/*.swift tools/legs/Seeded.swift tools/legs/main.swift
   rm -rf "$tmp"
 }
@@ -28,7 +29,9 @@ build() {
 if [ "${1:-}" = "ab" ]; then
   shift
   base="$(mktemp -d)"
-  for f in $FILES; do git show "${BASE:-HEAD}:Sources/DesktopSpider/$f.swift" > "$base/$f.swift"; done
+  for f in $FILES; do
+    git show "${BASE:-HEAD}:Sources/DesktopSpider/$f.swift" > "$base/$f.swift" 2>/dev/null || rm -f "$base/$f.swift"
+  done
   build "$base" build/LegsBase &
   build Sources/DesktopSpider build/Legs
   wait

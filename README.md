@@ -523,6 +523,10 @@ Plants sway, crystals and mushrooms glow, water dishes ripple.
   drops into the most open spot.
 - **Layouts**: eight ready-made tanks and a bare one, **Surprise Me** and
   **Clear All**.
+- **Weather**: how the tank's weather runs (see below) — whether it comes
+  and goes, is kept to one kind, or follows the weather outside; which
+  kinds come to this scenery; how often it changes and how much of the
+  time there is weather at all.
 - In the tank: click a piece to select it, drag to move it (rocks, pots and
   the like stay on the ground; branches, logs and small things can be
   propped up off it; vines hang from the lid), drag a corner handle to
@@ -534,6 +538,54 @@ Plants sway, crystals and mushrooms glow, water dishes ripple.
 
 The habitat is saved as you go. The tank keeps its shape as the window is
 resized, and remembers its size.
+
+### Weather
+
+The tank has weather of its own: **Clear**, **Blazing Sun** (glare and heat
+haze), **Overcast**, **Fog**, **Drizzle**, **Rain** (puddles and splashes,
+the ground darkening), **Thunderstorm** (lightning, far off or right down
+to the ground, and thunder that shakes the tank), **Hail** (bouncing, and
+lying about after), **Snow** (settling on the ground and on top of the
+furniture, with footprints in it), **Blizzard**, **Gale** (leaves and
+streaks of wind blowing through, plants leaning over), **Sandstorm**, **Sun
+Shower** (with a rainbow), **Shooting Stars** and **Northern Lights**. Rain
+slants and snow drifts with the wind; cloud drifts over; the light dims
+under a storm and warms in the sun. It rolls in and clears over half a
+minute or so, sometimes turns into something else (rain into a storm, snow
+into a blizzard), and a rainbow often follows the rain.
+
+By default it **comes and goes**: a spell of something, then clear skies,
+then something else, from the kinds that suit the scenery — sandstorms and
+blazing sun in the desert, downpours in the jungle, snow and the northern
+lights in the snowfall. Which kinds come can be changed for each scenery
+in **Decorate ▸ Weather** (click a tile to add it or take it out — snow in
+the desert, say — and **Back to … Own** undoes it), with how often it
+changes and how much of the time there is weather. Or keep it to one kind
+for good (**Always**), or have it follow the weather where you are
+(**Outside**, which needs Notice the Weather). The **Weather** button in
+the tank's toolbar (and the Weather menu while the tank is open) says what
+it is doing and has all of it too, plus **Right Now** — make it rain, snow,
+hail… this minute — **Something Else** and **Clear the Sky**. The weather
+keeps time while the tank is shut: open it an hour later and it has moved
+on.
+
+The spider feels it. Rain soaks it — a darker, glossy coat beaded with
+water, drops gathering under it and dripping off, rain splashing on its
+back — until it shakes itself off; in the fog it gets dewy. Snow settles on
+its back while it keeps still and slides off as it moves, climbs a wall or
+leaps; sand gets in its fur. It shivers in the cold and huddles up. The
+wind pushes it about on its feet: it leans into it, goes slower against it,
+flattens itself and holds on through the big gusts, and on its line it is
+blown out sideways (about 15° in a gale), its free legs streaming and the
+silk bowing; leaps drift. When it comes down hard it runs for cover —
+under a branch, the leaves of a plant, anything raised off the ground, the
+lid at a pinch — and sits it out there, watching it come down; a playful
+one may dance about in a warm rain instead, a bold one just braces. Hail
+makes it flinch, a clap of thunder overhead makes it jump and stare at
+where the lightning struck, it basks in the sun (or finds shade when it's
+too hot), reaches up for the snowflakes, and stops to look up at a rainbow
+or the northern lights — with a thought to go with it now and then. It
+dries off out on the desktop, where there is no weather.
 
 ## Your Mac
 
@@ -550,7 +602,8 @@ Under **Your Mac** in the menu bar panel:
   it keeps every foot where it is and bobs and wiggles on them.
 - **Notice the Weather**: when it rains where you are, rain is on its mind
   (checked every twenty minutes from Open-Meteo, going by roughly where
-  your internet connection is). **Rain on the Screen** adds faint streaks
+  your internet connection is), and the habitat can have the same weather
+  (Decorate ▸ Weather ▸ Outside). **Rain on the Screen** adds faint streaks
   across the desktop while it rains.
 - **Notice Pop-ups**: a notification sliding in makes it jump — right up
   in the air if it is standing on top of something, a start where it
@@ -767,6 +820,8 @@ DisplayServices.
 | `HabitatArt.swift` | painting the tank: palettes, sky, scenery, substrate, glass, and the pictures the moving parts are made of |
 | `HabitatItems.swift` | painting the furniture, and the picker's thumbnails |
 | `HabitatAtmosphere.swift` | what moves in the tank's air, per biome, as Core Animation layers and emitters |
+| `Weather.swift` | the tank's weather: its kinds, each scenery's list, the settings, and the clock that brings it in and clears it |
+| `HabitatWeather.swift` | the weather drawn in the tank — cloud, rain, snow, lightning, puddles, snow lying about — and the Weather tab's tiles |
 | `HabitatScene.swift` | the inside of the tank: its layers, the spider and creatures drawn in it, the mouse, decorating |
 | `HabitatWindow.swift` | the tank's window: frame, toolbar buttons, the decorating panel, undo |
 | `Prey.swift` | the creatures: their behaviour, drawing, and the click-through window they (and the toys) live in |

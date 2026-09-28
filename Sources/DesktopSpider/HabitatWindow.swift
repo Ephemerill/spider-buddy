@@ -10,10 +10,25 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     let scene = HabitatSceneView(frame: CGRect(x: 0, y: 0, width: 860, height: 516))
     private let root = HabitatRootView()
     private let panel = DecorPanel()
-    private let titleView = HabitatTitleView()
+    let titleView = HabitatTitleView()
     private let decorateButton = HabitatButton(title: "Decorate", symbol: "paintbrush.pointed")
     private let feedButton = HabitatButton(title: "Feed", symbol: "fork.knife", menu: true)
     private let letOutButton = HabitatButton(title: "Let Out", symbol: "door.left.hand.open")
+    private let weatherButton = HabitatButton(title: "Weather", symbol: "cloud.sun", menu: true)
+
+    /// The tank's weather: what it is doing, and what comes next (see
+    /// Weather.swift).
+    let weather: WeatherClock
+    /// Whether the weather outside can be known (the app is allowed to look
+    /// it up), turning that on, and what it is out there, for the controls.
+    var outsideAvailable: () -> Bool = { false }
+    var enableOutside: (() -> Void)?
+    var outsideSummary: () -> String? = { nil }
+    /// The kind showing on the button, and what the title last said about
+    /// the weather (to take it away again).
+    private var shownKind: WeatherKind?
+    private var weatherNotice: String?
+    private var weatherCheckedAt: CFTimeInterval = 0
 
     /// The user asked for it to come out (the Let Out button, or the
     /// window's close button).
@@ -39,6 +54,7 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 880, height: 600),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                           backing: .buffered, defer: false)
+        weather = WeatherClock(biome: Habitat.load().biome)
         super.init()
         window.title = HabitatController.title(for: spiderName)
         window.titleVisibility = .hidden
@@ -66,7 +82,12 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         window.toolbar = toolbar
         window.toolbarStyle = .unified
 
-        titleView.set(title: HabitatController.title(for: spiderName), status: nil)
+        titleView.set(title: window.title, status: nil)
+        titleView.onRename = { [weak self] typed in self?.named(typed) }
+        titleView.onEndEditing = { [weak self] in
+            guard let self else { return }
+            self.window.makeFirstResponder(self.scene)
+        }
         decorateButton.target = self
         decorateButton.action = #selector(toggleDecorate)
         decorateButton.toolTip = "Change the scenery and move the furniture about"
@@ -76,6 +97,10 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         letOutButton.target = self
         letOutButton.action = #selector(letOut)
         letOutButton.toolTip = "Close the habitat — it drops back onto your desktop"
+        weatherButton.target = self
+        weatherButton.action = #selector(showWeatherMenu)
+        weatherButton.toolTip = "Rain, snow, wind, sun and more — change what the weather does in the tank"
+        weather.onChange = { [weak self] in self?.panel.refreshWeather() }
 
         scene.onEdit = { [weak self] before, after in self?.edited(from: before, to: after) }
         scene.onSelect = { [weak self] _ in self?.panel.refresh() }
@@ -94,14 +119,40 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         root.needsLayout = true
     }
 
-    static func title(for name: String) -> String {
+    static let nameKey = "habitatName"
+
+    /// What the user called the tank, if they gave it a name of its own.
+    static var customName: String? {
+        let s = UserDefaults.standard.string(forKey: nameKey)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return s.isEmpty ? nil : s
+    }
+
+    /// Named after its spider.
+    static func defaultTitle(for name: String) -> String {
         "\(name.isEmpty ? "Your Spider" : name)’s Habitat"
+    }
+
+    /// The tank's own name, or else its spider's.
+    static func title(for name: String) -> String {
+        customName ?? defaultTitle(for: name)
     }
 
     func rename(_ spiderName: String) {
         name = spiderName
         window.title = HabitatController.title(for: spiderName)
         titleView.set(title: window.title, status: titleView.status)
+    }
+
+    /// Typed into the title: a name of its own, or — left empty, or the
+    /// same as the spider's — back to being named after the spider.
+    private func named(_ typed: String) {
+        let t = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty || t == HabitatController.defaultTitle(for: name) {
+            UserDefaults.standard.removeObject(forKey: HabitatController.nameKey)
+        } else {
+            UserDefaults.standard.set(t, forKey: HabitatController.nameKey)
+        }
+        rename(name)
     }
 
     /// A few words under the title, or none.
@@ -181,7 +232,7 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     // MARK: Toolbar
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, .habitatTitle, .flexibleSpace, .habitatFeed, .habitatDecorate, .habitatLetOut]
+        [.flexibleSpace, .habitatTitle, .flexibleSpace, .habitatWeather, .habitatFeed, .habitatDecorate, .habitatLetOut]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -192,6 +243,7 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         let item = NSToolbarItem(itemIdentifier: id)
         switch id {
         case .habitatTitle: item.view = titleView
+        case .habitatWeather: item.view = weatherButton; item.label = "Weather"
         case .habitatFeed: item.view = feedButton; item.label = "Feed"
         case .habitatDecorate: item.view = decorateButton; item.label = "Decorate"
         case .habitatLetOut: item.view = letOutButton; item.label = "Let Out"
@@ -324,6 +376,180 @@ extension NSToolbarItem.Identifier {
     static let habitatFeed = NSToolbarItem.Identifier("habitat.feed")
     static let habitatDecorate = NSToolbarItem.Identifier("habitat.decorate")
     static let habitatLetOut = NSToolbarItem.Identifier("habitat.letOut")
+    static let habitatWeather = NSToolbarItem.Identifier("habitat.weather")
+}
+
+// MARK: - The weather controls
+
+extension HabitatController {
+    /// The weather now, for this frame: the tank shows it, and it is handed
+    /// back for the spider to feel. `clock` is any steady time in seconds.
+    func tickWeather(dt: CGFloat, clock: CGFloat) -> WeatherConditions {
+        weather.biome = scene.habitat.biome
+        let c = weather.conditions(clock: clock)
+        scene.updateWeather(c, dt: dt)
+        let now = CACurrentMediaTime()
+        if now - weatherCheckedAt > 0.5 {
+            weatherCheckedAt = now
+            noteWeather()
+        }
+        return c
+    }
+
+    /// Keeps the button's picture on the weather, and says a word under
+    /// the title when something new rolls in.
+    private func noteWeather() {
+        let k = weather.current
+        guard k != shownKind else { return }
+        let first = shownKind == nil
+        shownKind = k
+        weatherButton.set(title: "Weather", symbol: k.symbol)
+        weatherButton.toolTip = "\(weather.summary()) — click to change the weather"
+        panel.refreshWeather()
+        guard !first else { return }
+        let line = k.arriving
+        if titleView.status == nil || titleView.status == weatherNotice {
+            weatherNotice = line
+            setStatus(line)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+                guard let self, self.titleView.status == line else { return }
+                self.weatherNotice = nil
+                self.setStatus(nil)
+            }
+        }
+    }
+
+    @objc func showWeatherMenu() {
+        let menu = NSMenu()
+        fillWeatherMenu(menu)
+        let below = weatherButton.isFlipped ? weatherButton.bounds.height + 4 : -4
+        menu.popUp(positioning: nil, at: CGPoint(x: 0, y: below), in: weatherButton)
+    }
+
+    /// The weather's menu: what it is doing; comes and goes, like outside,
+    /// or kept to one kind; something now; and the settings.
+    func fillWeatherMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        menu.autoenablesItems = false
+        let s = weather.settings
+        let head = NSMenuItem(title: weather.summary(), action: nil, keyEquivalent: "")
+        head.isEnabled = false
+        head.image = NSImage(systemSymbolName: weather.current.symbol, accessibilityDescription: nil)
+        menu.addItem(head)
+        menu.addItem(.separator())
+
+        func item(_ title: String, _ sel: Selector, on: Bool = false, tag: Int = 0, tip: String? = nil) -> NSMenuItem {
+            let i = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+            i.target = self
+            i.state = on ? .on : .off
+            i.tag = tag
+            i.toolTip = tip
+            menu.addItem(i)
+            return i
+        }
+        _ = item("Comes and Goes", #selector(weatherModeChosen(_:)), on: s.mode == .changing, tag: 0,
+                 tip: "Weather rolls in now and then and clears again, from what suits the scenery")
+        _ = item("Like the Weather Outside", #selector(weatherModeChosen(_:)), on: s.mode == .outside, tag: 2,
+                 tip: "The weather where you are, looked up every twenty minutes (roughly, from your internet connection)")
+        let always = NSMenuItem(title: "Always", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        for (i, k) in WeatherKind.allCases.enumerated() {
+            let it = NSMenuItem(title: k.label, action: #selector(weatherKept(_:)), keyEquivalent: "")
+            it.target = self
+            it.tag = i
+            it.image = NSImage(systemSymbolName: k.symbol, accessibilityDescription: nil)
+            it.state = s.mode == .always && s.always == k ? .on : .off
+            sub.addItem(it)
+        }
+        always.submenu = sub
+        always.state = s.mode == .always ? .on : .off
+        menu.addItem(always)
+        menu.addItem(.separator())
+
+        let now = NSMenuItem(title: "Right Now", action: nil, keyEquivalent: "")
+        let nowMenu = NSMenu()
+        for (i, k) in WeatherKind.allCases.enumerated() where k != .clear {
+            let it = NSMenuItem(title: k.summon, action: #selector(weatherBrought(_:)), keyEquivalent: "")
+            it.target = self
+            it.tag = i
+            it.image = NSImage(systemSymbolName: k.symbol, accessibilityDescription: nil)
+            nowMenu.addItem(it)
+        }
+        now.submenu = nowMenu
+        menu.addItem(now)
+        if s.mode == .changing {
+            _ = item("Something Else", #selector(weatherChangeNow), tip: "What's in clears, and something else comes")
+        }
+        _ = item("Clear the Sky", #selector(weatherClear))
+        menu.addItem(.separator())
+        _ = item("Weather Settings…", #selector(showWeatherSettings), tip: "Pick what weather comes to this scenery, and how often")
+    }
+
+    @objc private func weatherModeChosen(_ sender: NSMenuItem) {
+        setWeatherMode(sender.tag == 2 ? .outside : .changing)
+    }
+
+    func setWeatherMode(_ m: WeatherSettings.Mode) {
+        if m == .outside, !outsideAvailable() { enableOutside?() }
+        weather.settings.mode = m
+        panel.refreshWeather()
+    }
+
+    @objc private func weatherKept(_ sender: NSMenuItem) {
+        guard WeatherKind.allCases.indices.contains(sender.tag) else { return }
+        keepWeather(WeatherKind.allCases[sender.tag])
+    }
+
+    func keepWeather(_ k: WeatherKind) {
+        weather.settings.always = k
+        weather.settings.mode = .always
+        panel.refreshWeather()
+    }
+
+    @objc private func weatherBrought(_ sender: NSMenuItem) {
+        guard WeatherKind.allCases.indices.contains(sender.tag) else { return }
+        weather.bring(WeatherKind.allCases[sender.tag])
+        panel.refreshWeather()
+    }
+
+    @objc func weatherChangeNow() {
+        weather.changeNow()
+        panel.refreshWeather()
+    }
+
+    @objc func weatherClear() {
+        weather.bring(.clear)
+        panel.refreshWeather()
+    }
+
+    /// The decorating panel, open at its Weather tab.
+    @objc func showWeatherSettings() {
+        if !decorating { toggleDecorate() }
+        panel.debugShowTab(3)
+    }
+}
+
+extension WeatherKind {
+    /// Said under the tank's name as it rolls in.
+    var arriving: String {
+        switch self {
+        case .clear: return "Clearing up"
+        case .sunny: return "The sun’s coming out"
+        case .cloudy: return "Clouding over"
+        case .fog: return "Fog rolling in"
+        case .drizzle: return "Starting to drizzle"
+        case .rain: return "Rain on the way"
+        case .storm: return "A storm is brewing"
+        case .hail: return "Hail!"
+        case .snow: return "It’s starting to snow"
+        case .blizzard: return "A blizzard is blowing in"
+        case .windy: return "The wind’s picking up"
+        case .sandstorm: return "A sandstorm is coming"
+        case .sunshower: return "A sun shower — look for the rainbow"
+        case .starfall: return "Shooting stars tonight"
+        case .aurora: return "The northern lights are out"
+        }
+    }
 }
 
 // MARK: - The frame
@@ -498,17 +724,39 @@ final class HabitatButton: NSButton {
     }
 }
 
-/// The name in the middle of the lid, and a line of what is happening under it.
-final class HabitatTitleView: NSView {
-    private let title = NSTextField(labelWithString: "")
+/// The name in the middle of the lid, and a line of what is happening under
+/// it. Clicking the name renames the tank; dragging it still moves the window.
+final class HabitatTitleView: NSView, NSTextFieldDelegate {
+    private let title = HabitatNameField(string: "")
     private let sub = NSTextField(labelWithString: "")
+    private var titleWidth: NSLayoutConstraint!
     private(set) var status: String?
+    /// The name as it was when editing began, for Escape to put back.
+    private var before = ""
+    private var hovering = false { didSet { needsDisplay = true } }
+
+    /// A name was typed (empty if it was cleared).
+    var onRename: ((String) -> Void)?
+    /// Return or Escape: the keys go back to the tank.
+    var onEndEditing: (() -> Void)?
+
+    static let maxLength = 40
 
     init() {
         super.init(frame: .zero)
         title.font = .systemFont(ofSize: 13, weight: .semibold)
         title.textColor = NSColor(white: 1, alpha: 0.92)
         title.alignment = .center
+        title.isBordered = false
+        title.drawsBackground = false
+        title.focusRingType = .none
+        title.lineBreakMode = .byTruncatingTail
+        title.cell?.usesSingleLineMode = true
+        title.isEditable = false
+        title.isSelectable = false
+        title.delegate = self
+        title.toolTip = "Click to rename the habitat"
+        title.onClick = { [weak self] in self?.beginEditing() }
         sub.font = .systemFont(ofSize: 11)
         sub.textColor = NSColor(white: 1, alpha: 0.55)
         sub.alignment = .center
@@ -518,23 +766,123 @@ final class HabitatTitleView: NSView {
         stack.alignment = .centerX
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        titleWidth = title.widthAnchor.constraint(equalToConstant: 120)
         NSLayoutConstraint.activate([
             stack.centerXAnchor.constraint(equalTo: centerXAnchor),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
             stack.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor),
             widthAnchor.constraint(greaterThanOrEqualToConstant: 200),
             heightAnchor.constraint(equalToConstant: 34),
+            titleWidth,
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
 
     override var mouseDownCanMoveWindow: Bool { true }
 
+    var editing: Bool { title.isEditable }
+    var nameField: HabitatNameField { title }
+
     func set(title t: String, status s: String?) {
-        title.stringValue = t
+        if !editing { title.stringValue = t; fitTitle() }
         status = s
         sub.stringValue = s ?? ""
         sub.isHidden = s == nil
+    }
+
+    /// Wide enough for the name (and a little room to type), no wider.
+    private func fitTitle() {
+        let w = (title.stringValue as NSString).size(withAttributes: [.font: title.font!]).width
+        titleWidth.constant = min(max(w + (editing ? 24 : 12), editing ? 140 : 60), 340).rounded()
+        needsDisplay = true
+    }
+
+    private func beginEditing() {
+        before = title.stringValue
+        title.isEditable = true
+        title.isSelectable = true
+        fitTitle()
+        window?.makeFirstResponder(title)
+        title.currentEditor()?.selectAll(nil)
+    }
+
+    // A soft plate behind the name: faint when the pointer is on it, to
+    // say it can be clicked, and plainer while typing.
+    override func draw(_ dirtyRect: NSRect) {
+        guard editing || hovering else { return }
+        let r = title.convert(title.bounds, to: self).insetBy(dx: -6, dy: -2)
+        NSColor(white: 1, alpha: editing ? 0.14 : 0.07).setFill()
+        NSBezierPath(roundedRect: r, xRadius: 5, yRadius: 5).fill()
+        if editing {
+            NSColor.controlAccentColor.withAlphaComponent(0.8).setStroke()
+            let ring = NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: 5, yRadius: 5)
+            ring.lineWidth = 1
+            ring.stroke()
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        needsDisplay = true
+        updateTrackingAreas()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: title.convert(title.bounds, to: self).insetBy(dx: -6, dy: -2),
+                                       options: [.mouseEnteredAndExited, .activeAlways], owner: self))
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+
+    // MARK: Typing
+
+    func controlTextDidChange(_ obj: Notification) {
+        if title.stringValue.count > HabitatTitleView.maxLength {
+            title.stringValue = String(title.stringValue.prefix(HabitatTitleView.maxLength))
+        }
+        fitTitle()
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
+        switch sel {
+        case #selector(NSResponder.insertNewline(_:)):
+            onEndEditing?()
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            title.stringValue = before
+            onEndEditing?()
+            return true
+        default:
+            return false
+        }
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        title.isEditable = false
+        title.isSelectable = false
+        let typed = title.stringValue
+        onRename?(typed)
+        fitTitle()
+    }
+}
+
+/// The tank's name: a click starts typing into it, a drag moves the window.
+final class HabitatNameField: NSTextField {
+    var onClick: (() -> Void)?
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func mouseDown(with event: NSEvent) {
+        guard !isEditable else { super.mouseDown(with: event); return }
+        let start = event.locationInWindow
+        while let e = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            if e.type == .leftMouseUp { onClick?(); return }
+            let p = e.locationInWindow
+            if hypot(p.x - start.x, p.y - start.y) > 3 { window?.performDrag(with: event); return }
+        }
     }
 }
 
@@ -545,7 +893,23 @@ final class HabitatTitleView: NSView {
 /// to it.
 final class DecorPanel: NSView {
     weak var controller: HabitatController?
-    private let tabs = NSSegmentedControl(labels: ["Scenery", "Add", "Layouts"], trackingMode: .selectOne, target: nil, action: nil)
+    private let tabs = NSSegmentedControl(labels: ["Scenery", "Add", "Layouts", "Weather"], trackingMode: .selectOne, target: nil, action: nil)
+    // The Weather tab.
+    private let weatherMode = NSSegmentedControl(labels: ["Comes & Goes", "Always", "Outside"], trackingMode: .selectOne, target: nil, action: nil)
+    private let weatherNow = NSTextField(labelWithString: "")
+    private let weatherNowIcon = NSImageView()
+    private var weatherNowRow = NSView()
+    private var weatherTiles: [(kind: WeatherKind, tile: TileButton)] = []
+    private var weatherGrid = NSView()
+    private var tilesBiome: Biome?
+    private var weatherListLabel = NSTextField(labelWithString: "")
+    private var weatherListNote = NSTextField(wrappingLabelWithString: "")
+    private let weatherReset = HabitatButton(title: "Back to Its Own", symbol: "arrow.counterclockwise")
+    private let paceSlider = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
+    private let amountSlider = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
+    private var paceRow = NSView(), amountRow = NSView()
+    private var outsideNote = NSTextField(wrappingLabelWithString: "")
+    private let outsideButton = HabitatButton(title: "Look Up the Weather Outside", symbol: "location")
     private let scroll = NSScrollView()
     private var pages: [NSView] = []
     private var biomeTiles: [TileButton] = []
@@ -597,7 +961,7 @@ final class DecorPanel: NSView {
         let head = NSStackView(views: [heading, spacer, undoButton, redoButton])
         head.spacing = 6
 
-        pages = [scenePage(width: inner), addPage(width: inner), layoutPage(width: inner)]
+        pages = [scenePage(width: inner), addPage(width: inner), layoutPage(width: inner), weatherPage(width: inner)]
         let doc = FlippedStack()
         doc.orientation = .vertical
         doc.alignment = .leading
@@ -737,6 +1101,185 @@ final class DecorPanel: NSView {
                      grid(tiles, columns: 2, width: width), row])
     }
 
+    private func weatherPage(width: CGFloat) -> NSView {
+        weatherMode.segmentDistribution = .fillEqually
+        weatherMode.target = self
+        weatherMode.action = #selector(weatherModeChanged)
+        weatherMode.translatesAutoresizingMaskIntoConstraints = false
+        weatherMode.widthAnchor.constraint(equalToConstant: width).isActive = true
+        weatherMode.setToolTip("Weather rolls in now and then, and clears again", forSegment: 0)
+        weatherMode.setToolTip("Keep one kind of weather for good", forSegment: 1)
+        weatherMode.setToolTip("The weather where you are", forSegment: 2)
+
+        weatherNow.font = .systemFont(ofSize: 12.5, weight: .semibold)
+        weatherNow.textColor = NSColor(white: 1, alpha: 0.92)
+        weatherNow.lineBreakMode = .byTruncatingTail
+        weatherNowIcon.contentTintColor = NSColor(white: 1, alpha: 0.85)
+        weatherNowIcon.translatesAutoresizingMaskIntoConstraints = false
+        weatherNowIcon.widthAnchor.constraint(equalToConstant: 18).isActive = true
+        let nowLine = NSStackView(views: [weatherNowIcon, weatherNow])
+        nowLine.spacing = 6
+
+        let change = HabitatButton(title: "Something Else", symbol: "shuffle")
+        change.target = controller
+        change.action = #selector(HabitatController.weatherChangeNow)
+        change.toolTip = "What's in clears, and something else comes"
+        let clear = HabitatButton(title: "Clear the Sky", symbol: "sun.min")
+        clear.target = controller
+        clear.action = #selector(HabitatController.weatherClear)
+        let buttons = NSStackView(views: [change, clear])
+        buttons.distribution = .fillEqually
+        buttons.spacing = 8
+        buttons.translatesAutoresizingMaskIntoConstraints = false
+        buttons.widthAnchor.constraint(equalToConstant: width).isActive = true
+        weatherNowRow = buttons
+
+        weatherListLabel = sectionLabel("")
+        weatherListNote = note("", width: width)
+        // Clear skies go last: they only show while keeping one kind.
+        let kinds = WeatherKind.allCases.filter { $0 != .clear } + [.clear]
+        let tileW = (width - 16) / 3
+        let thumb = CGSize(width: tileW - 12, height: ((tileW - 12) * HabitatLayout.aspect).rounded())
+        weatherTiles = kinds.map { k in
+            let t = TileButton(image: NSImage(size: thumb), title: k.label, subtitle: nil, imageSize: thumb, titleSize: 10)
+            t.onClick = { [weak self] in self?.weatherTileClicked(k) }
+            t.toolTip = k.blurb
+            return (k, t)
+        }
+        weatherGrid = grid(weatherTiles.map { $0.tile }, columns: 3, width: width)
+
+        weatherReset.target = self
+        weatherReset.action = #selector(weatherResetTapped)
+        weatherReset.toolTip = "Only the weather that comes to this scenery by itself"
+
+        func sliderRow(_ title: String, low: String, high: String, _ s: NSSlider, action: Selector) -> NSView {
+            let label = NSTextField(labelWithString: title)
+            label.font = .systemFont(ofSize: 12)
+            label.textColor = NSColor(white: 1, alpha: 0.78)
+            s.controlSize = .small
+            s.isContinuous = true
+            s.target = self
+            s.action = action
+            s.translatesAutoresizingMaskIntoConstraints = false
+            s.widthAnchor.constraint(equalToConstant: width).isActive = true
+            func caption(_ t: String) -> NSTextField {
+                let c = NSTextField(labelWithString: t)
+                c.font = .systemFont(ofSize: 10)
+                c.textColor = NSColor(white: 1, alpha: 0.45)
+                return c
+            }
+            let gap = NSView()
+            gap.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            let ends = NSStackView(views: [caption(low), gap, caption(high)])
+            ends.translatesAutoresizingMaskIntoConstraints = false
+            ends.widthAnchor.constraint(equalToConstant: width).isActive = true
+            let col = NSStackView(views: [label, s, ends])
+            col.orientation = .vertical
+            col.alignment = .leading
+            col.spacing = 3
+            return col
+        }
+        paceRow = sliderRow("How Often It Changes", low: "Slowly", high: "Often", paceSlider, action: #selector(paceChanged))
+        amountRow = sliderRow("How Much Weather", low: "Now and then", high: "Most of the time", amountSlider, action: #selector(amountChanged))
+
+        outsideNote = note("", width: width)
+        outsideButton.target = self
+        outsideButton.action = #selector(outsideTapped)
+
+        return page([note("The tank has weather of its own, and your spider feels it: rain soaks it, snow settles on it, the wind blows it about — and it runs for cover when it pours.", width: width),
+                     weatherMode, nowLine, weatherNowRow, weatherListLabel, weatherListNote, weatherGrid, weatherReset,
+                     paceRow, amountRow, outsideNote, outsideButton])
+    }
+
+    /// The Weather tab, back in step with the tank's weather.
+    func refreshWeather() {
+        guard let c = controller, !weatherTiles.isEmpty else { return }
+        let s = c.weather.settings
+        let b = c.scene.habitat.biome
+        weatherMode.selectedSegment = s.mode == .changing ? 0 : (s.mode == .always ? 1 : 2)
+        weatherNow.stringValue = c.weather.summary()
+        weatherNowIcon.image = NSImage(systemSymbolName: c.weather.current.symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .semibold))
+        // The tiles show this scenery, with each kind of weather on it.
+        if tilesBiome != b, pages.count > 3, !pages[3].isHidden {
+            tilesBiome = b
+            for (k, t) in weatherTiles {
+                t.setImage(WeatherArt.thumbnail(k, biome: b, size: t.imageSize))
+            }
+        }
+        let list = s.rotation(b)
+        for (k, t) in weatherTiles {
+            switch s.mode {
+            case .changing:
+                t.isHidden = k == .clear
+                t.selected = list.contains(k)
+                t.alphaValue = list.contains(k) ? 1 : 0.45
+                t.toolTip = list.contains(k) ? "\(k.blurb) — comes to the \(b.label). Click to take it out." : "\(k.blurb). Click to have it come to the \(b.label) too."
+            case .always:
+                t.isHidden = false
+                t.selected = s.always == k
+                t.alphaValue = 1
+                t.toolTip = "\(k.blurb). Click to keep it that way."
+            case .outside:
+                t.isHidden = true
+            }
+        }
+        let changing = s.mode == .changing
+        weatherGrid.isHidden = s.mode == .outside
+        weatherListLabel.isHidden = s.mode == .outside
+        weatherListNote.isHidden = s.mode == .outside
+        weatherListLabel.stringValue = (changing ? "Weather in the \(b.label)" : "Keep It…").uppercased()
+        weatherListNote.stringValue = changing
+            ? "Lit up: comes to the \(b.label) now and then. Click to add or take one out — snow in the desert, if you like. Clear skies come in between."
+            : "Click one to keep it that way."
+        weatherReset.isHidden = !changing
+        weatherReset.isEnabled = s.isCustom(b)
+        weatherReset.set(title: "Back to the \(b.label)’s Own", symbol: "arrow.counterclockwise")
+        weatherNowRow.isHidden = !changing
+        paceRow.isHidden = !changing
+        amountRow.isHidden = !changing
+        if abs(paceSlider.doubleValue - Double(s.pace)) > 0.001 { paceSlider.doubleValue = Double(s.pace) }
+        if abs(amountSlider.doubleValue - Double(s.amount)) > 0.001 { amountSlider.doubleValue = Double(s.amount) }
+        let available = c.outsideAvailable()
+        outsideNote.isHidden = s.mode != .outside
+        outsideButton.isHidden = s.mode != .outside || available
+        outsideNote.stringValue = available
+            ? "The tank has the weather where you are — rain when it rains, snow when it snows. It’s looked up every twenty minutes, from Open-Meteo, going by roughly where your internet connection is. " + (c.outsideSummary() ?? "Looking it up…")
+            : "To follow the weather where you are, the app looks it up every twenty minutes (from Open-Meteo, going by roughly where your internet connection is). That’s off at the moment."
+    }
+
+    @objc private func weatherModeChanged() {
+        let m: WeatherSettings.Mode = weatherMode.selectedSegment == 1 ? .always : (weatherMode.selectedSegment == 2 ? .outside : .changing)
+        if m == .outside {
+            // (Only once it is allowed to look.)
+            if controller?.outsideAvailable() == true { controller?.setWeatherMode(.outside) }
+            else { controller?.weather.settings.mode = .outside; refreshWeather() }
+        } else {
+            controller?.setWeatherMode(m)
+        }
+    }
+
+    private func weatherTileClicked(_ k: WeatherKind) {
+        guard let c = controller else { return }
+        switch c.weather.settings.mode {
+        case .changing:
+            c.weather.settings.toggle(k, in: c.scene.habitat.biome)
+        case .always, .outside:
+            c.keepWeather(k)
+        }
+        refreshWeather()
+    }
+
+    @objc private func weatherResetTapped() {
+        guard let c = controller else { return }
+        c.weather.settings.reset(c.scene.habitat.biome)
+        refreshWeather()
+    }
+
+    @objc private func paceChanged() { controller?.weather.settings.pace = CGFloat(paceSlider.doubleValue) }
+    @objc private func amountChanged() { controller?.weather.settings.amount = CGFloat(amountSlider.doubleValue) }
+    @objc private func outsideTapped() { controller?.setWeatherMode(.outside) }
+
     private func buildInspector(width: CGFloat) {
         inspector.orientation = .vertical
         inspector.alignment = .leading
@@ -814,6 +1357,7 @@ final class DecorPanel: NSView {
 
     private func showPage(_ i: Int) {
         for (k, p) in pages.enumerated() { p.isHidden = k != i }
+        if i == 3 { refreshWeather() }
         scroll.documentView?.scroll(.zero)
         scroll.reflectScrolledClipView(scroll.contentView)
     }
@@ -821,6 +1365,7 @@ final class DecorPanel: NSView {
     /// Back in step with the tank.
     func refresh() {
         guard let c = controller else { return }
+        refreshWeather()
         let h = c.scene.habitat
         for (b, t) in zip(Biome.allCases, biomeTiles) { t.selected = b == h.biome }
         undoButton.isEnabled = c.canUndo
@@ -874,6 +1419,13 @@ extension HabitatController {
 
 final class FlippedStack: NSStackView {
     override var isFlipped: Bool { true }
+}
+
+/// Fills a menu afresh each time it is about to open.
+final class MenuFiller: NSObject, NSMenuDelegate {
+    private let fill: (NSMenu) -> Void
+    init(_ fill: @escaping (NSMenu) -> Void) { self.fill = fill }
+    func menuNeedsUpdate(_ menu: NSMenu) { fill(menu) }
 }
 
 /// One of the row of things to do to the chosen piece: an icon over a
@@ -950,17 +1502,19 @@ final class TileButton: NSView {
     private let imageView = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private let sub = NSTextField(wrappingLabelWithString: "")
+    let imageSize: CGSize
 
-    init(image: NSImage, title: String, subtitle: String?, imageSize: CGSize) {
+    init(image: NSImage, title: String, subtitle: String?, imageSize: CGSize, titleSize: CGFloat = 11.5) {
+        self.imageSize = imageSize
         super.init(frame: .zero)
         imageView.image = image
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.wantsLayer = true
-        imageView.layer?.cornerRadius = subtitle == nil && imageSize.width < 80 ? 0 : 6
+        imageView.layer?.cornerRadius = subtitle == nil && imageSize.width < 80 && titleSize >= 11.5 ? 0 : 6
         imageView.layer?.masksToBounds = true
         imageView.translatesAutoresizingMaskIntoConstraints = false
         label.stringValue = title
-        label.font = .systemFont(ofSize: 11.5, weight: .medium)
+        label.font = .systemFont(ofSize: titleSize, weight: .medium)
         label.textColor = NSColor(white: 1, alpha: 0.9)
         label.alignment = .center
         label.lineBreakMode = .byTruncatingTail
@@ -989,6 +1543,8 @@ final class TileButton: NSView {
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil))
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    func setImage(_ img: NSImage) { imageView.image = img }
 
     override func mouseEntered(with event: NSEvent) { hovering = true }
     override func mouseExited(with event: NSEvent) { hovering = false }

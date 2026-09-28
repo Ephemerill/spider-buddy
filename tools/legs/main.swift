@@ -30,7 +30,8 @@ import AppKit
 // LC_V=1 lists the worst moments; LC_FILM=1 draws them into LC_OUT (with
 // LC_FILMN, LC_KINDS); LC_CLIP=run:from-to:every:label draws one stretch
 // of one life (LC_NAME, LC_CLEAN=1 without the joints); LC_TRACE=from-to:run
-// prints every leg's bones, frame by frame.
+// prints every leg's bones, frame by frame. LC_NATURAL=1 walks the natural
+// way (`Gait.natural`).
 
 let dt: CGFloat = 1.0 / 60.0
 let env = ProcessInfo.processInfo.environment
@@ -41,6 +42,12 @@ let outDir = env["LC_OUT"] ?? "."
 let film = env["LC_FILM"] != nil
 let topN = Int(env["LC_TOP"] ?? "6") ?? 6
 let verbose = env["LC_V"] != nil
+let naturalWalk = env["LC_NATURAL"] == "1"
+func dress(_ s: Spider) {
+    // (Set straight on the gait: applying a design draws random numbers,
+    // and the lives would no longer match the classic walk's.)
+    if naturalWalk { s.gait.natural = true }
+}
 let kinds = ["stretch", "reach", "off", "sunk", "through", "flip", "pop"]
 
 // MARK: - Worlds
@@ -392,6 +399,7 @@ func live(_ world: World) -> Tally {
         s.config.scale = S
         s.config.followCursor = false
         s.config.pounceOnCursor = false
+        dress(s)
         s.enter(map: world.map, at: world.start, habitat: world.habitat)
         for f in 0..<Int(secs / dt) {
             s.setCursor(V2(-9e4, -9e4))
@@ -538,6 +546,7 @@ case "flat":
         s.config.scale = S
         s.config.followCursor = seed % 3 == 1
         s.config.pounceOnCursor = false
+        dress(s)
         s.debugAttach(loopID: "win:1", segIdx: 0, t: 640, dir: seed % 2 == 0 ? 1 : -1)
         for f in 0..<Int(secs / dt) {
             // For some, the pointer drifting about above the window.

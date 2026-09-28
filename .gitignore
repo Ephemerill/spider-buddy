@@ -4,3 +4,12 @@ Spider Buddy.app/
 build/Sparkle/
 build/appcast.xml
 .swiftpm/
+build/art/
+build/Painter
+
+# The report Worker's local state and secrets.
+tools/report-worker/.wrangler/
+tools/report-worker/.dev.vars
+tools/report-worker/node_modules/
+
+.build/

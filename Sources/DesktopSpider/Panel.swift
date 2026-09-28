@@ -157,6 +157,13 @@ final class PanelController: NSObject, NSPopoverDelegate {
     /// window (a popover's contents do not draw into a bitmap). Takes the
     /// panel's view out of the popover for good, so it is the last use.
     func snapshot(to path: String, page: Int, dark: Bool) {
+        guard let rep = picture(page: page, dark: dark) else { return }
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+    }
+
+    /// A page of the panel as a picture (the welcome tour shows one). Like
+    /// `snapshot`, it takes the panel's view out of the popover for good.
+    func picture(page: Int, dark: Bool) -> NSBitmapImageRep? {
         if popover.isShown { popover.close() }
         let host = NSView()
         host.wantsLayer = true
@@ -175,9 +182,9 @@ final class PanelController: NSObject, NSPopoverDelegate {
         w.appearance = host.appearance
         host.layoutSubtreeIfNeeded()
         host.display()
-        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return nil }
         host.cacheDisplay(in: host.bounds, to: rep)
-        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+        return rep
     }
 
     private func fit() {
@@ -528,7 +535,7 @@ final class CardView: NSView {
     }
 }
 
-/// The menu bar icon, white on a small accent-coloured disc.
+/// The menu bar icon, plain, just as it sits in the menu bar.
 final class SpiderBadge: NSView {
     private static let side: CGFloat = 24
 
@@ -538,7 +545,7 @@ final class SpiderBadge: NSView {
         widthAnchor.constraint(equalToConstant: SpiderBadge.side).isActive = true
         heightAnchor.constraint(equalToConstant: SpiderBadge.side).isActive = true
         let icon = NSImageView(image: SpiderRenderer.statusItemImage(size: 17))
-        icon.contentTintColor = .white
+        icon.contentTintColor = .labelColor
         icon.translatesAutoresizingMaskIntoConstraints = false
         addSubview(icon)
         NSLayoutConstraint.activate([
@@ -547,11 +554,6 @@ final class SpiderBadge: NSView {
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
-
-    override func draw(_ dirtyRect: NSRect) {
-        NSColor.controlAccentColor.setFill()
-        NSBezierPath(ovalIn: bounds).fill()
-    }
 }
 
 /// An icon in the page strip: tinted and on a soft accent tile when its

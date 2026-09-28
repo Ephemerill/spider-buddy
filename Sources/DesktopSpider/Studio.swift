@@ -191,6 +191,14 @@ final class StudioPreview: NSView {
         let body = spider.worldPos + spider.standingNormal * (4 * spider.config.scale)
         spider.surroundings = ledge.contains(body.point) ? RGB(1, 1, 1) : RGB(0.98, 0.96, 0.92)
         spider.update(dt: dt)
+        // The box is small, and some of what it gets up to (a drop on a
+        // thread, a swing) is sized for a real desktop: kept inside the
+        // box no matter what it computed, moved along with whatever it is
+        // holding onto rather than dropped or reset.
+        let room = bounds.insetBy(dx: 4, dy: 4)
+        let p = spider.worldPos
+        let clamped = V2(clamp(p.x, room.minX, room.maxX), clamp(p.y, room.minY, room.maxY))
+        if clamped.distance(to: p) > 0.01 { spider.teleportQuietly(to: clamped) }
         needsDisplay = true
     }
 
@@ -213,7 +221,10 @@ final class StudioPreview: NSView {
     }
     override func mouseDragged(with event: NSEvent) {
         guard dragging else { return }
-        let p = local(event)
+        // Kept inside the box: dragged past its edge it would leave its own
+        // surfaces behind and break.
+        let b = bounds.insetBy(dx: 4, dy: 4)
+        let p = V2(clamp(local(event).x, b.minX, b.maxX), clamp(local(event).y, b.minY, b.maxY))
         spider.moveGrab(to: p)
         samples.append((p, event.timestamp))
         if samples.count > 8 { samples.removeFirst() }
@@ -318,6 +329,7 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
     private var sliders: [(NSSlider, () -> CGFloat)] = []
     private var presetPopup: NSPopUpButton!
     private var stylePopup: NSPopUpButton!
+    private var legMotionPopup: NSPopUpButton!
     private var sizeSlider: NSSlider!
     var scale: CGFloat = 0.95
     var onScale: ((CGFloat) -> Void)?
@@ -1169,6 +1181,17 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         stylePopup.action = #selector(stylePicked(_:))
         row.addArrangedSubview(stylePopup)
         col.addArrangedSubview(row)
+        let legRow = NSStackView()
+        legRow.orientation = .horizontal
+        legRow.spacing = 8
+        legRow.addArrangedSubview(header("Leg motion"))
+        legMotionPopup = NSPopUpButton()
+        legMotionPopup.addItems(withTitles: ["Classic", "Natural"])
+        legMotionPopup.toolTip = "Natural: every leg keeps its true length, steps ripple from the back legs to the front, and it walks a leg at a time when it goes slowly. Classic: the walk it has always had."
+        legMotionPopup.target = self
+        legMotionPopup.action = #selector(legMotionPicked(_:))
+        legRow.addArrangedSubview(legMotionPopup)
+        col.addArrangedSubview(legRow)
         col.addArrangedSubview(slider("Pace", low: "Ambling", high: "Brisk",
                                       get: { self.design.gait.pace }, set: { self.design.gait.pace = $0 }))
         col.addArrangedSubview(slider("Stride", low: "Short steps", high: "Long steps",
@@ -1226,6 +1249,7 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         let presetIdx = Personality.presets.firstIndex { $0.p == design.personality }
         presetPopup.selectItem(at: presetIdx.map { $0 + 1 } ?? 0)
         stylePopup.selectItem(at: GaitPreference.allCases.firstIndex(of: design.gait.style) ?? 0)
+        legMotionPopup.selectItem(at: design.gait.natural ? 1 : 0)
         sizeSlider.doubleValue = Double(scale)
         for sync in syncers { sync() }
         for (pack, box) in packBoxes { box.state = design.packs.contains(pack) ? .on : .off }
@@ -1275,6 +1299,11 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         changed()
     }
 
+    @objc private func legMotionPicked(_ p: NSPopUpButton) {
+        design.gait.natural = p.indexOfSelectedItem == 1
+        changed()
+    }
+
     @objc private func showPose(_ item: NSMenuItem) {
         guard let key = item.representedObject as? String, !key.isEmpty else { return }
         preview.show(key)
@@ -1286,7 +1315,10 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
     }
 
     @objc private func randomize() {
+        // (How its legs move is a choice of animation, not of spider: kept.)
+        let natural = design.gait.natural
         design = SpiderDesign.random()
+        design.gait.natural = natural
         changed()
         preview.spider.celebrate()
     }

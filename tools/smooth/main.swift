@@ -16,8 +16,15 @@ import AppKit
 //   slide     free life: every stretch where the body travels along a ledge
 //             with no foot lifted (SLIDE_LOG=1 lists them, SLIDE_DUMP=1
 //             prints the second before any that carry the feet along)
+//   icewalk   free life from every edge of a window (top, sides, under),
+//             the pointer away / near / sweeping, and doubling back from a
+//             friend: walking on frozen legs, by activity, leg controller
+//             and how far round toward you it is, plus leg jolts while
+//             walking by yaw and just after passing the front view.
+//             ICE_LOG=1 lists each one, ICE_BIG=n prints the frames before
+//             any jolt over n, ICE_SCALE (0.78), ICE_SECS (120)
 //
-// `./tools/smooth.sh [pairs|sweep|hover|gaze|slide|all]`
+// `./tools/smooth.sh [pairs|sweep|hover|gaze|slide|icewalk|all]`
 
 let dt: CGFloat = 1.0 / 60.0
 let snapA: CGFloat = 2.5        // px/frame², at scale 1
@@ -953,7 +960,130 @@ func runSlide() {
     }
 }
 
+// MARK: - ice walking
+
+/// Free life from every edge of the window (top, sides, underneath), the
+/// pointer away, resting near, and sweeping over it: every stretch where
+/// the body goes along the surface with no foot lifting and the feet carried
+/// along with it — walking on frozen legs. Broken down by activity, leg
+/// controller and how far round toward you it is (yaw). `ICE_LOG=1` lists
+/// each one; `ICE_SCALE` sets the size (default 0.78).
+func runIceWalk() {
+    let window = 15
+    let log = ProcessInfo.processInfo.environment["ICE_LOG"] != nil
+    let scale = CGFloat(Double(ProcessInfo.processInfo.environment["ICE_SCALE"] ?? "") ?? 0.78)
+    let secs = CGFloat(Double(ProcessInfo.processInfo.environment["ICE_SECS"] ?? "") ?? 120)
+    struct F { var pos: V2; var along: V2; var lift: CGFloat; var feet: [V2]; var key: String; var ok: Bool }
+    var by: [String: (n: Int, px: CGFloat)] = [:]
+    var total: CGFloat = 0, episodes = 0, walkFrames = 0, faceWalkFrames = 0
+    // Jolts in the legs while walking, by how far round it is, and in the
+    // frames either side of passing the front view mid-walk.
+    var jolts: [String: Tally] = [:]
+    let cursors: [(String, (CGFloat, V2) -> V2)] = [
+        ("away", { _, _ in far }),
+        ("near", { _, p in V2(p.x + 90, p.y + 60) }),
+        ("sweep", { t, p in V2(p.x + 140 * sin(t * 2 * .pi / 3.5), p.y + 70) }),
+        // Running from a friend that keeps turning up on the other side:
+        // it doubles back through the front view, on the move, each time.
+        ("doubling back", { _, _ in far }),
+    ]
+    for (name, cursorAt) in cursors {
+        for seg in 0..<4 {
+            for run in 0..<2 {
+                let s = freshSpider(followCursor: name != "away", seg: seg, at: 60 + CGFloat(run) * 90)
+                s.config.scale = scale
+                let fleeing = name == "doubling back"
+                var fleeSide: CGFloat = 1
+                var hist: [F] = []
+                var t: CGFloat = 0
+                var inEp = false
+                let meter = Meter()
+                var lastFlip = -99, frame = 0
+                var lastYaw: CGFloat = 1
+                var ring: [String] = []
+                while t < secs {
+                    t += dt
+                    frame += 1
+                    s.setCursor(cursorAt(t, s.worldPos))
+                    if fleeing {
+                        if frame % 100 == 0 { fleeSide = -fleeSide }
+                        let along = V2.angle(s.pose().heading)
+                        s.friendFlee = s.debugState.hasPrefix("attached") ? s.worldPos + along * (fleeSide * 150) : nil
+                    }
+                    s.update(dt: dt)
+                    let p = s.pose()
+                    let j = joints(p)
+                    let st = s.debugState
+                    let g = s.debugGait
+                    let attached = st.hasPrefix("attached")
+                    let yawB = abs(p.facing) < 0.35 ? "face-on" : (abs(p.facing) < 0.7 ? "3/4" : "profile")
+                    let key = "\(activityName(s)) \(g.controller) \(yawB)"
+                    let walkingNow = attached && g.speed > 1 && !key.hasPrefix("roll")
+                    if (p.facing >= 0) != (lastYaw >= 0), walkingNow { lastFlip = frame }
+                    lastYaw = p.facing
+                    ring.append(String(format: "T %6.2f yaw %5.2f spd %5.1f %@", t, p.facing, g.speed, s.debugLegTiming as NSString))
+                    if ring.count > 5 { ring.removeFirst() }
+                    meter.tally = Tally()
+                    meter.sample(p, measuring: walkingNow)
+                    if walkingNow {
+                        let jk = frame - lastFlip <= 8 ? "passing the front view" : yawB
+                        jolts[jk, default: Tally()].add(meter.tally)
+                        if let big = ProcessInfo.processInfo.environment["ICE_BIG"].flatMap({ Double($0) }), meter.tally.worstA > CGFloat(big) {
+                            print(String(format: "  BIG %.2f %@  %@ seg %d run %d t %6.2f  %@  yaw %.2f  flip-%d  %@", meter.tally.worstA, meter.tally.worstJoint as NSString,
+                                         name as NSString, seg, run, t, key as NSString, p.facing, frame - lastFlip, s.debugFeetWhy as NSString))
+                            ring.forEach { print("    " + $0) }
+                        }
+                        if log, frame - lastFlip <= 8, meter.tally.worstA > 2.5 {
+                            print(String(format: "  flip+%d %@ seg %d run %d t %6.2f  %@  yaw %.2f  jolt %.2f %@  %@", frame - lastFlip, name as NSString, seg, run, t,
+                                         key as NSString, p.facing, meter.tally.worstA, meter.tally.worstJoint as NSString, s.debugFeetWhy as NSString))                        }
+                    }
+                    if attached, g.speed > 1 {
+                        walkFrames += 1
+                        if abs(p.facing) < 0.7 { faceWalkFrames += 1 }
+                    }
+                    hist.append(F(pos: p.pos, along: V2.angle(p.heading), lift: p.legs.map(\.lift).max() ?? 0,
+                                  feet: Array(j[0..<8]), key: key, ok: attached && !key.hasPrefix("roll")))
+                    if hist.count > window { hist.removeFirst() }
+                    guard hist.count == window, hist.allSatisfy(\.ok) else { inEp = false; continue }
+                    let d = hist.last!.pos - hist.first!.pos
+                    let travel = abs(d.dot(hist.last!.along)) / scale
+                    let lifted = hist.map(\.lift).max() ?? 0
+                    let carried = zip(hist.last!.feet, hist.first!.feet).map { $0.distance(to: $1) }.reduce(0, +) / 8 / scale
+                    if travel > 5, lifted < 0.05, carried > travel * 0.5 {
+                        let step = hist[window - 1].pos.distance(to: hist[window - 2].pos) / scale
+                        total += step
+                        by[key, default: (0, 0)].px += step
+                        if !inEp {
+                            episodes += 1
+                            by[key, default: (0, 0)].n += 1
+                            if log {
+                                print(String(format: "  %@ seg %d run %d t %6.2f  %@  yaw %.2f  travel %.1f  carried %.1f  %@", name as NSString, seg, run, t,
+                                             key as NSString, p.facing, travel, carried, s.debugActivity as NSString))
+                            }
+                        }
+                        inEp = true
+                    } else {
+                        inEp = false
+                    }
+                }
+            }
+        }
+    }
+    print(String(format: "ice walking: %d stretches, %.0f px  (walking %.0f s, %.0f s of it turned toward you)",
+                 episodes, total, CGFloat(walkFrames) * dt, CGFloat(faceWalkFrames) * dt))
+    for (k, v) in by.sorted(by: { $0.value.px > $1.value.px }) {
+        print(String(format: "  %-34@ %4d times  %6.0f px", k as NSString, v.n, v.px))
+    }
+    print("leg jolts while walking:")
+    for (k, v) in jolts.sorted(by: { $0.key < $1.key }) {
+        let secs = CGFloat(v.frames) * dt
+        print(String(format: "  %-24@ %6.1f s  snaps %5.1f/s  reversals %4.1f/s  worst %5.2f %@", k as NSString, secs,
+                     CGFloat(v.snaps) / max(secs, 0.01), CGFloat(v.reversals) / max(secs, 0.01), v.worstA, v.worstJoint as NSString))
+    }
+}
+
 switch mode {
+case "icewalk": runIceWalk()
 case "legmap": legMap(CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "greet",
                       secs: CommandLine.arguments.count > 3 ? CGFloat(Double(CommandLine.arguments[3]) ?? 1) : 1,
                       out: CommandLine.arguments.count > 4 ? CommandLine.arguments[4] : "build/legmap.png")

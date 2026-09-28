@@ -328,6 +328,18 @@ enum SpiderRenderer {
         // Normalise to y-up regardless of how the backing context is oriented.
         if ctx.ctm.d < 0 { ctx.scaleBy(x: 1, y: -1) }
 
+        let pal = palette(for: pose.outfit, time: pose.time, surroundings: pose.surroundings)
+
+        // Peek-a-boo, hiding: its front feet stay out in front of the
+        // clip below, gripping the edge, as little dots.
+        if !pose.peekGrip.isEmpty {
+            let dotColour = pal.legFill
+            ctx.setFillColor(dotColour)
+            for g in pose.peekGrip {
+                ctx.fillEllipse(in: CGRect(x: g.x - 2.2, y: g.y - 2.2, width: 4.4, height: 4.4))
+            }
+        }
+
         // Whatever falls inside a window in front of it is behind that
         // window: cut it out of everything drawn from here on.
         if !pose.hiddenBy.isEmpty {
@@ -346,7 +358,11 @@ enum SpiderRenderer {
         drawEmote(pose, in: ctx)
         drawNameTag(pose, in: ctx)
         let look = pose.outfit
-        let pal = palette(for: look, time: pose.time, surroundings: pose.surroundings)
+
+        // Weather on its coat — wet, dusty, chilled — tints all of it, legs
+        // and all: it is drawn into a layer of its own and washed over.
+        let coat = pose.wet > 0.01 || pose.dust > 0.01 || pose.chill > 0.05
+        if coat { ctx.beginTransparencyLayer(auxiliaryInfo: nil) }
 
         ctx.saveGState()
         ctx.rotate(by: pose.heading)
@@ -381,29 +397,34 @@ enum SpiderRenderer {
         // The far legs are always behind everything. The face goes over
         // or under the near legs as the look says; the hat is always on
         // top, since nothing reaches up past the head.
-        let hcN = V2.lerp(frontHead.c, head.c, profile)
-        let hrN = lerp(frontHead.r, head.r, profile) * look.bodyMetrics.head
+        //
+        // Head and abdomen can be turned further round than the legs are
+        // standing: they are drawn for their own yaw (see `upperTurn`),
+        // mirrored when that is round past the front view from the legs'.
+        let upper = upperTurn(pose)
+        let fu = upper.f
+        let hrN = lerp(frontHead.r, head.r, fu) * look.bodyMetrics.head
         func face(_ ctx: CGContext) {
             ctx.saveGState()
             lean(ctx)
-            headTurn(pose, hc: hcN, hr: hrN, profile: profile, in: ctx)
-            foldHead(pose, profile: profile, in: ctx)
-            drawFace(pose, profile: profile, look: look, pal: pal, in: ctx)
-            drawFaceAccessory(pose, profile: profile, look: look, pal: pal, in: ctx)
+            enterHead(pose, upper: upper, hr: hrN, in: ctx)
+            ctx.translateBy(x: 0, y: faceLift(pose, profile: fu))
+            drawFace(pose, profile: fu, look: look, pal: pal, in: ctx)
+            drawFaceAccessory(pose, profile: fu, look: look, pal: pal, in: ctx)
             ctx.restoreGState()
         }
         drawLegs(pose, far: true, profile: profile, look: look, pal: pal, in: ctx)
         ctx.saveGState()
         lean(ctx)
         drawThread(pose, in: ctx)
-        drawBody(pose, profile: profile, look: look, pal: pal, in: ctx)
+        if upper.flip { ctx.scaleBy(x: -1, y: 1) }
+        drawBody(pose, profile: fu, flipped: upper.flip, look: look, pal: pal, in: ctx)
         ctx.restoreGState()
         func hat(_ ctx: CGContext) {
             ctx.saveGState()
             lean(ctx)
-            headTurn(pose, hc: hcN, hr: hrN, profile: profile, in: ctx)
-            foldHead(pose, profile: profile, in: ctx)
-            drawHat(pose, profile: profile, look: look, pal: pal, in: ctx)
+            enterHead(pose, upper: upper, hr: hrN, in: ctx)
+            drawHat(pose, profile: fu, look: look, pal: pal, in: ctx)
             ctx.restoreGState()
         }
         // The near legs are in front of the hat — a front leg reaching up
@@ -413,7 +434,7 @@ enum SpiderRenderer {
         // outline: the part over the head is drawn under the face, the
         // rest over the hat, each part once.
         if look.faceOverLegs {
-            let head = headOutline(pose, hc: hcN, hr: hrN, profile: profile, lean: lean, in: ctx)
+            let head = headOutline(pose, hr: hrN, lean: lean, in: ctx)
             ctx.saveGState()
             ctx.addPath(head); ctx.clip()
             drawLegs(pose, far: false, profile: profile, look: look, pal: pal, in: ctx)
@@ -433,6 +454,177 @@ enum SpiderRenderer {
         }
 
         ctx.restoreGState()
+        if coat {
+            washCoat(pose, in: ctx)
+            ctx.endTransparencyLayer()
+        }
+        drawSpecks(pose, in: ctx)
+        ctx.restoreGState()
+    }
+
+    // MARK: Weather on it
+
+    /// A number in 0…1 that is always the same for the same two.
+    private static func hash01(_ a: Int, _ b: Int) -> CGFloat {
+        let x = sin(CGFloat(a) * 12.9898 + CGFloat(b) * 78.233) * 43758.5453
+        return x - x.rounded(.down)
+    }
+
+    /// Washes the whole of it (drawn in a layer of its own) with the
+    /// weather's tint: a cold blue, sandy dust, the dark of a soaked coat.
+    private static func washCoat(_ pose: SpiderPose, in ctx: CGContext) {
+        ctx.saveGState()
+        ctx.setBlendMode(.sourceAtop)
+        let all = CGRect(x: -600, y: -600, width: 1200, height: 1200)
+        if pose.chill > 0.05 {
+            ctx.setFillColor(CGColor(red: 0.6, green: 0.76, blue: 1, alpha: 0.2 * pose.chill))
+            ctx.fill(all)
+        }
+        if pose.dust > 0.01 {
+            ctx.setFillColor(CGColor(red: 0.86, green: 0.72, blue: 0.5, alpha: 0.34 * pose.dust))
+            ctx.fill(all)
+        }
+        if pose.wet > 0.01 {
+            ctx.setFillColor(CGColor(red: 0.05, green: 0.09, blue: 0.19, alpha: 0.3 * pose.wet))
+            ctx.fill(all)
+        }
+        ctx.restoreGState()
+    }
+
+    /// Soaked: a wet shine across the top of it and beads of water standing
+    /// on it — more of them the wetter it is.
+    private static func drawWetCoat(_ c: V2, _ rx: CGFloat, _ ry: CGFloat, wet: CGFloat, seed: Int, in ctx: CGContext) {
+        guard wet > 0.02 else { return }
+        ctx.saveGState()
+        ctx.setLineCap(.round)
+        for (k, (a0, a1, r, w, al)) in [(CGFloat(2.2), CGFloat(1.0), CGFloat(0.74), CGFloat(1.7), CGFloat(0.6)),
+                                        (2.5, 1.9, 0.5, 1.1, 0.35)].enumerated() {
+            let shine = CGMutablePath()
+            for i in 0...10 {
+                let a = a0 + (a1 - a0) * CGFloat(i) / 10
+                let p = CGPoint(x: c.x + cos(a) * rx * r, y: c.y + sin(a) * ry * r)
+                if i == 0 { shine.move(to: p) } else { shine.addLine(to: p) }
+            }
+            ctx.addPath(shine)
+            ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: al * min(wet * 1.4, 1) * (k == 0 ? 1 : 0.9)))
+            ctx.setLineWidth(w)
+            ctx.strokePath()
+        }
+        let beads = Int((wet * 9).rounded())
+        for i in 0..<beads {
+            let a = 0.2 + hash01(seed, i) * 2.7
+            let rr = 0.5 + 0.38 * hash01(seed + 1, i)
+            let p = CGPoint(x: c.x + cos(a) * rx * rr, y: c.y + sin(a) * ry * rr)
+            let r = 0.9 + hash01(seed + 2, i) * 0.9
+            let bead = CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)
+            ctx.setFillColor(CGColor(red: 0.82, green: 0.9, blue: 1, alpha: 0.5))
+            ctx.fillEllipse(in: bead)
+            ctx.setStrokeColor(CGColor(red: 0.22, green: 0.3, blue: 0.45, alpha: 0.4))
+            ctx.setLineWidth(0.5)
+            ctx.strokeEllipse(in: bead)
+            ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.95))
+            ctx.fillEllipse(in: CGRect(x: p.x - r * 0.55, y: p.y + r * 0.1, width: r * 0.6, height: r * 0.6))
+        }
+        ctx.restoreGState()
+    }
+
+    /// Snow settled on it: a lumpy white cap along whichever side of it is
+    /// up (`up`, in this frame), thicker the more has fallen.
+    private static func drawSnowCap(_ c: V2, _ rx: CGFloat, _ ry: CGFloat, amount: CGFloat, up: V2, seed: Int, in ctx: CGContext) {
+        guard amount > 0.02, up.length > 0.01 else { return }
+        let u = up.normalized
+        let mid = atan2(u.y * ry, u.x * rx)
+        let span: CGFloat = 1.45
+        let steps = 24
+        var outer: [CGPoint] = [], inner: [CGPoint] = []
+        for k in 0...steps {
+            let a = mid - span + 2 * span * CGFloat(k) / CGFloat(steps)
+            let e = V2(c.x + cos(a) * rx, c.y + sin(a) * ry)
+            let n = V2(cos(a) / rx, sin(a) / ry).normalized
+            let face = smoothstep(clamp((n.dot(u) - 0.1) / 0.6, 0, 1))
+            let lump = 1 + 0.22 * sin(a * 7 + CGFloat(seed)) + 0.12 * sin(a * 13 + CGFloat(seed) * 2)
+            let thick = (1.2 + 4.8 * amount) * face * lump
+            outer.append((e + n * thick).point)
+            inner.append((e - n * (0.9 * face)).point)
+        }
+        let a = min(1, amount * 3)
+        ctx.saveGState()
+        let cap = CGMutablePath()
+        cap.addLines(between: outer + inner.reversed())
+        cap.closeSubpath()
+        ctx.addPath(cap)
+        ctx.setFillColor(CGColor(red: 0.97, green: 0.98, blue: 1, alpha: a))
+        ctx.fillPath()
+        // Blue in the shade where it sits on the fur, crisp along the top.
+        ctx.setLineCap(.round)
+        ctx.setLineJoin(.round)
+        ctx.addLines(between: inner)
+        ctx.setStrokeColor(CGColor(red: 0.72, green: 0.8, blue: 0.94, alpha: 0.8 * a))
+        ctx.setLineWidth(1)
+        ctx.strokePath()
+        ctx.addLines(between: outer)
+        ctx.setStrokeColor(CGColor(red: 0.55, green: 0.64, blue: 0.8, alpha: 0.75 * a))
+        ctx.setLineWidth(0.7)
+        ctx.strokePath()
+        ctx.restoreGState()
+    }
+
+    /// Sand in its fur: a sprinkle of grains.
+    private static func drawDust(_ c: V2, _ rx: CGFloat, _ ry: CGFloat, amount: CGFloat, seed: Int, in ctx: CGContext) {
+        let n = Int(amount * 22)
+        guard n > 0 else { return }
+        ctx.saveGState()
+        for i in 0..<n {
+            let a = hash01(seed, i) * 2 * .pi
+            let rr = hash01(seed + 3, i).squareRoot() * 0.85
+            let r = 0.45 + hash01(seed + 4, i) * 0.5
+            ctx.setFillColor(CGColor(red: 0.8 + hash01(seed + 5, i) * 0.15, green: 0.66, blue: 0.44, alpha: 0.9))
+            ctx.fillEllipse(in: CGRect(x: c.x + cos(a) * rx * rr - r, y: c.y + sin(a) * ry * rr - r, width: r * 2, height: r * 2))
+        }
+        ctx.restoreGState()
+    }
+
+    /// What is falling off it: drops (drawn out as they fall), the rings
+    /// where they land, snow and dust shaken off, hail glancing off it.
+    private static func drawSpecks(_ pose: SpiderPose, in ctx: CGContext) {
+        guard !pose.specks.isEmpty else { return }
+        ctx.saveGState()
+        for s in pose.specks where s.alpha > 0.01 {
+            let a = s.alpha
+            switch s.kind {
+            case .water:
+                let w = s.r, h = s.r * s.stretch
+                let drop = CGRect(x: s.p.x - w, y: s.p.y - s.r, width: w * 2, height: h + s.r)
+                ctx.setFillColor(CGColor(red: 0.74, green: 0.86, blue: 1, alpha: 0.85 * a))
+                ctx.fillEllipse(in: drop)
+                ctx.setStrokeColor(CGColor(red: 0.28, green: 0.42, blue: 0.62, alpha: 0.55 * a))
+                ctx.setLineWidth(0.5)
+                ctx.strokeEllipse(in: drop)
+                ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.9 * a))
+                let g = s.r * 0.35
+                ctx.fillEllipse(in: CGRect(x: s.p.x - s.r * 0.45 - g, y: drop.maxY - s.r * 0.9 - g, width: g * 2, height: g * 2))
+            case .ring:
+                ctx.setStrokeColor(CGColor(red: 0.82, green: 0.9, blue: 1, alpha: 0.75 * a))
+                ctx.setLineWidth(0.7)
+                ctx.strokeEllipse(in: CGRect(x: s.p.x - s.r, y: s.p.y - s.r * 0.28, width: s.r * 2, height: s.r * 0.56))
+            case .snow:
+                ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.45 * a))
+                ctx.fillEllipse(in: CGRect(x: s.p.x - s.r, y: s.p.y - s.r, width: s.r * 2, height: s.r * 2))
+                let r = s.r * 0.62
+                ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.95 * a))
+                ctx.fillEllipse(in: CGRect(x: s.p.x - r, y: s.p.y - r, width: r * 2, height: r * 2))
+            case .sand:
+                ctx.setFillColor(CGColor(red: 0.86, green: 0.72, blue: 0.5, alpha: 0.9 * a))
+                ctx.fillEllipse(in: CGRect(x: s.p.x - s.r, y: s.p.y - s.r, width: s.r * 2, height: s.r * 2))
+            case .hail:
+                let r = CGRect(x: s.p.x - s.r, y: s.p.y - s.r, width: s.r * 2, height: s.r * 2)
+                ctx.setFillColor(CGColor(red: 0.93, green: 0.97, blue: 1, alpha: a))
+                ctx.fillEllipse(in: r)
+                ctx.setStrokeColor(CGColor(red: 0.52, green: 0.62, blue: 0.78, alpha: 0.8 * a))
+                ctx.setLineWidth(0.5)
+                ctx.strokeEllipse(in: r)
+            }
+        }
         ctx.restoreGState()
     }
 
@@ -808,7 +1000,11 @@ enum SpiderRenderer {
         }
     }
 
-    private static func drawBody(_ pose: SpiderPose, profile f: CGFloat,
+    /// The abdomen and head, for the upper body's yaw `f`. `flipped`: drawn
+    /// mirrored (turned round past the front view from the legs), which
+    /// their fuzzy outlines are not — so those do not flip over as the body
+    /// passes the front view.
+    private static func drawBody(_ pose: SpiderPose, profile f: CGFloat, flipped: Bool = false,
                                  look: SpiderLook, pal: Palette, in ctx: CGContext) {
         let bm = look.bodyMetrics
         let ac = V2.lerp(frontAbdomen.c, abdomen.c, f)
@@ -824,12 +1020,23 @@ enum SpiderRenderer {
         }
 
         // The abdomen bobs a touch as it walks, hinged where it meets the head.
+        // Tipped on its waist, it swings about the same hinge side on; face
+        // on, the far end of it is going down (or up) out of sight behind
+        // the head.
         ctx.saveGState()
+        if pose.abdomenTilt != 0 { ctx.translateBy(x: 0, y: -abdomenDrop * sin(pose.abdomenTilt) * (1 - f)) }
         ctx.translateBy(x: ac.x + arx * 0.6 * f, y: ac.y)
-        ctx.rotate(by: (pose.abdomenSway * 0.18 + pose.ball * 0.5) * f)
+        ctx.rotate(by: (pose.abdomenSway * 0.18 + pose.ball * 0.5 + pose.abdomenTilt) * f)
         ctx.translateBy(x: -(ac.x + arx * 0.6 * f), y: -ac.y)
-        let abPath = fuzzyEllipse(ac, arx, ary, bumps: 15, amp: amp, phase: 0.4)
-        if look.fuzz == 2 { drawHairs(ac, arx, ary, count: 22, colour: pal.outline, in: ctx) }
+        var abPath = fuzzyEllipse(ac, arx, ary, bumps: 15, amp: amp, phase: 0.4)
+        var unflip = CGAffineTransform(translationX: 2 * ac.x, y: 0).scaledBy(x: -1, y: 1)
+        if flipped, let p = abPath.copy(using: &unflip) { abPath = p }
+        if look.fuzz == 2 {
+            ctx.saveGState()
+            if flipped { ctx.concatenate(unflip) }
+            drawHairs(ac, arx, ary, count: 22, colour: pal.outline, in: ctx)
+            ctx.restoreGState()
+        }
         pal.fillBody(abPath, head: false, in: ctx)
         sheen(ctx, at: V2(ac.x - 2 * f, ac.y + 5), rx: arx * 0.7, ry: ary * 0.68, alpha: 0.30 * pal.sheen, colour: pal.bodyLight)
         drawPattern(look, ac: ac, arx: arx, ary: ary, profile: f, path: abPath, pal: pal, in: ctx)
@@ -838,12 +1045,19 @@ enum SpiderRenderer {
         ctx.setStrokeColor(pal.outline)
         ctx.setLineWidth(2.5)
         ctx.strokePath()
+        // The weather on it: beads of water, grains of sand.
+        if pose.wet > 0.02 { drawWetCoat(ac, arx, ary, wet: pose.wet, seed: 11, in: ctx) }
+        if pose.dust > 0.02 { drawDust(ac, arx, ary, amount: pose.dust, seed: 21, in: ctx) }
         if look.accessory == .tutu { drawTutu(pose: pose, ac: ac, arx: arx, ary: ary, profile: f, pal: pal, in: ctx) }
         if look.accessory == .backpack { drawBackpack(ac: ac, arx: arx, ary: ary, profile: f, pal: pal, in: ctx) }
         if look.accessory == .jetpack { drawJetpack(pose: pose, ac: ac, arx: arx, ary: ary, profile: f, pal: pal, in: ctx) }
         if look.accessory == .satchel { drawSatchel(ac: ac, arx: arx, ary: ary, profile: f, pal: pal, in: ctx) }
         if look.accessory == .bindle { drawBindle(ac: ac, arx: arx, ary: ary, hc: hc, hr: hr, profile: f, pal: pal, in: ctx) }
         if look.accessory == .cape { drawBackwear(look, pose: pose, ac: ac, arx: arx, ary: ary, hc: hc, hr: hr, profile: f, pal: pal, in: ctx) }
+        // Snow settled on its back — whichever side of it is up — over
+        // whatever it is wearing.
+        let up = V2((pose.facing >= 0 ? 1 : -1) * sin(pose.heading), cos(pose.heading))
+        if pose.snow > 0.02 { drawSnowCap(ac, arx, ary, amount: pose.snow, up: V2(flipped ? -up.x : up.x, up.y), seed: 3, in: ctx) }
         ctx.restoreGState()
 
         // Neckwear sits between the two body segments, under the head.
@@ -862,14 +1076,17 @@ enum SpiderRenderer {
         defer { ctx.restoreGState() }
 
         // Pedipalps: two little paddles held out in front of the face. Side by
-        // side in profile, either side of the chin from the front.
+        // side in profile, the far one a touch thinner; either side of the
+        // chin, and alike, from the front.
+        let lift = faceLift(pose, profile: f)
         let palps: [(V2, V2, CGFloat)] = [
             (V2.lerp(V2(3.5, -9), V2(head.c.x + 7.5, -7.0), f),
-             V2.lerp(V2(4.5, -14.5), V2(head.c.x + 14.5, -10.5 - pose.happy * 1.2), f), 1.0),
+             V2.lerp(V2(4.5, -14.5), V2(head.c.x + 14.5, -10.5 - pose.happy * 1.2), f), lerp(0.9, 1.0, f)),
             (V2.lerp(V2(-3.5, -9), V2(head.c.x + 7.5, -4.5), f),
-             V2.lerp(V2(-4.5, -14.5), V2(head.c.x + 14.5, -8.0 - pose.happy * 1.2), f), 0.8),
+             V2.lerp(V2(-4.5, -14.5), V2(head.c.x + 14.5, -8.0 - pose.happy * 1.2), f), lerp(0.9, 0.8, f)),
         ]
-        for (base, tip, w) in palps {
+        for (base0, tip0, w) in palps {
+            let base = base0 + V2(0, lift), tip = tip0 + V2(0, lift)
             ctx.setLineCap(.round)
             ctx.setStrokeColor(pal.outline)
             ctx.setLineWidth(5.6 * w)
@@ -879,28 +1096,43 @@ enum SpiderRenderer {
             ctx.beginPath(); ctx.move(to: base.point); ctx.addLine(to: tip.point); ctx.strokePath()
         }
 
+        // (The head's round outline is not mirrored with the rest; its
+        // shine is put back where the mirror had it.)
+        if flipped {
+            ctx.translateBy(x: hc.x, y: 0)
+            ctx.scaleBy(x: -1, y: 1)
+            ctx.translateBy(x: -hc.x, y: 0)
+        }
         let hdPath = fuzzyEllipse(hc, hr, hr, bumps: 12, amp: amp * 0.9, phase: 2.0)
         if look.fuzz == 2 { drawHairs(hc, hr, hr, count: 14, colour: pal.outline, in: ctx) }
         pal.fillBody(hdPath, head: true, in: ctx)
-        sheen(ctx, at: V2(hc.x - 2 * f, hc.y + 4), rx: hr * 0.66, ry: hr * 0.66, alpha: 0.28 * pal.sheen, colour: pal.bodyLight)
+        sheen(ctx, at: V2(hc.x + (flipped ? 2 : -2) * f, hc.y + 4), rx: hr * 0.66, ry: hr * 0.66, alpha: 0.28 * pal.sheen, colour: pal.bodyLight)
         ctx.addPath(hdPath)
         ctx.setStrokeColor(pal.outline)
         ctx.setLineWidth(2.5)
         ctx.strokePath()
+        if pose.wet > 0.02 { drawWetCoat(hc, hr, hr, wet: pose.wet * 0.7, seed: 31, in: ctx) }
+        if pose.dust > 0.02 { drawDust(hc, hr, hr, amount: pose.dust * 0.6, seed: 41, in: ctx) }
+        if pose.snow > 0.02 {
+            // (The head is not mirrored with the rest: see above.)
+            let up = V2((pose.facing >= 0 ? 1 : -1) * sin(pose.heading), cos(pose.heading))
+            drawSnowCap(hc, hr, hr, amount: pose.snow * 0.8, up: up, seed: 7, in: ctx)
+        }
     }
 
     /// The head's outline where the face is drawn — leaned, tipped and
     /// folded as the face is — in the current frame, for splitting the near
     /// legs round it. (A touch generous, for the fuzz of its rim.)
-    static func headOutline(_ pose: SpiderPose, hc: V2, hr: CGFloat, profile f: CGFloat,
+    static func headOutline(_ pose: SpiderPose, hr: CGFloat,
                             lean: (CGContext) -> Void, in ctx: CGContext) -> CGPath {
         ctx.saveGState()
         let base = ctx.ctm
         lean(ctx)
-        headTurn(pose, hc: hc, hr: hr, profile: f, in: ctx)
-        foldHead(pose, profile: f, in: ctx)
+        let upper = upperTurn(pose)
+        enterHead(pose, upper: upper, hr: hr, in: ctx)
         var rel = ctx.ctm.concatenating(base.inverted())
         ctx.restoreGState()
+        let hc = V2.lerp(frontHead.c, head.c, upper.f)
         let r = hr * 1.08
         return CGPath(ellipseIn: CGRect(x: hc.x - r, y: hc.y - r, width: r * 2, height: r * 2), transform: &rel)
     }
@@ -910,13 +1142,94 @@ enum SpiderRenderer {
         V2(hc.x - hr * 0.55 * f, hc.y - hr * 0.35)
     }
 
+    /// Face on, tipping the head up is not a turn in the picture but the
+    /// head rising a little on its neck and the face going up it (see
+    /// `faceLift`), in body units per radian — both mirror-free, so the
+    /// look carries on through the front view to the other side.
+    static let headRise: CGFloat = 3
+    static let faceRise: CGFloat = 7
+    /// Face on, how far the abdomen drops out of sight behind the head for
+    /// a tail-down tip of its waist, in body units per unit of sine.
+    static let abdomenDrop: CGFloat = 7
+
     /// Rotates the context for the head's tilt, nose up for a positive tilt.
+    /// Side on, a tip about the neck; face on (where the same turn in the
+    /// picture would cock the head over, and flip it as it passed the front
+    /// view), the head rises on its neck instead.
     static func headTurn(_ pose: SpiderPose, hc: V2, hr: CGFloat, profile f: CGFloat, in ctx: CGContext) {
         guard abs(pose.headTilt) > 0.0005 else { return }
         let n = neck(hc: hc, hr: hr, profile: f)
-        ctx.translateBy(x: n.x, y: n.y)
-        ctx.rotate(by: pose.headTilt * max(f, 0.35))
+        ctx.translateBy(x: n.x, y: n.y + headRise * sin(pose.headTilt) * (1 - f))
+        ctx.rotate(by: pose.headTilt * f)
         ctx.translateBy(x: -n.x, y: -n.y)
+    }
+
+    /// Face on, the face goes up the head as it looks up (and down it as it
+    /// looks down): drawn on top of `headTurn`, for the face and palps only.
+    static func faceLift(_ pose: SpiderPose, profile f: CGFloat) -> CGFloat {
+        faceRise * sin(pose.headTilt) * (1 - f)
+    }
+
+    /// The yaw of the head and abdomen, which can be turned further round
+    /// than the legs are standing (`facing + headTurn`): how far round it
+    /// is (1 = side on, 0 = facing you), and whether it is round past the
+    /// front view from the way the legs face — then it is drawn mirrored
+    /// about the body's middle. Everything of it is laid out symmetrically
+    /// about that line face on, so it goes past the front view unseen; the
+    /// legs, whose layering is not symmetric there, stay as they stand.
+    static func upperTurn(_ pose: SpiderPose) -> (f: CGFloat, flip: Bool) {
+        let legs = profileAmount(yaw: pose.facing)
+        guard pose.headTurn != 0 else { return (legs, false) }
+        let y = clamp(pose.facing + pose.headTurn, -1, 1)
+        return (profileAmount(yaw: y), (y >= 0) != (pose.facing >= 0))
+    }
+
+    /// Whether this look's head and abdomen are their own mirror image face
+    /// on, so they can be turned round past the front view from the legs
+    /// unseen. A lopsided hat, an eyepatch or a wink would flip over to the
+    /// other side as they went past: with those the head stays on the legs'
+    /// side of the front view. Worked out once per look by drawing the upper
+    /// body both ways round and comparing.
+    static func faceOnSymmetric(_ look: SpiderLook) -> Bool {
+        if let known = symmetryKnown[look] { return known }
+        var p = SpiderPose()
+        p.outfit = look
+        p.grounded = 0
+        p.facing = 0.5
+        let side = 128
+        func picture(_ turn: CGFloat) -> [UInt8] {
+            p.headTurn = turn
+            guard let c = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                    space: CGColorSpaceCreateDeviceRGB(),
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return [] }
+            // (Body units, 2 px each: the body's middle low enough in the
+            // picture that the tallest hat is in it.)
+            c.scaleBy(x: 2, y: 2)
+            draw(p, in: c, bounds: CGRect(x: 0, y: -6, width: 64, height: 64))
+            guard let d = c.data else { return [] }
+            return Array(UnsafeBufferPointer(start: d.bindMemory(to: UInt8.self, capacity: side * side * 4), count: side * side * 4))
+        }
+        let a = picture(-0.5 + 0.0005), b = picture(-0.5 - 0.0005)
+        var off = 0
+        for k in stride(from: 0, to: min(a.count, b.count), by: 4) {
+            let d = abs(Int(a[k]) - Int(b[k])) + abs(Int(a[k + 1]) - Int(b[k + 1])) + abs(Int(a[k + 2]) - Int(b[k + 2]))
+                + abs(Int(a[k + 3]) - Int(b[k + 3]))
+            if d > 90 { off += 1 }
+        }
+        let symmetric = !a.isEmpty && off <= 40
+        symmetryKnown[look] = symmetric
+        return symmetric
+    }
+    private static var symmetryKnown: [SpiderLook: Bool] = [:]
+
+    /// From the legs' frame into the head's: mirrored if the upper body is
+    /// round past the front view from them, tipped on its neck, and folded
+    /// for a roll.
+    static func enterHead(_ pose: SpiderPose, upper: (f: CGFloat, flip: Bool), hr: CGFloat, in ctx: CGContext) {
+        if upper.flip { ctx.scaleBy(x: -1, y: 1) }
+        let hc = V2.lerp(frontHead.c, head.c, upper.f)
+        headTurn(pose, hc: hc, hr: hr, profile: upper.f, in: ctx)
+        foldHead(pose, profile: upper.f, in: ctx)
     }
 
     /// Short hairs standing off an ellipse's rim.
@@ -1605,16 +1918,21 @@ enum SpiderRenderer {
     static func faceGaze(_ pose: SpiderPose, profile f: CGFloat) -> V2 {
         var g = pose.look.rotated(by: -pose.heading)
         g.x *= pose.facing >= 0 ? 1 : -1
-        return g.rotated(by: -(pose.headTilt * max(f, 0.35) + pose.bodyPitch)).clampedLength(1)
+        g = g.rotated(by: -pose.bodyPitch)
+        if upperTurn(pose).flip { g.x = -g.x }
+        return g.rotated(by: -pose.headTilt * f).clampedLength(1)
     }
 
     /// Tools only: the screen direction the glints are drawn toward — the
-    /// face-frame gaze carried out through the head's tilt, the lean, the
-    /// mirror and the heading, as the context does.
+    /// face-frame gaze carried out through the head's tilt, the upper
+    /// body's turn, the lean, the mirror and the heading, as the context
+    /// does.
     static func drawnGaze(_ pose: SpiderPose) -> V2 {
-        let f = profileAmount(yaw: pose.facing)
+        let turned = upperTurn(pose)
         let mirror: CGFloat = pose.facing >= 0 ? 1 : -1
-        var g = faceGaze(pose, profile: f).rotated(by: pose.headTilt * max(f, 0.35) + pose.bodyPitch)
+        var g = faceGaze(pose, profile: turned.f).rotated(by: pose.headTilt * turned.f)
+        if turned.flip { g.x = -g.x }
+        g = g.rotated(by: pose.bodyPitch)
         g.x *= mirror
         return g.rotated(by: pose.heading)
     }
@@ -1628,15 +1946,21 @@ enum SpiderRenderer {
         let hc = V2.lerp(frontHead.c, head.c, f)
         let hr = lerp(frontHead.r, head.r, f) * look.bodyMetrics.head
         let hm = look.bodyMetrics.head
+        // The glints sit toward the back of each eye in profile. Face on,
+        // they come round to one side of the picture whichever way the face
+        // is mirrored, so they stay put as it turns through the front view.
+        let facingSign: CGFloat = pose.facing + pose.headTurn >= 0 ? 1 : -1
+        let glintSide = lerp(facingSign, 1, smoothstep(clamp(f / 0.6, 0, 1)))
 
-        // Blush, when it is pleased with you.
+        // Blush, when it is pleased with you (the same either side face on).
         if happy > 0.25 {
             let a = Double(0.42 * (happy - 0.25) / 0.75)
             ctx.setFillColor(CGColor(red: 0.898, green: 0.451, blue: 0.325, alpha: a))
             let b1 = V2.lerp(V2(7.5, -6.5), V2(15.0, -5.0), f)
             let b2 = V2.lerp(V2(-7.5, -6.5), V2(4.7, -3.0), f)
-            ctx.fillEllipse(in: CGRect(x: b1.x - 3.5, y: b1.y - 2, width: 7.0, height: 4.2))
-            ctx.fillEllipse(in: CGRect(x: b2.x - 2.7, y: b2.y - 1.7, width: 5.4, height: 3.4))
+            let s1 = V2(lerp(6.2, 7.0, f), lerp(3.8, 4.2, f)), s2 = V2(lerp(6.2, 5.4, f), lerp(3.8, 3.4, f))
+            ctx.fillEllipse(in: CGRect(x: b1.x - s1.x / 2, y: b1.y - s1.y / 2 + 0.1, width: s1.x, height: s1.y))
+            ctx.fillEllipse(in: CGRect(x: b2.x - s2.x / 2, y: b2.y - s2.y / 2, width: s2.x, height: s2.y))
         }
 
         let squint = happy > 0.5 ? remap(happy, 0.5, 1, 0, 1) : 0
@@ -1717,7 +2041,7 @@ enum SpiderRenderer {
                           size: r * 0.5 * beat, colour: CGColor(red: 0.98, green: 0.40, blue: 0.52, alpha: 1), in: ctx)
                 ctx.setFillColor(white)
                 let g = r * 0.16
-                ctx.fillEllipse(in: CGRect(x: e.c.x - r * 0.4 - g, y: e.c.y + r * 0.45 - g, width: g * 2, height: g * 2))
+                ctx.fillEllipse(in: CGRect(x: e.c.x - r * 0.4 * glintSide - g, y: e.c.y + r * 0.45 - g, width: g * 2, height: g * 2))
                 continue
             }
             if look.eyes == .button {
@@ -1748,16 +2072,16 @@ enum SpiderRenderer {
             let off = gaze * (r * 0.28)
             ctx.setFillColor(white)
             let g1 = r * (look.eyes == .beady ? 0.34 : 0.42)
-            ctx.fillEllipse(in: CGRect(x: e.c.x + off.x - r * 0.22 - g1,
+            ctx.fillEllipse(in: CGRect(x: e.c.x + off.x - r * 0.22 * glintSide - g1,
                                        y: e.c.y + off.y + r * 0.24 - g1,
                                        width: g1 * 2, height: g1 * 2))
             if e.big {
                 let g2 = r * 0.19
-                ctx.fillEllipse(in: CGRect(x: e.c.x + off.x + r * 0.34 - g2,
+                ctx.fillEllipse(in: CGRect(x: e.c.x + off.x + r * 0.34 * glintSide - g2,
                                            y: e.c.y + off.y - r * 0.30 - g2,
                                            width: g2 * 2, height: g2 * 2))
                 if look.eyes == .sparkly {
-                    drawStar(at: CGPoint(x: e.c.x + off.x + r * 0.30, y: e.c.y + off.y + r * 0.35),
+                    drawStar(at: CGPoint(x: e.c.x + off.x + r * 0.30 * glintSide, y: e.c.y + off.y + r * 0.35),
                              size: r * 0.4, colour: white, in: ctx)
                 }
             }
@@ -2333,15 +2657,21 @@ enum SpiderRenderer {
             p.addQuadCurve(to: CGPoint(x: w * 0.95, y: 0), control: CGPoint(x: 0, y: w * 1.5))
             p.closeSubpath()
             outlined(p, fill: accent)
+            // Alternate panels, fanning up from the middle of the brim and
+            // kept inside the cap (they used to hang down over the eyes).
+            ctx.saveGState()
+            ctx.addPath(p); ctx.clip()
             ctx.setFillColor(pal.accentRGB.darker(0.3).cg)
             for k in 0..<3 {
                 ctx.beginPath()
-                let a0 = CGFloat(k) / 3 * .pi - .pi / 2, a1 = a0 + .pi / 3
-                ctx.move(to: CGPoint(x: 0, y: w * 0.2))
-                ctx.addArc(center: CGPoint(x: 0, y: w * 0.2), radius: w * 0.95, startAngle: a0, endAngle: a1, clockwise: false)
+                let a0 = CGFloat(2 * k + 1) / 7 * .pi, a1 = a0 + .pi / 7
+                ctx.move(to: .zero)
+                ctx.addArc(center: .zero, radius: w * 2, startAngle: a0, endAngle: a1, clockwise: false)
                 ctx.closePath()
                 ctx.fillPath()
             }
+            ctx.restoreGState()
+            ctx.addPath(p); ctx.strokePath()
             // The blades turn with distance travelled, so they only spin
             // while it is on the move.
             let stem = CGPoint(x: 0, y: w * 0.72)
@@ -3160,8 +3490,14 @@ enum SpiderRenderer {
         ctx.translateBy(x: cx, y: cy)
         ctx.scaleBy(x: pop, y: pop)
         ctx.translateBy(x: -cx, y: -cy)
-        let fill = CGColor(red: 1, green: 0.98, blue: 0.94, alpha: Double(alpha * 0.96))
-        let rim = CGColor(red: 0.30, green: 0.18, blue: 0.09, alpha: Double(alpha * 0.85))
+        // Drawn solid into a layer that fades as one: the cloud is a heap
+        // of overlapping shapes, and faded one by one they showed through
+        // each other (the middle of it a card stacked on a paler bubble).
+        ctx.setAlpha(alpha * 0.96)
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        let alpha: CGFloat = 1
+        let fill = CGColor(red: 1, green: 0.98, blue: 0.94, alpha: 1)
+        let rim = CGColor(red: 0.30, green: 0.18, blue: 0.09, alpha: 0.85)
         ctx.setFillColor(fill)
         ctx.setStrokeColor(rim)
         ctx.setLineWidth(1.1)
@@ -3192,8 +3528,6 @@ enum SpiderRenderer {
         // Outline only the outside: stroke, then paint the interior over it.
         ctx.addPath(cloud); ctx.strokePath()
         ctx.addPath(cloud); ctx.setFillColor(fill); ctx.fillPath()
-        ctx.setFillColor(CGColor(red: 1, green: 0.98, blue: 0.94, alpha: Double(alpha * 0.96)))
-        ctx.fill(body.insetBy(dx: 1.5, dy: 1.5))
 
         // What it is thinking.
         ctx.saveGState()
@@ -3296,8 +3630,73 @@ enum SpiderRenderer {
             }
             ctx.setFillColor(CGColor(red: 0.85, green: 0.6, blue: 0.35, alpha: Double(alpha)))
             ctx.fillEllipse(in: CGRect(x: -4, y: -3.5, width: 8, height: 5))
+        case .snow:
+            // A snowflake, turning slowly.
+            ctx.saveGState()
+            ctx.rotate(by: t * 0.6)
+            ctx.setStrokeColor(CGColor(red: 0.45, green: 0.62, blue: 0.9, alpha: Double(alpha)))
+            ctx.setLineWidth(1.3)
+            ctx.setLineCap(.round)
+            for k in 0..<3 {
+                let a = CGFloat(k) * .pi / 3
+                let d = CGPoint(x: cos(a) * 6.5, y: sin(a) * 6.5)
+                ctx.beginPath(); ctx.move(to: CGPoint(x: -d.x, y: -d.y)); ctx.addLine(to: d); ctx.strokePath()
+                for s in [CGFloat(1), -1] {
+                    let tip = CGPoint(x: d.x * 0.62 * s, y: d.y * 0.62 * s)
+                    for b in [CGFloat(0.7), -0.7] {
+                        let ba = a + (s > 0 ? 0 : .pi) + .pi + b
+                        ctx.beginPath(); ctx.move(to: tip)
+                        ctx.addLine(to: CGPoint(x: tip.x + cos(ba) * 2.2, y: tip.y + sin(ba) * 2.2)); ctx.strokePath()
+                    }
+                }
+            }
+            ctx.restoreGState()
+        case .wind:
+            // Gusts: three curling lines, blowing across.
+            ctx.setStrokeColor(CGColor(red: 0.42, green: 0.55, blue: 0.7, alpha: Double(alpha)))
+            ctx.setLineWidth(1.3)
+            ctx.setLineCap(.round)
+            let drift = sin(t * 5) * 1.2
+            for (k, (y, len)) in [(CGFloat(4), CGFloat(13)), (0, 16), (-4, 11)].enumerated() {
+                let x0: CGFloat = -8 + drift + CGFloat(k % 2) * 1.5
+                ctx.beginPath()
+                ctx.move(to: CGPoint(x: x0, y: y))
+                ctx.addLine(to: CGPoint(x: x0 + len - 3, y: y))
+                ctx.addArc(center: CGPoint(x: x0 + len - 3, y: y + 1.6 * (k == 2 ? -1 : 1)), radius: 1.6,
+                           startAngle: k == 2 ? .pi / 2 : -.pi / 2, endAngle: k == 2 ? -.pi : .pi, clockwise: k == 2)
+                ctx.strokePath()
+            }
+        case .storm:
+            // A dark cloud with a bolt out of it.
+            ctx.setFillColor(CGColor(red: 0.42, green: 0.45, blue: 0.54, alpha: Double(alpha)))
+            let cl = CGMutablePath()
+            cl.addEllipse(in: CGRect(x: -8, y: 0, width: 9, height: 7.5))
+            cl.addEllipse(in: CGRect(x: -3.5, y: 2, width: 10, height: 8.5))
+            cl.addEllipse(in: CGRect(x: 1.5, y: 0, width: 7.5, height: 6.5))
+            cl.addRect(CGRect(x: -7, y: 0, width: 14, height: 3.5))
+            ctx.addPath(cl); ctx.fillPath()
+            let flick = sin(t * 23) > -0.3
+            let bolt = CGMutablePath()
+            bolt.addLines(between: [CGPoint(x: 0.5, y: 0.5), CGPoint(x: -2.4, y: -4.2), CGPoint(x: 0, y: -4.2),
+                                    CGPoint(x: -1.8, y: -9), CGPoint(x: 3, y: -2.6), CGPoint(x: 0.6, y: -2.6), CGPoint(x: 2.2, y: 0.5)])
+            bolt.closeSubpath()
+            ctx.addPath(bolt)
+            ctx.setFillColor(CGColor(red: 1, green: 0.85, blue: 0.25, alpha: Double(alpha * (flick ? 1 : 0.55))))
+            ctx.fillPath()
+        case .rainbow:
+            // Bands of colour in an arch.
+            ctx.setLineWidth(1.6)
+            ctx.setLineCap(.round)
+            let bands: [(CGFloat, CGFloat, CGFloat)] = [(0.95, 0.3, 0.3), (0.98, 0.65, 0.2), (0.95, 0.88, 0.25), (0.35, 0.78, 0.4), (0.3, 0.55, 0.95), (0.6, 0.4, 0.85)]
+            for (k, col) in bands.enumerated() {
+                ctx.setStrokeColor(CGColor(red: col.0, green: col.1, blue: col.2, alpha: Double(alpha)))
+                ctx.beginPath()
+                ctx.addArc(center: CGPoint(x: 0, y: -5), radius: 9.5 - CGFloat(k) * 1.5, startAngle: 0.15, endAngle: .pi - 0.15, clockwise: false)
+                ctx.strokePath()
+            }
         }
         ctx.restoreGState()
+        ctx.endTransparencyLayer()
         ctx.restoreGState()
     }
 
@@ -3353,28 +3752,7 @@ enum SpiderRenderer {
             ctx.translateBy(x: rect.midX, y: rect.midY)
             let s = size / 46
             ctx.scaleBy(x: s, y: s)
-            ctx.rotate(by: .pi / 2)
-            ctx.setFillColor(NSColor.black.cgColor)
-            ctx.setStrokeColor(NSColor.black.cgColor)
-            ctx.setLineCap(.round)
-            // Legs
-            for side in [CGFloat(1), CGFloat(-1)] {
-                let feet: [(V2, V2)] = [
-                    (V2(8, side * 5), V2(21, side * 15)),
-                    (V2(4, side * 6), V2(12, side * 23)),
-                    (V2(0, side * 6), V2(-6, side * 24)),
-                    (V2(-4, side * 5), V2(-19, side * 17)),
-                ]
-                for (h, f) in feet {
-                    let knee = V2((h.x + f.x) / 2 + side * 0, (h.y + f.y) / 2 + side * 5)
-                    ctx.setLineWidth(4.4)
-                    ctx.beginPath()
-                    ctx.move(to: h.point); ctx.addLine(to: knee.point); ctx.addLine(to: f.point)
-                    ctx.strokePath()
-                }
-            }
-            ctx.fillEllipse(in: CGRect(x: -24, y: -13, width: 27, height: 26))
-            ctx.fillEllipse(in: CGRect(x: -5, y: -11.5, width: 24, height: 23))
+            AppArt.drawGlyph(in: ctx, colour: NSColor.black.cgColor)
             return true
         }
         img.isTemplate = true

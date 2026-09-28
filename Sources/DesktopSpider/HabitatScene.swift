@@ -59,6 +59,16 @@ final class HabitatSceneView: NSView {
     private var paintedKey = ""
     private var atmosphereKey = ""
 
+    /// The weather, drawn: its layers go in among the scene's own (see
+    /// HabitatWeather.swift).
+    let weatherFX = WeatherLayers()
+    private var weatherDue: CGFloat = 0
+    /// Tools only: it keeps moving even out of sight.
+    var debugKeepAnimating = false
+    /// Thunder, a moment after the lightning: where it came down, on the
+    /// screen, and how loud (1: right overhead).
+    var onThunder: ((V2, CGFloat) -> Void)?
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -68,7 +78,10 @@ final class HabitatSceneView: NSView {
         root.backgroundColor = CGColor(gray: 0.1, alpha: 1)
         world.masksToBounds = true
         root.addSublayer(world)
-        for l in [sky, airBack, scenery, airMid, ground, backItems, creatures, frontItems, airFront, glass] { world.addSublayer(l) }
+        let wx = weatherFX
+        for l in [sky, airBack, wx.back, scenery, airMid, wx.mid, ground, wx.ground, backItems, wx.caps, creatures,
+                  frontItems, airFront, wx.shade, wx.front, wx.flash, glass] { world.addSublayer(l) }
+        wx.onThunder = { [weak self] p, loud in self?.thundered(at: p, loud: loud) }
         root.addSublayer(editLayer)
         creatures.addSublayer(silk)
         creatures.addSublayer(spiderLayer)
@@ -201,6 +214,8 @@ final class HabitatSceneView: NSView {
         world.frame = bounds
         editLayer.frame = bounds
         for l in [sky, airBack, scenery, airMid, backItems, creatures, frontItems, airFront, glass] { l.frame = bounds }
+        let wx = weatherFX
+        for l in [wx.back, wx.mid, wx.ground, wx.caps, wx.shade, wx.front, wx.flash] { l.frame = bounds }
         let f = HabitatArt.Frame(rect: bounds)
         ground.frame = CGRect(x: 0, y: 0, width: bounds.width, height: f.groundY + HabitatArt.groundOverhang(f))
         placeItems()
@@ -255,6 +270,7 @@ final class HabitatSceneView: NSView {
         if akey != atmosphereKey {
             atmosphereKey = akey
             buildAtmosphere()
+            weatherFX.build(size: bounds.size, biome: habitat.biome, groundImage: ground.contents)
         }
         paintItems()
     }
@@ -321,6 +337,59 @@ final class HabitatSceneView: NSView {
 
     private func paintItems() {
         for l in itemLayers.values { l.paint(biome: habitat.biome, scale: scale, size: toView(l.item.rect).size) }
+        // Snow settles on the furniture where it now stands; puddles form
+        // round it.
+        if bounds.width > 100, !inLiveResize { weatherFX.layoutItems(habitat) { [unowned self] in self.toView($0) } }
+    }
+
+    // MARK: The weather
+
+    /// The weather as it is now: the layers turned up or down (a dozen or
+    /// so times a second is plenty — Core Animation eases between), and
+    /// the plants leaning with the wind.
+    func updateWeather(_ c: WeatherConditions, dt: CGFloat) {
+        weatherDue += dt
+        guard weatherDue >= 1.0 / 15.0, bounds.width > 100 else { return }
+        let step = weatherDue
+        weatherDue = 0
+        weatherFX.update(c, dt: min(step, 0.5))
+        let now = CGFloat(CACurrentMediaTime())
+        let gust = c.mix.gust * min(abs(c.windNow), 1.5)
+        for l in itemLayers.values {
+            let k = ItemLayer.windLean(l.item.kind)
+            guard k > 0 else { continue }
+            let s = CGFloat(abs(l.item.seed % 97))
+            let flutter = sin(now * (4.5 + s.truncatingRemainder(dividingBy: 3)) + s) * 0.3 * gust
+            l.setLean(editing ? 0 : clamp(c.windNow, -1.8, 1.8) * k * (1 + flutter), over: Double(step) * 1.05)
+        }
+    }
+
+    /// Thunder: the tank shakes with a clap right overhead.
+    private func thundered(at p: CGPoint, loud: CGFloat) {
+        if loud > 0.75 {
+            let o = world.position
+            let shake = CAKeyframeAnimation(keyPath: "position")
+            shake.values = [(0, 0), (2.5, -1.5), (-2, 1.5), (1.5, -1), (-1, 0.5), (0, 0)].map {
+                NSValue(point: CGPoint(x: o.x + $0.0, y: o.y + $0.1))
+            }
+            shake.duration = 0.4
+            world.add(shake, forKey: "thunder")
+        }
+        onThunder?(V2(p.x + screenOrigin.x, p.y + screenOrigin.y), loud)
+    }
+
+    /// Footprints in the snow, where its feet come down on the floor.
+    private func noteFootprints(_ pose: SpiderPose) {
+        guard pose.grounded > 0.9, abs(angleDelta(pose.heading, 0)) < 0.35 else { return }
+        let mirror: CGFloat = pose.facing >= 0 ? 1 : -1
+        let g = SpiderRenderer.ground
+        let o = V2(screenOrigin)
+        for leg in pose.legs where leg.lift < 0.05 {
+            let local = V2(leg.foot.x * pose.stretch * mirror, g + (leg.foot.y - g) * pose.fatten)
+            let w = pose.pos + local.rotated(by: pose.heading) * pose.scale - o
+            guard abs(w.y - groundY) < 3 else { continue }
+            weatherFX.footDown(at: CGPoint(x: w.x, y: groundY))
+        }
     }
 
     // MARK: The moving air
@@ -337,6 +406,8 @@ final class HabitatSceneView: NSView {
 
     /// Stops everything moving while no part of the tank can be seen.
     func setAnimating(_ on: Bool) {
+        // (Tools only: pictures taken of it behind other windows.)
+        guard on || !debugKeepAnimating else { return }
         if on, world.speed == 0 {
             let paused = world.timeOffset
             world.speed = 1
@@ -374,13 +445,14 @@ final class HabitatSceneView: NSView {
             spiderLayer.position = CGPoint(x: pose.pos.x - o.x, y: pose.pos.y - o.y)
             spiderLayer.pose = pose
             let now = CACurrentMediaTime()
-            let hold: CFTimeInterval = pose.outfit.isAnimated ? 1.0 / 30.0 : 0.5
+            let hold: CFTimeInterval = pose.outfit.isAnimated || !pose.specks.isEmpty ? 1.0 / 30.0 : 0.5
             if drawn == nil || now - drawnAt >= hold || drawn!.outfit != pose.outfit || SpiderView.shapeDelta(drawn!, pose) >= 0.04 {
                 drawn = pose
                 drawnAt = now
                 didRedraw = true
                 spiderLayer.setNeedsDisplay()
             }
+            if weatherFX.wantsFootprints { noteFootprints(pose) }
             if pose.web != nil, let path = SpiderRenderer.silkPath(pose, origin: o) {
                 silk.path = path
                 silk.opacity = Float(pose.web?.alpha ?? 1)
@@ -484,6 +556,13 @@ final class HabitatSceneView: NSView {
         if dragSamples.count > 8 { dragSamples.removeFirst(dragSamples.count - 8) }
         if holdingSpider { spider.moveGrab(to: w) }
         if let p = grabbedPrey { spider.movePreyGrab(p, to: w) }
+    }
+
+    /// A force press on a creature in hand squashes it.
+    override func pressureChange(with event: NSEvent) {
+        guard !editing, event.stage >= 2, let p = grabbedPrey, let spider else { return }
+        spider.squashPrey(p)
+        grabbedPrey = nil
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -913,6 +992,44 @@ final class ItemLayer: CALayer {
     var paintedKey = ""
     private var extras: [CALayer] = []
     private var animatedKey = ""
+    /// How far it leans with the wind, as a shear (+: its top to the
+    /// right); its own sway goes on on top of that.
+    private var lean: CGFloat = 0
+
+    /// How far each kind of thing leans in a gale.
+    static func windLean(_ kind: HabitatItemKind) -> CGFloat {
+        switch kind {
+        case .grass: return 0.16
+        case .flower: return 0.13
+        case .vine: return 0.14
+        case .fern: return 0.1
+        case .plant: return 0.05
+        case .bamboo: return 0.035
+        default: return 0
+        }
+    }
+
+    private static func shear(_ k: CGFloat) -> CATransform3D {
+        var t = CATransform3DIdentity
+        t.m21 = k
+        return t
+    }
+
+    /// Leans it over to `k`, easing there over `d` seconds.
+    func setLean(_ k: CGFloat, over d: CFTimeInterval) {
+        guard abs(k - lean) > 0.0004 else { return }
+        let from = lean
+        lean = k
+        let sign: CGFloat = item.kind.hangs ? -1 : 1
+        transform = ItemLayer.shear(sign * k)
+        // (Added to the sway, which is added to this.)
+        let ease = CABasicAnimation(keyPath: "transform")
+        ease.fromValue = NSValue(caTransform3D: ItemLayer.shear(sign * (from - k)))
+        ease.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+        ease.duration = d
+        ease.isAdditive = true
+        add(ease, forKey: "lean")
+    }
 
     override init() {
         super.init()
@@ -965,6 +1082,8 @@ final class ItemLayer: CALayer {
             sway.repeatCount = .infinity
             sway.timingFunctions = Array(repeating: CAMediaTimingFunction(name: .easeInEaseOut), count: 4)
             sway.timeOffset = CFTimeInterval(s) * sway.duration
+            // (On top of any lean the wind gives it.)
+            sway.isAdditive = true
             add(sway, forKey: "sway")
         }
         let r = CGRect(x: pad, y: pad, width: bounds.width - pad * 2, height: bounds.height - pad * 2)

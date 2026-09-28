@@ -48,7 +48,6 @@ APP="$NAME.app"
 DMG="build/SpiderBuddy-$VERSION.dmg"
 APPCAST="build/appcast.xml"
 VOL="$NAME $VERSION"
-STAGE="build/dmg-stage"
 REPO="Ephemerill/spider-buddy"
 MODE="${1:-}"
 MARKER="<!-- install -->"
@@ -174,12 +173,7 @@ if [ -n "$SIGNED" ]; then
 fi
 
 echo "==> Packaging $DMG"
-rm -rf "$STAGE" "$DMG"
-mkdir -p "$STAGE"
-ditto "$APP" "$STAGE/$APP"
-ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "$VOL" -srcfolder "$STAGE" -ov -format UDZO -quiet "$DMG"
-rm -rf "$STAGE"
+tools/dmg.sh "$APP" "$DMG" "$VOL"
 
 if [ -n "$SIGNED" ]; then
   codesign --force --sign "$SIGN_IDENTITY" --timestamp "$DMG"

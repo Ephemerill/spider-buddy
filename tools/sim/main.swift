@@ -533,6 +533,26 @@ do {
     expect("dropped prey stays on the desktop", map.worldBounds.contains(p.pos.point), "\(p.pos)")
 }
 
+// A force press on prey in hand squashes it: it can't be picked up or eaten,
+// and after a moment it is cleared away.
+do {
+    let s = Spider(map: map)
+    s.config.followCursor = false
+    _ = settleUntilAttached(s)
+    let p = s.release(.cricket)
+    for _ in 0..<6 { s.update(dt: dt) }
+    s.beginPreyGrab(p, at: p.pos)
+    s.squashPrey(p)
+    expect("squashed prey can't be picked up", s.preyHit(p.pos) == nil)
+    var n = 0
+    while CGFloat(n) * dt < 6, s.prey.contains(where: { $0 === p }) {
+        s.setCursor(V2(-4000, -4000)); s.update(dt: dt); n += 1
+        if p.state != .squashed { break }
+    }
+    expect("squashed prey stays squashed", p.state == .squashed, "\(p.state)")
+    expect("squashed prey is cleared away", !s.prey.contains { $0 === p }, "after \(String(format: "%.1f", Double(n) * Double(dt))) s")
+}
+
 // A window sitting just above the floor: from under it, it must be able to
 // get down to the floor (a short drop) rather than dither.
 do {
@@ -872,6 +892,141 @@ do {
     s.enter(map: map, at: V2(screen.midX, screen.maxY - 80), habitat: false)
     let back = settleUntilAttached(s)
     expect("habitat: comes back to the desktop", back.hasPrefix("attached") && s.fed == fedBefore, back)
+}
+
+// Weather in the habitat (see Weather.swift, and "Weather" in Spider.swift):
+// rain soaks it, it runs for cover and shakes itself off after; snow
+// settles on it keeping still and comes off when it moves; the wind blows
+// it out on its line; hail and thunder make it jump. And with none of it,
+// none of it happens.
+do {
+    print("\n--- weather ---")
+    let tank = SurfaceMap()
+    tank.standoff = map.standoff
+    let scene = CGRect(x: 0, y: 0, width: 900, height: 540)
+    let built = Habitat.preset(.forestFloor).surfaces(in: scene, standoff: tank.standoff)
+    tank.rebuild(habitat: built.air, loops: built.loops)
+    let verbose = ProcessInfo.processInfo.environment["SIM_WEATHER"] != nil
+    /// A spider standing on the open floor of the tank at `x`.
+    func inTank(_ x: CGFloat) -> Spider {
+        let s = Spider(map: map)
+        s.config.followCursor = false
+        _ = settleUntilAttached(s)
+        s.enter(map: tank, at: V2(x, scene.minY + HabitatLayout.ground + 30), habitat: true)
+        if let rim = tank.loop("screen:0"),
+           let i = rim.segs.indices.filter({ rim.segs[$0].facing == .up && min(rim.segs[$0].a.x, rim.segs[$0].b.x) < x
+                                            && max(rim.segs[$0].a.x, rim.segs[$0].b.x) > x }).min(by: { rim.segs[$0].a.y < rim.segs[$1].a.y }) {
+            let seg = rim.segs[i]
+            s.debugAttach(loopID: "screen:0", segIdx: i, t: abs(x - seg.a.x), dir: 1)
+        }
+        return s
+    }
+    @discardableResult
+    func run(_ s: Spider, _ secs: CGFloat, _ w: WeatherFeel, each: ((Spider, Int) -> Void)? = nil) -> Int {
+        var n = 0
+        while CGFloat(n) * dt < secs {
+            s.setCursor(V2(-4000, -4000))
+            s.weather = w
+            s.update(dt: dt)
+            each?(s, n)
+            if verbose, n % 60 == 0 { print(String(format: "    %5.1fs %@  %@", Double(n) * Double(dt), s.debugState, s.debugWeather)) }
+            n += 1
+        }
+        return n
+    }
+    var storm = WeatherFeel()
+    storm.rain = 1; storm.wind = 0.7; storm.gust = 0.9; storm.storm = 1; storm.cold = 0.2
+    var snow = WeatherFeel()
+    snow.snow = 0.65; snow.wind = 0.12; snow.gust = 0.2; snow.cold = 0.8
+
+    // Calm: nothing on it, nothing falling off it.
+    do {
+        let s = inTank(300)
+        var specks = 0
+        run(s, 20, .calm) { s, _ in if !s.pose().specks.isEmpty { specks += 1 } }
+        expect("weather: calm, nothing on it", s.wet == 0 && s.snowOn == 0 && s.dust == 0 && s.chill == 0 && specks == 0,
+               "\(s.debugWeather), specks \(specks)")
+    }
+    // A thunderstorm: soaked, dripping, off for cover — and after it, a
+    // shake and drying off.
+    do {
+        let s = inTank(120)
+        var maxWet: CGFloat = 0, drips = 0, coverFrames = 0, lateFrames = 0
+        let n = run(s, 45, storm) { s, i in
+            maxWet = max(maxWet, s.wet)
+            if s.pose().specks.contains(where: { $0.kind == .water }) { drips += 1 }
+            if CGFloat(i) * dt > 25 {
+                lateFrames += 1
+                if s.sheltered { coverFrames += 1 }
+            }
+        }
+        _ = n
+        expect("weather: rain soaks it", maxWet > 0.3, String(format: "wet at most %.2f", maxWet))
+        expect("weather: it drips", drips > 30, "\(drips) frames with drops")
+        expect("weather: runs for cover in a storm", coverFrames > lateFrames / 2,
+               "sheltered \(coverFrames * 100 / max(lateFrames, 1))% of the last 20 s, \(s.debugState)")
+        let wetBefore = s.wet
+        var shook = false
+        run(s, 40, .calm) { s, _ in if s.debugState.contains(":shake") { shook = true } }
+        expect("weather: shakes itself off after", shook || wetBefore < 0.4, String(format: "wet %.2f -> %.2f", wetBefore, s.wet))
+        expect("weather: dries off", s.wet < wetBefore * 0.6, String(format: "wet %.2f -> %.2f", wetBefore, s.wet))
+    }
+    // Snow settles on it keeping still, and comes off when it leaps.
+    do {
+        let s = inTank(300)
+        s.debugActivity("rest", for: 30)
+        run(s, 22, snow) { s, _ in if s.debugState.contains(":rest") == false, s.snowOn < 0.1 { s.debugActivity("rest", for: 30) } }
+        let settled = s.snowOn
+        expect("weather: snow settles on it", settled > 0.3, String(format: "snow %.2f, %@", settled, s.debugState))
+        expect("weather: cold, it is chilled", s.chill > 0.4, String(format: "chill %.2f", s.chill))
+        s.debugJump(to: s.worldPos + V2(120, 0))
+        var least = settled
+        run(s, 3, snow) { s, _ in least = min(least, s.snowOn) }
+        expect("weather: snow comes off as it moves", least < settled * 0.7, String(format: "snow %.2f -> %.2f", settled, least))
+    }
+    // The wind blows it out sideways on its line, whichever way it blows.
+    do {
+        for w in [CGFloat(1), -1] {
+            // (Hung in the tank, clear of anything over it.)
+            let s = inTank(300)
+            s.debugHang(at: V2(300, scene.maxY - 30), length: 180, swing: false)
+            var gale = WeatherFeel()
+            gale.wind = w
+            gale.gust = 0
+            var sum: CGFloat = 0, k = 0
+            run(s, 8, gale) { s, i in if CGFloat(i) * dt > 4 { sum += s.debugSwing.angle; k += 1 } }
+            let mean = sum / CGFloat(max(k, 1))
+            expect("weather: a gale holds it out on its line (\(w > 0 ? "to the right" : "to the left"))",
+                   mean * w > 0.12 && mean * w < 0.45, String(format: "%.2f rad", mean))
+        }
+    }
+    // Hail: it flinches; thunder overhead: it jumps.
+    do {
+        let s = inTank(450)
+        var hail = WeatherFeel()
+        hail.hail = 1; hail.rain = 0.25; hail.wind = 0.45; hail.gust = 0.6; hail.cold = 0.45
+        var flinched = false
+        run(s, 12, hail) { s, _ in if s.pose().emote == .exclaim || s.pose().specks.contains(where: { $0.kind == .hail }) { flinched = true } }
+        expect("weather: hail glances off it", flinched, s.debugState)
+        let t = inTank(450)
+        run(t, 2, storm)
+        t.thunder(at: t.worldPos + V2(40, 160), loud: 1)
+        var jumped = false
+        run(t, 1, storm) { s, _ in if s.pose().emote == .surprise || !s.debugState.hasPrefix("attached") { jumped = true } }
+        expect("weather: thunder overhead makes it jump", jumped, t.debugState)
+    }
+    // A blazing sun: it basks, or finds shade.
+    do {
+        let s = inTank(300)
+        var sun = WeatherFeel()
+        sun.sun = 1; sun.heat = 0.8; sun.wind = 0.08; sun.gust = 0.2
+        var basked = false, shaded = false
+        run(s, 60, sun) { s, _ in
+            if s.debugState.contains(":bask") { basked = true }
+            if s.sheltered { shaded = true }
+        }
+        expect("weather: basks in the sun (or finds shade)", basked || shaded, "basked \(basked), shade \(shaded)")
+    }
 }
 
 // A line hung at the very edge of the screen must not jitter at the bottom
@@ -2601,6 +2756,191 @@ do {
     }
     map.rebuild(windows: windows)
 } catch {}
+
+// Music: with a beat playing it notices, dances — the body coming down on
+// the beat itself, the standing feet staying put — and stops soon after the
+// music does. Snatches of rhythm (speech) never set it off; a meal does
+// interrupt it; fast music it dances half time; on a wall or underneath it
+// only does the moves that keep its feet down.
+print("\n--- music ---")
+do {
+    let mm = SurfaceMap()
+    mm.standoff = map.standoff
+    let w = TrackedWindow(id: 41, frame: CGRect(x: screen.minX + 300, y: screen.minY + 200, width: 800, height: 420), depth: 0, owner: "W")
+    mm.debugRebuild(screen: screen, menuBarHeight: 25, windows: [w], cinema: false)
+    guard let loop = mm.loop("win:41"),
+          let top = loop.segs.firstIndex(where: { $0.facing == .up }),
+          let side = loop.segs.firstIndex(where: { $0.facing == .left || $0.facing == .right }),
+          let under = loop.segs.firstIndex(where: { $0.facing == .down }) else {
+        print("  [skip] music: no window loop"); exit(0)
+    }
+    let verbose = ProcessInfo.processInfo.environment["SIM_MUSIC"] != nil
+    /// A spider on top of the window, with music at `bpm` from `from`
+    /// seconds for `length` seconds (nil: on for good).
+    final class Gig {
+        let s: Spider
+        var t: CGFloat = 0
+        var bpm: Double
+        var on: (CGFloat) -> Bool
+        init(_ s: Spider, bpm: Double, on: @escaping (CGFloat) -> Bool) { self.s = s; self.bpm = bpm; self.on = on }
+        var beat: Double { Double(t) * bpm / 60 }
+        func step() {
+            t += dt
+            s.music = on(t) ? MusicBeat(beat: beat, period: 60 / bpm, confidence: 0.9, energy: 0.7, bar: 0) : nil
+            s.setCursor(V2(-4000, -4000))
+            s.update(dt: dt)
+        }
+        func run(_ secs: CGFloat, until: ((Spider) -> Bool)? = nil) -> CGFloat? {
+            var n = 0
+            while CGFloat(n) * dt < secs {
+                step(); n += 1
+                if let u = until, u(s) { return CGFloat(n) * dt }
+            }
+            return nil
+        }
+    }
+    func gig(seg: Int = top, at: CGFloat = 200, bpm: Double = 118, on: @escaping (CGFloat) -> Bool = { _ in true }) -> Gig? {
+        let s = Spider(map: mm)
+        s.config.followCursor = false
+        s.config.webs = false
+        _ = settleUntilAttached(s)
+        guard park(s, loopID: "win:41", segIdx: seg, t: at) else { return nil }
+        return Gig(s, bpm: bpm, on: on)
+    }
+    let dancing: (Spider) -> Bool = { $0.debugState.contains(":groove") }
+
+    // No music: never.
+    var danced = 0
+    for trial in 0..<3 {
+        guard let g = gig(at: 150 + CGFloat(trial) * 150, on: { _ in false }) else { continue }
+        if g.run(40, until: dancing) != nil { danced += 1 }
+    }
+    expect("no music: it never dances", danced == 0, "\(danced)/3 did")
+
+    // Music: it dances, soon, on the beat, feet down; and stops after it.
+    var starts: [CGFloat] = [], stops: [CGFloat] = [], lows: [Double] = [], slide: CGFloat = 0, moves = Set<String>()
+    var trials = 0
+    for trial in 0..<5 {
+        var musicUntil: CGFloat = 1e9
+        guard let g = gig(at: 120 + CGFloat(trial) * 120, bpm: [96, 118, 128, 104, 140][trial], on: { $0 < musicUntil }) else { continue }
+        trials += 1
+        guard let start = g.run(15, until: dancing) else {
+            if verbose { print("    no dance:", g.s.debugState, g.s.debugGroove) }
+            continue
+        }
+        starts.append(start)
+        // Settled into it: a few beats in, then eight beats looked at.
+        _ = g.run(CGFloat(4 * 60 / g.bpm))
+        var low = (y: CGFloat.greatestFiniteMagnitude, ph: 0.0), last = Int(floor(g.beat))
+        var feet = g.s.debugPlanted
+        var mine: [Double] = []
+        defer { if verbose { print("    trial \(trial) \(g.bpm) bpm \(g.s.debugState) \(g.s.debugGroove) footing \(g.s.debugFooting): lows " + mine.map { String(format: "%+.2f", $0) }.joined(separator: " ")) } }
+        // (Timed by height, so only on top of something: up a side it
+        // bounces off the wall, sideways.)
+        for _ in 0..<Int(8 * 60 / g.bpm / Double(dt)) {
+            g.step()
+            guard dancing(g.s), g.s.debugFooting > 0.5 else { break }
+            if Int(floor(g.beat)) != last {
+                mine.append(low.ph > 0.5 ? low.ph - 1 : low.ph)
+                lows.append(low.ph > 0.5 ? low.ph - 1 : low.ph)
+                low = (.greatestFiniteMagnitude, 0)
+                last = Int(floor(g.beat))
+            }
+            if g.s.worldPos.y < low.y { low = (g.s.worldPos.y, g.beat - floor(g.beat)) }
+            let now = g.s.debugPlanted
+            for i in now.indices where now[i].planted && feet[i].planted { slide = max(slide, now[i].world.distance(to: feet[i].world)) }
+            feet = now
+        }
+        // Dance on a good while, then the music stops — mid-dance.
+        _ = g.run(20) { s in
+            if let m = s.debugGroove.split(separator: " ").first { moves.insert(String(m)) }
+            return false
+        }
+        _ = g.run(20) { dancing($0) && !$0.debugGroove.contains("ending") }
+        musicUntil = g.t
+        if let stop = g.run(8, until: { !dancing($0) }) { stops.append(stop) }
+    }
+    let late = lows.filter { abs($0) > 0.06 }.count
+    let meanLow = lows.isEmpty ? 1 : lows.reduce(0, +) / Double(lows.count)
+    expect("music on: it takes to dancing within ten seconds", trials > 0 && starts.count == trials && starts.allSatisfy { $0 < 10 },
+           "\(starts.count)/\(trials), after \(starts.map { String(format: "%.1fs", $0) }.joined(separator: " "))")
+    expect("dancing: the body comes down on the beat", !lows.isEmpty && abs(meanLow) < 0.03 && late <= lows.count / 10,
+           String(format: "low point %+.3f beat on average, %d of %d off by more than 0.06", meanLow, late, lows.count))
+    expect("dancing: standing feet stay where they are", slide < 1, String(format: "worst %.2f px in a frame", Double(slide)))
+    expect("dancing: it gets through its moves", moves.count >= 3, moves.sorted().joined(separator: " "))
+    expect("music stops: so does it, within five seconds", stops.count == starts.count && stops.allSatisfy { $0 < 5 },
+           stops.map { String(format: "%.1fs", $0) }.joined(separator: " "))
+
+    // Snatches of rhythm — two seconds on, three off, as in speech — are
+    // not music to it.
+    danced = 0
+    for trial in 0..<3 {
+        guard let g = gig(at: 200 + CGFloat(trial) * 100, on: { $0.truncatingRemainder(dividingBy: 5) < 2 }) else { continue }
+        if g.run(40, until: dancing) != nil { danced += 1 }
+    }
+    expect("snatches of rhythm: never a dance", danced == 0, "\(danced)/3 danced")
+
+    // Asleep when the music starts: it wakes up for it.
+    var woke = 0, sleepers = 0
+    for trial in 0..<3 {
+        var musicFrom: CGFloat = 1e9
+        guard let g = gig(at: 250 + CGFloat(trial) * 90, on: { $0 >= musicFrom }) else { continue }
+        g.s.debugActivity("sleep", for: 60)
+        _ = g.run(1)
+        guard g.s.debugState.contains(":sleep") else { continue }
+        sleepers += 1
+        musicFrom = g.t
+        if g.run(20, until: dancing) != nil { woke += 1 } else if verbose { print("    slept on:", g.s.debugState) }
+    }
+    expect("asleep: music wakes it, and it dances", sleepers > 0 && woke == sleepers, "\(woke)/\(sleepers)")
+
+    // Dancing, a fly lands near: dinner first.
+    var hunted = 0, dancers = 0
+    for trial in 0..<3 {
+        guard let g = gig(at: 300 + CGFloat(trial) * 60), g.run(15, until: dancing) != nil else { continue }
+        _ = g.run(2)
+        dancers += 1
+        _ = g.s.release(.fruitFly, at: g.s.worldPos + V2(90, 40))
+        if g.run(4, until: { !dancing($0) }) != nil { hunted += 1 }
+    }
+    expect("dancing: prey nearby comes first", dancers > 0 && hunted == dancers, "\(hunted)/\(dancers)")
+
+    // Fast music: half time — a bounce every other beat.
+    if let g = gig(at: 400, bpm: 172), g.run(15, until: dancing) != nil {
+        _ = g.run(3)
+        var lowsAt: [Double] = [], prev = g.s.worldPos.y, falling = false
+        for _ in 0..<Int(12 * 60 / 172 / Double(dt)) {
+            g.step()
+            let y = g.s.worldPos.y
+            if falling, y > prev { lowsAt.append(g.beat) }
+            falling = y < prev
+            prev = y
+        }
+        let gaps = zip(lowsAt.dropFirst(), lowsAt).map { $0 - $1 }.filter { $0 > 0.5 }
+        let mean = gaps.isEmpty ? 0 : gaps.reduce(0, +) / Double(gaps.count)
+        expect("fast music: it dances half time", abs(mean - 2) < 0.25, String(format: "a bounce every %.2f beats", mean))
+    }
+
+    // Up a side, and underneath: only moves that keep its feet on.
+    for (label, seg, allowed) in [("a side", side, Set(["bob", "pump"])), ("underneath", under, Set(["bob"]))] {
+        var seen = Set<String>(), got = false
+        for _ in 0..<3 where !got {
+            guard let g = gig(seg: seg, at: 120), g.run(15, until: dancing) != nil else { continue }
+            got = true
+            _ = g.run(40) { s in
+                let here = s.debugFooting
+                let onIt = seg == under ? here < -0.5 : abs(here) <= 0.5
+                if dancing(s), onIt, let m = s.debugGroove.split(separator: " ").first { seen.insert(String(m.dropFirst(5))) }
+                return false
+            }
+        }
+        if got {
+            expect("on \(label): only its moves", seen.isSubset(of: allowed), seen.sorted().joined(separator: " "))
+        } else {
+            print("  [skip] on \(label): never danced (it did not stay there)")
+        }
+    }
+}
 
 // Every stretch where the body went along the ground with all its feet
 // down and sliding with it. Landings touch down with a few px of it; a

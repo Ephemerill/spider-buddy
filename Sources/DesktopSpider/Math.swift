@@ -287,8 +287,9 @@ struct SilkRope {
     }
 
     /// `tail` is ignored when the tail end is not pinned. Gravity is in
-    /// world units per second squared, pointing down (-y).
-    mutating func step(head: V2, tail: V2, gravity: CGFloat, drag: CGFloat, dt: CGFloat) {
+    /// world units per second squared, pointing down (-y); `wind` pushes on
+    /// the line the same way, in whatever direction it blows.
+    mutating func step(head: V2, tail: V2, gravity: CGFloat, drag: CGFloat, wind: V2 = .zero, dt: CGFloat) {
         guard live, points.count > 1 else { return }
         let h: CGFloat = 1.0 / 120.0
         acc += min(dt, 0.05)
@@ -296,7 +297,7 @@ struct SilkRope {
         while acc >= h, steps < 6 {
             acc -= h
             steps += 1
-            substep(head: head, tail: tail, gravity: gravity, drag: drag, h: h)
+            substep(head: head, tail: tail, gravity: gravity, drag: drag, wind: wind, h: h)
         }
         // Pin exactly, whatever the substep count, so the ends never float
         // off the things they are tied to.
@@ -304,14 +305,14 @@ struct SilkRope {
         if tailPinned { points[points.count - 1] = tail }
     }
 
-    private mutating func substep(head: V2, tail: V2, gravity: CGFloat, drag: CGFloat, h: CGFloat) {
+    private mutating func substep(head: V2, tail: V2, gravity: CGFloat, drag: CGFloat, wind: V2, h: CGFloat) {
         let n = points.count - 1
         if headPinned { points[0] = head; prev[0] = head }
         let first = headPinned ? 1 : 0
         let last = tailPinned ? n - 1 : n
         if tailPinned { points[n] = tail; prev[n] = tail }
         if last >= first {
-            let g = V2(0, -gravity) * (h * h)
+            let g = (V2(0, -gravity) + wind) * (h * h)
             for i in first...last {
                 let v = (points[i] - prev[i]) * drag
                 prev[i] = points[i]

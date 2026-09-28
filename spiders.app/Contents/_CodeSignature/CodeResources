@@ -3,7 +3,12 @@
 <plist version="1.0">
 <dict>
 	<key>files</key>
-	<dict/>
+	<dict>
+		<key>Resources/AppIcon.icns</key>
+		<data>
+		q++0IqG38RDcoy0XuDtunuKRF3Y=
+		</data>
+	</dict>
 	<key>files2</key>
 	<dict>
 		<key>Frameworks/Sparkle.framework</key>
@@ -14,6 +19,13 @@
 			</data>
 			<key>requirement</key>
 			<string>cdhash H"c208226a64d7b0abf24e6f7b5ffa5c490a9a252a" or cdhash H"55cb20723bebe709ba6b6d0fec5f5cb241ac26ce"</string>
+		</dict>
+		<key>Resources/AppIcon.icns</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			F6lTmsboxXgSiYxA0OHsHaYA21vh+dF3nOG6h0c5LFw=
+			</data>
 		</dict>
 	</dict>
 	<key>rules</key>

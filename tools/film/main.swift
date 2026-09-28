@@ -172,6 +172,189 @@ if let idx = CommandLine.arguments.firstIndex(of: "--seq"), idx + 1 < CommandLin
     exit(0)
 }
 
+// --- dancing to music ---------------------------------------------------------
+// `--dance [moves]` puts music on at DANCE_BPM (120) and films each dance move
+// over two beats, eight frames a beat, taken at exact points in the beat
+// (labelled), in a fixed frame so the body's bounce shows. It prints where in
+// the beat the body is lowest (should be on it), how far the standing feet
+// slide, and the biggest frame-to-frame foot jump.
+if let idx = CommandLine.arguments.firstIndex(of: "--dance") {
+    let moves = idx + 1 < CommandLine.arguments.count && !CommandLine.arguments[idx + 1].hasPrefix("-")
+        ? CommandLine.arguments[idx + 1].split(separator: ",").map(String.init)
+        : ["bob", "stomp", "pump", "peacock", "arms"]
+    let bpm = Double(ProcessInfo.processInfo.environment["DANCE_BPM"] ?? "120") ?? 120
+    let scale = CGFloat(Double(ProcessInfo.processInfo.environment["DANCE_SCALE"] ?? "1") ?? 1)
+    let perBeat = 8, beatsShown = 2
+    let cols = perBeat * beatsShown
+    let cell: CGFloat = 130 * max(scale, 0.6)
+    let W = Int(cell * CGFloat(cols)), H = Int((cell + 14) * CGFloat(moves.count))
+    guard let c = CGContext(data: nil, width: W * 2, height: H * 2, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { exit(1) }
+    c.scaleBy(x: 2, y: 2)
+    c.setFillColor(gray: 0.22, alpha: 1)
+    c.fill(CGRect(x: 0, y: 0, width: W, height: H))
+    let dfont = CTFontCreateWithName("Menlo" as CFString, 9, nil)
+    func text(_ s: String, _ x: CGFloat, _ y: CGFloat) {
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: s, attributes: [.font: dfont, .foregroundColor: NSColor(white: 0.8, alpha: 1)]))
+        c.textPosition = CGPoint(x: x, y: y); CTLineDraw(line, c)
+    }
+    let dt: CGFloat = 1.0 / 120.0
+    for (row, move) in moves.enumerated() {
+        let sm = SurfaceMap()
+        sm.standoff = 22 * scale
+        let win = CGRect(x: 250, y: 200, width: 420, height: 240)
+        sm.debugRebuild(screen: CGRect(x: 0, y: 0, width: 900, height: 620), menuBarHeight: 0,
+                        windows: [TrackedWindow(id: 9, frame: win, depth: 0, owner: "Mock")])
+        let sp = Spider(map: sm)
+        sp.config.scale = scale
+        sp.config.followCursor = false
+        sp.debugAttach(loopID: "win:9", segIdx: 0, t: 200, dir: 1)
+        Spider.debugGrooveMove = move
+        var t = 0.0
+        func step() {
+            t += Double(dt)
+            sp.music = MusicBeat(beat: t * bpm / 60, period: 60 / bpm, confidence: 1, energy: 0.8, bar: 0)
+            sp.setCursor(V2(-9e4, -9e4))
+            sp.update(dt: dt)
+        }
+        for _ in 0..<Int(0.3 / dt) { step() }
+        sp.debugActivity("groove", for: 30)
+        for _ in 0..<Int(6 * 60 / bpm / Double(dt)) { step() }   // six beats in
+        let anchorX = sp.worldPos.x
+        // Measure over eight beats: the low point in each, and foot slides.
+        var lows: [Double] = []
+        var beatLow = (y: CGFloat.greatestFiniteMagnitude, ph: 0.0)
+        var lastBeat = Int(floor(t * bpm / 60))
+        var slide: CGFloat = 0, jump: CGFloat = 0
+        var prevFeet = sp.debugPlanted
+        var frames = 0
+        while frames < Int(8 * 60 / bpm / Double(dt)) {
+            step(); frames += 1
+            let b = t * bpm / 60
+            if Int(floor(b)) != lastBeat {
+                lows.append(beatLow.ph)
+                beatLow = (.greatestFiniteMagnitude, 0)
+                lastBeat = Int(floor(b))
+            }
+            let y = sp.worldPos.y
+            if y < beatLow.y { beatLow = (y, b - floor(b)) }
+            let feet = sp.debugPlanted
+            for i in feet.indices {
+                let d = feet[i].world.distance(to: prevFeet[i].world)
+                jump = max(jump, d)
+                if feet[i].planted && prevFeet[i].planted { slide = max(slide, d) }
+            }
+            prevFeet = feet
+        }
+        // Low points as signed phase: near 1 is just before the beat.
+        let signed = lows.map { $0 > 0.5 ? $0 - 1 : $0 }
+        let mean = signed.reduce(0, +) / Double(max(signed.count, 1))
+        print(String(format: "%-8@ %@  lowest at %+.3f beat (%+.0f ms)  planted-foot slide %.2f px/frame  biggest foot jump %.1f px/frame",
+                     move as NSString, sp.debugState, mean, mean * 60 / bpm * 1000, Double(slide), Double(jump)))
+        // Film two beats from the next beat.
+        let nextBeat = floor(t * bpm / 60) + 1
+        while t * bpm / 60 < nextBeat { step() }
+        let baseY = CGFloat(H) - CGFloat(row + 1) * (cell + 14)
+        text("\(move) at \(Int(bpm)) bpm", 4, baseY + cell + 3)
+        for k in 0..<cols {
+            let at = nextBeat + Double(k) / Double(perBeat)
+            while t * bpm / 60 < at { step() }
+            let pose = sp.pose()
+            let box = CGRect(x: CGFloat(k) * cell, y: baseY, width: cell, height: cell)
+            c.saveGState(); c.addRect(box); c.clip()
+            if k % perBeat == 0 { c.setFillColor(NSColor(calibratedRed: 0.3, green: 0.26, blue: 0.2, alpha: 1).cgColor); c.fill(box) }
+            // A fixed frame: the ledge stays put and the body moves on it.
+            let ly = box.midY - 30 * scale
+            c.setStrokeColor(NSColor(calibratedRed: 0.35, green: 0.55, blue: 0.9, alpha: 1).cgColor)
+            c.setLineWidth(2)
+            c.beginPath(); c.move(to: CGPoint(x: box.minX, y: ly)); c.addLine(to: CGPoint(x: box.maxX, y: ly)); c.strokePath()
+            let fixed = CGRect(x: box.minX + (pose.pos.x - anchorX), y: ly + (pose.pos.y - win.maxY) - cell / 2,
+                               width: cell, height: cell)
+            SpiderRenderer.draw(pose, in: c, bounds: fixed)
+            c.restoreGState()
+            text(k % perBeat == 0 ? "BEAT" : "+\(k % perBeat)/8", box.minX + 3, box.minY + 3)
+            c.setStrokeColor(gray: 0.4, alpha: 1); c.setLineWidth(1)
+            c.stroke(box.insetBy(dx: 0.5, dy: 0.5))
+        }
+    }
+    guard let img = c.makeImage() else { exit(1) }
+    let out = ProcessInfo.processInfo.environment["DANCE_OUT"] ?? "build/dance.png"
+    try NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: out))
+    print("wrote \(out)")
+    exit(0)
+}
+
+// `--dance-session` runs whole dances the way it picks them (DANCE_BPM,
+// DANCE_SCALE), start to finish, and reports the worst frame-to-frame jumps of
+// the feet, knees and body, and how far any standing foot slides — with what
+// it was doing when each happened.
+if CommandLine.arguments.contains("--dance-session") {
+    let bpm = Double(ProcessInfo.processInfo.environment["DANCE_BPM"] ?? "120") ?? 120
+    let scale = CGFloat(Double(ProcessInfo.processInfo.environment["DANCE_SCALE"] ?? "1") ?? 1)
+    let runs = Int(ProcessInfo.processInfo.environment["DANCE_RUNS"] ?? "6") ?? 6
+    Spider.debugGrooveTrace = ProcessInfo.processInfo.environment["DANCE_JUMP"] != nil
+    let dt: CGFloat = 1.0 / 60.0
+    var worst: [(CGFloat, String)] = []
+    var slides: [(CGFloat, String)] = []
+    var sessions = 0, moves = Set<String>()
+    for run in 0..<runs {
+        let sm = SurfaceMap()
+        sm.standoff = 22 * scale
+        let win = CGRect(x: 250, y: 200, width: 520, height: 240)
+        sm.debugRebuild(screen: CGRect(x: 0, y: 0, width: 1000, height: 620), menuBarHeight: 0,
+                        windows: [TrackedWindow(id: 9, frame: win, depth: 0, owner: "Mock")])
+        let sp = Spider(map: sm)
+        sp.config.scale = scale
+        sp.config.followCursor = false
+        sp.debugAttach(loopID: "win:9", segIdx: 0, t: 150 + CGFloat(run) * 40, dir: run % 2 == 0 ? 1 : -1)
+        Spider.debugGrooveMove = nil
+        var t = Double(run) * 0.37
+        var prevFeet = sp.debugPlanted, prevPos = sp.worldPos
+        var was = "", prevState = ""
+        var prevLegs = [String](repeating: "", count: 8)
+        for f in 0..<Int(90 / dt) {
+            t += Double(dt)
+            sp.music = MusicBeat(beat: t * bpm / 60, period: 60 / bpm, confidence: 1, energy: 0.5 + 0.4 * sin(t / 7), bar: 0)
+            sp.setCursor(V2(-9e4, -9e4))
+            sp.update(dt: dt)
+            let st = sp.debugState + " " + sp.debugGroove
+            if st.contains("groove"), !was.contains("groove") { sessions += 1 }
+            if let m = st.split(separator: " ").first(where: { $0.hasPrefix("move=") }) { moves.insert(String(m)) }
+            was = st
+            let feet = sp.debugPlanted
+            let attached = st.hasPrefix("attached")
+            if attached, prevPos.distance(to: sp.worldPos) < 20 {
+                for i in feet.indices {
+                    let d = feet[i].world.distance(to: prevFeet[i].world)
+                    if st.contains("groove") { worst.append((d, String(format: "run %d f%d leg %d %@", run, f, i, st))) }
+                    if let th = Double(ProcessInfo.processInfo.environment["DANCE_JUMP"] ?? ""), d > CGFloat(th), st.contains("groove") {
+                        print(String(format: "JUMP %.1f run %d f%d leg %d  %@  | %@\n     was %@ | %@", Double(d), run, f, i, sp.debugGrooveLeg(i), st, prevLegs[i], prevState))
+                    }
+                    if feet[i].planted, prevFeet[i].planted, st.contains("groove") {
+                        slides.append((d, String(format: "run %d f%d leg %d %@", run, f, i, st)))
+                        if let th = Double(ProcessInfo.processInfo.environment["DANCE_SLIDE"] ?? ""), d > CGFloat(th) {
+                            print(String(format: "SLIDE %.2f run %d f%d leg %d  %@  | %@ | was %@ | body %.2f,%.2f moved %.2f,%.2f", Double(d), run, f, i, sp.debugGrooveLeg(i), st, prevState,
+                                         Double(sp.worldPos.x), Double(sp.worldPos.y), Double(sp.worldPos.x - prevPos.x), Double(sp.worldPos.y - prevPos.y)))
+                        }
+                    }
+                }
+            }
+            prevFeet = feet
+            prevPos = sp.worldPos
+            prevState = st
+            prevLegs = (0..<8).map { sp.debugGrooveLeg($0) }
+        }
+    }
+    worst.sort { $0.0 > $1.0 }
+    slides.sort { $0.0 > $1.0 }
+    print(String(format: "%.0f bpm, scale %.2f: %d dances, moves %@", bpm, Double(scale), sessions, moves.sorted().joined(separator: " ")))
+    print("  biggest foot jumps (px/frame):")
+    for w in worst.prefix(5) { print(String(format: "    %5.1f  %@", Double(w.0), w.1)) }
+    print("  biggest standing-foot slides (px/frame):")
+    for w in slides.prefix(3) { print(String(format: "    %5.2f  %@", Double(w.0), w.1)) }
+    exit(0)
+}
+
 // --- strips: corner walk, turn, and every activity --------------------------
 // `--strip corner` walks it round a window corner; `--strip turn` films a
 // turn-around; `--strip <activity>` films that activity. Frames are laid out in

@@ -1,0 +1,32 @@
+# The Worker bug reports go through on their way to Discord (see src/index.js).
+#
+# Once:     npx wrangler login
+#           npx wrangler secret put DISCORD_WEBHOOK      (paste the webhook address)
+# Deploy:   npx wrangler deploy                          (from this folder)
+# Watch:    npx wrangler tail
+name = "spider-buddy-reports"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+# At https://spider-buddy-reports.ephemerill.workers.dev, the address build.sh
+# gives the app; no preview addresses for each version besides.
+workers_dev = true
+preview_urls = false
+
+# Three reports a minute from any one address (a report with a lot of video
+# may take two or three messages)…
+[[ratelimits]]
+name = "PER_SENDER"
+namespace_id = "1001"
+
+  [ratelimits.simple]
+  limit = 3
+  period = 60
+
+# …and twenty a minute from everyone together, well inside Discord's limit.
+[[ratelimits]]
+name = "OVERALL"
+namespace_id = "1002"
+
+  [ratelimits.simple]
+  limit = 20
+  period = 60

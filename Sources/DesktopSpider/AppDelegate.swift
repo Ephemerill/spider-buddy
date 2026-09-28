@@ -85,6 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let updater = Updater()
     private var studio: StudioController?
+    private var bugReport: BugReportController?
+    private var studioVisible = false
     private var welcome: OnboardingController?
     /// The welcome tour is on: the spider is put away until the end of it,
     /// and then comes out of its menu bar icon.
@@ -133,8 +135,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var feelsWeather = true
     /// A faint rain across the desktop while it rains, too.
     private var showsRain = true
+    /// What the weather is doing outside, as the habitat has it (when the
+    /// app may look it up), and a word on it for the controls.
+    private var outsideWeather: WeatherKind?
+    private var outsideSummary: String?
+    /// Tools only (SPIDER_WEATHER=kind): the tank's weather kept to that,
+    /// in memory only.
+    private let forcedWeather = ProcessInfo.processInfo.environment["SPIDER_WEATHER"].flatMap(WeatherKind.init)
     /// Jumps at a notification; looks up at the volume or brightness changing.
     private var feelsCommotion = true
+    /// Hears music playing on the Mac and dances to its beat.
+    private let ears = Ears()
+    private var dancesToMusic = true
     /// It remembers what happens to it and grows a little with it.
     private var learns = true
     /// What it has been through (nil with learning off).
@@ -206,7 +218,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !UserDefaults.standard.bool(forKey: "welcomed") || ProcessInfo.processInfo.environment["SPIDER_WELCOME"] == "1" {
             DispatchQueue.main.async { [weak self] in self?.startWelcome() }
         }
-        // SPIDER_WELCOME_SHOT=dir writes the welcome's first two pages there, then quits.
+        // SPIDER_ENTRANCE_TEST=secs: straight to the first entrance (the tour
+        // skipped), where it is every quarter second, then quits.
+        if let secs = ProcessInfo.processInfo.environment["SPIDER_ENTRANCE_TEST"].flatMap(Double.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self else { return }
+                if self.welcome == nil { self.startWelcome() }
+                self.welcome?.window.close()
+                let n = Int(secs * 4)
+                for i in 1...n {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.25) {
+                        print("entrance: +\(Double(i) * 0.25)s \(self.spider.debugState) at \(Int(self.spider.worldPos.x)),\(Int(self.spider.worldPos.y)) entering \(self.spider.makingEntrance) level \(self.window.level.rawValue)")
+                        if i == n { NSApp.terminate(nil) }
+                    }
+                }
+            }
+        }
+        // SPIDER_WELCOME_SHOT=dir writes the welcome's pages there, then quits.
         if let dir = ProcessInfo.processInfo.environment["SPIDER_WELCOME_SHOT"] {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
@@ -216,6 +244,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.welcome?.debugNextPage()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                         self.welcome?.debugSnapshot(to: "\(dir)/welcome2.png")
+                        self.welcome?.debugNextPage()
+                        self.welcome?.window.displayIfNeeded()
+                        self.welcome?.debugSnapshot(to: "\(dir)/welcome3.png")
                         guard ProcessInfo.processInfo.environment["SPIDER_WELCOME_FLOW"] == "1" else { NSApp.terminate(nil); return }
                         // On through the Studio and out: where each window
                         // is, and what the spider does as it arrives.
@@ -260,6 +291,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // decorating), then puts everything back and quits.
         if let dir = ProcessInfo.processInfo.environment["SPIDER_HABITAT_SHOT"] {
             runHabitatShots(dir: dir)
+        }
+        // SPIDER_WEATHER_SHOT=dir opens the habitat with the spider in it and
+        // writes a picture of the tank in every kind of weather, fully in
+        // (SPIDER_WEATHER_KINDS and SPIDER_WEATHER_BIOMES, comma lists, to
+        // pick), then puts everything back and quits.
+        if let dir = ProcessInfo.processInfo.environment["SPIDER_WEATHER_SHOT"] {
+            runWeatherShots(dir: dir)
         }
         if ProcessInfo.processInfo.environment["SPIDER_HABITAT_INPUT"] == "1" { runHabitatInputTest() }
         // SPIDER_HABITAT_RETURN=left|right|above: carried out of the tank to
@@ -457,6 +495,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 exit(0)
             }
         }
+        // SPIDER_BUG_SHOT=dir opens Report a Bug and writes bug_form.png (and
+        // bug_peek.png, with what's sent showing) there, then quits.
+        // SPIDER_BUG_FILES=a:b attaches those first; SPIDER_BUG_SEND=1 sends
+        // it too (to SPIDER_BUG_ENDPOINT, say) and writes bug_after.png.
+        if let dir = ProcessInfo.processInfo.environment["SPIDER_BUG_SHOT"] {
+            let env = ProcessInfo.processInfo.environment
+            reportBug()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                guard let c = self?.bugReport else { return }
+                if let files = env["SPIDER_BUG_FILES"] {
+                    c.debugFill(name: "Tester", text: "A test report from the SPIDER_BUG_SHOT hook: nothing's wrong, please ignore.",
+                                files: files.split(separator: ":").map { URL(fileURLWithPath: String($0)) })
+                }
+                c.debugSnapshot(to: "\(dir)/bug_form.png")
+                c.debugPeek()
+                c.debugSnapshot(to: "\(dir)/bug_peek.png")
+                c.debugPeek()
+                guard env["SPIDER_BUG_SEND"] == "1" else { NSApp.terminate(nil); return }
+                c.debugSend()
+                func wait(_ n: Int) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        guard n > 0, !c.debugDone, c.debugProblem == nil else {
+                            print("bug report: \(c.debugDone ? "sent" : c.debugProblem ?? "timed out")")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                c.debugSnapshot(to: "\(dir)/bug_after.png")
+                                NSApp.terminate(nil)
+                            }
+                            return
+                        }
+                        wait(n - 1)
+                    }
+                }
+                wait(60)
+            }
+        }
         // SPIDER_STUDIO=1 opens the studio straight away (handy for testing).
         if ProcessInfo.processInfo.environment["SPIDER_STUDIO"] == "1" { openStudio() }
         // SPIDER_STUDIO_SHOT=dir writes one PNG per studio tab there, then quits.
@@ -474,6 +547,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         UserDefaults.standard.set(inHabitat, forKey: "inHabitat")
         memory?.save()
+        ears.stop()
         tracker.stop()
         fallbackTimer?.invalidate()
     }
@@ -602,6 +676,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if tickCount % 3600 == 0, let m = memory, m.dirty { m.save() }
         if tickCount % 30 == 0 {
             updateRain(now: CACurrentMediaTime())
+            updateEars()
             // Never left asleep for good by an unlock that went unheard.
             if spider.dormant, !away, !wakingUp, !AppDelegate.screenIsLocked { spider.wakeAndGreet() }
         }
@@ -650,6 +725,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lastCursor = cursor
             for s in allSpiders { s.setCursor(cursor) }
         }
+        updateWeather(now: now, dt: dt)
+        // The beat of whatever is playing, as it is on the screen this frame.
+        let heard = dancesToMusic ? ears.music(at: now) : nil
+        for s in allSpiders { s.music = heard }
         // Wiping the pointer across the hammock tears it down.
         if spider.hammock != nil {
             let moved = lastWipeCursor.x > -9000 ? cursor.distance(to: lastWipeCursor) : 0
@@ -758,7 +837,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// hammock, which hangs below the bar and is drawn over it on purpose,
     /// so it is seen through the silk.)
     private func raiseOverMenuBarIfNeeded(_ pose: SpiderPose) {
-        guard !spider.inHammock else {
+        // (Nor making its entrance: it comes out from behind the bar.)
+        guard !spider.inHammock, !spider.makingEntrance else {
             if window.level != .floating { window.level = .floating }
             return
         }
@@ -814,7 +894,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateVisitors(dt: CGFloat, now: CFTimeInterval) -> Bool {
         if visitorsOn, now >= nextVisitAt {
             nextVisitAt = now + visitGap
-            if visitors.count < Visitor.most, !inHabitat, !tankOpen, !awaitingEntrance,
+            if visitors.count < Visitor.most, !inHabitat, !tankOpen, !awaitingEntrance, !spider.makingEntrance,
                !spider.config.paused, cinemaScreens.isEmpty {
                 arriveVisitor()
             }
@@ -912,16 +992,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc private func toggleVisitors() {
-        if !visitorsOn {
-            let alert = NSAlert()
-            alert.messageText = "Let other spiders visit?"
-            alert.informativeText = "Now and then a spider will drop by to play with \(spider.name.isEmpty ? "yours" : spider.name) for a few minutes — up to \(Visitor.most) at once.\n\nEvery spider is animated sixty times a second, so each visitor uses a lot more CPU and battery. With several about, your Mac may run warm and its fans may come on."
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "Let Them Visit")
-            alert.addButton(withTitle: "Cancel")
-            NSApp.activate(ignoringOtherApps: true)
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
+    @objc private func toggleVisitors() { setVisitors(!visitorsOn, ask: true) }
+
+    /// Turning them on from the panel asks first, over what they cost in
+    /// power; the welcome tour says so in small print instead (`ask` false).
+    private func setVisitors(_ on: Bool, ask: Bool) {
+        guard on != visitorsOn else { return }
+        if on {
+            if ask {
+                let alert = NSAlert()
+                alert.messageText = "Let other spiders visit?"
+                alert.informativeText = "Now and then a spider will drop by to play with \(spider.name.isEmpty ? "yours" : spider.name) for a few minutes — up to \(Visitor.most) at once.\n\nEvery spider is animated sixty times a second, so each visitor uses a lot more CPU and battery. With several about, your Mac may run warm and its fans may come on."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "Let Them Visit")
+                alert.addButton(withTitle: "Cancel")
+                NSApp.activate(ignoringOtherApps: true)
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+            }
             visitorsOn = true
             // The first one soon, so it is plain that it worked.
             nextVisitAt = CACurrentMediaTime() + Double(randRange(4, 10))
@@ -1499,12 +1586,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func togglePanel() {
         guard let button = statusItem.button else { return }
         if panel == nil {
-            panel = PanelController(pages: panelPages(), footer: [
-                PanelButton("Spider Studio", symbol: "paintbrush.pointed") { [unowned self] in panel?.close(); openStudio() },
-                PanelButton("Quit", symbol: "power") { [unowned self] in quit() },
-            ], design: { [weak self] in self?.spider.design ?? SpiderDesign() })
+            panel = PanelController(pages: panelPages(), footer: panelFooter(),
+                                    design: { [weak self] in self?.spider.design ?? SpiderDesign() })
         }
         panel?.toggle(from: button)
+    }
+
+    private func panelFooter() -> [PanelButton] {
+        [
+            PanelButton("Spider Studio", symbol: "paintbrush.pointed") { [unowned self] in panel?.close(); openStudio() },
+            PanelButton("Quit", symbol: "power") { [unowned self] in quit() },
+        ]
     }
 
     /// The panel opened at a given page (0 is the first).
@@ -1513,8 +1605,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel?.show(pageTitled: "Behavior")
     }
 
-    private func panelPages() -> [PanelPage] {
-        var name: String { spider.name.isEmpty ? "Your spider" : spider.name }
+    /// `generic`: for the welcome tour's picture of it, which is the same
+    /// for everyone — no name of anyone's spider in it.
+    private func panelPages(generic: Bool = false) -> [PanelPage] {
+        var name: String { generic ? "Spider" : spider.name.isEmpty ? "Your spider" : spider.name }
         let home = PanelPage(title: "Spider", symbol: "house", sections: [
             PanelSection(title: nil, rows: [
                 // Only there while an update found on the daily check waits.
@@ -1559,6 +1653,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                             """,
                         get: { [unowned self] in learns }, set: { [unowned self] _ in toggleLearning() }),
                 .status { [unowned self] in
+                    // (Pictured in the welcome, it tells nothing of anyone's spider.)
+                    if generic { return "Its personality drifts a little with how things go, always close to what you set in the Studio." }
                     guard learns, let m = memory else { return "\(name) is just as the Studio made it." }
                     return m.summary(name: name, base: spider.basePersonality)
                 },
@@ -1703,6 +1799,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         get: { [unowned self] in feelsWeather }, set: { [unowned self] _ in toggleFeelWeather() }),
                 .toggle("Notice Pop-ups", help: "A notification sliding in makes it jump — right up in the air, if it is on top of something — and stare at it. Turn the volume or brightness up or down and it looks up to see. Nothing in a notification is read.",
                         get: { [unowned self] in feelsCommotion }, set: { [unowned self] _ in toggleFeelCommotion() }),
+                .toggle("Dance to Music", help: Ears.supported
+                        ? "When an app plays music with a beat, it hears it and dances along, in time. It only listens while something is playing, and only for the beat: nothing is recorded or kept. The first time, macOS asks whether it may listen to your Mac's sound."
+                        : "Dancing along to music needs macOS 14.2 or later.",
+                        get: { [unowned self] in dancesToMusic && Ears.supported }, set: { [unowned self] _ in toggleDanceToMusic() },
+                        enabled: { Ears.supported }),
                 .toggle("Rain on the Screen", help: "Faint streaks of rain across the desktop while it rains. Never over a full-screen app or in Low Power Mode.",
                         get: { [unowned self] in showsRain }, set: { [unowned self] _ in toggleShowRain() },
                         enabled: { [unowned self] in feelsWeather }),
@@ -1715,7 +1816,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     default: power = nil
                     }
                     let rain = feelsWeather && sense.raining ? "It's raining where you are." : nil
-                    let said = [power, rain].compactMap { $0 }.joined(separator: " ")
+                    let apps = ears.playingApps.isEmpty ? "the music" : ears.playingApps.joined(separator: " and ")
+                    let music: String?
+                    switch dancesToMusic ? ears.status : .off {
+                    case .hearing(let bpm): music = "Dancing to \(apps), at \(Int(bpm)) beats a minute."
+                    case .listening: music = "Listening to \(apps) for a beat."
+                    case .deaf: music = "Something is playing, but \(name) can't hear it. Allow \(AppInfo.name) under System Settings ▸ Privacy & Security ▸ Screen & System Audio Recording."
+                    default: music = nil
+                    }
+                    let said = [power, rain, music].compactMap { $0 }.joined(separator: " ")
                     return said.isEmpty ? "Nothing to report." : said
                 },
             ]),
@@ -1751,6 +1860,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             PanelSection(title: "Start Over", rows: [
                 .note("Lost it, or something looks stuck? This starts the app afresh. Its looks and settings are kept."),
                 .buttons([PanelButton("Reset Everything", symbol: "arrow.counterclockwise") { [unowned self] in resetEverything() }]),
+            ]),
+            // Hardly ever wanted, so small: two buttons side by side.
+            PanelSection(title: "Help", rows: [
+                .buttons([
+                    PanelButton("Welcome Tour", symbol: "play.circle") { [unowned self] in
+                        panel?.close()
+                        startWelcome()
+                    },
+                    PanelButton("Report a Bug", symbol: "ladybug") { [unowned self] in reportBug() },
+                ]),
             ]),
         ])
         let visitorsPage = PanelPage(title: "Visitors", symbol: "person.2", sections: [
@@ -1886,7 +2005,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var headInAfter: CFTimeInterval = 0
     private var lastEntryNudge: CFTimeInterval = 0
     private var onLineSince: CFTimeInterval = -1
-    private static let tankOriginKey = "habitatOrigin"
 
     @objc private func toggleHabitat() {
         if tankOpen { closeHabitat() } else { openHabitat() }
@@ -1902,26 +2020,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hc.onLetOut = { [weak self] in self?.closeHabitat() }
         hc.onFeed = { [weak self] kind in self?.release(kind) }
         hc.canFeed = { [weak self] in self?.canFeed ?? false }
+        hc.outsideAvailable = { [weak self] in self?.feelsWeather ?? false }
+        hc.enableOutside = { [weak self] in
+            guard let self, !self.feelsWeather else { return }
+            self.toggleFeelWeather()
+        }
+        hc.outsideSummary = { [weak self] in self?.outsideSummary }
+        hc.weather.outside = feelsWeather ? outsideWeather : nil
+        if let k = forcedWeather {
+            hc.weather.persists = false
+            hc.weather.debugForce(k)
+        }
+        hc.scene.onThunder = { [weak self] p, loud in
+            guard let self, self.inHabitat, !self.spider.isHeld else { return }
+            self.spider.thunder(at: p, loud: loud)
+        }
         habitat = hc
         return hc
     }
 
-    /// Where the tank opens: over the spider, with room under it for a
-    /// line, if there is room on its screen; otherwise where it last was.
+    // MARK: The habitat's weather
+
+    /// The tank's weather, this frame: it is drawn there, and the spider —
+    /// in it, and not in your hand — feels it. Anywhere else the air is
+    /// still and dry.
+    private func updateWeather(now: CFTimeInterval, dt: CGFloat) {
+        guard let hc = habitat, tankOpen else {
+            if !spider.weather.isCalm { spider.weather = .calm }
+            return
+        }
+        let c = hc.tickWeather(dt: dt, clock: CGFloat(now))
+        let feel = inHabitat && !spider.isHeld ? WeatherFeel(c) : .calm
+        if spider.weather != feel { spider.weather = feel }
+    }
+
+    /// What it is doing outside, from the weather look-up: the habitat can
+    /// follow it.
+    private func heardOutside(code: Int, wind: Double, day: Bool, temperature: Double?) {
+        let k = WeatherKind.outside(code: code, wind: wind, day: day, temperature: temperature)
+        outsideWeather = k
+        var bits = ["Outside it’s \(k == .clear ? "clear" : k.label.lowercased())"]
+        if let t = temperature { bits.append(String(format: "%.0f°C", t)) }
+        if wind >= 1 { bits.append(String(format: "wind %.0f km/h", wind)) }
+        outsideSummary = bits.joined(separator: ", ") + "."
+        habitat?.weather.outside = k
+    }
+
+    /// Where the tank opens: dead centre of its screen, every time — so it
+    /// is always where it is expected, and the decorate sidebar (which
+    /// grows the window to the right) always has room to open.
     private func tankFrame(_ hc: HabitatController) -> CGRect {
         let size = hc.tankSize
         let p = spider.worldPos
         let screen = NSScreen.screens.first { $0.frame.contains(p.point) } ?? NSScreen.main
         let vis = screen?.visibleFrame ?? worldFrame()
-        let lift = max(150, 110 * spider.config.scale)
-        var f = CGRect(x: p.x - size.width / 2, y: p.y + lift - HabitatRootView.base, width: size.width, height: size.height)
-        f.origin.x = min(max(f.minX, vis.minX + 6), vis.maxX - size.width - 6)
-        if f.maxY <= vis.maxY - 2, size.width < vis.width { return f }
-        if let o = UserDefaults.standard.array(forKey: AppDelegate.tankOriginKey) as? [Double], o.count == 2 {
-            let saved = CGRect(x: o[0], y: o[1], width: size.width, height: size.height)
-            if NSScreen.screens.contains(where: { $0.visibleFrame.intersects(saved.insetBy(dx: 100, dy: 100)) }) { return saved }
-        }
-        return CGRect(x: vis.midX - size.width / 2, y: vis.maxY - size.height - 20, width: size.width, height: size.height)
+        return CGRect(x: vis.midX - size.width / 2, y: vis.midY - size.height / 2, width: size.width, height: size.height)
     }
 
     /// Opens the tank. `restoring`: it was in there when the app last
@@ -1941,6 +2094,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             spider.confine = nil
             boxWindow.orderOut(nil)
         }
+        updateDockPresence()
         let target = tankFrame(hc)
         // It rises into place and fades in.
         hc.window.setFrame(target.offsetBy(dx: 0, dy: -24), display: false)
@@ -2124,7 +2278,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             boxWhileInTank = nil
         }
         let f = hc.window.frame
-        UserDefaults.standard.set([Double(f.minX), Double(f.minY)], forKey: AppDelegate.tankOriginKey)
         calmFrames = 0
         calm = false
         refreshMenu()
@@ -2133,6 +2286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hc.window.alphaValue = 1
             hc.window.setFrame(f, display: false)
             self?.tankClosing = false
+            self?.updateDockPresence()
             self?.refreshMenu()
         }
         guard animated else { finish(); return }
@@ -2144,11 +2298,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }, completionHandler: finish)
     }
 
+    /// While the tank or the Studio is open it is a window like any other
+    /// app's, so the app is in the Dock (with its bundle icon, the menu bar spider) with a
+    /// menu bar of its own; with both closed, it is a menu bar icon again.
+    private func updateDockPresence() {
+        showInDock(tankOpen || studioVisible)
+    }
+
+    private func showInDock(_ on: Bool) {
+        guard on != (NSApp.activationPolicy() == .regular) else { return }
+        if on {
+            if NSApp.mainMenu == nil { NSApp.mainMenu = mainMenu() }
+            NSApp.setActivationPolicy(.regular)
+        } else {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
+    /// The menus it has while it is in the Dock.
+    private func mainMenu() -> NSMenu {
+        let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Spider Buddy"
+        let menu = NSMenu()
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Hide \(name)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Quit \(name)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        // The habitat's weather, filled in afresh each time it opens.
+        let weatherMenu = NSMenu(title: "Weather")
+        weatherMenu.delegate = weatherMenuFiller
+        for sub in [appMenu, weatherMenu, windowMenu] {
+            let item = NSMenuItem()
+            item.submenu = sub
+            menu.addItem(item)
+        }
+        NSApp.windowsMenu = windowMenu
+        return menu
+    }
+
+    private lazy var weatherMenuFiller = MenuFiller { [weak self] menu in
+        guard let self, let hc = self.habitat, self.tankOpen else {
+            menu.removeAllItems()
+            let none = NSMenuItem(title: "Open the habitat to change its weather", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+            return
+        }
+        hc.fillWeatherMenu(menu)
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // Clicking it in the Dock brings the tank forward.
+        if tankOpen { openHabitat() }
+        return false
+    }
+
     // MARK: Habitat testing
 
     /// The saved state a habitat test may touch, to put back afterwards.
     private func habitatTestSnapshot() -> () -> Void {
-        let keys = [Habitat.key, HabitatController.tankWidthKey, AppDelegate.tankOriginKey, "inHabitat"]
+        let keys = [Habitat.key, HabitatController.tankWidthKey, HabitatController.nameKey, "inHabitat", WeatherSettings.key, WeatherClock.saveKey]
         let saved = keys.map { UserDefaults.standard.object(forKey: $0) }
         return {
             for (k, v) in zip(keys, saved) { UserDefaults.standard.set(v, forKey: k) }
@@ -2164,7 +2375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// A picture of our own windows in `rect` (other apps' need permission).
-    private func debugShot(_ path: String, rect: CGRect, window: NSWindow? = nil) {
+    private func debugShot(_ path: String, rect: CGRect, window: NSWindow? = nil, crop: CGRect? = nil) {
         let img: CGImage?
         if let window {
             img = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming, .bestResolution])
@@ -2173,7 +2384,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let r = CGRect(x: rect.minX, y: primary.frame.maxY - rect.maxY, width: rect.width, height: rect.height)
             img = CGWindowListCreateImage(r, .optionOnScreenOnly, kCGNullWindowID, [.bestResolution])
         }
-        guard let img else { return }
+        guard var img else { return }
+        if let crop, let window {
+            // (In points from the window's top left; the picture is in pixels.)
+            let k = CGFloat(img.width) / max(window.frame.width, 1)
+            guard let part = img.cropping(to: CGRect(x: crop.minX * k, y: crop.minY * k, width: crop.width * k, height: crop.height * k)) else { return }
+            img = part
+        }
         try? NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
     }
 
@@ -2362,6 +2579,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
+        after(9.2) { [self] in
+            // The name in the lid: a click, typing, and Return renames it;
+            // Escape leaves it be; cleared, it is the spider's again.
+            let field = hc.titleView.nameField
+            func click() {
+                let p = field.convert(CGPoint(x: field.bounds.midX, y: field.bounds.midY), to: nil)
+                // The release is queued first: the press waits for it.
+                for type in [NSEvent.EventType.leftMouseUp, .leftMouseDown] {
+                    guard let e = NSEvent.mouseEvent(with: type, location: p, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                     windowNumber: hc.window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
+                    if type == .leftMouseUp { NSApp.postEvent(e, atStart: false) } else { field.mouseDown(with: e) }
+                }
+            }
+            func type(_ text: String, then command: Selector) {
+                guard let editor = field.currentEditor() as? NSTextView else { check("typing into the name", false); return }
+                editor.insertText(text, replacementRange: editor.selectedRange())
+                editor.doCommand(by: command)
+            }
+            let spiderName = self.spider.name
+            click()
+            check("clicking the name starts typing", hc.titleView.editing && field.currentEditor() != nil)
+            type("Web Palace", then: #selector(NSResponder.insertNewline(_:)))
+            check("Return renames it", hc.window.title == "Web Palace" && !hc.titleView.editing, hc.window.title)
+            check("the keys go back to the tank", hc.window.firstResponder === scene)
+            check("the name is kept", UserDefaults.standard.string(forKey: HabitatController.nameKey) == "Web Palace")
+            hc.rename("Someone Else")
+            check("renaming the spider leaves it", hc.window.title == "Web Palace", hc.window.title)
+            click()
+            type("Nope", then: #selector(NSResponder.cancelOperation(_:)))
+            check("Escape leaves it be", hc.window.title == "Web Palace" && !hc.titleView.editing, hc.window.title)
+            click()
+            type("", then: #selector(NSResponder.insertNewline(_:)))
+            check("cleared, it is named after the spider again", hc.window.title == "Someone Else’s Habitat"
+                  && UserDefaults.standard.object(forKey: HabitatController.nameKey) == nil, hc.window.title)
+            click()
+            type(String(repeating: "x", count: 60), then: #selector(NSResponder.insertNewline(_:)))
+            check("a long name is cut short", hc.window.title.count == HabitatTitleView.maxLength, "\(hc.window.title.count)")
+            UserDefaults.standard.removeObject(forKey: HabitatController.nameKey)
+            hc.rename(spiderName)
+        }
         after(10) { [self] in
             // The window pulled wider: the tank keeps its shape.
             let proposed = CGSize(width: hc.window.frame.width + 200, height: hc.window.frame.height)
@@ -2378,6 +2635,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func runWeatherShots(dir: String) {
+        let restore = habitatTestSnapshot()
+        let env = ProcessInfo.processInfo.environment
+        openHabitat(restoring: true)
+        guard let hc = habitat else { return }
+        hc.weather.persists = false
+        hc.scene.debugKeepAnimating = true
+        hc.scene.setAnimating(true)
+        let kinds = env["SPIDER_WEATHER_KINDS"].map { $0.split(separator: ",").compactMap { WeatherKind(rawValue: String($0)) } } ?? WeatherKind.allCases
+        let biomes = env["SPIDER_WEATHER_BIOMES"].map { $0.split(separator: ",").compactMap { Biome(rawValue: String($0)) } } ?? [hc.scene.habitat.biome]
+        var queue = biomes.flatMap { b in kinds.map { (b, $0) } }
+        let settle = Double(env["SPIDER_WEATHER_SETTLE"] ?? "") ?? 5
+        func after(_ secs: Double, _ f: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + secs, execute: f) }
+        func next() {
+            guard !queue.isEmpty else { self.finishHabitatTest(restore); return }
+            let (b, k) = queue.removeFirst()
+            if hc.scene.habitat.biome != b {
+                var h = hc.scene.habitat
+                h.biome = b
+                hc.scene.setHabitat(h)
+            }
+            hc.weather.debugForce(k)
+            let m = k.recipe
+            hc.scene.weatherFX.debugGround(snow: m.snow > 0 ? 1 : 0, wet: m.rain > 0 ? 1 : 0)
+            self.spider.debugWeatherOn(wet: m.rain > 0 ? 0.85 : 0, snow: m.snow > 0 ? 0.8 : 0, dust: m.sand > 0 ? 0.7 : 0)
+            after(settle) {
+                if m.lightning > 0.5 { hc.scene.weatherFX.strike(near: true) }
+                after(m.lightning > 0.5 ? 0.08 : 0) {
+                    print("weather shot: \(b.rawValue) \(k.rawValue) — \(self.spider.debugState) — \(self.spider.debugWeather)")
+                    self.debugShot("\(dir)/weather_\(b.rawValue)_\(k.rawValue).png", rect: .zero, window: hc.window)
+                    // And a close look at the spider.
+                    let f = hc.window.frame, p = self.spider.worldPos
+                    self.debugShot("\(dir)/weather_\(b.rawValue)_\(k.rawValue)_spider.png", rect: .zero, window: hc.window,
+                                   crop: CGRect(x: p.x - f.minX - 70, y: f.maxY - p.y - 70, width: 140, height: 140))
+                    next()
+                }
+            }
+        }
+        after(2) { next() }
+    }
+
     private func runHabitatShots(dir: String) {
         let restore = habitatTestSnapshot()
         openHabitat(restoring: true)
@@ -2391,12 +2689,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                         hc.scene.select(hc.scene.habitat.items.first { $0.kind == .log }?.id)
                         self.debugShot("\(dir)/habitat_decorating.png", rect: .zero, window: hc.window)
-                        for tab in 1...2 {
+                        for tab in 1...3 {
                             DispatchQueue.main.asyncAfter(deadline: .now() + Double(tab) * 0.8) {
                                 hc.debugShowTab(tab)
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                                     self.debugShot("\(dir)/habitat_decorating_tab\(tab).png", rect: .zero, window: hc.window)
-                                    if tab == 2 { self.finishHabitatTest(restore) }
+                                    if tab == 3 { self.finishHabitatTest(restore) }
                                 }
                             }
                         }
@@ -2821,6 +3119,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 if shown { self.tracker.ownFurniture.insert(number) } else { self.tracker.ownFurniture.remove(number) }
                 self.tracker.pollNow()
+                self.studioVisible = shown
+                self.updateDockPresence()
                 // The last page of the welcome: done designing, out it comes.
                 if !shown, self.awaitingEntrance { self.finishWelcome() }
             }
@@ -2830,20 +3130,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         studio?.show()
     }
 
+    // MARK: - Bug reports
+
+    @objc private func reportBug() {
+        panel?.close()
+        if bugReport == nil {
+            let c = BugReportController(look: spider.design.look,
+                                        spiderName: spider.name.isEmpty ? "Your spider" : spider.name,
+                                        systemInfo: { [weak self] in SystemReport.lines(extra: self?.reportDetails() ?? []) })
+            c.onClose = { [weak self] in self?.bugReport = nil }
+            bugReport = c
+        }
+        bugReport?.show()
+    }
+
+    /// What the spider and the app were up to, for a bug report.
+    private func reportDetails() -> [(String, String)] {
+        let on = { (b: Bool) in b ? "On" : "Off" }
+        var doing = spider.debugState
+        if hidden { doing += ", hidden" }
+        if spider.config.paused { doing += ", paused" }
+        if tankOpen { doing += ", in its habitat" }
+        return [
+            ("Spider", doing),
+            ("Size", String(format: "%.2f×", Double(spider.config.scale))),
+            ("Its Low Power Mode", on(lowPower)),
+            ("Visitors", visitorsOn ? "\(visitors.count) about" : "Off"),
+            ("Notice the Weather", on(feelsWeather)),
+        ]
+    }
+
     // MARK: - Welcome
 
-    /// The welcome tour: a hello, where its menu lives, and the Studio —
-    /// and then the spider lets itself down into the desktop from its menu
-    /// bar icon. Shown once, the first time the app is opened.
+    /// The welcome tour: a hello, where its panel lives, a few house rules,
+    /// and the Studio — and then the spider makes its grand entrance from
+    /// its menu bar icon (`Spider.makeEntrance`). Shown once, the first time
+    /// the app is opened; the App page can replay it.
     @objc private func startWelcome() {
         guard welcome == nil, !awaitingEntrance else { welcome?.show(); return }
         if tankOpen { closeHabitat(animated: false) }
-        // The menu as it will be once the spider is out — shown, not
-        // paused — for the picture of it; built before the tour puts the
-        // spider away.
+        panel?.close()
+        // The panel as it will be once the spider is out — shown, not
+        // paused — for the picture of it, light and dark; drawn before the
+        // tour puts the spider away. (Each picture takes a panel of its own:
+        // picturing one uses it up.)
         let wasHidden = hidden
         hidden = false
-        let pictured = buildMenu()
+        var pictures: [Bool: NSImage] = [:]
+        for dark in [false, true] {
+            let p = PanelController(pages: panelPages(generic: true), footer: panelFooter(), design: { [weak self] in
+                var d = self?.spider.design ?? SpiderDesign()
+                d.name = ""
+                return d
+            })
+            if let rep = p.picture(page: 0, dark: dark) {
+                let img = NSImage(size: rep.size)
+                img.addRepresentation(rep)
+                pictures[dark] = img
+            }
+        }
         hidden = wasHidden
         awaitingEntrance = true
         pausedBeforeWelcome = spider.config.paused
@@ -2853,7 +3198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         silkWindow.orderOut(nil)
         silkVisible = false
         hammockWindow.orderOut(nil)
-        let w = OnboardingController(design: spider.design, menu: pictured)
+        let w = OnboardingController(design: spider.design, panelPicture: { pictures[$0] }, choices: welcomeChoices())
         w.onOpenMenu = { [weak self] in self?.statusItem.button?.performClick(nil) }
         w.onStudio = { [weak self] frame in
             guard let self else { return }
@@ -2863,6 +3208,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         w.onSkip = { [weak self] in self?.finishWelcome() }
         welcome = w
         w.show()
+    }
+
+    /// The house rules the welcome asks about: the settings that most
+    /// change what having it about is like.
+    private func welcomeChoices() -> [WelcomeChoice] {
+        [
+            WelcomeChoice(title: "Wandering Bugs", detail: "Now and then a moth, a beetle or a trail of ants wanders in for it to hunt.",
+                          symbol: "ladybug", get: { [unowned self] in wildOn },
+                          set: { [unowned self] on in if on != wildOn { toggleWildlife() } }),
+            WelcomeChoice(title: "Visiting Spiders", detail: "Other spiders drop by to play for a while, then head off again.",
+                          symbol: "person.2", note: "More spiders on screen use more battery.",
+                          get: { [unowned self] in visitorsOn }, set: { [unowned self] on in setVisitors(on, ask: false) }),
+            WelcomeChoice(title: "Traces", detail: "It leaves silk strands, little webs and leftovers about. They fade on their own.",
+                          symbol: "scribble.variable", get: { [unowned self] in leavesTraces },
+                          set: { [unowned self] on in setLeavesTraces(on) }),
+            WelcomeChoice(title: "Learns as It Goes", detail: "Its personality drifts a little with how you treat it and how its days go.",
+                          symbol: "sparkles", get: { [unowned self] in learns },
+                          set: { [unowned self] on in if on != learns { toggleLearning() } }),
+            WelcomeChoice(title: "Notices the Weather", detail: "When it rains where you are, it knows. Checks online, by your rough location.",
+                          symbol: "cloud.rain", get: { [unowned self] in feelsWeather },
+                          set: { [unowned self] on in if on != feelsWeather { toggleFeelWeather() } }),
+            WelcomeChoice(title: "Open at Login", detail: "It's there waiting for you every time you log in.",
+                          symbol: "power", get: { [unowned self] in loginEnabled },
+                          set: { [unowned self] on in if on != loginEnabled { toggleLogin() } }),
+        ]
     }
 
     private func finishWelcome() {
@@ -2879,13 +3249,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.orderFrontRegardless()
         if hammockShown { hammockWindow.orderFrontRegardless() }
         lastTime = CACurrentMediaTime()
-        // Down on a line from just under its icon in the menu bar.
-        var from = V2(NSScreen.main.map { $0.frame.midX } ?? 600, NSScreen.main.map { $0.visibleFrame.maxY } ?? 800)
-        if let icon = statusItem.button?.window?.frame {
-            from = V2(icon.midX, icon.minY)
+        // Its grand entrance: out from behind the menu bar, under its icon.
+        let icon = statusItem.button?.window?.frame
+        let screen = icon.flatMap { f in NSScreen.screens.first { $0.frame.contains(CGPoint(x: f.midX, y: f.midY)) } }
+            ?? NSScreen.main ?? NSScreen.screens.first
+        if let screen {
+            let x = icon?.midX ?? screen.frame.midX
+            spider.makeEntrance(x: x, barY: screen.visibleFrame.maxY, top: screen.frame.maxY, floorY: screen.visibleFrame.minY)
         }
-        spider.enterOnThread(from: from)
+        wiggleIcon()
         refreshMenu()
+    }
+
+    /// Something stirring in the menu bar icon: two little shakes, the
+    /// spider getting ready to come out.
+    private var iconWiggle: Timer?
+    private func wiggleIcon() {
+        guard let button = statusItem.button else { return }
+        iconWiggle?.invalidate()
+        let plain = SpiderRenderer.statusItemImage(size: 17)
+        let start = CACurrentMediaTime()
+        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            let e = CGFloat(CACurrentMediaTime() - start)
+            // Two bursts, each dying away, with a pause between.
+            func burst(_ from: CGFloat, _ len: CGFloat, _ swings: CGFloat, _ size: CGFloat) -> CGFloat {
+                let u = (e - from) / len
+                guard u > 0, u < 1 else { return 0 }
+                return sin(u * swings * .pi) * size * (1 - u * 0.7)
+            }
+            let angle = burst(0.05, 0.6, 4, 0.38) + burst(0.9, 0.4, 3, 0.26)
+            if e > 1.35 {
+                button.image = plain
+                timer.invalidate()
+                self?.iconWiggle = nil
+                return
+            }
+            button.image = AppDelegate.rotated(plain, by: angle)
+        }
+        RunLoop.main.add(t, forMode: .common)
+        iconWiggle = t
+    }
+
+    private static func rotated(_ img: NSImage, by angle: CGFloat) -> NSImage {
+        let out = NSImage(size: img.size, flipped: false) { r in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            // About a point low in the icon, as if it rocked on its feet.
+            ctx.translateBy(x: r.midX, y: r.midY * 0.6)
+            ctx.rotate(by: angle)
+            ctx.translateBy(x: -r.midX, y: -r.midY * 0.6)
+            img.draw(in: r)
+            return true
+        }
+        out.isTemplate = img.isTemplate
+        return out
     }
 
     @objc private func toggleFollow() {
@@ -3006,6 +3422,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.updateRain(now: CACurrentMediaTime())
             self.refreshMenu()
         }
+        sense.onOutside = { [weak self] code, wind, day, temp in
+            self?.heardOutside(code: code, wind: wind, day: day, temperature: temp)
+        }
         sense.onCommotion = { [weak self] c in
             guard let self else { return }
             // Its little window of lights comes up at the top right of the
@@ -3020,7 +3439,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if feelsPower { sense.startPower() }
         if feelsWeather { sense.startWeather() }
         if feelsCommotion { sense.startCommotion() }
+        ears.onChange = { [weak self] in self?.refreshMenu() }
+        updateEars()
         applyPowerMood()
+    }
+
+    /// Listening for music only while there is a spider out to dance to it
+    /// (not put away, paused, or asleep while you are away).
+    private func updateEars() {
+        let want = dancesToMusic && !hidden && !awaitingEntrance && !spider.config.paused && !spider.dormant
+        if want, ears.status == .off {
+            ears.start()
+        } else if !want, ears.status != .off, ears.status != .unsupported {
+            ears.stop()
+        }
+    }
+
+    @objc private func toggleDanceToMusic() {
+        dancesToMusic.toggle()
+        updateEars(); saveSettings(); refreshMenu()
     }
 
     /// Something going off up at the top right of a screen — where the
@@ -3107,6 +3544,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleFeelWeather() {
         feelsWeather.toggle()
         if feelsWeather { sense.startWeather() } else { sense.stopWeather() }
+        if !feelsWeather {
+            outsideWeather = nil
+            outsideSummary = nil
+            habitat?.weather.outside = nil
+        }
         updateRain(now: CACurrentMediaTime()); saveSettings(); refreshMenu()
     }
 
@@ -3171,6 +3613,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         d.set(feelsWeather, forKey: "feelWeather")
         d.set(showsRain, forKey: "showRain")
         d.set(feelsCommotion, forKey: "feelCommotion")
+        d.set(dancesToMusic, forKey: "danceToMusic")
         d.set(learns, forKey: "learns")
         d.set(wildOn, forKey: "wildlife")
         d.set(toySounds, forKey: "toySounds")
@@ -3183,7 +3626,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "scale": 0.95, "liveliness": 1.0, "followCursor": true, "pounceOnCursor": true,
             "webs": true, "hammocks": true, "paused": false, "interactive": true, "hidden": false,
             "visitors": false, "visitFrequency": 0.5, "visitStay": 0.5,
-            "feelPower": true, "feelWeather": true, "showRain": true, "feelCommotion": true,
+            "feelPower": true, "feelWeather": true, "showRain": true, "feelCommotion": true, "danceToMusic": true,
             "learns": true, "wildlife": false, "wildFrequency": 0.35, "toySounds": true, "traces": false, "traceLimit": 0.45,
         ])
         toySounds = d.bool(forKey: "toySounds")
@@ -3194,6 +3637,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         feelsWeather = d.bool(forKey: "feelWeather")
         showsRain = d.bool(forKey: "showRain")
         feelsCommotion = d.bool(forKey: "feelCommotion")
+        dancesToMusic = d.bool(forKey: "danceToMusic")
         learns = d.bool(forKey: "learns")
         visitorsOn = d.bool(forKey: "visitors")
         visitFrequency = CGFloat(d.double(forKey: "visitFrequency"))

@@ -846,16 +846,20 @@ struct Gait: Codable, Equatable {
     /// hits; up the dial it bounces off, tumbling, from gentler hits and
     /// with more spring.
     var bounciness: CGFloat = 0.5
+    /// The natural walk: every leg keeps its true length, steps ripple from
+    /// back to front, and the pattern changes with its pace. Off, it walks
+    /// the classic way.
+    var natural = false
 
     init(pace: CGFloat = 0.5, stride: CGFloat = 0.5, bounce: CGFloat = 0.5, stance: CGFloat = 0.5,
-         style: GaitPreference = .mixed, bounciness: CGFloat = 0.5) {
+         style: GaitPreference = .mixed, bounciness: CGFloat = 0.5, natural: Bool = false) {
         self.pace = pace; self.stride = stride; self.bounce = bounce; self.stance = stance
-        self.style = style; self.bounciness = bounciness
+        self.style = style; self.bounciness = bounciness; self.natural = natural
     }
 
     // Written out so a design saved before a dial existed still loads,
     // taking that dial at its middle.
-    private enum CodingKeys: String, CodingKey { case pace, stride, bounce, stance, style, bounciness }
+    private enum CodingKeys: String, CodingKey { case pace, stride, bounce, stance, style, bounciness, natural }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         pace = (try? c.decodeIfPresent(CGFloat.self, forKey: .pace)) ?? 0.5
@@ -864,6 +868,7 @@ struct Gait: Codable, Equatable {
         stance = (try? c.decodeIfPresent(CGFloat.self, forKey: .stance)) ?? 0.5
         style = (try? c.decodeIfPresent(GaitPreference.self, forKey: .style)) ?? .mixed
         bounciness = (try? c.decodeIfPresent(CGFloat.self, forKey: .bounciness)) ?? 0.5
+        natural = (try? c.decodeIfPresent(Bool.self, forKey: .natural)) ?? false
     }
 
     var speedMul: CGFloat { lerp(0.55, 1.7, pace) }
