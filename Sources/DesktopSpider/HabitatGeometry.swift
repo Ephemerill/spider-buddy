@@ -1075,6 +1075,15 @@ enum SurfaceTrace {
         }
         let junctionVertices = Set(meets.filter { $0.value.count > 1 }.keys)
 
+        // The tank's own surface — round the glass, the lid and the ground
+        // — is "screen:0": of the runs that take in part of it, the one that
+        // reaches furthest (a room closed in under a bridge takes in a
+        // stretch of the ground too).
+        let mainRim = body.chains.indices.filter { body.chains[$0].parts.contains(rim) }
+            .max { a, b in
+                let ra = Poly.bounds(body.chains[a].pts), rb = Poly.bounds(body.chains[b].pts)
+                return ra.width * ra.height < rb.width * rb.height
+            }
         var loops: [SurfaceLoop] = []
         var loopOfChain: [Int: Int] = [:]
         var vertexMap: [Int: [Int: Int]] = [:]   // chain -> position -> loop vertex
@@ -1087,7 +1096,7 @@ enum SurfaceTrace {
             if ch.closed, Poly.area(ch.pts) > 0, Poly.area(ch.pts) < .pi * 4 * off * off { continue }
             let owners = Set(ch.parts.map { parts[$0].owner })
             let onRim = ch.parts.contains(rim)
-            var id = onRim ? "screen:0" : "item:\(owners.filter { $0 != 0 }.min() ?? 0)"
+            var id = onRim ? (c == mainRim ? "screen:0" : "screen:0~r") : "item:\(owners.filter { $0 != 0 }.min() ?? 0)"
             if used.contains(id) {
                 var k = 1
                 while used.contains("\(id)~\(k)") { k += 1 }

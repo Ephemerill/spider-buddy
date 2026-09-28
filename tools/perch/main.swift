@@ -38,7 +38,7 @@ func paintItems(_ h: Habitat, area: CGRect, scale: CGFloat, _ ctx: CGContext, on
     for it in h.items where !it.inFront && (only?(it) ?? true) {
         let r = it.rect
         let pad = HabitatArt.itemPad(r.size)
-        guard r.insetBy(dx: -pad, dy: -pad).intersects(area), let img = HabitatArt.itemImage(it, size: r.size, biome: h.biome, scale: scale) else { continue }
+        guard r.insetBy(dx: -pad, dy: -pad).intersects(area), let img = HabitatArt.itemImage(it, size: r.size, biome: h.biome, scale: scale, backed: h.isBacked(it)) else { continue }
         ctx.draw(img, in: CGRect(x: r.minX - pad - area.minX, y: r.minY - pad - area.minY, width: r.width + pad * 2, height: r.height + pad * 2))
     }
 }
@@ -353,7 +353,8 @@ case "stress":
             // A jumble: things put anywhere, overlapping, resized, flipped.
             for _ in 0..<25 {
                 let kind = HabitatItemKind.allCases.filter(\.climbable).randomElement()!
-                var it = h.add(kind, at: CGPoint(x: CGFloat.random(in: 0...world.width), y: kind.liftable ? CGFloat.random(in: 0...600) : 0),
+                // (Hanging things from the lid, as the editor leaves them.)
+                var it = h.add(kind, at: CGPoint(x: CGFloat.random(in: 0...world.width), y: kind.hangs ? world.height : (kind.liftable ? CGFloat.random(in: 0...600) : 0)),
                                scale: CGFloat.random(in: 0.4...2.6))
                 it.flipped = seededBool()
                 Habitat.clamp(&it, in: h.size)
@@ -373,11 +374,15 @@ case "stress":
                 let p = v == 0 ? l.segs[0].a : l.segs[l.segs.count - 1].b
                 var near = CGFloat.greatestFiniteMagnitude
                 for o in m.loops { for sg in o.segs where !(o.id == l.id) { near = min(near, projectOnSegment(p, sg.a, sg.b).dist) } }
-                print(String(format: "   tank \(k)\(k % 2 == 1 ? " (jumble)" : "") loose end: %@ %@ at (%.1f,%.1f), nearest other surface %.1f", l.id, v == 0 ? "start" : "end", p.x, p.y, near))
+                let kinds = Set(l.owners).sorted().compactMap { h.item(id: $0)?.kind.rawValue }.joined(separator: "+")
+                print(String(format: "   tank \(k)\(k % 2 == 1 ? " (jumble)" : "") loose end: %@ (%@) %@ at (%.1f,%.1f), nearest other surface %.1f", l.id, kinds, v == 0 ? "start" : "end", p.x, p.y, near))
             }
         }
         deadEnds += ends
-        if rims.count != 1 || rims.contains(where: { !$0.closed }) {
+        // (Besides the tank's own, a rim loop is a room closed in under
+        // something bulky bridging a gap — a plank from a log to a stone.)
+        if m.loop("screen:0")?.closed != true || rims.contains(where: { !$0.closed })
+            || rims.contains(where: { $0.id != "screen:0" && $0.perimeter > m.loop("screen:0")!.perimeter }) {
             bad += 1
             print("tank \(k): \(rims.count) rim loops, open \(rims.filter { !$0.closed }.count), \(h.items.count) things")
             for l in rims {
@@ -447,6 +452,22 @@ case "persist":
     let m = surfaces(h, standoff: 17)
     let owned = Set(m.loops.flatMap(\.owners)).filter { $0 != 0 }
     print("every surface's owner is a thing in it:", owned.allSatisfy { h.item(id: $0) != nil }, "(\(owned.count) things own surfaces)")
+case "one":
+    // One kind alone (and the ground): its loops and junctions.
+    var h = Habitat(biome: .forest, world: CGSize(width: 600, height: 500))
+    let kind = HabitatItemKind(rawValue: args[2]) ?? .ladder
+    let given = args.count > 3 ? CGFloat(Double(args[3]) ?? 0) : nil
+    h.add(kind, at: CGPoint(x: 300, y: given ?? (kind.hangs ? 500 : 0)))
+    print("item rect \(h.items[0].rect)")
+    let m = surfaces(h, standoff: 22 * 0.78)
+    for l in m.loops { print("loop \(l.id) closed=\(l.closed) segs=\(l.segs.count) len=\(Int(l.perimeter)) owners=\(Set(l.owners).sorted())") }
+    var pairs: [String: Int] = [:]
+    for j in m.junctions { pairs["\(j.from)->\(j.to)", default: 0] += 1 }
+    print(pairs)
+case "pieces":
+    piecesSheet(args.count > 2 ? args[2] : "perch_pieces.png")
+case "build":
+    buildCheck(args.count > 2 ? args[2] : nil)
 case "chains":
     chains(HabitatItemKind(rawValue: args.count > 2 ? args[2] : "driftwood") ?? .driftwood)
 #endif

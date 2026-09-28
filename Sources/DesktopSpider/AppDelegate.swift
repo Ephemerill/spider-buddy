@@ -303,6 +303,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             runWeatherShots(dir: dir)
         }
         if ProcessInfo.processInfo.environment["SPIDER_HABITAT_INPUT"] == "1" { runHabitatInputTest() }
+        // SPIDER_HABITAT_BUILD=1 (+SPIDER_HABITAT_DIR for pictures): structures
+        // built in the tank by synthesized drags — snapping, carrying,
+        // resizing, placing freely, supports, saving — then the spider on them.
+        if ProcessInfo.processInfo.environment["SPIDER_HABITAT_BUILD"] == "1" { runHabitatBuildTest(dir: ProcessInfo.processInfo.environment["SPIDER_HABITAT_DIR"]) }
         // SPIDER_HABITAT_CAMERA=1: the big tank and its camera, through every
         // way of looking round it, coming and going, and decorating it
         // (prints [ok]/[FAIL] for each, then puts the habitat keys back).
@@ -2765,6 +2769,302 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 check("closed", !self.inHabitat && !self.tankOpen)
                 after(0.5) { self.finishHabitatTest(restore) }
             }
+        }
+    }
+
+    /// SPIDER_HABITAT_BUILD=1: building up off the ground in the tank, by
+    /// synthesized drags, well along the tank and up in the air (so the
+    /// camera is far from the world's corner).
+    private func runHabitatBuildTest(dir: String?) {
+        let restore = habitatTestSnapshot()
+        var fails = 0
+        func after(_ secs: Double, _ f: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + secs, execute: f) }
+        func check(_ label: String, _ ok: Bool, _ detail: String = "") {
+            if !ok { fails += 1 }
+            print("habitat build: [\(ok ? "ok  " : "FAIL")] \(label) \(detail)")
+            fflush(stdout)
+        }
+        openHabitat(restoring: true)
+        guard let hc = habitat else { return }
+        let scene = hc.scene
+        // (A beat later, so what has just changed is on the glass.)
+        func shot(_ name: String) { if let dir { after(0.12) { self.debugShot("\(dir)/\(name).png", rect: .zero, window: hc.window) } } }
+        func mouse(_ type: NSEvent.EventType, _ w: V2, clicks: Int = 1) {
+            let p = scene.convert(scene.viewPoint(fromWorld: w), to: nil)
+            guard let e = NSEvent.mouseEvent(with: type, location: p, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                             windowNumber: hc.window.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1) else { return }
+            switch type {
+            case .leftMouseDown: scene.mouseDown(with: e)
+            case .leftMouseDragged: scene.mouseDragged(with: e)
+            default: scene.mouseUp(with: e)
+            }
+        }
+        /// A drag in the world, `from` to `to`; `midway` runs part way.
+        func drag(_ from: V2, _ to: V2, steps: Int = 24, midway: (() -> Void)? = nil, then: @escaping () -> Void) {
+            mouse(.leftMouseDown, from)
+            var i = 0
+            Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { t in
+                i += 1
+                // (Eased in at the end, as a hand does.)
+                let u = CGFloat(i) / CGFloat(steps)
+                mouse(.leftMouseDragged, V2.lerp(from, to, 1 - (1 - u) * (1 - u)))
+                if i == steps - 2 { midway?() }
+                if i >= steps { t.invalidate(); mouse(.leftMouseUp, to); then() }
+            }
+        }
+        func item(_ id: Int) -> HabitatItem { scene.habitat.item(id: id)! }
+        func added(_ kind: HabitatItemKind) -> Int {
+            scene.add(kind)
+            return scene.habitat.items.last!.id
+        }
+        func place(_ id: Int, x: CGFloat, y: CGFloat) { scene.update(id) { $0.x = x; $0.y = y } }
+        func linked(_ child: Int, _ parent: Int) -> Bool {
+            let c = item(child).uid, p = item(parent).uid
+            return scene.habitat.links.contains { $0.child == c && $0.parent == p }
+        }
+        let G = HabitatLayout.ground
+        let world = scene.habitat.size
+        let X = (world.width * 0.62).rounded()
+        var h = Habitat(biome: .jungle, world: world)
+        h.items = []
+        scene.setHabitat(h)
+        // (Once the window has finished opening.)
+        after(0.7) { if !hc.decorating { hc.toggleDecorate() } }
+        var brace = 0, branch = 0, vine = 0, post1 = 0, post2 = 0, plank = 0, fern = 0, high = 0
+        after(1.2) {
+            scene.lookAt(V2(X, G + 330))
+            check("the glass is well along and up the tank", scene.camera.origin.x > 1000 && scene.camera.origin.y > 20,
+                  String(format: "camera %.0f,%.0f", scene.camera.origin.x, scene.camera.origin.y))
+            brace = added(.brace)
+            place(brace, x: X - 120, y: 300)
+            branch = added(.mediumBranch)
+            place(branch, x: X + 60, y: 280)
+        }
+        after(2.2) {
+            // The branch dragged over to lie 10 points above the brace's cup.
+            let cup = item(brace).port("cup")!.pts[0]
+            let along = item(branch).port("along0")!
+            let grab = along.point(at: 0.5)
+            let target = cup + V2(0, 10 + along.halfWidth(at: 0.5))
+            drag(grab, grab + (target - grab), midway: { shot("build_1_snapping") }) {
+                check("the branch clicks into the brace's cup", linked(branch, brace))
+                check("…and is held up", scene.habitat.support(of: branch) == .held(by: brace), "\(scene.habitat.support(of: branch))")
+                check("…and stays chosen", scene.selected == branch)
+            }
+        }
+        after(3.4) {
+            vine = added(.thinVine)
+            let hangAt = item(branch).port("along0")!.point(at: 0.85)
+            let top = item(vine).port("b0").map { _ in V2(item(vine).x, item(vine).rect.maxY) }!
+            let grab = V2(item(vine).x, item(vine).rect.maxY - 20)
+            drag(grab, grab + (hangAt + V2(8, -5) - top), steps: 30) {
+                check("a vine hung from the branch", linked(vine, branch), String(format: "top at %.0f,%.0f", item(vine).x, item(vine).rect.maxY))
+                check("…shorter, clear of the ground", item(vine).rect.minY > G, String(format: "bottom %.0f", item(vine).rect.minY))
+            }
+        }
+        after(4.8) {
+            // The brace moved: the branch and the vine come with it.
+            let b0 = item(branch), v0 = item(vine)
+            let grab = V2(item(brace).x, item(brace).rect.minY + 30)
+            drag(grab, grab + V2(150, 60)) {
+                let d = V2(item(branch).x - b0.x, item(branch).y - b0.y), dv = V2(item(vine).x - v0.x, item(vine).y - v0.y)
+                check("moving the brace takes what it holds", d.distance(to: V2(150, 60)) < 2 && dv.distance(to: V2(150, 60)) < 2,
+                      String(format: "branch %.0f,%.0f vine %.0f,%.0f", d.x, d.y, dv.x, dv.y))
+                check("…still fastened", linked(branch, brace) && linked(vine, branch))
+            }
+        }
+        after(6.2) {
+            // The branch's top right corner pulled out: bigger, still on its cup, the vine still on it.
+            scene.select(branch)
+            let r = item(branch).rect.insetBy(dx: -5, dy: -5)
+            drag(V2(r.maxX, r.maxY), V2(r.maxX + 70, r.maxY + 25), steps: 16) {
+                let js = scene.habitat.links.compactMap { scene.habitat.joint($0) }.map { $0.child.distance(to: $0.seat) }
+                check("resized by its corner", item(branch).w > r.width, String(format: "w %.0f", item(branch).w))
+                check("…what is fastened stays fastened", (js.max() ?? 0) < 1 && linked(vine, branch) && linked(branch, brace),
+                      String(format: "worst joint %.2f", js.max() ?? 0))
+                shot("build_2_resized")
+            }
+        }
+        after(7.4) {
+            // ⌥: dragged right past the branch, it doesn't catch — and with
+            // nothing to hang from, it goes back up to the lid.
+            scene.debugPlaceFreely = true
+            let top = V2(item(vine).x, item(vine).rect.maxY)
+            drag(top + V2(0, -15), top + V2(30, -15)) {
+                scene.debugPlaceFreely = false
+                check("⌥-dragged, it is placed freely (not fastened)", !linked(vine, branch))
+                check("…and, hanging from nothing, back to the lid", item(vine).rect.maxY >= world.height - 0.5, String(format: "top %.0f", item(vine).rect.maxY))
+                hc.undo()
+                check("⌘Z: hung from the branch again", linked(vine, branch))
+            }
+        }
+        after(8.8) {
+            // Two uprights, a plank across them, a fern on it.
+            post1 = added(.verticalSupport)
+            place(post1, x: X + 380, y: 0)
+            post2 = added(.verticalSupport)
+            place(post2, x: X + 560, y: 0)
+            plank = added(.plank)
+            place(plank, x: X + 470, y: 420)
+        }
+        after(9.6) {
+            let topY = item(post1).rect.maxY
+            let grab = V2(item(plank).x, item(plank).rect.midY)
+            drag(grab, V2(X + 472, topY + item(plank).h / 2 + 9)) {
+                check("the plank clicks onto the uprights", linked(plank, post1) && linked(plank, post2),
+                      "\(scene.habitat.links.filter { $0.child == item(plank).uid }.count) links")
+                fern = added(.fern)
+                place(fern, x: X + 300, y: 0)
+            }
+        }
+        after(10.8) {
+            let grab = V2(item(fern).x, item(fern).rect.midY)
+            drag(grab, V2(X + 460, item(plank).rect.maxY + 70)) {
+                check("a fern let go of over it comes to rest on it", scene.habitat.support(of: fern) == .resting(on: plank),
+                      "\(scene.habitat.support(of: fern))")
+            }
+        }
+        after(12) {
+            // An upright moved: the plank stays on the other; the fern with it.
+            let p0 = item(plank)
+            let grab = V2(item(post1).x, item(post1).rect.midY)
+            drag(grab, grab + V2(-70, 0)) {
+                check("one upright moved away: the plank stays put", item(plank) == p0 && linked(plank, post2) && !linked(plank, post1))
+                hc.undo()
+                check("⌘Z: back under it", linked(plank, post1))
+            }
+        }
+        after(13.2) {
+            // A branch left floating, and a support made for it.
+            high = added(.longBranch)
+            place(high, x: X - 100, y: 620)
+            scene.select(high)
+            check("up in the air on its own, it floats", scene.habitat.support(of: high) == .floating)
+            shot("build_3_floating")
+            scene.supportSelected()
+            check("Add a Support holds it up", scene.habitat.support(of: high).holds, "\(scene.habitat.support(of: high))")
+            check("…propped from the ground by a stake at the back", scene.habitat.items.contains { $0.kind == .stake && $0.y < 2 })
+        }
+        after(14.2) {
+            // Saved, and loaded again.
+            let back = Habitat.load()
+            check("saved with its links", back.links == scene.habitat.links && back.items == scene.habitat.items,
+                  "\(back.links.count) of \(scene.habitat.links.count)")
+            check("nothing floating", scene.habitat.supports().values.allSatisfy(\.holds))
+            scene.select(branch)
+            scene.lookAt(V2(X + 150, G + 330))
+            after(0.4) { shot("build_4_decorating") }
+            after(0.8) { hc.debugShowShelf(.supports); after(0.4) { shot("build_5_supports_tab") } }
+            after(1.6) { hc.debugShowShelf(.built); after(0.4) { shot("build_6_built_tab") } }
+        }
+        // A house: a wood wall at the back, a wall and a door, floorboards
+        // across them, a twig on the wall, and the door shut and opened.
+        let X2 = X + 760
+        var backing = 0, wall = 0, door = 0, floor = 0, twig = 0
+        after(17) {
+            hc.debugShowShelf(.building)
+            backing = added(.woodBacking)
+            place(backing, x: X2 + 150, y: 0)
+            scene.update(backing) { $0.w = 300; $0.h = 150 }
+            wall = added(.wall)
+            place(wall, x: X2, y: 0)
+            door = added(.door)
+            place(door, x: X2 + 300, y: 0)
+            floor = added(.floorboards)
+            scene.update(floor) { $0.w = 330 }
+            place(floor, x: X2 + 150, y: 300)
+            twig = added(.twig)
+            place(twig, x: X2 + 150, y: 100)
+            scene.lookAt(V2(X2 + 150, G + 220))
+        }
+        after(17.8) {
+            let f = item(floor)
+            let grab = V2(f.x, f.rect.midY)
+            drag(grab, V2(f.x + 4, item(wall).rect.maxY + f.h / 2 + 8)) {
+                check("floorboards dragged over two walls sit on both", linked(floor, wall) && linked(floor, door))
+            }
+        }
+        after(19) {
+            scene.select(twig)
+            scene.supportSelected()
+            let made = scene.habitat.items.last!
+            check("a twig in front of the wood wall: a bracket screwed into it", made.kind == .branchBracket && scene.habitat.isBacked(made)
+                  && scene.habitat.support(of: twig).holds, made.kind.rawValue)
+            check("…drawn screwed in", (scene.debugItemLayers[made.id] as? ItemLayer)?.backed == true)
+            // Double-clicked: the door shuts.
+            let d = V2(item(door).x, item(door).rect.maxY - 20)
+            mouse(.leftMouseDown, d); mouse(.leftMouseUp, d)
+            mouse(.leftMouseDown, d, clicks: 2); mouse(.leftMouseUp, d, clicks: 2)
+            check("double-clicking the door shuts it", item(door).kind == .doorClosed, item(door).kind.rawValue)
+            shot("build_8_house")
+            // Close-ups of it swinging shut, then (double-clicked again) open.
+            func closeUp(_ name: String) {
+                guard let dir else { return }
+                let r = item(door).rect.insetBy(dx: -40, dy: -20)
+                let lo = scene.convert(scene.viewPoint(fromWorld: V2(r.minX, r.minY)), to: nil)
+                let hi = scene.convert(scene.viewPoint(fromWorld: V2(r.maxX, r.maxY)), to: nil)
+                let crop = CGRect(x: lo.x, y: hc.window.frame.height - hi.y, width: hi.x - lo.x, height: hi.y - lo.y)
+                self.debugShot("\(dir)/\(name).png", rect: .zero, window: hc.window, crop: crop)
+            }
+            for (k, t) in [0.02, 0.12, 0.22, 0.32, 0.45, 0.8].enumerated() { after(t) { closeUp("door_shut_\(k)") } }
+            after(1.0) {
+                mouse(.leftMouseDown, d); mouse(.leftMouseUp, d)
+                mouse(.leftMouseDown, d, clicks: 2); mouse(.leftMouseUp, d, clicks: 2)
+                for (k, t) in [0.02, 0.12, 0.22, 0.32, 0.45, 0.8].enumerated() { after(t) { closeUp("door_open_\(k)") } }
+                after(0.9) {
+                    mouse(.leftMouseDown, d); mouse(.leftMouseUp, d)
+                    mouse(.leftMouseDown, d, clicks: 2); mouse(.leftMouseUp, d, clicks: 2)
+                }
+            }
+        }
+        after(21) {
+            hc.debugShowShelf(nil)
+            hc.toggleDecorate()
+            after(0.5) {
+                // Out of decorating, too: opened again.
+                let d = V2(item(door).x, item(door).rect.maxY - 20)
+                mouse(.leftMouseDown, d); mouse(.leftMouseUp, d)
+                mouse(.leftMouseDown, d, clicks: 2); mouse(.leftMouseUp, d, clicks: 2)
+                check("…and opens it again, not decorating", item(door).kind == .door, item(door).kind.rawValue)
+                hc.toggleDecorate()
+            }
+        }
+        after(22.2) {
+            hc.debugShowShelf(nil)
+            hc.toggleDecorate()
+            // Shut in: the door shut, the spider put in the room. It lets
+            // itself out.
+            let d = V2(item(door).x, item(door).rect.maxY - 20)
+            mouse(.leftMouseDown, d); mouse(.leftMouseUp, d)
+            mouse(.leftMouseDown, d, clicks: 2); mouse(.leftMouseUp, d, clicks: 2)
+            check("shut again", item(door).kind == .doorClosed)
+            self.spider.placeInHabitat(map: scene.map, at: V2(X2 + 120, G + 30))
+            scene.lookAt(V2(X2 + 150, G + 220))
+            // Called over to the door, across the floor of the room: it
+            // pushes the door open on its way, and goes out.
+            for t in [3.0, 12.0, 24.0] {
+                after(t) { if item(door).kind == .doorClosed, self.spider.standingOn != nil { self.spider.summon(to: V2(item(door).x - 12, G + 20)) } }
+            }
+        }
+        var pushedOpen = false, gotOut = false, shutBehind = false
+        var visited: [Int: Int] = [:]
+        for k in 0..<1200 {
+            after(23 + Double(k) * 0.05) {
+                if let a = self.spider.standingOn, let o = scene.map.owner(of: a) { visited[o, default: 0] += 1 }
+                if item(door).kind == .door { pushedOpen = true }
+                let p = self.spider.worldPos
+                if pushedOpen, p.x > item(door).rect.maxX + 10 || p.x < item(wall).rect.minX - 10 { gotOut = true }
+                if pushedOpen, gotOut, item(door).kind == .doorClosed { shutBehind = true }
+                if k == 80 || (pushedOpen && k % 100 == 0) { shot("build_7_spider_\(k)") }
+            }
+        }
+        after(84) {
+            check("shut in, walking to the door, the spider pushes it open", pushedOpen)
+            check("…goes out", gotOut, String(format: "at %.0f,%.0f", self.spider.worldPos.x, self.spider.worldPos.y))
+            check("…and it swings shut behind it", shutBehind, item(door).kind.rawValue)
+            print("habitat build: things it stood on: \(visited.keys.compactMap { scene.habitat.item(id: $0)?.kind.rawValue }.sorted().joined(separator: ", "))")
+            print("habitat build: \(fails == 0 ? "all ok" : "\(fails) FAILED")")
+            self.finishHabitatTest(restore)
         }
     }
 

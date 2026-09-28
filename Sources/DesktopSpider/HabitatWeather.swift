@@ -1275,17 +1275,13 @@ enum WeatherArt {
             for it in items where !it.inFront {
                 let r = toView(it.rect)
                 var t = depth
-                switch it.kind {
-                case .branch, .rock, .boulder, .log, .driftwood, .hide, .corkBark, .cactus, .bamboo, .plant:
+                switch it.kind.definition.snow {
+                case .tops(let k):
                     // Along the tops of what is solid of it, as it is shaped.
-                    switch it.kind {
-                    case .branch: t *= 0.75
-                    case .corkBark, .cactus, .bamboo, .plant: t *= 0.8
-                    default: break
-                    }
+                    t *= [.rock, .boulder, .log, .driftwood, .hide].contains(it.kind) ? 1 : (it.kind == .branch ? 0.75 : k)
                     for line in it.geometry.topLines(step: 6) { cap(ctx, along: line.map(point), depth: t, seed: it.seed, u: u) }
                     continue
-                case .mushrooms, .crystal, .succulent, .fern, .grass, .flower, .twigs, .leafPile, .moss, .pebbles:
+                case .sprinkle:
                     // A sprinkle over the top of it.
                     let n = Int(r.width / (4 * u))
                     ctx.setFillColor(c(1, 1, 1, thick ? 0.95 : 0.8))
@@ -1296,7 +1292,7 @@ enum WeatherArt {
                         ctx.fillEllipse(in: CGRect(x: x - rr * 1.3, y: y - rr * 0.6, width: rr * 2.6, height: rr * 1.2))
                     }
                     continue
-                case .vine, .waterDish:
+                case .bare:
                     continue
                 }
             }

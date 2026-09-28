@@ -72,11 +72,25 @@ struct Habitat: Codable, Equatable {
     /// How big its world is. Missing from a habitat saved before the tank
     /// was bigger than its window — `load` moves one of those into a world.
     var world: CGSize?
+    /// What is fastened to what (see HabitatStructures.swift). None in a
+    /// habitat saved before things could be.
+    var links: [HabitatLink] = []
 
     init() {}
     init(biome: Biome, world: CGSize) {
         self.biome = biome
         self.world = world
+    }
+
+    private enum CodingKeys: String, CodingKey { case biome, items, nextID, world, links }
+
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        biome = try c.decode(Biome.self, forKey: .biome)
+        items = try c.decode([HabitatItem].self, forKey: .items)
+        nextID = try c.decode(Int.self, forKey: .nextID)
+        world = try c.decodeIfPresent(CGSize.self, forKey: .world)
+        links = try c.decodeIfPresent([HabitatLink].self, forKey: .links) ?? []
     }
 
     /// The world's size: the old scene's for a habitat not yet moved into one.
@@ -95,6 +109,7 @@ struct Habitat: Codable, Equatable {
         }
         if changed { h.save() }
         h.clampAll()
+        h.pruneLinks()
         return h
     }
 
@@ -142,7 +157,9 @@ struct Habitat: Codable, Equatable {
         it.h = min(max(it.h, 10), (H - G) * 0.96)
         it.x = min(max(it.x, it.w * 0.2), W - it.w * 0.2)
         if it.kind.hangs {
-            it.y = min(max(it.y, G + it.h + 10), H)
+            // (Hung low — from a branch — it is no longer than will clear the ground.)
+            it.y = min(max(it.y, G + 40), H)
+            it.h = max(10, min(it.h, it.y - G - 10))
         } else {
             it.y = min(max(it.y, 0), H - G - it.h)
         }
@@ -361,6 +378,9 @@ struct Habitat: Codable, Equatable {
         let (left, right) = p.sides
         b.fill(from: x0, to: 0, kinds: left)
         b.fill(from: x0 + mid, to: world.width, kinds: right)
+        // Nothing left floating: brackets on the back wall under what is up
+        // in the air.
+        b.h.supportFloating()
         return b.h
     }
 
@@ -381,6 +401,7 @@ struct Habitat: Codable, Equatable {
             kinds.append(k)
         }
         b.fill(from: 0, to: world.width, kinds: kinds, open: true)
+        b.h.supportFloating()
         return b.h
     }
 

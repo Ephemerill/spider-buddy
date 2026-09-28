@@ -335,6 +335,8 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     /// Tools only: the decorating panel at a tab.
     func debugShowTab(_ i: Int) { panel.debugShowTab(i) }
+    /// Tools only: the Add tab showing one part of it.
+    func debugShowShelf(_ s: HabitatObjectDefinition.Shelf?) { panel.debugShowTab(1); panel.showShelf(s) }
 
     // MARK: Editing
 
@@ -955,6 +957,17 @@ final class DecorPanel: NSView {
     private let copyButton = InspectorButton(title: "Duplicate", symbol: "plus.square.on.square")
     private let removeButton = InspectorButton(title: "Remove", symbol: "trash")
     private var sizeEditBefore: Habitat?
+    /// What holds the chosen thing up, and a way to hold it up if nothing does.
+    private let supportIcon = NSImageView()
+    private let supportLabel = NSTextField(labelWithString: "")
+    private var supportLine = NSView()
+    private let supportButton = HabitatButton(title: "Add a Support", symbol: "wrench.and.screwdriver")
+    /// A door or a window: open it, or shut it.
+    private let openButton = HabitatButton(title: "Open", symbol: "door.left.hand.open")
+    // The Add tab: a chip for each part of it, and each part's heading and tiles.
+    private var chips: [(shelf: HabitatObjectDefinition.Shelf?, chip: ChipButton)] = []
+    private var shelfViews: [(shelf: HabitatObjectDefinition.Shelf, views: [NSView])] = []
+    private var shownShelf: HabitatObjectDefinition.Shelf?
 
     override var isFlipped: Bool { true }
 
@@ -1090,19 +1103,61 @@ final class DecorPanel: NSView {
     }
 
     private func addPage(width: CGFloat) -> NSView {
+        typealias Shelf = HabitatObjectDefinition.Shelf
         func tiles(_ kinds: [HabitatItemKind]) -> [NSView] {
             kinds.map { k in
-                let t = TileButton(image: HabitatArt.thumbnail(k, side: 56), title: k.label, subtitle: nil, imageSize: CGSize(width: 56, height: 56))
+                let t = TileButton(image: HabitatArt.thumbnail(k, side: 56), title: k.label, subtitle: nil, imageSize: CGSize(width: 56, height: 56), titleSize: 10.5)
                 t.onClick = { [weak self] in self?.controller?.scene.add(k) }
-                t.toolTip = "Add \(k.label.lowercased())"
+                t.toolTip = k.definition.note.map { "\(k.label): \($0)" } ?? "Add \(k.label.lowercased())"
                 return t
             }
         }
-        return page([note("Click something to put it in the tank, then drag it wherever you like.", width: width),
-                     sectionLabel("Perches — it can climb these"),
-                     grid(tiles(HabitatItemKind.allCases.filter(\.climbable)), columns: 3, width: width),
-                     sectionLabel("Plants & details"),
-                     grid(tiles(HabitatItemKind.allCases.filter { !$0.climbable }), columns: 3, width: width)])
+        func heading(_ shelf: Shelf) -> String {
+            switch shelf {
+            case .structures: return "Structures — branches, roots, driftwood"
+            case .supports: return "Supports — fixed to the back wall"
+            case .vines: return "Vines"
+            case .bark: return "Bark & logs"
+            case .platforms: return "Platforms"
+            case .built: return "Built — timber, board and brick"
+            case .building: return "Building — floors, walls, doors, a roof"
+            case .walls: return "Backing — the back walls of rooms"
+            case .home: return "Home — furniture"
+            case .decor: return "Decor — little things, and for the walls"
+            case .furniture: return "Stones & more"
+            case .plants: return "Plants & details"
+            }
+        }
+        // Chips to show one part at a time.
+        let all: [Shelf?] = [nil] + Shelf.allCases.map { Optional($0) }
+        chips = all.map { shelf in
+            let c = ChipButton(title: shelf?.label ?? "All")
+            c.target = self
+            c.action = #selector(chipTapped(_:))
+            c.isOn = shelf == nil
+            return (shelf, c)
+        }
+        let chipGrid = grid(chips.map(\.chip), columns: 3, width: width, spacing: 6)
+        var views: [NSView] = [note("Click something to put it in the tank, then drag it where you like. Pieces click together where they meet — hold ⌥ while dragging to place something freely.", width: width), chipGrid]
+        shelfViews = Shelf.allCases.map { shelf in
+            let v = [sectionLabel(heading(shelf)), grid(tiles(HabitatItemKind.allCases.filter { $0.definition.shelf == shelf }), columns: 3, width: width)]
+            views += v
+            return (shelf, v)
+        }
+        return page(views)
+    }
+
+    @objc private func chipTapped(_ sender: ChipButton) {
+        guard let pick = chips.first(where: { $0.chip === sender }) else { return }
+        showShelf(pick.shelf)
+    }
+
+    /// The Add tab showing only one part of it (nil: all of them).
+    func showShelf(_ shelf: HabitatObjectDefinition.Shelf?) {
+        shownShelf = shelf
+        for (s, c) in chips { c.isOn = s == shelf }
+        for (s, vs) in shelfViews { for v in vs { v.isHidden = shelf != nil && s != shelf } }
+        scroll.documentView?.scroll(.zero)
     }
 
     private func layoutPage(width: CGFloat) -> NSView {
@@ -1363,6 +1418,20 @@ final class DecorPanel: NSView {
         removeButton.target = self
         removeButton.action = #selector(removeTapped)
         removeButton.toolTip = "Take it out of the tank (⌫)"
+        supportIcon.translatesAutoresizingMaskIntoConstraints = false
+        supportIcon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+        supportLabel.font = .systemFont(ofSize: 11.5)
+        supportLabel.textColor = NSColor(white: 1, alpha: 0.7)
+        supportLabel.lineBreakMode = .byTruncatingTail
+        let line = NSStackView(views: [supportIcon, supportLabel])
+        line.spacing = 6
+        supportLine = line
+        supportButton.target = self
+        supportButton.action = #selector(supportTapped)
+        supportButton.toolTip = "Prop it up from below — or, with a backing wall behind it, fix it to that"
+        openButton.target = self
+        openButton.action = #selector(openTapped)
+        openButton.toolTip = "Open or shut it (or double-click it in the tank)"
         let r1 = NSStackView(views: [flipButton, copyButton, layerButton, removeButton])
         r1.distribution = .fillEqually
         r1.spacing = 6
@@ -1370,10 +1439,10 @@ final class DecorPanel: NSView {
         r1.widthAnchor.constraint(equalToConstant: width - 24).isActive = true
         hint.font = .systemFont(ofSize: 11.5)
         hint.textColor = NSColor(white: 1, alpha: 0.55)
-        hint.stringValue = "Click anything in the tank to move it; drag a corner to resize it. Drag the bare glass to look round the tank, or use the Overview to move things a long way. ⌘Z undoes."
+        hint.stringValue = "Click anything in the tank to move it; drag a corner to resize it. Pieces click together where they meet (hold ⌥ to place freely), and what is fastened to a thing moves with it. Double-click a door or a window to open or shut it. Drag the bare glass to look round the tank, or use the Overview to move things a long way. ⌘Z undoes."
         hint.translatesAutoresizingMaskIntoConstraints = false
         hint.widthAnchor.constraint(equalToConstant: width - 24).isActive = true
-        for v in [top, sizeRow, r1, hint] as [NSView] { inspector.addArrangedSubview(v) }
+        for v in [top, supportLine, supportButton, openButton, sizeRow, r1, hint] as [NSView] { inspector.addArrangedSubview(v) }
     }
 
     @objc private func tabChanged() { showPage(tabs.selectedSegment) }
@@ -1404,7 +1473,24 @@ final class DecorPanel: NSView {
         hint.isHidden = item != nil
         guard let it = item else { return }
         selName.stringValue = it.kind.label
-        selKind.stringValue = it.kind.climbable ? "A perch — it can climb this" : "Scenery"
+        selKind.stringValue = it.kind.atBack ? (it.kind.climbable ? "Support — at the back; it can climb this" : "Support — at the back")
+            : (it.kind.climbable ? "A perch — it can climb this" : "Scenery")
+        let (text, symbol, floating) = supportText(h, it)
+        supportLabel.stringValue = text
+        supportLabel.toolTip = text
+        supportLabel.textColor = floating ? NSColor.systemOrange.withAlphaComponent(0.95) : NSColor(white: 1, alpha: 0.7)
+        supportIcon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
+        supportIcon.contentTintColor = floating ? .systemOrange : NSColor(white: 1, alpha: 0.6)
+        // (Only where one can be made for it.)
+        var trial = h
+        supportButton.isHidden = !(floating && !trial.addSupport(for: it.id).isEmpty)
+        if let other = it.kind.toggled {
+            let opens = other == .door || other == .windowOpen
+            openButton.isHidden = false
+            openButton.set(title: opens ? "Open It" : "Shut It", symbol: opens ? "door.left.hand.open" : "door.left.hand.closed")
+        } else {
+            openButton.isHidden = true
+        }
         selThumb.image = HabitatArt.thumbnail(it.kind, side: 30)
         let k = it.w / it.kind.defaultSize.width
         if abs(sizeSlider.doubleValue - Double(k)) > 0.005 { sizeSlider.doubleValue = Double(k) }
@@ -1433,6 +1519,29 @@ final class DecorPanel: NSView {
             c.noteEdit(from: before, to: c.scene.habitat)
         }
     }
+
+    /// What holds a thing up, in words: and its symbol, and whether it is floating.
+    private func supportText(_ h: Habitat, _ it: HabitatItem) -> (String, String, Bool) {
+        func name(_ id: Int) -> String { h.item(id: id).map { "the " + $0.kind.label.lowercased() } ?? "something" }
+        switch h.support(of: it.id) {
+        case .ground: return ("On the ground", "arrow.down.to.line", false)
+        case .lid: return ("Hanging from the lid", "arrow.up.to.line", false)
+        case .wall:
+            if it.kind.isBacking { return ("Against the glass at the back", "square.grid.3x3.square", false) }
+            if h.isBacked(it), let wall = h.items.first(where: { $0.kind.isBacking && $0.rect.contains(CGPoint(x: it.rect.midX, y: it.rect.midY)) }) {
+                return ("Fixed to the \(wall.kind.label.lowercased()) behind it", "hammer", false)
+            }
+            return ("Stuck to the glass at the back (suction cups)", "circle.dotted", false)
+        case .glass: return ("Wedged against the glass", "rectangle.portrait", false)
+        case .held(let by): return ("Held by \(name(by))", "link", false)
+        case .resting(let on): return ("Resting on \(name(on))", "square.stack.3d.down.forward", false)
+        case .wedged(let into): return ("Propped against \(name(into))", "arrow.triangle.merge", false)
+        case .floating: return ("Floating — nothing holds it up", "exclamationmark.triangle", true)
+        }
+    }
+
+    @objc private func supportTapped() { controller?.scene.supportSelected() }
+    @objc private func openTapped() { if let id = controller?.scene.selected { controller?.scene.toggleOpen(id) } }
 
     @objc private func flipTapped() { controller?.scene.updateSelected { $0.flipped.toggle() } }
     @objc private func copyTapped() { controller?.scene.duplicateSelected() }
@@ -1496,6 +1605,48 @@ final class InspectorButton: NSButton {
     override func draw(_ dirtyRect: NSRect) {
         let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 9, yRadius: 9)
         NSColor(white: 1, alpha: isHighlighted ? 0.18 : (hovering && isEnabled ? 0.12 : 0.06)).setFill()
+        path.fill()
+        super.draw(dirtyRect)
+    }
+}
+
+/// A small pill to pick one part of a list (the Add tab's parts).
+final class ChipButton: NSButton {
+    var isOn = false { didSet { needsDisplay = true; update() } }
+    private var hovering = false { didSet { needsDisplay = true } }
+    private let label: String
+
+    init(title: String) {
+        label = title
+        super.init(frame: .zero)
+        isBordered = false
+        translatesAutoresizingMaskIntoConstraints = false
+        heightAnchor.constraint(equalToConstant: 24).isActive = true
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil))
+        setAccessibilityLabel(title)
+        update()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func update() {
+        let col = NSColor(white: 1, alpha: isOn ? 1 : 0.8)
+        let p = NSMutableParagraphStyle()
+        p.alignment = .center
+        attributedTitle = NSAttributedString(string: label, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: isOn ? .semibold : .medium),
+                                                                          .foregroundColor: col, .paragraphStyle: p])
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let r = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let path = NSBezierPath(roundedRect: r, xRadius: r.height / 2, yRadius: r.height / 2)
+        if isOn {
+            NSColor.controlAccentColor.withAlphaComponent(0.9).setFill()
+        } else {
+            NSColor(white: 1, alpha: isHighlighted ? 0.18 : (hovering ? 0.12 : 0.06)).setFill()
+        }
         path.fill()
         super.draw(dirtyRect)
     }

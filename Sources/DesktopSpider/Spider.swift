@@ -8798,6 +8798,56 @@ final class Spider {
         beginActivity(.crouch, dur: randRange(0.45, 0.7))
     }
 
+    /// In the tank: whether a leap launched at `launch` from `a`, meant to
+    /// come down at `b`, would pass right through something solid on the
+    /// way — in one side and out the other through more than a few points
+    /// of it (a twig or a vine it could brush past; a wall, never).
+    private func leapBlocked(from a: V2, launch: V2, to b: V2) -> Bool {
+        guard inHabitat, map.hasJunctions else { return false }
+        // The arc, a few dozen points along it, as far as its nearest to `b`.
+        var pts: [V2] = []
+        var best = CGFloat.greatestFiniteMagnitude
+        var t: CGFloat = 0
+        while t < 3 {
+            let p = a + launch * t + gravity * (0.5 * t * t)
+            let d = p.distance(to: b)
+            pts.append(p)
+            if d < best { best = d } else if d > best + 30 { break }
+            t += 1.0 / 30
+        }
+        guard pts.count >= 2 else { return false }
+        // Every place it crosses the outline of something, by how far along.
+        var crossings: [CGFloat] = []
+        var run: CGFloat = 0
+        let box = Poly.bounds(pts).insetBy(dx: -2, dy: -2)
+        let near = map.loops.filter { $0.rect.isNull || $0.rect.insetBy(dx: -4, dy: -4).intersects(box) }
+        for i in 1..<pts.count {
+            let p = pts[i - 1], q = pts[i]
+            let r = q - p, len = r.length
+            for loop in near {
+                for e in loop.edge {
+                    guard max(e.a.x, e.b.x) >= box.minX, min(e.a.x, e.b.x) <= box.maxX,
+                          max(e.a.y, e.b.y) >= box.minY, min(e.a.y, e.b.y) <= box.maxY else { continue }
+                    let s = e.b - e.a
+                    let den = r.cross(s)
+                    guard abs(den) > 1e-9 else { continue }
+                    let w = e.a - p
+                    let u = w.cross(s) / den, v = w.cross(r) / den
+                    if u >= 0, u <= 1, v >= 0, v <= 1 { crossings.append(run + u * len) }
+                }
+            }
+            run += len
+        }
+        // (Not what it takes off from or lands on.)
+        let inner = crossings.filter { $0 > 10 && $0 < run - 10 }.sorted()
+        var k = 0
+        while k + 1 < inner.count {
+            if inner[k + 1] - inner[k] >= 6 { return true }
+            k += 2
+        }
+        return false
+    }
+
     private func launchPendingJump() {
         guard let point = pendingJump, var launch = ballistic(from: pos, to: point) else {
             pendingJump = nil
@@ -8829,6 +8879,17 @@ final class Spider {
                 let along = launch - surfaceNormal * launch.dot(surfaceNormal)
                 launch = along.clampedLength(220) + surfaceNormal * 90
             }
+        }
+        // In the tank, it doesn't leap through walls: an arc that would go
+        // right through something solid (a wall, a shut door, a log) on the
+        // way, it doesn't try.
+        if !glassLeap, !departLeap, leapBlocked(from: pos, launch: launch, to: point) {
+            pendingJump = nil
+            pendingMap = nil
+            activity = .idle
+            crouch.velocity = -6
+            if cursorHunt == .pouncing { endCursorHunt(nextIn: randRange(5, 10)); setEmote(.question, 1.0) }
+            return
         }
         glassLeap = false
         pendingJump = nil
@@ -8872,6 +8933,9 @@ final class Spider {
         let disc = max(0, v2 * v2 - g * (g * dx * dx + 2 * d.y * v2))
         let theta = atan((v2 - disc.squareRoot()) / (g * dx))
         let dir = V2(cos(theta) * (d.x >= 0 ? 1 : -1), sin(theta))
+        // (In the tank, no leap through walls: a mark it could only reach
+        // through something solid is out of reach.)
+        if leapBlocked(from: p0, launch: dir * v, to: p1) { return nil }
         return dir * v
     }
 

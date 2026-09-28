@@ -13,18 +13,20 @@ extension HabitatArt {
 
     /// A thing's picture, `size` points across (its rectangle), painted
     /// with `pad` points of room round it.
-    static func itemImage(_ it: HabitatItem, size: CGSize, biome: Biome, scale: CGFloat) -> CGImage? {
+    /// `leaf`: a door's (or a window's) leaf painted in with it — not when
+    /// it is a layer of its own, to swing (see `ItemLayer`).
+    static func itemImage(_ it: HabitatItem, size: CGSize, biome: Biome, scale: CGFloat, backed: Bool = false, leaf: Bool = true) -> CGImage? {
         let pad = itemPad(size)
         let full = CGSize(width: size.width + pad * 2, height: size.height + pad * 2)
         return image(full, scale: scale) { ctx in
             let r = CGRect(x: pad, y: pad, width: size.width, height: size.height)
-            if it.onGround { contactShadow(ctx, r, it.kind) }
+            if it.onGround, it.kind.definition.mount != .wall { contactShadow(ctx, r, it.kind) }
             ctx.saveGState()
             if it.flipped {
                 ctx.translateBy(x: full.width, y: 0)
                 ctx.scaleBy(x: -1, y: 1)
             }
-            paintItem(it.kind, seed: it.seed, in: r, biome: biome, ctx)
+            paintItem(it.kind, seed: it.seed, in: r, biome: biome, backed: backed, leaf: leaf, ctx)
             ctx.restoreGState()
             // The light of the place: dimmer and bluer by moonlight, and so on.
             let p = palette(biome)
@@ -43,7 +45,25 @@ extension HabitatArt {
         switch kind {
         case .crystal: return crystalHue(seed)
         case .mushrooms: return biome == .cave || biome == .night ? c(0.55, 1, 0.75) : nil
+        case .floorLamp, .hangingLamp, .lantern, .candle, .sconce, .chandelier, .fireplace: return c(1, 0.78, 0.42)
+        case .tv: return c(0.55, 0.8, 1)
         default: return nil
+        }
+    }
+
+    /// Where on it the light comes from (a fraction of its rectangle), and
+    /// how far the glow spreads for its size.
+    static func glowSpot(_ kind: HabitatItemKind) -> (at: CGPoint, spread: CGFloat) {
+        switch kind {
+        case .floorLamp: return (CGPoint(x: 0.5, y: 0.74), 1.6)
+        case .hangingLamp: return (CGPoint(x: 0.5, y: 0.04), 1.1)
+        case .lantern: return (CGPoint(x: 0.5, y: 0.2), 1.3)
+        case .candle: return (CGPoint(x: 0.5, y: 0.9), 1.4)
+        case .sconce: return (CGPoint(x: 0.5, y: 0.66), 1.6)
+        case .chandelier: return (CGPoint(x: 0.5, y: 0.3), 0.9)
+        case .fireplace: return (CGPoint(x: 0.5, y: 0.3), 0.9)
+        case .tv: return (CGPoint(x: 0.44, y: 0.4), 0.9)
+        default: return (CGPoint(x: 0.5, y: 0.45), 0.75)
         }
     }
 
@@ -61,7 +81,7 @@ extension HabitatArt {
         ctx.restoreGState()
     }
 
-    static func paintItem(_ kind: HabitatItemKind, seed s: Int, in r: CGRect, biome: Biome, _ ctx: CGContext) {
+    static func paintItem(_ kind: HabitatItemKind, seed s: Int, in r: CGRect, biome: Biome, backed: Bool = false, leaf: Bool = true, _ ctx: CGContext) {
         let u = max(0.5, min(r.width / kind.defaultSize.width, r.height / kind.defaultSize.height))
         ctx.setLineJoin(.round)
         ctx.setLineCap(.round)
@@ -87,6 +107,7 @@ extension HabitatArt {
         case .pebbles: paintPebbles(r, s, u, ctx)
         case .twigs: paintTwigs(r, s, u, ctx)
         case .crystal: paintCrystals(r, s, u, ctx)
+        default: paintPiece(kind, r, s, u, biome, backed: backed, leaf: leaf, ctx)
         }
     }
 
@@ -846,15 +867,17 @@ extension HabitatArt {
             paintSky(h.biome, in: f, ctx)
             paintScenery(h.biome, in: f, ctx)
             paintGround(h.biome, in: f, ctx)
-            for it in h.items.sorted(by: { !$0.inFront && $1.inFront }) {
+            // (Hardware at the back first, then the furniture, then what is in front — each in order.)
+            func band(_ it: HabitatItem) -> Int { it.inFront ? 2 : (it.kind.atBack ? 0 : 1) }
+            for it in h.items.enumerated().sorted(by: { (band($0.element), $0.offset) < (band($1.element), $1.offset) }).map(\.element) {
                 let r = it.rect
                 ctx.saveGState()
-                if it.onGround { contactShadow(ctx, r, it.kind) }
+                if it.onGround, it.kind.definition.mount != .wall { contactShadow(ctx, r, it.kind) }
                 if it.flipped {
                     ctx.translateBy(x: r.midX * 2, y: 0)
                     ctx.scaleBy(x: -1, y: 1)
                 }
-                paintItem(it.kind, seed: it.seed, in: r, biome: h.biome, ctx)
+                paintItem(it.kind, seed: it.seed, in: r, biome: h.biome, backed: h.isBacked(it), ctx)
                 ctx.restoreGState()
             }
         }

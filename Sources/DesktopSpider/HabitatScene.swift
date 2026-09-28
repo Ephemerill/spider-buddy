@@ -43,6 +43,7 @@ final class HabitatSceneView: NSView {
     var spiderName = "" { didSet { findButton.set(title: HabitatSceneView.findTitle(spiderName), symbol: findSymbol) } }
 
     var editing = false {
+        willSet { if newValue, !editing { shutDoorsItOpened() } }
         didSet {
             guard editing != oldValue else { return }
             if !editing { select(nil) }
@@ -64,6 +65,8 @@ final class HabitatSceneView: NSView {
     private var airMid = CALayer()
     private let content = CALayer()
     private let ground = CALayer()
+    /// Hardware fixed to the back wall: behind all the furniture.
+    private let rearItems = CALayer()
     private let backItems = CALayer()
     private let creatures = CALayer()
     private let silk = CAShapeLayer()
@@ -85,6 +88,12 @@ final class HabitatSceneView: NSView {
     private let geometryHUD = CATextLayer()
     private let selectionOutline = CAShapeLayer()
     private let hoverOutline = CAShapeLayer()
+    /// Decorating: faint rings where what is being dragged could fasten,
+    /// a brighter one where it will, and dots where the chosen thing is
+    /// fastened (see "Fastening").
+    private let portHints = CAShapeLayer()
+    private let snapRing = CAShapeLayer()
+    private let jointDots = CAShapeLayer()
     private var handles: [CALayer] = []
 
     private var itemLayers: [Int: ItemLayer] = [:]
@@ -126,7 +135,7 @@ final class HabitatSceneView: NSView {
         let wx = weatherFX
         for l in [backdrop, content, wx.shade, wx.front, wx.flash, glass] { world.addSublayer(l) }
         for l in [sky, airBack, wx.back, scenery, airMid, wx.mid] { backdrop.addSublayer(l) }
-        for l in [ground, wx.ground, backItems, wx.caps, creatures, frontItems, airFront, wx.fall, tankEnds, geometryLayer] { content.addSublayer(l) }
+        for l in [ground, wx.ground, rearItems, backItems, wx.caps, creatures, frontItems, airFront, wx.fall, tankEnds, geometryLayer] { content.addSublayer(l) }
         for l in [backdrop, content, editLayer, tapLayer, sky, scenery, ground] { l.anchorPoint = .zero }
         wx.onThunder = { [weak self] p, loud in self?.thundered(at: p, loud: loud) }
         root.addSublayer(editLayer)
@@ -168,6 +177,23 @@ final class HabitatSceneView: NSView {
         hoverOutline.strokeColor = CGColor(gray: 1, alpha: 0.55)
         hoverOutline.lineWidth = 1.5
         hoverOutline.lineDashPattern = [4, 4]
+        for l in [portHints, snapRing, jointDots] {
+            l.fillColor = nil
+            l.isHidden = true
+            l.shadowColor = CGColor(gray: 0, alpha: 0.6)
+            l.shadowRadius = 1.5
+            l.shadowOpacity = 1
+            l.shadowOffset = .zero
+            editLayer.addSublayer(l)
+        }
+        portHints.strokeColor = CGColor(gray: 1, alpha: 0.45)
+        portHints.lineWidth = 1.2
+        snapRing.strokeColor = NSColor.controlAccentColor.cgColor
+        snapRing.lineWidth = 2
+        snapRing.fillColor = NSColor.controlAccentColor.withAlphaComponent(0.25).cgColor
+        jointDots.fillColor = NSColor.controlAccentColor.cgColor
+        jointDots.strokeColor = CGColor(gray: 1, alpha: 0.9)
+        jointDots.lineWidth = 1.2
         for _ in 0..<4 {
             let h = CALayer()
             h.bounds = CGRect(x: 0, y: 0, width: 12, height: 12)
@@ -273,10 +299,44 @@ final class HabitatSceneView: NSView {
 
     /// The surfaces, laid out afresh for the furniture as it stands — once
     /// for each change to it; the camera moving changes nothing.
-    func rebuildMap() {
+    /// `smooth`: the spider carries on as it was, read off the new surfaces
+    /// where it stands (a door opened in front of it), rather than set down
+    /// afresh on the nearest.
+    func rebuildMap(smooth: Bool = false) {
         map.rebuild(habitat: habitat.surfaces(standoff: map.standoff))
-        if let spider, spider.inHabitat, spider.map === map { spider.mapChanged() }
+        if let spider, spider.inHabitat, spider.map === map { if smooth { spider.surfacesRestructured() } else { spider.mapChanged() } }
         refreshGeometryOverlay()
+    }
+
+    // MARK: Doors it opens itself
+
+    private var doors = DoorKeeper()
+
+    /// Opens the doors it pushes at, and shuts them again behind it (see
+    /// `DoorKeeper`) — not an edit: nothing to undo, nothing saved.
+    private func tendDoors(dt: CGFloat) {
+        guard !editing, let spider, spider.inHabitat, spider.map === map else { return }
+        let (open, shut, through) = doors.tend(habitat, spider: spider.worldPos, attached: spider.standingOn != nil, scale: spider.config.scale, dt: dt)
+        swing(open, to: .door)
+        swing(shut, to: .doorClosed)
+        // (It opened it to go through: on it goes.)
+        if let through { spider.summon(to: through) }
+    }
+
+    /// Doors the spider left open, shut again (decorating starts).
+    private func shutDoorsItOpened() {
+        swing(doors.release().filter { habitat.item(id: $0)?.kind == .door }, to: .doorClosed)
+    }
+
+    private func swing(_ ids: [Int], to kind: HabitatItemKind) {
+        guard !ids.isEmpty else { return }
+        for id in ids {
+            guard let i = habitat.items.firstIndex(where: { $0.id == id }) else { continue }
+            habitat.items[i].kind = kind
+        }
+        syncItemLayers()
+        paintItems()
+        rebuildMap(smooth: true)
     }
 
     func setStandoff(_ s: CGFloat) {
@@ -321,6 +381,7 @@ final class HabitatSceneView: NSView {
     @discardableResult
     func tick(dt: CGFloat, spider s: V2?) -> Bool {
         lastSpider = s
+        tendDoors(dt: dt)
         var moved = false
         if let v = dragView, isDraggingItem {
             let m: CGFloat = 44
@@ -684,7 +745,8 @@ final class HabitatSceneView: NSView {
                 return n
             }()
             l.item = it
-            let parent = it.inFront ? frontItems : backItems
+            l.backed = habitat.isBacked(it)
+            let parent = it.inFront ? frontItems : (it.kind.atBack ? rearItems : backItems)
             if l.superlayer !== parent { l.removeFromSuperlayer(); parent.addSublayer(l) }
             l.zPosition = CGFloat(i)
         }
@@ -944,6 +1006,9 @@ final class HabitatSceneView: NSView {
         } else if spider.inHabitat, let p = spider.preyHit(w) {
             grabbedPrey = p
             spider.beginPreyGrab(p, at: w)
+        } else if event.clickCount == 2, let it = itemAt(w), it.kind.toggled != nil {
+            // A door or a window, double-clicked: opened, or shut.
+            toggleOpen(it.id)
         } else {
             beginGlassPress(event)
         }
@@ -1091,22 +1156,34 @@ final class HabitatSceneView: NSView {
 
     // MARK: Decorating
 
-    private enum Drag { case none, move(id: Int, offset: CGPoint), resize(id: Int, from: HabitatItem, anchor: CGPoint, startDist: CGFloat) }
+    private enum Drag {
+        case none
+        /// A thing taken hold of: where on it (so it doesn't jump to the
+        /// pointer), it as it was, what goes with it as they were, and
+        /// whether it has moved yet.
+        case move(id: Int, offset: CGPoint, start: HabitatItem, carried: [HabitatItem], moved: Bool)
+        /// A corner pulled: it as it was, the point it grows from, and where
+        /// the pointer took hold.
+        case resize(id: Int, from: HabitatItem, anchor: CGPoint, startPoint: CGPoint)
+    }
     private var drag = Drag.none
     private var before: Habitat?
     private var hovered: Int?
+    /// Where what is being dragged will fasten if it is let go now.
+    private var snap: HabitatSnap?
 
     private var isDraggingItem: Bool {
         if case .none = drag { return false }
         return true
     }
 
-    /// The thing at a point in the world, front first.
+    /// The thing at a point in the world: what is in front first, the
+    /// hardware at the back last.
     func itemAt(_ p: V2) -> HabitatItem? {
         let q = p.point
+        func band(_ it: HabitatItem) -> Int { it.inFront ? 0 : (it.kind.atBack ? (it.kind.isBacking ? 3 : 2) : 1) }
         let ordered = habitat.items.enumerated().sorted { a, b in
-            if a.element.inFront != b.element.inFront { return a.element.inFront }
-            return a.offset > b.offset
+            band(a.element) != band(b.element) ? band(a.element) < band(b.element) : a.offset > b.offset
         }
         // What is really there first — its solid parts, or its foliage —
         // then the box round it.
@@ -1150,6 +1227,8 @@ final class HabitatSceneView: NSView {
         } else {
             hoverOutline.isHidden = true
         }
+        showJoints(of: editing && !isDraggingItem ? item : nil)
+        if !editing { portHints.isHidden = true; snapRing.isHidden = true }
     }
 
     /// Where a thing is drawn right now, from its layer.
@@ -1195,14 +1274,22 @@ final class HabitatSceneView: NSView {
         if let id = selected, let it = habitat.items.first(where: { $0.id == id }), handleRects(it).contains(where: { $0.contains(p) }) {
             let r = it.rect
             let anchor = CGPoint(x: r.midX, y: it.kind.hangs ? r.maxY : r.minY)
-            drag = .resize(id: id, from: it, anchor: anchor, startDist: max(hypot(p.x - anchor.x, p.y - anchor.y), 8))
+            drag = .resize(id: id, from: it, anchor: anchor, startPoint: p)
             dragView = v
             return
         }
         if let it = itemAt(V2(p)) {
             select(it.id)
+            if event.clickCount == 2, it.kind.toggled != nil {
+                drag = .none
+                before = nil
+                toggleOpen(it.id)
+                return
+            }
             // Where on it it was taken hold of, so it does not jump to the pointer.
-            drag = .move(id: it.id, offset: CGPoint(x: it.x - p.x, y: it.y - (p.y - HabitatLayout.ground)))
+            let offset = it.kind.hangs ? CGPoint(x: it.x - p.x, y: it.y - p.y) : CGPoint(x: it.x - p.x, y: it.y - (p.y - HabitatLayout.ground))
+            let carried = habitat.dependents(of: it.id).compactMap { habitat.item(id: $0) }
+            drag = .move(id: it.id, offset: offset, start: it, carried: carried, moved: false)
             dragView = v
             NSCursor.closedHand.set()
         } else {
@@ -1221,42 +1308,103 @@ final class HabitatSceneView: NSView {
         dragItem(at: v)
     }
 
+    /// Placing freely: ⌥ held while dragging, nothing is pulled into place.
+    private var placingFreely: Bool { NSEvent.modifierFlags.contains(.option) || debugPlaceFreely }
+    /// Tools only: as if ⌥ were held.
+    var debugPlaceFreely = false
+
     /// The thing being dragged, to where the pointer is over the world
     /// (which moves under it as the camera is taken along).
     private func dragItem(at v: CGPoint) {
         let p = worldPoint(fromView: v).point
+        let G = HabitatLayout.ground
         switch drag {
         case .none:
             return
-        case .move(let id, let offset):
+        case .move(let id, let offset, let start, let carried, let moved):
             guard let i = habitat.items.firstIndex(where: { $0.id == id }) else { return }
-            var it = habitat.items[i]
+            if !moved {
+                // A click that doesn't move it leaves it where (and how) it is.
+                let grab = CGPoint(x: start.x - offset.x, y: start.kind.hangs ? start.y - offset.y : start.y + G - offset.y)
+                guard hypot(p.x - grab.x, p.y - grab.y) > 2 else { return }
+                // Taken off whatever held it, the moment it moves (and what
+                // stays put lets go of it).
+                habitat.release([id] + carried.map(\.id))
+                drag = .move(id: id, offset: offset, start: start, carried: carried, moved: true)
+            }
+            var it = start
             it.x = p.x + offset.x
             if it.kind.hangs {
-                it.y = habitat.size.height
+                // Brought down from the lid (to hang from a branch, say), it
+                // is only as long as there is room for.
+                it.y = p.y + offset.y
+                if it.y > habitat.size.height - 36 { it.y = habitat.size.height }
             } else if it.kind.liftable {
-                let y = p.y - HabitatLayout.ground + offset.y
+                let y = p.y - G + offset.y
                 // Near the ground it sits on it.
                 it.y = y < 12 ? 0 : y
             } else {
                 it.y = 0
             }
             Habitat.clamp(&it, in: habitat.size)
+            // Where a joint of it comes near one it fits, it is pulled into
+            // place — gently, and it lets go again if pulled further away.
+            let was = snap
+            snap = nil
+            if !placingFreely, it.kind.fastens,
+               let s = habitat.snap(for: it, excluding: Set([id] + carried.map(\.id)), radius: was != nil ? Habitat.snapHold : Habitat.snapRadius) {
+                it.x += s.delta.x
+                it.y += s.delta.y
+                Habitat.clamp(&it, in: habitat.size)
+                snap = s
+            }
             habitat.items[i] = it
-            moveLayer(it)
-        case .resize(let id, let from, let anchor, let startDist):
+            // What goes with it, moved as far — then set right on it again.
+            let d = V2(it.x - start.x, it.y - start.y)
+            for c in carried {
+                guard let j = habitat.items.firstIndex(where: { $0.id == c.id }) else { continue }
+                var ci = c
+                ci.x += d.x
+                ci.y += d.y
+                Habitat.clamp(&ci, in: habitat.size)
+                habitat.items[j] = ci
+            }
+            if !habitat.links.isEmpty { habitat.realign() }
+            syncMovedLayers()
+            showSnap(snap, engaged: snap != nil && snap != was)
+            showPortHints(for: it, excluding: Set([id] + carried.map(\.id)))
+        case .resize(let id, let from, let anchor, let startPoint):
             guard let i = habitat.items.firstIndex(where: { $0.id == id }) else { return }
-            let d = hypot(p.x - anchor.x, p.y - anchor.y)
-            let base = from.kind.defaultSize
-            var k = d / startDist
-            // Between a third and three times its usual size.
-            k = min(max(k, 0.35 * base.width / from.w), 3 * base.width / from.w)
+            let def = from.kind.definition
             var it = from
-            it.w = from.w * k
-            it.h = from.h * k
+            switch def.stretch {
+            case .vertical?:
+                // Longer or shorter, no thicker.
+                let k = max(abs(p.y - anchor.y), 4) / max(abs(startPoint.y - anchor.y), 8)
+                it.h = min(max(from.h * k, def.size.height * 0.3), def.size.height * 8)
+            case .horizontal?:
+                let k = max(abs(p.x - anchor.x), 4) / max(abs(startPoint.x - anchor.x), 8)
+                it.w = min(max(from.w * k, def.size.width * 0.3), def.size.width * 6)
+            case .both?:
+                // Any shape: wider and taller each on its own.
+                let kx = max(abs(p.x - anchor.x), 4) / max(abs(startPoint.x - anchor.x), 8)
+                let ky = max(abs(p.y - anchor.y), 4) / max(abs(startPoint.y - anchor.y), 8)
+                it.w = min(max(from.w * kx, def.size.width * 0.2), def.size.width * 8)
+                it.h = min(max(from.h * ky, def.size.height * 0.2), def.size.height * 8)
+            case nil:
+                let d = hypot(p.x - anchor.x, p.y - anchor.y)
+                let startDist = max(hypot(startPoint.x - anchor.x, startPoint.y - anchor.y), 8)
+                let base = def.size
+                // Between a third and three times its usual size.
+                let k = min(max(d / startDist, 0.35 * base.width / from.w), 3 * base.width / from.w)
+                it.w = from.w * k
+                it.h = from.h * k
+            }
             Habitat.clamp(&it, in: habitat.size)
             habitat.items[i] = it
-            moveLayer(it)
+            // What it holds stays fastened to it, and it to what holds it.
+            if !habitat.links.isEmpty { habitat.realign() }
+            syncMovedLayers()
         }
     }
 
@@ -1266,8 +1414,25 @@ final class HabitatSceneView: NSView {
         switch drag {
         case .none:
             return
-        case .move(let id, _):
-            settle(id)
+        case .move(let id, _, let start, _, let moved):
+            if moved {
+                if let s = snap {
+                    habitat.attach(s.link)
+                    pulse(at: s.joint)
+                    // (And anything else it now lies right on: the second post.)
+                    habitat.linkWhatTouches(id, within: 2)
+                } else if !placingFreely {
+                    // Let go of right on a joint anyway (put back by hand).
+                    habitat.linkWhatTouches(id)
+                }
+                backToLid(id, length: start.h)
+                settle(id)
+                if !habitat.links.isEmpty { habitat.realign() }
+                syncMovedLayers()
+            }
+            snap = nil
+            showSnap(nil, engaged: false)
+            portHints.isHidden = true
             commit()
             updateCursor(at: viewPoint(event))
         case .resize:
@@ -1276,34 +1441,55 @@ final class HabitatSceneView: NSView {
         }
     }
 
+    /// Something hanging, let go of with nothing to hang from, goes back up
+    /// to the lid (as long as it was).
+    private func backToLid(_ id: Int, length: CGFloat) {
+        guard let it = habitat.item(id: id), it.kind.hangs, !habitat.links.contains(where: { $0.child == it.uid }),
+              it.y < habitat.size.height - 0.5 else { return }
+        let deps = habitat.dependents(of: id)
+        let from = itemLayers[id]?.position.y
+        var up = it
+        up.y = habitat.size.height
+        up.h = length
+        Habitat.clamp(&up, in: habitat.size)
+        habitat.items[habitat.items.firstIndex { $0.id == id }!] = up
+        habitat.shift(deps, by: V2(0, up.y - it.y))
+        syncMovedLayers()
+        if let l = itemLayers[id], let from { spring(l, fromY: from) }
+    }
+
     /// Let go of up in the air, a thing comes to rest on whatever it is
-    /// over — the top of a log or a stone, or the ground. (A branch stays
-    /// where it is put: it is wedged there.)
+    /// over — the top of a log or a stone, or the ground — with whatever
+    /// rests on it. (A branch stays where it is put: it is wedged there;
+    /// and what is fastened to something stays fastened.)
     private func settle(_ id: Int) {
         guard let i = habitat.items.firstIndex(where: { $0.id == id }) else { return }
-        var it = habitat.items[i]
-        guard !it.kind.hangs, it.kind.definition.placement != .wedged, it.y > 0 else { return }
+        let it = habitat.items[i]
+        guard !it.kind.hangs, it.kind.definition.placement != .wedged, it.y > 0,
+              !habitat.links.contains(where: { $0.child == it.uid }) else { return }
         let lo = it.x - it.w * 0.25, hi = it.x + it.w * 0.25
+        let deps = Set(habitat.dependents(of: id))
         var rest: CGFloat = 0
-        for o in habitat.items where o.id != id && !o.kind.hangs && o.rect.maxX > lo && o.rect.minX < hi {
+        for o in habitat.items where o.id != id && !deps.contains(o.id) && !o.kind.hangs && !o.kind.isBacking && o.rect.maxX > lo && o.rect.minX < hi {
             guard let top = Habitat.restingTop(o, from: lo, to: hi).map({ $0 - HabitatLayout.ground }) else { continue }
             if top <= it.y + 8 { rest = max(rest, top) }
         }
         guard abs(rest - it.y) > 0.5 else { return }
-        let fromY = itemLayers[id]?.position.y
-        it.y = rest
-        Habitat.clamp(&it, in: habitat.size)
-        habitat.items[i] = it
-        moveLayer(it)
-        if let l = itemLayers[id], let fromY {
-            let drop = CASpringAnimation(keyPath: "position.y")
-            drop.fromValue = fromY
-            drop.toValue = l.position.y
-            drop.damping = 14
-            drop.stiffness = 260
-            drop.duration = drop.settlingDuration
-            l.add(drop, forKey: "settle")
-        }
+        let moving = [id] + deps
+        let from = Dictionary(uniqueKeysWithValues: moving.compactMap { m in itemLayers[m].map { (m, $0.position.y) } })
+        habitat.shift(moving, by: V2(0, rest - it.y))
+        syncMovedLayers()
+        for m in moving { if let l = itemLayers[m], let y = from[m] { spring(l, fromY: y) } }
+    }
+
+    private func spring(_ l: CALayer, fromY: CGFloat) {
+        let drop = CASpringAnimation(keyPath: "position.y")
+        drop.fromValue = fromY
+        drop.toValue = l.position.y
+        drop.damping = 14
+        drop.stiffness = 260
+        drop.duration = drop.settlingDuration
+        l.add(drop, forKey: "settle")
     }
 
     /// Moves a thing's layer to where the model now has it, without
@@ -1313,8 +1499,24 @@ final class HabitatSceneView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         l.item = it
+        l.stopDropping()
         place(l)
         if l.isHidden { l.paint(biome: habitat.biome, scale: scale, size: it.rect.size); l.isHidden = false }
+        CATransaction.commit()
+        refreshSelection()
+    }
+
+    /// Every layer whose thing has moved (or changed size), moved with it.
+    private func syncMovedLayers() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for it in habitat.items {
+            guard let l = itemLayers[it.id], l.item != it else { continue }
+            l.item = it
+            l.stopDropping()
+            place(l)
+            if l.isHidden { l.paint(biome: habitat.biome, scale: scale, size: it.rect.size); l.isHidden = false }
+        }
         CATransaction.commit()
         refreshSelection()
     }
@@ -1331,6 +1533,92 @@ final class HabitatSceneView: NSView {
         onEdit?(before, habitat)
     }
 
+    // MARK: Fastening
+    //
+    // Only while decorating, and only what helps: while a thing is dragged,
+    // faint rings where it could fasten near it, and a brighter one (with a
+    // little pulse as it takes hold) where it will; with a thing chosen,
+    // small dots where it is fastened to others.
+
+    private func ring(_ p: V2, _ r: CGFloat, into path: CGMutablePath) {
+        path.addEllipse(in: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2))
+    }
+
+    private func showSnap(_ s: HabitatSnap?, engaged: Bool) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        guard let s else { snapRing.isHidden = true; return }
+        let path = CGMutablePath()
+        ring(s.joint, 7, into: path)
+        snapRing.path = path
+        snapRing.isHidden = false
+        if engaged { pulse(at: s.joint, big: false) }
+    }
+
+    /// Faint rings at the places near a dragged thing where it could fasten.
+    private func showPortHints(for it: HabitatItem, excluding: Set<Int>) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        guard !placingFreely else { portHints.isHidden = true; return }
+        let mine = it.ports
+        guard !mine.isEmpty else { portHints.isHidden = true; return }
+        let reach = it.rect.insetBy(dx: -120, dy: -120)
+        let path = CGMutablePath()
+        var n = 0
+        for o in habitat.items where !excluding.contains(o.id) && o.rect.intersects(reach) {
+            for pp in o.ports {
+                for cp in mine where HabitatPort.fits(child: cp.kind, parent: pp.kind) {
+                    guard let m = HabitatPort.meet(child: cp, parent: pp), m.delta.length < 90 else { continue }
+                    guard snap.map({ $0.joint.distance(to: m.joint) > 3 }) ?? true else { continue }
+                    ring(m.joint, 4, into: path)
+                    n += 1
+                    break
+                }
+                if n > 40 { break }
+            }
+        }
+        portHints.path = path
+        portHints.isHidden = n == 0
+    }
+
+    /// Dots where the chosen thing is fastened to others.
+    private func showJoints(of it: HabitatItem?) {
+        guard let it else { jointDots.isHidden = true; return }
+        let path = CGMutablePath()
+        for l in habitat.links where l.child == it.uid || l.parent == it.uid {
+            if let j = habitat.joint(l) { ring(j.seat, 3.5, into: path) }
+        }
+        jointDots.path = path
+        jointDots.isHidden = path.isEmpty
+    }
+
+    /// A ring that spreads and fades: something has just fastened here.
+    private func pulse(at p: V2, big: Bool = true) {
+        let r: CGFloat = big ? 12 : 8
+        let l = CAShapeLayer()
+        l.path = CGPath(ellipseIn: CGRect(x: -r, y: -r, width: r * 2, height: r * 2), transform: nil)
+        l.fillColor = nil
+        l.strokeColor = NSColor.controlAccentColor.cgColor
+        l.lineWidth = 2
+        l.position = p.point
+        l.opacity = 0
+        editLayer.addSublayer(l)
+        let grow = CABasicAnimation(keyPath: "transform.scale")
+        grow.fromValue = 0.4
+        grow.toValue = big ? 1.5 : 1.2
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0.9
+        fade.toValue = 0
+        let g = CAAnimationGroup()
+        g.animations = [grow, fade]
+        g.duration = big ? 0.45 : 0.3
+        g.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        l.add(g, forKey: "pulse")
+        DispatchQueue.main.asyncAfter(deadline: .now() + g.duration + 0.05) { l.removeFromSuperlayer() }
+    }
+
     // MARK: Editing from outside
 
     /// Changes the chosen thing, as one edit — or `silently`, as part of
@@ -1340,14 +1628,25 @@ final class HabitatSceneView: NSView {
         update(id, silently: silently, f)
     }
 
-    /// Changes a thing, as one edit (or silently).
+    /// Changes a thing, as one edit (or silently). Moved (by the arrow
+    /// keys), what goes with it goes too, and it lets go of what held it;
+    /// resized or flipped, what is fastened stays fastened.
     func update(_ id: Int, silently: Bool = false, _ f: (inout HabitatItem) -> Void) {
         guard let i = habitat.items.firstIndex(where: { $0.id == id }) else { return }
         let was = habitat
-        var it = habitat.items[i]
+        let old = habitat.items[i]
+        var it = old
         f(&it)
         Habitat.clamp(&it, in: habitat.size)
-        habitat.items[i] = it
+        if it.w == old.w, it.h == old.h, it.flipped == old.flipped, it.x != old.x || it.y != old.y {
+            let deps = habitat.dependents(of: id)
+            habitat.release([id] + deps)
+            habitat.items[i] = it
+            habitat.shift(deps, by: V2(it.x - old.x, it.y - old.y))
+        } else {
+            habitat.items[i] = it
+        }
+        if !habitat.links.isEmpty { habitat.realign() }
         guard was != habitat else { return }
         syncItemLayers()
         paintItems()
@@ -1357,12 +1656,15 @@ final class HabitatSceneView: NSView {
         if silently { habitat.save() } else { onEdit?(was, habitat) }
     }
 
-    /// Moved in the overview: a thing to a new spot in the world, where it
-    /// comes to rest on whatever is under it, as one edit.
+    /// Moved in the overview: a thing to a new spot in the world, with what
+    /// goes with it, where it comes to rest on whatever is under it, as one edit.
     func moveItem(_ id: Int, to p: V2) {
         guard let i = habitat.items.firstIndex(where: { $0.id == id }) else { return }
         before = habitat
-        var it = habitat.items[i]
+        let old = habitat.items[i]
+        let deps = habitat.dependents(of: id)
+        habitat.release([id] + deps)
+        var it = old
         it.x = p.x
         if it.kind.hangs {
             it.y = habitat.size.height
@@ -1371,8 +1673,11 @@ final class HabitatSceneView: NSView {
         }
         Habitat.clamp(&it, in: habitat.size)
         habitat.items[i] = it
-        moveLayer(it)
+        habitat.shift(deps, by: V2(it.x - old.x, it.y - old.y))
+        habitat.linkWhatTouches(id)
         settle(id)
+        if !habitat.links.isEmpty { habitat.realign() }
+        syncMovedLayers()
         commit()
         before = nil
     }
@@ -1405,12 +1710,13 @@ final class HabitatSceneView: NSView {
             let score = min(gap, 300) + CGFloat.random(in: 0...20) - abs(x - view.midX) * 0.05
             if score > best { best = score; bestX = x }
         }
-        // A branch goes where the glass is looking, even up in the air;
+        // Something that stays where it is put (a branch, a bracket on the
+        // back wall) goes where the glass is looking, even up in the air;
         // anything else stands on the ground (or hangs from the lid).
         var y: CGFloat = 0
         if kind.hangs {
             y = h.size.height
-        } else if kind == .branch, view.minY > HabitatLayout.ground + 40 {
+        } else if kind.definition.placement == .wedged, view.minY > HabitatLayout.ground + 40 || kind.definition.mount == .wall {
             y = max(0, view.midY - HabitatLayout.ground - size.height / 2)
         }
         let it = h.add(kind, at: CGPoint(x: bestX, y: y))
@@ -1441,11 +1747,47 @@ final class HabitatSceneView: NSView {
         }
     }
 
+    /// A door or a window opened (or shut), as one edit: open, it can go
+    /// through; shut, it can't.
+    func toggleOpen(_ id: Int) {
+        guard let it = habitat.item(id: id), let other = it.kind.toggled else { return }
+        // (Its leaf swings open or shut as its picture is brought up to date.)
+        update(id) { $0.kind = other }
+    }
+
+    /// Something unobtrusive on the back wall to hold the chosen thing up,
+    /// if it is floating (see `Habitat.addSupport`), as one edit.
+    func supportSelected() {
+        guard let id = selected else { return }
+        var h = habitat
+        let made = h.addSupport(for: id)
+        guard !made.isEmpty else { return }
+        let was = habitat
+        setHabitat(h)
+        onEdit?(was, h)
+        for m in made {
+            guard let l = itemLayers[m] else { continue }
+            l.paint(biome: habitat.biome, scale: scale, size: l.item.rect.size)
+            l.isHidden = false
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 0
+            fade.toValue = 1
+            fade.duration = 0.35
+            l.add(fade, forKey: "appear")
+        }
+        let madeUIDs = Set(made.compactMap { habitat.item(id: $0)?.uid })
+        for l in habitat.links where madeUIDs.contains(l.parent) {
+            if let j = habitat.joint(l) { pulse(at: j.seat) }
+        }
+        refreshSelection()
+    }
+
     func removeSelected() {
         guard let id = selected else { return }
         let was = habitat
         var h = habitat
         h.items.removeAll { $0.id == id }
+        h.pruneLinks()
         select(nil)
         setHabitat(h)
         onEdit?(was, h)
@@ -1711,6 +2053,8 @@ final class HabitatSceneView: NSView {
 /// a glow, ripples.
 final class ItemLayer: CALayer {
     var item = HabitatItem(id: 0, kind: .rock, x: 0, y: 0, w: 1, h: 1)
+    /// Fixed to a backing wall (screwed), not just to the glass (suction cups).
+    var backed = false
     var paintedKey = ""
     private var extras: [CALayer] = []
     private var animatedKey = ""
@@ -1778,6 +2122,109 @@ final class ItemLayer: CALayer {
 
     override func action(forKey event: String) -> CAAction? { nil }
 
+    // MARK: A door's leaf
+    //
+    // A door (or a window's casement) is hinged at the middle of its wall:
+    // shut, its edge stands in the opening, a little thinner than the wall;
+    // open, it has swung out to the side, its face toward the glass. In
+    // between it turns in perspective, so opening and shutting swing.
+
+    private let leafHinge = CALayer(), leafFace = CALayer(), leafEdge = CALayer()
+    private var leafKey = ""
+    private var leafOpen: Bool?
+
+    /// How far round a leaf is turned: open (turned out, nearly face on) or
+    /// shut (edge on). Its sign depends which way it opens.
+    private func leafAngle(open: Bool) -> CGFloat {
+        let a: CGFloat = open ? 0.42 : .pi / 2 - 0.03
+        return item.flipped ? a : -a
+    }
+
+    private func updateLeaf(biome: Biome, scale: CGFloat, size: CGSize) {
+        guard let open = item.kind.leafOpen else {
+            if leafHinge.superlayer != nil { leafHinge.removeFromSuperlayer(); leafKey = ""; leafOpen = nil }
+            return
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        let pad = HabitatArt.itemPad(size)
+        let r = CGRect(x: pad, y: pad, width: size.width, height: size.height)
+        let g = HabitatShape.leaf(item.kind, r, item.unit)
+        let W = size.width + pad * 2
+        // Mirrored, it hinges the same place and opens the other way.
+        func mx(_ x: CGFloat) -> CGFloat { item.flipped ? W - x : x }
+        let family = item.kind == .door || item.kind == .doorClosed ? "door" : "window"
+        let key = "\(family)-\(item.seed)-\(Int(size.width))x\(Int(size.height))-\(item.flipped)-\(biome.rawValue)-\(scale)"
+        if key != leafKey {
+            leafKey = key
+            leafOpen = nil
+            leafHinge.frame = CGRect(x: 0, y: 0, width: W, height: size.height + pad * 2)
+            var p = CATransform3DIdentity
+            p.m34 = -1 / 420
+            leafHinge.sublayerTransform = p
+            if leafHinge.superlayer == nil { addSublayer(leafHinge) }
+            for l in [leafEdge, leafFace] where l.superlayer == nil { leafHinge.addSublayer(l) }
+            let kind = item.kind, seed = item.seed, u = item.unit
+            let tint = HabitatArt.palette(biome)
+            func picture(_ sz: CGSize, _ paint: @escaping (CGContext, CGRect) -> Void) -> CGImage? {
+                HabitatArt.image(sz, scale: scale) { ctx in
+                    let rr = CGRect(origin: .zero, size: sz)
+                    if item.flipped { ctx.translateBy(x: sz.width, y: 0); ctx.scaleBy(x: -1, y: 1) }
+                    paint(ctx, rr)
+                    if tint.tintAmount > 0.01 {
+                        ctx.setBlendMode(.sourceAtop)
+                        ctx.setFillColor(HabitatArt.alpha(tint.tint, tint.tintAmount))
+                        ctx.fill(rr)
+                    }
+                }
+            }
+            leafFace.contents = picture(g.face.size) { ctx, rr in HabitatArt.paintLeafFace(kind, rr, seed, u, ctx) }
+            leafFace.contentsScale = scale
+            leafFace.bounds = CGRect(origin: .zero, size: g.face.size)
+            leafFace.anchorPoint = CGPoint(x: item.flipped ? 1 : 0, y: 0.5)
+            leafFace.position = CGPoint(x: mx(g.hinge), y: g.face.midY)
+            // (Its edge, with a little room for the knobs either side.)
+            let edge = g.edge.insetBy(dx: -3 * u, dy: 0)
+            leafEdge.contents = picture(edge.size) { ctx, rr in HabitatArt.paintLeafEdge(kind, rr.insetBy(dx: 3 * u, dy: 0), seed, u, ctx) }
+            leafEdge.contentsScale = scale
+            leafEdge.frame = CGRect(x: item.flipped ? W - edge.maxX : edge.minX, y: edge.minY, width: edge.width, height: edge.height)
+        }
+        let to = leafAngle(open: open)
+        let was = leafOpen
+        leafOpen = open
+        leafFace.transform = CATransform3DMakeRotation(to, 0, 1, 0)
+        leafFace.opacity = open ? 1 : 0
+        leafEdge.opacity = open ? 0 : 1
+        // Opened or shut just now: it swings there.
+        guard let was, was != open else { return }
+        let duration: CFTimeInterval = 0.55
+        let turn = CABasicAnimation(keyPath: "transform.rotation.y")
+        turn.fromValue = leafAngle(open: was)
+        turn.toValue = to
+        turn.duration = duration
+        turn.timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0.0, 0.2, 1.0)
+        leafFace.add(turn, forKey: "swing")
+        // Edge on, its face can't be seen, only its edge; turned, the other way.
+        let face = CAKeyframeAnimation(keyPath: "opacity")
+        face.values = open ? [0, 1, 1] : [1, 1, 0]
+        face.keyTimes = open ? [0, 0.18, 1] : [0, 0.82, 1]
+        face.duration = duration
+        leafFace.add(face, forKey: "show")
+        let edgeFade = CAKeyframeAnimation(keyPath: "opacity")
+        edgeFade.values = open ? [1, 0, 0] : [0, 0, 1]
+        edgeFade.keyTimes = open ? [0, 0.3, 1] : [0, 0.7, 1]
+        edgeFade.duration = duration
+        leafEdge.add(edgeFade, forKey: "show")
+    }
+
+    /// Picked up (or moved) while it is still dropping into place: it is
+    /// where it is put at once, not left bouncing where it was.
+    func stopDropping() {
+        removeAnimation(forKey: "drop")
+        removeAnimation(forKey: "settle")
+    }
+
     /// Lets its picture go (it is far from the glass): painted again when
     /// it comes near.
     func unpaint() {
@@ -1788,13 +2235,17 @@ final class ItemLayer: CALayer {
 
     /// Paints its picture if its look has changed, and sets it moving.
     func paint(biome: Biome, scale: CGFloat, size: CGSize) {
-        let key = "\(item.kind.rawValue)-\(item.seed)-\(Int(size.width))x\(Int(size.height))-\(item.flipped)-\(biome.rawValue)-\(scale)-\(item.onGround)"
+        let key = "\(item.kind.rawValue)-\(item.seed)-\(Int(size.width))x\(Int(size.height))-\(item.flipped)-\(biome.rawValue)-\(scale)-\(item.onGround)-\(backed)"
         guard key != paintedKey, size.width > 1 else { return }
         paintedKey = key
         let pad = HabitatArt.itemPad(size)
-        contents = HabitatArt.itemImage(item, size: size, biome: biome, scale: scale)
+        // (A door's leaf is a layer of its own, to swing.)
+        contents = HabitatArt.itemImage(item, size: size, biome: biome, scale: scale, backed: backed, leaf: item.kind.leafOpen == nil)
         contentsScale = scale
-        let akey = "\(item.kind.rawValue)-\(item.seed)-\(biome.rawValue)-\(Int(bounds.width))"
+        updateLeaf(biome: biome, scale: scale, size: size)
+        // (Opened or shut, a door is the same door: nothing to start again.)
+        let family = item.kind.leafOpen == nil ? item.kind.rawValue : (item.kind == .door || item.kind == .doorClosed ? "door" : "window")
+        let akey = "\(family)-\(item.seed)-\(biome.rawValue)-\(Int(bounds.width))"
         if akey != animatedKey {
             animatedKey = akey
             animate(biome: biome, pad: pad)
@@ -1846,16 +2297,22 @@ final class ItemLayer: CALayer {
         if let glow = HabitatArt.glowColour(item.kind, seed: item.seed, biome: biome) {
             // A soft light that breathes.
             let g = CALayer()
-            let radius = max(r.width, r.height) * 0.75
+            let spot = HabitatArt.glowSpot(item.kind)
+            let radius = max(r.width, r.height) * spot.spread
             g.contents = HabitatArt.softDot(radius, HabitatArt.alpha(glow, 0.55), core: 0.2)
-            g.frame = CGRect(x: r.midX - radius, y: r.minY + r.height * 0.45 - radius, width: radius * 2, height: radius * 2)
+            // (Flipped, its light is on the other side.)
+            let fx = item.flipped ? 1 - spot.at.x : spot.at.x
+            g.frame = CGRect(x: r.minX + r.width * fx - radius, y: r.minY + r.height * spot.at.y - radius, width: radius * 2, height: radius * 2)
             g.compositingFilter = "screenBlendMode"
             addSublayer(g)
             extras.append(g)
             let breathe = CABasicAnimation(keyPath: "opacity")
             breathe.fromValue = 0.45
             breathe.toValue = 1
-            breathe.duration = CFTimeInterval(2.2 + s * 1.5)
+            // (A flame or a screen flickers; the rest breathe slowly.)
+            let flickers = [.candle, .lantern, .fireplace, .chandelier, .tv].contains(item.kind)
+            breathe.duration = flickers ? CFTimeInterval(0.18 + s * 0.2) : CFTimeInterval(2.2 + s * 1.5)
+            if flickers { breathe.fromValue = 0.75 }
             breathe.autoreverses = true
             breathe.repeatCount = .infinity
             breathe.timeOffset = CFTimeInterval(s) * breathe.duration
