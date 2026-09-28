@@ -24,6 +24,9 @@ struct PieceBuild {
     var hollows: [Hollow] = []
     /// Its sticks' ends and lengths as ports too.
     var stickPorts = true
+    /// The midribs of those of its bars that are leaves (by the bar's
+    /// place in `bars`), for their veins to be painted along.
+    var ribs: [Int: [V2]] = [:]
 }
 
 extension HabitatShape {
@@ -541,7 +544,7 @@ extension HabitatShape {
             b.stickPorts = false
             b.ports.append(HabitatPort("a0", .foot, P(0.5, 0), half: 4.5 * u))
         default:
-            break
+            if let n = nature(kind, r, s, u) { b = n }
         }
         // Leaves: to look at.
         if leaves {
@@ -558,7 +561,7 @@ extension HabitatShape {
 
     /// Where a platform rests on what holds it: under its middle and near
     /// each end. `bottom` is how high its underside is (0…1) at x (0…1).
-    private static func platformBase(_ r: CGRect, bottom: (CGFloat) -> CGFloat) -> [HabitatPort] {
+    static func platformBase(_ r: CGRect, bottom: (CGFloat) -> CGFloat) -> [HabitatPort] {
         [("baseL", CGFloat(0.22)), ("base", 0.5), ("baseR", 0.78)].map { name, x in
             HabitatPort(name, .base, V2(r.minX + r.width * x, r.minY + r.height * bottom(x)))
         }

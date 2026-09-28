@@ -11,8 +11,9 @@ import AppKit
 /// Every new piece, with its shape, surfaces and ports over its picture.
 func piecesSheet(_ out: String) {
     let shelf = env["PC_SHELF"]
-    let kinds = HabitatItemKind.allCases.filter { $0.definition.shelf != .plants && $0.definition.shelf != .furniture
-        && (shelf == nil || $0.definition.shelf.rawValue == shelf) }
+    // (PC_NEW: only what came with the natural world, from the twisted branch on.)
+    let first = env["PC_NEW"] == nil ? 0 : HabitatItemKind.allCases.firstIndex(of: .twistedBranch)!
+    let kinds = HabitatItemKind.allCases.dropFirst(first).filter { shelf == nil || $0.definition.shelf.rawValue == shelf }
     let zoom = CGFloat(Double(env["PC_ZOOM"] ?? "1") ?? 1)
     let cellW: CGFloat = 330 / zoom, cellH: CGFloat = 380 / zoom, cols = 6
     let rows = Int(ceil(Double(kinds.count) / Double(cols)))

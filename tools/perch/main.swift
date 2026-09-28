@@ -75,6 +75,10 @@ func overlay(_ h: Habitat, map: SurfaceMap, area: CGRect, _ ctx: CGContext) {
             case .perch: ctx.setFillColor(c(0.4, 1, 0.3)); ctx.fill(CGRect(x: p.x - 2.5, y: p.y - 2.5, width: 5, height: 5))
             case .tie: ctx.setStrokeColor(c(1, 1, 1)); ctx.setLineWidth(1.2); ctx.strokeEllipse(in: CGRect(x: p.x - 3, y: p.y - 3, width: 6, height: 6))
             case .entrance: ctx.setFillColor(c(1, 0.6, 0.1)); ctx.fillEllipse(in: CGRect(x: p.x - 3.5, y: p.y - 3.5, width: 7, height: 7))
+            case .refuge, .drink, .bask, .lookout, .feed:
+                ctx.setFillColor(c(0.3, 0.8, 1))
+                ctx.move(to: CGPoint(x: p.x, y: p.y + 5)); ctx.addLine(to: CGPoint(x: p.x + 5, y: p.y))
+                ctx.addLine(to: CGPoint(x: p.x, y: p.y - 5)); ctx.addLine(to: CGPoint(x: p.x - 5, y: p.y)); ctx.fillPath()
             }
         }
     }
@@ -468,6 +472,8 @@ case "pieces":
     piecesSheet(args.count > 2 ? args[2] : "perch_pieces.png")
 case "build":
     buildCheck(args.count > 2 ? args[2] : nil)
+case "nature":
+    natureCheck()
 case "chains":
     chains(HabitatItemKind(rawValue: args.count > 2 ? args[2] : "driftwood") ?? .driftwood)
 #endif

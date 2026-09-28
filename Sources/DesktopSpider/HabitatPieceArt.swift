@@ -12,6 +12,8 @@ extension HabitatArt {
     enum StickLook {
         case wood(light: CGColor, mid: CGColor, dark: CGColor)
         case root, driftwood, bamboo, straw, liana, greenVine, metal, cord, birch, pvc, craft, jute
+        /// Cork bark, and a green, soft plant stem.
+        case bark, greenStem
     }
 
     static func stickLook(_ kind: HabitatItemKind, _ s: Int) -> StickLook {
@@ -52,6 +54,8 @@ extension HabitatArt {
         case .pvc: return (c(0.98, 0.98, 0.96), c(0.86, 0.87, 0.86), c(0.62, 0.64, 0.64))
         case .craft: return (c(0.95, 0.86, 0.66), c(0.86, 0.74, 0.52), c(0.64, 0.52, 0.34))
         case .jute: return (c(0.82, 0.7, 0.5), c(0.66, 0.54, 0.36), c(0.44, 0.34, 0.22))
+        case .bark: return (c(0.62, 0.46, 0.3), c(0.42, 0.3, 0.19), c(0.24, 0.16, 0.1))
+        case .greenStem: return (c(0.5, 0.72, 0.38), c(0.34, 0.56, 0.28), c(0.2, 0.38, 0.18))
         }
     }
 
@@ -95,7 +99,7 @@ extension HabitatArt {
         ctx.setLineWidth(max(avg * 0.55, 0.8))
         ctx.strokePath()
         switch look {
-        case .wood, .root, .driftwood, .straw, .liana, .birch, .craft:
+        case .wood, .root, .driftwood, .straw, .liana, .birch, .craft, .bark:
             // Grain along it.
             ctx.setLineWidth(0.7 * u)
             ctx.setStrokeColor(alpha(shade(dark, -0.2), 0.4))
@@ -124,7 +128,7 @@ extension HabitatArt {
                 ctx.addLine(to: (sp[i] + d - n * hw[i] * 1.2).point)
                 ctx.strokePath()
             }
-        case .jute, .cord, .metal, .pvc, .greenVine:
+        case .jute, .cord, .metal, .pvc, .greenVine, .greenStem:
             break
         }
         if case .jute = look { twist(sp, normals, hw, dark, u, ctx) }
@@ -276,6 +280,7 @@ extension HabitatArt {
     /// back (held on by suction cups).
     static func paintPiece(_ kind: HabitatItemKind, _ r: CGRect, _ s: Int, _ u: CGFloat, _ biome: Biome, backed: Bool = false, leaf: Bool = true, _ ctx: CGContext) {
         if paintHome(kind, r, s, u, biome, backed: backed, leaf: leaf, ctx) { return }
+        if paintNature(kind, r, s, u, biome, ctx) { return }
         let b = HabitatShape.piece(kind, r, s, u, leaves: false)
         func P(_ x: CGFloat, _ y: CGFloat) -> V2 { V2(r.minX + r.width * x, r.minY + r.height * y) }
         switch kind {

@@ -44,7 +44,9 @@ extension HabitatArt {
     static func glowColour(_ kind: HabitatItemKind, seed: Int, biome: Biome) -> CGColor? {
         switch kind {
         case .crystal: return crystalHue(seed)
-        case .mushrooms: return biome == .cave || biome == .night ? c(0.55, 1, 0.75) : nil
+        case .crystalCluster: return crystalHue(seed)
+        case .mushrooms, .tinyMushrooms: return biome == .cave || biome == .night ? c(0.55, 1, 0.75) : nil
+        case .glowMushrooms: return c(0.4, 1, 0.82)
         case .floorLamp, .hangingLamp, .lantern, .candle, .sconce, .chandelier, .fireplace: return c(1, 0.78, 0.42)
         case .tv: return c(0.55, 0.8, 1)
         default: return nil
@@ -64,6 +66,16 @@ extension HabitatArt {
         case .fireplace: return (CGPoint(x: 0.5, y: 0.3), 0.9)
         case .tv: return (CGPoint(x: 0.44, y: 0.4), 0.9)
         default: return (CGPoint(x: 0.5, y: 0.45), 0.75)
+        }
+    }
+
+    /// Where on it there is open water, as fractions of its rectangle.
+    static func waterSurface(_ kind: HabitatItemKind) -> CGRect? {
+        switch kind {
+        case .waterDish: return CGRect(x: 0.1, y: 0.45, width: 0.8, height: 0.36)
+        case .rockPool: return CGRect(x: 0.16, y: 0.75, width: 0.68, height: 0.16)
+        case .puddle: return CGRect(x: 0.08, y: 0.05, width: 0.84, height: 0.8)
+        default: return nil
         }
     }
 

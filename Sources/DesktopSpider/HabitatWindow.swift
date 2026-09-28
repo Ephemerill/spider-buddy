@@ -337,6 +337,8 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     func debugShowTab(_ i: Int) { panel.debugShowTab(i) }
     /// Tools only: the Add tab showing one part of it.
     func debugShowShelf(_ s: HabitatObjectDefinition.Shelf?) { panel.debugShowTab(1); panel.showShelf(s) }
+    func debugSearch(_ q: String) { panel.debugShowTab(1); panel.debugSearch(q) }
+    func debugSuits(_ on: Bool) { panel.debugShowTab(1); panel.debugSuits(on) }
 
     // MARK: Editing
 
@@ -965,9 +967,18 @@ final class DecorPanel: NSView {
     /// A door or a window: open it, or shut it.
     private let openButton = HabitatButton(title: "Open", symbol: "door.left.hand.open")
     // The Add tab: a chip for each part of it, and each part's heading and tiles.
-    private var chips: [(shelf: HabitatObjectDefinition.Shelf?, chip: ChipButton)] = []
-    private var shelfViews: [(shelf: HabitatObjectDefinition.Shelf, views: [NSView])] = []
+    private let shelfMenu = NSPopUpButton()
     private var shownShelf: HabitatObjectDefinition.Shelf?
+    private struct AddGroup { let label: NSTextField?; let host: NSStackView; let kinds: [HabitatItemKind] }
+    private struct AddSection { let shelf: HabitatObjectDefinition.Shelf; let header: NSView; let groups: [AddGroup] }
+    private var addSections: [AddSection] = []
+    private var addTiles: [HabitatItemKind: TileButton] = [:]
+    private var addWidth: CGFloat = 0
+    private let searchField = NSSearchField()
+    private let suitsBox = NSButton(checkboxWithTitle: "Only what suits this scenery", target: nil, action: nil)
+    private let nothingNote = NSTextField(labelWithString: "")
+    /// The scenery the Add tab was last filtered for.
+    private var filteredBiome: Biome?
 
     override var isFlipped: Bool { true }
 
@@ -1104,60 +1115,145 @@ final class DecorPanel: NSView {
 
     private func addPage(width: CGFloat) -> NSView {
         typealias Shelf = HabitatObjectDefinition.Shelf
-        func tiles(_ kinds: [HabitatItemKind]) -> [NSView] {
-            kinds.map { k in
-                let t = TileButton(image: HabitatArt.thumbnail(k, side: 56), title: k.label, subtitle: nil, imageSize: CGSize(width: 56, height: 56), titleSize: 10.5)
-                t.onClick = { [weak self] in self?.controller?.scene.add(k) }
-                t.toolTip = k.definition.note.map { "\(k.label): \($0)" } ?? "Add \(k.label.lowercased())"
-                return t
+        addWidth = width
+        let tileW = (width - 16) / 3
+        for k in HabitatItemKind.allCases {
+            let t = TileButton(image: HabitatArt.thumbnail(k, side: 56), title: k.label, subtitle: nil, imageSize: CGSize(width: 56, height: 56), titleSize: 10.5)
+            t.onClick = { [weak self] in self?.controller?.scene.add(k) }
+            t.toolTip = k.definition.note.map { "\(k.label): \($0)" } ?? "Add \(k.label.lowercased())"
+            t.translatesAutoresizingMaskIntoConstraints = false
+            t.widthAnchor.constraint(equalToConstant: tileW).isActive = true
+            addTiles[k] = t
+        }
+        // Search, and only what belongs in this scenery.
+        searchField.placeholderString = "Search — fern, shelter, water…"
+        searchField.sendsSearchStringImmediately = true
+        searchField.target = self
+        searchField.action = #selector(searchChanged)
+        searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchField.widthAnchor.constraint(equalToConstant: width).isActive = true
+        suitsBox.target = self
+        suitsBox.action = #selector(suitsChanged)
+        suitsBox.font = .systemFont(ofSize: 11.5)
+        suitsBox.toolTip = "Hide what wouldn't be found in the scenery you have chosen"
+        // Which part to show: a menu, the natural world first, then what is made by hand.
+        shelfMenu.removeAllItems()
+        shelfMenu.addItem(withTitle: "Everything")
+        shelfMenu.menu?.addItem(.separator())
+        for shelf in Shelf.allCases where shelf.natural { shelfMenu.addItem(withTitle: shelf.label); shelfMenu.lastItem?.representedObject = shelf.rawValue }
+        shelfMenu.menu?.addItem(.separator())
+        for shelf in Shelf.allCases where !shelf.natural { shelfMenu.addItem(withTitle: shelf.label); shelfMenu.lastItem?.representedObject = shelf.rawValue }
+        shelfMenu.target = self
+        shelfMenu.action = #selector(shelfPicked)
+        shelfMenu.controlSize = .small
+        shelfMenu.font = .systemFont(ofSize: 11.5)
+        let filters = NSStackView(views: [shelfMenu, suitsBox])
+        filters.spacing = 10
+        nothingNote.stringValue = "Nothing matches."
+        nothingNote.font = .systemFont(ofSize: 12)
+        nothingNote.textColor = NSColor(white: 1, alpha: 0.5)
+        nothingNote.isHidden = true
+        var views: [NSView] = [note("Click something to add it, then drag it into place. Pieces click together where they meet (hold ⌥ to place freely).", width: width),
+                               searchField, filters, nothingNote]
+        addSections = Shelf.allCases.map { shelf in
+            let header = sectionLabel(shelf.heading)
+            views.append(header)
+            let kinds = HabitatItemKind.allCases.filter { $0.definition.shelf == shelf }
+            // Its parts, in order; what is in none of them first.
+            let groups: [HabitatObjectDefinition.Group?] = [nil] + HabitatObjectDefinition.Group.allCases.map { Optional($0) }
+            var parts: [AddGroup] = []
+            for g in groups {
+                let ks = kinds.filter { $0.definition.group == g }
+                guard !ks.isEmpty else { continue }
+                let label = g.map { subLabel($0.label) }
+                let host = NSStackView()
+                host.orientation = .vertical
+                host.alignment = .leading
+                if let label { views.append(label) }
+                views.append(host)
+                parts.append(AddGroup(label: label, host: host, kinds: ks))
             }
+            return AddSection(shelf: shelf, header: header, groups: parts)
         }
-        func heading(_ shelf: Shelf) -> String {
-            switch shelf {
-            case .structures: return "Structures — branches, roots, driftwood"
-            case .supports: return "Supports — fixed to the back wall"
-            case .vines: return "Vines"
-            case .bark: return "Bark & logs"
-            case .platforms: return "Platforms"
-            case .built: return "Built — timber, board and brick"
-            case .building: return "Building — floors, walls, doors, a roof"
-            case .walls: return "Backing — the back walls of rooms"
-            case .home: return "Home — furniture"
-            case .decor: return "Decor — little things, and for the walls"
-            case .furniture: return "Stones & more"
-            case .plants: return "Plants & details"
-            }
-        }
-        // Chips to show one part at a time.
-        let all: [Shelf?] = [nil] + Shelf.allCases.map { Optional($0) }
-        chips = all.map { shelf in
-            let c = ChipButton(title: shelf?.label ?? "All")
-            c.target = self
-            c.action = #selector(chipTapped(_:))
-            c.isOn = shelf == nil
-            return (shelf, c)
-        }
-        let chipGrid = grid(chips.map(\.chip), columns: 3, width: width, spacing: 6)
-        var views: [NSView] = [note("Click something to put it in the tank, then drag it where you like. Pieces click together where they meet — hold ⌥ while dragging to place something freely.", width: width), chipGrid]
-        shelfViews = Shelf.allCases.map { shelf in
-            let v = [sectionLabel(heading(shelf)), grid(tiles(HabitatItemKind.allCases.filter { $0.definition.shelf == shelf }), columns: 3, width: width)]
-            views += v
-            return (shelf, v)
-        }
-        return page(views)
+        let p = page(views)
+        refilter()
+        return p
     }
 
-    @objc private func chipTapped(_ sender: ChipButton) {
-        guard let pick = chips.first(where: { $0.chip === sender }) else { return }
-        showShelf(pick.shelf)
+    private func subLabel(_ s: String) -> NSTextField {
+        let l = NSTextField(labelWithString: s)
+        l.font = .systemFont(ofSize: 11, weight: .medium)
+        l.textColor = NSColor(white: 1, alpha: 0.7)
+        return l
+    }
+
+    /// Tiles in rows of three (their widths are their own).
+    private func tileRows(_ tiles: [NSView]) -> NSView {
+        let rows = NSStackView()
+        rows.orientation = .vertical
+        rows.alignment = .leading
+        rows.spacing = 8
+        var i = 0
+        while i < tiles.count {
+            let row = NSStackView(views: Array(tiles[i..<min(i + 3, tiles.count)]))
+            row.spacing = 8
+            rows.addArrangedSubview(row)
+            i += 3
+        }
+        return rows
+    }
+
+    @objc private func searchChanged() {
+        if !searchField.stringValue.isEmpty, shownShelf != nil { shownShelf = nil; selectInMenu(nil) }
+        refilter()
+    }
+
+    @objc private func suitsChanged() { refilter() }
+
+    private func selectInMenu(_ shelf: HabitatObjectDefinition.Shelf?) {
+        if let i = shelfMenu.itemArray.firstIndex(where: { ($0.representedObject as? String) == shelf?.rawValue && !$0.isSeparatorItem }) { shelfMenu.selectItem(at: i) }
+    }
+
+    func debugSearch(_ q: String) { searchField.stringValue = q; searchChanged() }
+    func debugSuits(_ on: Bool) { suitsBox.state = on ? .on : .off; refilter() }
+
+    @objc private func shelfPicked() {
+        showShelf((shelfMenu.selectedItem?.representedObject as? String).flatMap(HabitatObjectDefinition.Shelf.init(rawValue:)))
     }
 
     /// The Add tab showing only one part of it (nil: all of them).
     func showShelf(_ shelf: HabitatObjectDefinition.Shelf?) {
         shownShelf = shelf
-        for (s, c) in chips { c.isOn = s == shelf }
-        for (s, vs) in shelfViews { for v in vs { v.isHidden = shelf != nil && s != shelf } }
+        selectInMenu(shelf)
+        refilter()
         scroll.documentView?.scroll(.zero)
+    }
+
+    /// The Add tab's tiles laid out again for what is being looked for:
+    /// the part chosen, the search, and (if asked) this scenery.
+    private func refilter() {
+        let biome = controller?.scene.habitat.biome ?? .forest
+        filteredBiome = biome
+        suitsBox.title = "Suits \(biome.label)"
+        suitsBox.toolTip = "Only what would be found in the \(biome.label) scenery"
+        let query = searchField.stringValue
+        let suits = suitsBox.state == .on
+        var shown = false
+        for sec in addSections {
+            var any = false
+            for g in sec.groups {
+                let ks = g.kinds.filter { (query.isEmpty || $0.matches(query)) && (!suits || $0.suits(biome)) }
+                for v in g.host.arrangedSubviews { g.host.removeArrangedSubview(v); v.removeFromSuperview() }
+                let show = !ks.isEmpty && (shownShelf == nil || shownShelf == sec.shelf)
+                if show { g.host.addArrangedSubview(tileRows(ks.compactMap { addTiles[$0] })) }
+                g.host.isHidden = !show
+                g.label?.isHidden = !show
+                any = any || show
+            }
+            sec.header.isHidden = !any
+            shown = shown || any
+        }
+        nothingNote.isHidden = shown
     }
 
     private func layoutPage(width: CGFloat) -> NSView {
@@ -1466,6 +1562,7 @@ final class DecorPanel: NSView {
         refreshWeather()
         let h = c.scene.habitat
         for (b, t) in zip(Biome.allCases, biomeTiles) { t.selected = b == h.biome }
+        if filteredBiome != h.biome, !addSections.isEmpty { refilter() }
         undoButton.isEnabled = c.canUndo
         redoButton.isEnabled = c.canRedo
         let item = c.scene.selected.flatMap { id in h.items.first { $0.id == id } }
@@ -1473,7 +1570,12 @@ final class DecorPanel: NSView {
         hint.isHidden = item != nil
         guard let it = item else { return }
         selName.stringValue = it.kind.label
+        let fn = it.kind.functions
         selKind.stringValue = it.kind.atBack ? (it.kind.climbable ? "Support — at the back; it can climb this" : "Support — at the back")
+            : fn.contains(.retreat) ? "A shelter — it can get right inside"
+            : fn.contains(.cover) && it.kind.climbable ? "Cover — a roof to get under"
+            : !fn.isEmpty ? "For " + HabitatFunction.allCases.filter(fn.contains).map(\.label).joined(separator: " and ")
+            : it.kind.loose != nil ? "Loose — light enough to blow about"
             : (it.kind.climbable ? "A perch — it can climb this" : "Scenery")
         let (text, symbol, floating) = supportText(h, it)
         supportLabel.stringValue = text
@@ -1610,48 +1712,6 @@ final class InspectorButton: NSButton {
     }
 }
 
-/// A small pill to pick one part of a list (the Add tab's parts).
-final class ChipButton: NSButton {
-    var isOn = false { didSet { needsDisplay = true; update() } }
-    private var hovering = false { didSet { needsDisplay = true } }
-    private let label: String
-
-    init(title: String) {
-        label = title
-        super.init(frame: .zero)
-        isBordered = false
-        translatesAutoresizingMaskIntoConstraints = false
-        heightAnchor.constraint(equalToConstant: 24).isActive = true
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil))
-        setAccessibilityLabel(title)
-        update()
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    private func update() {
-        let col = NSColor(white: 1, alpha: isOn ? 1 : 0.8)
-        let p = NSMutableParagraphStyle()
-        p.alignment = .center
-        attributedTitle = NSAttributedString(string: label, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: isOn ? .semibold : .medium),
-                                                                          .foregroundColor: col, .paragraphStyle: p])
-    }
-
-    override func mouseEntered(with event: NSEvent) { hovering = true }
-    override func mouseExited(with event: NSEvent) { hovering = false }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let r = bounds.insetBy(dx: 0.5, dy: 0.5)
-        let path = NSBezierPath(roundedRect: r, xRadius: r.height / 2, yRadius: r.height / 2)
-        if isOn {
-            NSColor.controlAccentColor.withAlphaComponent(0.9).setFill()
-        } else {
-            NSColor(white: 1, alpha: isHighlighted ? 0.18 : (hovering ? 0.12 : 0.06)).setFill()
-        }
-        path.fill()
-        super.draw(dirtyRect)
-    }
-}
-
 /// A small round icon-only button (undo, redo).
 final class HabitatIconButton: NSButton {
     init(symbol: String, tip: String) {
@@ -1688,12 +1748,13 @@ final class TileButton: NSView {
     init(image: NSImage, title: String, subtitle: String?, imageSize: CGSize, titleSize: CGFloat = 11.5) {
         self.imageSize = imageSize
         super.init(frame: .zero)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
         imageView.image = image
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.wantsLayer = true
         imageView.layer?.cornerRadius = subtitle == nil && imageSize.width < 80 && titleSize >= 11.5 ? 0 : 6
         imageView.layer?.masksToBounds = true
-        imageView.translatesAutoresizingMaskIntoConstraints = false
         label.stringValue = title
         label.font = .systemFont(ofSize: titleSize, weight: .medium)
         label.textColor = NSColor(white: 1, alpha: 0.9)
@@ -1705,27 +1766,37 @@ final class TileButton: NSView {
         sub.alignment = .center
         sub.isHidden = subtitle == nil
         sub.maximumNumberOfLines = 2
-        let stack = NSStackView(views: [imageView, label, sub])
-        stack.orientation = .vertical
-        stack.spacing = 4
-        stack.alignment = .centerX
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
-            imageView.widthAnchor.constraint(equalToConstant: imageSize.width),
-            imageView.heightAnchor.constraint(equalToConstant: imageSize.height),
-            label.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor),
-            sub.widthAnchor.constraint(equalTo: stack.widthAnchor),
-        ])
+        // (Laid out by hand, not with a stack and constraints: the Add page
+        // has a couple of hundred of these, and all that layout bookkeeping
+        // came to tens of megabytes.)
+        for v in [imageView, label, sub] { addSubview(v) }
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil))
     }
     required init?(coder: NSCoder) { fatalError() }
 
     func setImage(_ img: NSImage) { imageView.image = img }
+
+    private var hasSub: Bool { !sub.isHidden }
+    private var labelHeight: CGFloat { ceil((label.font?.boundingRectForFont.height ?? 14) * 0.95) }
+    private static let subHeight: CGFloat = 26
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: 6 + imageSize.height + 4 + labelHeight + (hasSub ? 4 + TileButton.subHeight : 0) + 7)
+    }
+
+    override func layout() {
+        super.layout()
+        // (From the top down: it is not flipped.)
+        var y = bounds.height - 6 - imageSize.height
+        imageView.frame = CGRect(x: ((bounds.width - imageSize.width) / 2).rounded(), y: y, width: imageSize.width, height: imageSize.height)
+        y -= 4 + labelHeight
+        let w = bounds.width - 12
+        label.frame = CGRect(x: 6, y: y, width: w, height: labelHeight)
+        if hasSub {
+            y -= 4 + TileButton.subHeight
+            sub.frame = CGRect(x: 6, y: y, width: w, height: TileButton.subHeight)
+        }
+    }
 
     override func mouseEntered(with event: NSEvent) { hovering = true }
     override func mouseExited(with event: NSEvent) { hovering = false }
@@ -1738,19 +1809,16 @@ final class TileButton: NSView {
         frame.contains(point) ? self : nil
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        let r = bounds.insetBy(dx: 1, dy: 1)
-        let path = NSBezierPath(roundedRect: r, xRadius: 10, yRadius: 10)
-        NSColor(white: 1, alpha: pressed ? 0.16 : (hovering ? 0.11 : 0.05)).setFill()
-        path.fill()
-        if selected {
-            NSColor.controlAccentColor.setStroke()
-            path.lineWidth = 2
-            path.stroke()
-        } else {
-            NSColor(white: 1, alpha: 0.07).setStroke()
-            path.lineWidth = 1
-            path.stroke()
-        }
+    // (Its rounded background is the layer's own — not drawn into a bitmap
+    // of its own, which with a couple of hundred tiles on the Add page came
+    // to tens of megabytes.)
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        guard let l = layer else { return }
+        l.cornerRadius = 10
+        l.backgroundColor = NSColor(white: 1, alpha: pressed ? 0.16 : (hovering ? 0.11 : 0.05)).cgColor
+        l.borderWidth = selected ? 2 : 1
+        l.borderColor = selected ? NSColor.controlAccentColor.cgColor : NSColor(white: 1, alpha: 0.07).cgColor
     }
 }

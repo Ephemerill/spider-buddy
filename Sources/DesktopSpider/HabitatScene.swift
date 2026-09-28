@@ -1719,7 +1719,27 @@ final class HabitatSceneView: NSView {
         } else if kind.definition.placement == .wedged, view.minY > HabitatLayout.ground + 40 || kind.definition.mount == .wall {
             y = max(0, view.midY - HabitatLayout.ground - size.height / 2)
         }
-        let it = h.add(kind, at: CGPoint(x: bestX, y: y))
+        var it = h.add(kind, at: CGPoint(x: bestX, y: y))
+        // What grows on wood or stone (a bracket fungus, lichen, an air
+        // plant) goes on some of that in view, if there is any: out of its
+        // side, or on its top — not on the bare soil.
+        let niche = kind.definition.traits.niche
+        if !niche.on.isEmpty, !niche.on.contains(.soil),
+           let host = h.items.filter({ o in o.id != it.id && o.kind.climbable && !o.kind.hangs && niche.on.contains(o.kind.definition.traits.material)
+                                        && view.intersects(o.rect) && o.w > it.w * (niche.side ? 0.4 : 1.2) })
+                             .min(by: { abs($0.x - view.midX) < abs($1.x - view.midX) }) {
+            if niche.side, let edge = Habitat.sideAt(host, y: host.rect.minY + host.h * 0.5, right: host.x < view.midX) {
+                let right = host.x < view.midX
+                it.x = edge + (right ? it.w * 0.5 - 4 : -it.w * 0.5 + 4)
+                it.y = host.rect.minY + host.h * 0.5 - HabitatLayout.ground - it.h * 0.5
+                it.flipped = !right
+            } else if let top = Habitat.restingTop(host, from: host.x - it.w * 0.25, to: host.x + it.w * 0.25) {
+                it.x = host.x
+                it.y = top - HabitatLayout.ground
+            }
+            Habitat.clamp(&it, in: h.size)
+            h.items[h.items.count - 1] = it
+        }
         let was = habitat
         setHabitat(h)
         onEdit?(was, h)
@@ -1961,6 +1981,13 @@ final class HabitatSceneView: NSView {
                     ways.move(to: CGPoint(x: p.x + a.normal.x * 9, y: p.y + 5))
                     ways.addLine(to: CGPoint(x: p.x + a.normal.x * 9, y: p.y - 5))
                     ways.addLine(to: p.point)
+                    ways.closeSubpath()
+                case .refuge, .drink, .bask, .lookout, .feed:
+                    // (What it is for: a diamond.)
+                    ways.move(to: CGPoint(x: p.x, y: p.y + 5))
+                    ways.addLine(to: CGPoint(x: p.x + 5, y: p.y))
+                    ways.addLine(to: CGPoint(x: p.x, y: p.y - 5))
+                    ways.addLine(to: CGPoint(x: p.x - 5, y: p.y))
                     ways.closeSubpath()
                 }
             }
@@ -2318,7 +2345,7 @@ final class ItemLayer: CALayer {
             breathe.timeOffset = CFTimeInterval(s) * breathe.duration
             g.add(breathe, forKey: "breathe")
             // Crystals catch the light now and then: a glint.
-            if item.kind == .crystal {
+            if item.kind == .crystal || item.kind == .crystalCluster {
                 let glint = CALayer()
                 glint.contents = HabitatArt.softDot(6, HabitatArt.c(1, 1, 1, 1), core: 0.15)
                 glint.frame = CGRect(x: r.midX - 6 + (item.flipped ? 4 : -4), y: r.minY + r.height * 0.75 - 6, width: 12, height: 12)
@@ -2334,9 +2361,9 @@ final class ItemLayer: CALayer {
                 glint.add(twinkle, forKey: "twinkle")
             }
         }
-        if item.kind == .waterDish {
+        if let f = HabitatArt.waterSurface(item.kind) {
             // Rings spreading on the water.
-            let water = CGRect(x: r.minX + r.width * 0.1, y: r.minY + r.height * 0.45, width: r.width * 0.8, height: r.height * 0.36)
+            let water = CGRect(x: r.minX + r.width * f.minX, y: r.minY + r.height * f.minY, width: r.width * f.width, height: r.height * f.height)
             for k in 0..<2 {
                 let ring = CAShapeLayer()
                 ring.path = CGPath(ellipseIn: CGRect(x: -water.width / 2, y: -water.height / 2, width: water.width, height: water.height), transform: nil)

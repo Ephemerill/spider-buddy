@@ -51,34 +51,62 @@ enum HabitatItemKind: String, Codable, CaseIterable {
     case painting, poster, mirror, curtains, dartboard, wallShelf, sconce, chandelier
     // Natural bracing: a stake with a fork at the top to hold a branch.
     case stake
+    // A natural world (HabitatNature.swift). Structures: branches, roots,
+    // driftwood, bark, bamboo, hanging things, platforms, rock.
+    case twistedBranch, threeFork, exposedRoot, rootTangle, stump, driftwoodRoot, driftwoodBranch, corkTunnel, leaningBark
+    case bambooTipi, hangingBranch, lianaLoop, hangingRoots, stickRaft, mossPlatform, rockSpire, stoneArch
+    // Shelters: covered places it can really get into.
+    case barkCave, rockCrevice, logDen, curledLeafHide, leafCanopy, rootHollow, mossyHide, hangingLeafShelter, overhang
+    // Plants.
+    case smallFern, largeFern, broadLeaf, trailingPlant, climbingVine, grassClump, floweringPlant, tinyFlowers, aloe, jadePlant
+    case lithops, airPlant, miniPalm, deadPlant, fiddleheads, creepingCover, hangingFoliage, mossCushion
+    // The ground.
+    case gravel, sandDrift, pineNeedles
+    // Natural details.
+    case mushroom, mushroomCluster, tinyMushrooms, glowMushrooms, shelfFungus, lichen, acorn, seedPod, pineCone, seaShell
+    case snailShell, fallenLeaf, curledLeaf, deadLeaf, leafHeap, pebblePile, smoothStones, crystalCluster, petals, puddle, shedBark, twigPile
+    // Things for something: water, food, warmth, a view, silk, climbing, damp, cover.
+    case rockPool, feedingPlatform, baskingStone, lookout, silkFrame, climbingBark, moistMoss, shelterCanopy
+    // Loose: small and light enough to be blown or nudged about (see `LooseBody`).
+    case looseLeaf, petal, tinyTwig, feather, seed, smallShell, tinyPebble
 
-    var definition: HabitatObjectDefinition {
+    /// Everything about it but its picture. (Made once for each kind.)
+    var definition: HabitatObjectDefinition { HabitatItemKind.definitions[self]! }
+
+    private static let definitions: [HabitatItemKind: HabitatObjectDefinition] = Dictionary(uniqueKeysWithValues: allCases.map { k in
+        var d = k.made
+        d.group = k.group
+        d.traits = k.traits
+        return (k, d)
+    })
+
+    private var made: HabitatObjectDefinition {
         typealias D = HabitatObjectDefinition
         let pieces = HabitatShape.pieceShape(self), joints = HabitatShape.piecePorts(self)
         switch self {
-        case .log: return D("Log", .perch, 180, 50, .rests, shelf: .bark, shape: HabitatShape.log)
+        case .log: return D("Log", .perch, 180, 50, .rests, shelf: .structures, shape: HabitatShape.log)
         case .branch: return D("Branch", .perch, 230, 130, .wedged, shelf: .structures, shape: HabitatShape.branch, ports: joints)
         case .driftwood: return D("Driftwood", .perch, 200, 56, .rests, shelf: .structures, shape: HabitatShape.driftwood)
-        case .corkBark: return D("Cork Bark", .perch, 74, 210, .ground, shelf: .bark, shadow: 0.8, shape: HabitatShape.corkBark)
-        case .hide: return D("Hollow Log", .perch, 130, 66, .ground, shelf: .bark, shape: HabitatShape.hollowLog)
-        case .rock: return D("Rock", .perch, 76, 44, .ground, shelf: .furniture, shape: HabitatShape.rock)
-        case .boulder: return D("Boulder", .perch, 140, 92, .ground, shelf: .furniture, shape: HabitatShape.rock)
+        case .corkBark: return D("Cork Bark", .perch, 74, 210, .ground, shelf: .structures, shadow: 0.8, shape: HabitatShape.corkBark)
+        case .hide: return D("Hollow Log", .perch, 130, 66, .ground, shelf: .structures, shape: HabitatShape.hollowLog)
+        case .rock: return D("Rock", .perch, 76, 44, .ground, shelf: .structures, shape: HabitatShape.rock)
+        case .boulder: return D("Boulder", .perch, 140, 92, .ground, shelf: .structures, shape: HabitatShape.rock)
         case .bamboo: return D("Bamboo", .perch, 60, 250, .ground, shelf: .structures, sway: 0.012, windLean: 0.035, shadow: 0.8, shape: HabitatShape.bamboo)
-        case .cactus: return D("Cactus", .perch, 70, 150, .ground, shelf: .furniture, shadow: 0.8, shape: HabitatShape.cactus)
-        case .plant: return D("Leafy Plant", .perch, 120, 150, .rests, shelf: .furniture, sway: 0.018, windLean: 0.05, shadow: 0.5, shape: HabitatShape.plant)
-        case .vine: return D("Hanging Vine", .perch, 40, 230, .hangs, shelf: .vines, stretch: .vertical, sway: 0.05, windLean: 0.14,
+        case .cactus: return D("Cactus", .perch, 70, 150, .ground, shelf: .plants, shadow: 0.8, shape: HabitatShape.cactus)
+        case .plant: return D("Leafy Plant", .perch, 120, 150, .rests, shelf: .plants, sway: 0.018, windLean: 0.05, shadow: 0.5, shape: HabitatShape.plant)
+        case .vine: return D("Hanging Vine", .perch, 40, 230, .hangs, shelf: .structures, stretch: .vertical, sway: 0.05, windLean: 0.14,
                              snow: .bare, shape: HabitatShape.vine, ports: joints)
-        case .waterDish: return D("Water Dish", .perch, 96, 26, .ground, shelf: .furniture, snow: .bare, shape: HabitatShape.waterDish)
+        case .waterDish: return D("Water Dish", .perch, 96, 26, .ground, shelf: .functional, snow: .bare, shape: HabitatShape.waterDish)
         case .fern: return D("Fern", .scenery, 130, 90, .rests, sway: 0.035, windLean: 0.1, shadow: 0.6, shape: HabitatShape.fern)
         case .grass: return D("Tall Grass", .scenery, 90, 84, .rests, sway: 0.035, windLean: 0.16, shadow: 0.6, shape: HabitatShape.grass)
         case .flower: return D("Flowers", .scenery, 80, 80, .rests, sway: 0.035, windLean: 0.13, shadow: 0.6, shape: HabitatShape.flowers)
         case .succulent: return D("Succulent", .scenery, 64, 46, .rests, shape: HabitatShape.succulent)
-        case .mushrooms: return D("Mushrooms", .scenery, 66, 46, .rests, shape: HabitatShape.mushrooms)
-        case .moss: return D("Moss", .scenery, 120, 24, .rests, shape: HabitatShape.groundCover)
-        case .leafPile: return D("Leaf Litter", .scenery, 130, 26, .rests, shape: HabitatShape.groundCover)
-        case .pebbles: return D("Pebbles", .scenery, 90, 20, .rests, shape: HabitatShape.groundCover)
-        case .twigs: return D("Twigs", .scenery, 96, 30, .rests, shape: HabitatShape.groundCover)
-        case .crystal: return D("Crystals", .scenery, 64, 70, .rests, shape: HabitatShape.crystals)
+        case .mushrooms: return D("Mushrooms", .scenery, 66, 46, .rests, shelf: .details, shape: HabitatShape.mushrooms)
+        case .moss: return D("Moss", .scenery, 120, 24, .rests, shelf: .ground, shape: HabitatShape.groundCover)
+        case .leafPile: return D("Leaf Litter", .scenery, 130, 26, .rests, shelf: .ground, shape: HabitatShape.groundCover)
+        case .pebbles: return D("Pebbles", .scenery, 90, 20, .rests, shelf: .ground, shape: HabitatShape.groundCover)
+        case .twigs: return D("Twigs", .scenery, 96, 30, .rests, shelf: .ground, shape: HabitatShape.groundCover)
+        case .crystal: return D("Crystals", .scenery, 64, 70, .rests, shelf: .details, shape: HabitatShape.crystals)
 
         case .thinBranch: return D("Thin Branch", .perch, 200, 56, .wedged, shelf: .structures, snow: .tops(0.6), shape: pieces, ports: joints)
         case .mediumBranch: return D("Medium Branch", .perch, 240, 80, .wedged, shelf: .structures, snow: .tops(0.75), shape: pieces, ports: joints)
@@ -101,13 +129,13 @@ enum HabitatItemKind: String, Codable, CaseIterable {
         case .driedStem: return D("Dried Stem", .perch, 60, 230, .rests, shelf: .structures, stretch: .vertical, sway: 0.01, windLean: 0.05,
                                   shadow: 0.3, snow: .bare, shape: pieces, ports: joints)
 
-        case .corkSlab: return D("Cork Slab", .perch, 190, 46, .wedged, shelf: .platforms, snow: .tops(1), shape: pieces, ports: joints)
-        case .corkTube: return D("Cork Tube", .perch, 90, 200, .rests, shelf: .bark, stretch: .vertical, shadow: 0.9, snow: .tops(0.8), shape: pieces, ports: joints)
-        case .barkLedge: return D("Bark Ledge", .perch, 170, 30, .wedged, shelf: .platforms, snow: .tops(1), shape: pieces, ports: joints)
-        case .slateLedge: return D("Slate Shelf", .perch, 160, 24, .wedged, shelf: .platforms, snow: .tops(1), shape: pieces, ports: joints)
+        case .corkSlab: return D("Cork Slab", .perch, 190, 46, .wedged, shelf: .structures, snow: .tops(1), shape: pieces, ports: joints)
+        case .corkTube: return D("Cork Tube", .perch, 90, 200, .rests, shelf: .structures, stretch: .vertical, shadow: 0.9, snow: .tops(0.8), shape: pieces, ports: joints)
+        case .barkLedge: return D("Bark Ledge", .perch, 170, 30, .wedged, shelf: .structures, snow: .tops(1), shape: pieces, ports: joints)
+        case .slateLedge: return D("Slate Shelf", .perch, 160, 24, .wedged, shelf: .structures, snow: .tops(1), shape: pieces, ports: joints)
 
-        case .thickVine: return D("Thick Vine", .perch, 260, 90, .wedged, shelf: .vines, stretch: .horizontal, snow: .tops(0.5), shape: pieces, ports: joints)
-        case .thinVine: return D("Thin Vine", .perch, 36, 170, .hangs, shelf: .vines, stretch: .vertical, sway: 0.05, windLean: 0.16,
+        case .thickVine: return D("Thick Vine", .perch, 260, 90, .wedged, shelf: .structures, stretch: .horizontal, snow: .tops(0.5), shape: pieces, ports: joints)
+        case .thinVine: return D("Thin Vine", .perch, 36, 170, .hangs, shelf: .structures, stretch: .vertical, sway: 0.05, windLean: 0.16,
                                  snow: .bare, shape: pieces, ports: joints)
 
         case .brace: return D("Back Brace", .perch, 30, 170, .wedged, shelf: .supports, layer: .rear, mount: .wall, stretch: .vertical,
@@ -259,6 +287,150 @@ enum HabitatItemKind: String, Codable, CaseIterable {
                                    snow: .bare, note: "Candles on a hoop, hung from a ceiling, a beam or the lid", shape: pieces, ports: joints)
         case .stake: return D("Forked Stake", .perch, 30, 300, .rests, shelf: .supports, layer: .rear, stretch: .vertical, shadow: 0.6, snow: .tops(0.5),
                                note: "A straight stick with a fork at the top, stood behind a branch to hold it up", shape: pieces, ports: joints)
+
+        // Structures.
+        case .twistedBranch: return D("Twisted Branch", .perch, 260, 110, .wedged, shelf: .structures, snow: .tops(0.6),
+                                      note: "Two limbs grown round and round each other", shape: pieces, ports: joints)
+        case .threeFork: return D("Three-Pronged Fork", .perch, 190, 230, .rests, shelf: .structures, shadow: 0.4, snow: .tops(0.6),
+                                  note: "An upright fork: lay a branch in its crotch", shape: pieces, ports: joints)
+        case .exposedRoot: return D("Exposed Root", .perch, 240, 86, .ground, shelf: .structures, shadow: 0.9, snow: .tops(0.7),
+                                    note: "A root arching up out of the soil, with room to creep under it", shape: pieces, ports: joints)
+        case .rootTangle: return D("Root Tangle", .perch, 300, 120, .ground, shelf: .structures, shadow: 0.9, snow: .tops(0.7),
+                                   note: "Roots looping in and out of the soil", shape: pieces, ports: joints)
+        case .stump: return D("Tree Stump", .perch, 150, 120, .ground, shelf: .structures, snow: .tops(1),
+                              note: "A sawn stump on its roots: things sit on its top", shape: pieces, ports: joints)
+        case .driftwoodRoot: return D("Driftwood Root", .perch, 240, 170, .rests, shelf: .structures, shadow: 0.7, snow: .tops(0.6),
+                                      note: "A bleached root ball, arms every way", shape: pieces, ports: joints)
+        case .driftwoodBranch: return D("Driftwood Branch", .perch, 280, 140, .rests, shelf: .structures, shadow: 0.6, snow: .tops(0.7),
+                                        note: "A bleached branch leaning up off the ground", shape: pieces, ports: joints)
+        case .corkTunnel: return D("Cork Tunnel", .perch, 200, 86, .rests, shelf: .structures, snow: .tops(1),
+                                   note: "A tube of cork on its side, open at both ends: it can go right through", shape: pieces, ports: joints)
+        case .leaningBark: return D("Leaning Bark", .perch, 160, 190, .rests, shelf: .structures, shadow: 0.7, snow: .tops(0.8),
+                                    note: "A sheet of bark stood at a lean, with a dry nook under it", shape: pieces, ports: joints)
+        case .bambooTipi: return D("Bamboo Tripod", .perch, 160, 270, .rests, shelf: .structures, stretch: .vertical, shadow: 0.9, snow: .tops(0.5),
+                                   note: "Three canes tied at the top: hang things from the tie, or lay a branch across", shape: pieces, ports: joints)
+        case .hangingBranch: return D("Hanging Perch", .perch, 220, 200, .hangs, shelf: .structures, stretch: .vertical, sway: 0.02, windLean: 0.06,
+                                      snow: .tops(0.5), note: "A branch slung on twine from the lid, a beam or a branch", shape: pieces, ports: joints)
+        case .lianaLoop: return D("Liana Loop", .perch, 260, 230, .wedged, shelf: .structures, snow: .tops(0.5),
+                                  note: "A woody vine with a loop in it: fasten each end to something", shape: pieces, ports: joints)
+        case .hangingRoots: return D("Hanging Roots", .perch, 130, 260, .hangs, shelf: .structures, stretch: .vertical, sway: 0.03, windLean: 0.1,
+                                     snow: .bare, note: "Air roots dangling from above, to climb down", shape: pieces, ports: joints)
+        case .stickRaft: return D("Stick Raft", .perch, 180, 26, .wedged, shelf: .structures, stretch: .horizontal, snow: .tops(1),
+                                  note: "A platform of sticks lashed side by side", shape: pieces, ports: joints)
+        case .mossPlatform: return D("Mossy Ledge", .perch, 170, 40, .wedged, shelf: .structures, snow: .tops(1),
+                                     note: "A shelf of bark with a cushion of moss on it", shape: pieces, ports: joints)
+        case .rockSpire: return D("Rock Spire", .perch, 100, 280, .ground, shelf: .structures, stretch: .vertical, shadow: 1.1, snow: .tops(1),
+                                  note: "Rock stacked up in ledges", shape: pieces, ports: joints)
+        case .stoneArch: return D("Stone Arch", .perch, 280, 170, .ground, shelf: .structures, shadow: 0.9, snow: .tops(1),
+                                  note: "An arch of rock to walk under, and over", shape: pieces, ports: joints)
+
+        // Shelters.
+        case .barkCave: return D("Bark Cave", .perch, 170, 110, .ground, shelf: .shelter, snow: .tops(1),
+                                 note: "A curl of cork bark over a hollow, open on one side", shape: pieces, ports: joints)
+        case .rockCrevice: return D("Rock Crevice", .perch, 220, 150, .ground, shelf: .shelter, snow: .tops(1),
+                                    note: "A deep crack in the side of a rock, roofed over", shape: pieces, ports: joints)
+        case .logDen: return D("Hollow Log Den", .perch, 220, 100, .ground, shelf: .shelter, snow: .tops(1),
+                               note: "A log gone hollow and split along its side, open at one end", shape: pieces, ports: joints)
+        case .curledLeafHide: return D("Curled-Leaf Hide", .perch, 175, 130, .rests, shelf: .shelter, snow: .tops(0.7),
+                                       note: "A great dry leaf rolled into a scroll: in at the open side", shape: pieces, ports: joints)
+        case .leafCanopy: return D("Leaf Canopy", .perch, 200, 150, .rests, shelf: .shelter, sway: 0.01, windLean: 0.04, shadow: 0.9, snow: .tops(0.6),
+                                   note: "Huge leaves arching over the ground: shade, and out of the rain", shape: pieces, ports: joints)
+        case .rootHollow: return D("Root Hollow", .perch, 200, 130, .ground, shelf: .shelter, snow: .tops(1),
+                                   note: "A hollow under the roots of a stump", shape: pieces, ports: joints)
+        case .mossyHide: return D("Mossy Hide", .perch, 160, 110, .ground, shelf: .shelter, snow: .tops(1),
+                                  note: "A dome of mossy stone with a doorway in its side", shape: pieces, ports: joints)
+        case .hangingLeafShelter: return D("Hanging Leaf Pouch", .perch, 110, 200, .hangs, shelf: .shelter, stretch: .vertical, sway: 0.02, windLean: 0.06,
+                                           snow: .bare, note: "A leaf folded into a pouch, hanging on a thread", shape: pieces, ports: joints)
+        case .overhang: return D("Rock Overhang", .perch, 240, 170, .ground, shelf: .shelter, snow: .tops(1),
+                                 note: "Rock jutting out over a sheltered nook", shape: pieces, ports: joints)
+
+        // Plants.
+        case .smallFern: return D("Small Fern", .scenery, 70, 55, .rests, shelf: .plants, sway: 0.03, windLean: 0.1, shadow: 0.6, shape: pieces, ports: joints)
+        case .largeFern: return D("Large Fern", .perch, 220, 170, .rests, shelf: .plants, sway: 0.012, windLean: 0.05, shadow: 0.6, snow: .tops(0.4),
+                                  note: "Arching fronds it can walk out along", shape: pieces, ports: joints)
+        case .broadLeaf: return D("Broad-Leaf Plant", .perch, 150, 140, .rests, shelf: .plants, sway: 0.012, windLean: 0.05, shadow: 0.6, snow: .tops(0.5),
+                                  shape: pieces, ports: joints)
+        case .trailingPlant: return D("Trailing Plant", .perch, 130, 170, .wedged, shelf: .plants, sway: 0.008, windLean: 0.05, shadow: 0, snow: .tops(0.4),
+                                      note: "A pot of trailing stems: set it on a ledge or a branch and they hang down", shape: pieces, ports: joints)
+        case .climbingVine: return D("Climbing Vine", .perch, 70, 260, .rests, shelf: .plants, stretch: .vertical, sway: 0.006, windLean: 0.03, shadow: 0.4,
+                                     snow: .tops(0.3), note: "Grows up from the ground: stand it against something to climb", shape: pieces, ports: joints)
+        case .grassClump: return D("Grass Clump", .perch, 110, 120, .rests, shelf: .plants, sway: 0.025, windLean: 0.12, shadow: 0.6, snow: .tops(0.3),
+                                   note: "Stiff blades it can climb", shape: pieces, ports: joints)
+        case .floweringPlant: return D("Flowering Plant", .perch, 90, 170, .rests, shelf: .plants, sway: 0.018, windLean: 0.07, shadow: 0.5, snow: .tops(0.4),
+                                       note: "A tall flower with a head to sit on", shape: pieces, ports: joints)
+        case .tinyFlowers: return D("Tiny Flowers", .scenery, 80, 22, .rests, shelf: .plants, sway: 0.02, windLean: 0.08, shadow: 0.5, shape: pieces, ports: joints)
+        case .aloe: return D("Aloe", .perch, 90, 90, .rests, shelf: .plants, shadow: 0.7, snow: .tops(0.5), shape: pieces, ports: joints)
+        case .jadePlant: return D("Jade Plant", .perch, 110, 120, .rests, shelf: .plants, shadow: 0.6, snow: .tops(0.6), note: "A little succulent tree", shape: pieces, ports: joints)
+        case .lithops: return D("Living Stones", .scenery, 60, 24, .rests, shelf: .plants, note: "Succulents that look like pebbles", shape: pieces, ports: joints)
+        case .airPlant: return D("Air Plant", .scenery, 50, 50, .wedged, shelf: .plants, note: "Needs no soil: set it on a branch or on bark", shape: pieces, ports: joints)
+        case .miniPalm: return D("Parlour Palm", .perch, 120, 210, .rests, shelf: .plants, sway: 0.012, windLean: 0.05, shadow: 0.5, snow: .tops(0.4),
+                                 shape: pieces, ports: joints)
+        case .deadPlant: return D("Dry Plant", .perch, 100, 140, .rests, shelf: .plants, sway: 0.006, windLean: 0.04, shadow: 0.4, snow: .tops(0.4),
+                                  note: "Dead stems gone papery", shape: pieces, ports: joints)
+        case .fiddleheads: return D("Fiddleheads", .perch, 90, 110, .rests, shelf: .plants, sway: 0.012, windLean: 0.05, shadow: 0.5, snow: .tops(0.3),
+                                    note: "Young fern fronds, still curled up", shape: pieces, ports: joints)
+        case .creepingCover: return D("Ground Cover", .scenery, 140, 18, .rests, shelf: .plants, note: "A low carpet of little leaves", shape: pieces, ports: joints)
+        case .hangingFoliage: return D("Hanging Foliage", .perch, 140, 240, .hangs, shelf: .plants, stretch: .vertical, sway: 0.03, windLean: 0.12,
+                                       snow: .bare, note: "Leafy strands trailing down from above", shape: pieces, ports: joints)
+        case .mossCushion: return D("Moss Cushion", .perch, 110, 34, .rests, shelf: .plants, snow: .tops(1), note: "A soft dome of moss", shape: pieces, ports: joints)
+
+        // The ground.
+        case .gravel: return D("Gravel", .scenery, 130, 10, .ground, shelf: .ground, shape: pieces, ports: joints)
+        case .sandDrift: return D("Sand Drift", .perch, 180, 26, .ground, shelf: .ground, snow: .tops(1), note: "A low hump of rippled sand", shape: pieces, ports: joints)
+        case .pineNeedles: return D("Pine Needles", .scenery, 140, 12, .rests, shelf: .ground, shape: pieces, ports: joints)
+
+        // Natural details.
+        case .mushroom: return D("Toadstool", .perch, 60, 80, .rests, shelf: .details, snow: .tops(0.6),
+                                 note: "It can sit on the cap, or shelter under it", shape: pieces, ports: joints)
+        case .mushroomCluster: return D("Mushroom Cluster", .perch, 110, 70, .rests, shelf: .details, snow: .tops(0.5), shape: pieces, ports: joints)
+        case .tinyMushrooms: return D("Tiny Mushrooms", .scenery, 60, 22, .rests, shelf: .details, shape: pieces, ports: joints)
+        case .glowMushrooms: return D("Glowing Mushrooms", .scenery, 70, 46, .rests, shelf: .details, note: "They glow in the dark", shape: pieces, ports: joints)
+        case .shelfFungus: return D("Shelf Fungus", .perch, 60, 30, .wedged, shelf: .details, snow: .tops(1),
+                                    note: "Brackets growing out of wood: little shelves to sit on", shape: pieces, ports: joints)
+        case .lichen: return D("Lichen", .scenery, 50, 40, .wedged, shelf: .details, snow: .bare, note: "Grows on bark and stone", shape: pieces, ports: joints)
+        case .acorn: return D("Acorn", .scenery, 26, 30, .rests, shelf: .details, shape: pieces, ports: joints)
+        case .seedPod: return D("Seed Pod", .scenery, 56, 30, .rests, shelf: .details, note: "Split open, its seeds on silk", shape: pieces, ports: joints)
+        case .pineCone: return D("Pine Cone", .perch, 46, 58, .rests, shelf: .details, snow: .tops(0.4), shape: pieces, ports: joints)
+        case .seaShell: return D("Sea Shell", .perch, 74, 48, .rests, shelf: .details, snow: .tops(0.5), shape: pieces, ports: joints)
+        case .snailShell: return D("Snail Shell", .perch, 48, 40, .rests, shelf: .details, snow: .tops(0.5), note: "Empty now", shape: pieces, ports: joints)
+        case .fallenLeaf: return D("Fallen Leaf", .scenery, 76, 24, .rests, shelf: .details, shape: pieces, ports: joints)
+        case .curledLeaf: return D("Curled Leaf", .scenery, 52, 30, .rests, shelf: .details, shape: pieces, ports: joints)
+        case .deadLeaf: return D("Dead Leaf", .scenery, 56, 28, .rests, shelf: .details, shape: pieces, ports: joints)
+        case .leafHeap: return D("Leaf Heap", .perch, 150, 50, .rests, shelf: .details, snow: .tops(1), note: "A drift of fallen leaves", shape: pieces, ports: joints)
+        case .pebblePile: return D("Pebble Pile", .perch, 90, 38, .rests, shelf: .details, snow: .tops(1), shape: pieces, ports: joints)
+        case .smoothStones: return D("Stacked Stones", .perch, 70, 74, .rests, shelf: .details, snow: .tops(1), note: "River stones, balanced", shape: pieces, ports: joints)
+        case .crystalCluster: return D("Crystal Cluster", .perch, 120, 110, .rests, shelf: .details, snow: .tops(0.4), note: "Big crystals to climb", shape: pieces, ports: joints)
+        case .petals: return D("Petals", .scenery, 70, 14, .rests, shelf: .details, shape: pieces, ports: joints)
+        case .puddle: return D("Puddle", .scenery, 140, 14, .ground, shelf: .details, snow: .bare, shape: pieces, ports: joints)
+        case .shedBark: return D("Shed Bark", .perch, 90, 34, .rests, shelf: .details, snow: .tops(0.6), note: "A strip of bark, curled as it dried", shape: pieces, ports: joints)
+        case .twigPile: return D("Twig Pile", .perch, 120, 60, .rests, shelf: .details, snow: .tops(0.5), shape: pieces, ports: joints)
+
+        // Functional.
+        case .rockPool: return D("Rock Pool", .perch, 160, 42, .ground, shelf: .functional, snow: .bare,
+                                 note: "A stone basin of water, to drink from", shape: pieces, ports: joints)
+        case .feedingPlatform: return D("Feeding Ledge", .perch, 100, 120, .rests, shelf: .functional, shadow: 0.4, snow: .tops(1),
+                                        note: "A tray on a stand, where food can be put", shape: pieces, ports: joints)
+        case .baskingStone: return D("Basking Stone", .perch, 170, 56, .ground, shelf: .functional, snow: .tops(1),
+                                     note: "A broad flat stone that keeps the warmth", shape: pieces, ports: joints)
+        case .lookout: return D("Lookout", .perch, 80, 340, .rests, shelf: .functional, stretch: .vertical, shadow: 0.5, snow: .tops(0.8),
+                                note: "A tall snag with a platform on top: the highest seat in the tank", shape: pieces, ports: joints)
+        case .silkFrame: return D("Silk Frame", .perch, 170, 200, .rests, shelf: .functional, stretch: .both, shadow: 0.7, snow: .tops(0.5),
+                                  note: "A frame of lashed twigs with room across it for silk", shape: pieces, ports: joints)
+        case .climbingBark: return D("Climbing Bark", .perch, 110, 300, .rests, shelf: .functional, mount: .wall, stretch: .vertical, snow: .tops(0.8),
+                                     note: "Rough bark fixed up the back wall, full of footholds", shape: pieces, ports: joints)
+        case .moistMoss: return D("Damp Moss Bed", .perch, 150, 40, .rests, shelf: .functional, snow: .tops(1),
+                                  note: "Deep wet moss in a saucer: a humid corner", shape: pieces, ports: joints)
+        case .shelterCanopy: return D("Shelter Canopy", .perch, 170, 130, .rests, shelf: .functional, shadow: 0.9, snow: .tops(1),
+                                      note: "A roof of bark on two forked sticks", shape: pieces, ports: joints)
+
+        // Loose.
+        case .looseLeaf: return D("Leaf", .scenery, 30, 14, .rests, shelf: .loose, shape: pieces, ports: joints)
+        case .petal: return D("Petal", .scenery, 18, 10, .rests, shelf: .loose, shape: pieces, ports: joints)
+        case .tinyTwig: return D("Tiny Twig", .scenery, 42, 10, .rests, shelf: .loose, shape: pieces, ports: joints)
+        case .feather: return D("Feather", .scenery, 58, 16, .rests, shelf: .loose, shape: pieces, ports: joints)
+        case .seed: return D("Winged Seed", .scenery, 32, 14, .rests, shelf: .loose, shape: pieces, ports: joints)
+        case .smallShell: return D("Small Shell", .scenery, 24, 18, .rests, shelf: .loose, shape: pieces, ports: joints)
+        case .tinyPebble: return D("Tiny Pebble", .scenery, 14, 10, .rests, shelf: .loose, shape: pieces, ports: joints)
         }
     }
 
@@ -317,22 +489,77 @@ struct HabitatObjectDefinition {
 
     /// Which part of the Add page it is in.
     enum Shelf: String, CaseIterable {
-        case structures, supports, vines, bark, platforms, built, building, walls, home, decor, furniture, plants
+        case structures, supports, shelter, plants, ground, details, functional, loose, built, building, walls, home, decor
 
         var label: String {
             switch self {
             case .structures: return "Structures"
+            case .supports: return "Supports"
+            case .shelter: return "Shelter"
+            case .plants: return "Plants"
+            case .ground: return "Ground"
+            case .details: return "Details"
+            case .functional: return "Functional"
+            case .loose: return "Loose"
             case .built: return "Built"
             case .building: return "Building"
             case .walls: return "Backing"
             case .home: return "Home"
             case .decor: return "Decor"
-            case .supports: return "Supports"
-            case .vines: return "Vines"
-            case .bark: return "Bark"
-            case .platforms: return "Platforms"
-            case .furniture: return "Stones & More"
+            }
+        }
+
+        /// Its heading on the Add page.
+        var heading: String {
+            switch self {
+            case .structures: return "Structures — branches, roots, bark, rock"
+            case .supports: return "Supports — fixed to the back wall"
+            case .shelter: return "Shelter — covered places to get into"
             case .plants: return "Plants"
+            case .ground: return "Ground"
+            case .details: return "Natural details"
+            case .functional: return "Functional — water, food, warmth, a view"
+            case .loose: return "Loose objects — light enough to blow about"
+            case .built: return "Built — timber, board and brick"
+            case .building: return "Building — floors, walls, doors, a roof"
+            case .walls: return "Backing — the back walls of rooms"
+            case .home: return "Home — furniture"
+            case .decor: return "Decor — little things, and for the walls"
+            }
+        }
+
+        /// The natural world, as against what is made by hand.
+        var natural: Bool { ![.supports, .built, .building, .walls, .home, .decor].contains(self) }
+    }
+
+    /// A part of a shelf, under a heading of its own.
+    enum Group: String, CaseIterable {
+        case branches, roots, driftwood, bark, bamboo, vines, platforms, rocks
+        case ferns, leafy, flowering, succulents, climbers, grasses
+        case fungi, seeds, leaves, stones, shells, water
+
+        var label: String {
+            switch self {
+            case .branches: return "Branches"
+            case .roots: return "Roots & stumps"
+            case .driftwood: return "Driftwood"
+            case .bark: return "Bark & logs"
+            case .bamboo: return "Bamboo & stems"
+            case .vines: return "Vines & hanging"
+            case .platforms: return "Platforms & ledges"
+            case .rocks: return "Rock"
+            case .ferns: return "Ferns"
+            case .leafy: return "Leafy"
+            case .flowering: return "Flowers"
+            case .succulents: return "Succulents & dry"
+            case .climbers: return "Climbing & trailing"
+            case .grasses: return "Grass, moss & cover"
+            case .fungi: return "Fungi"
+            case .seeds: return "Seeds & cones"
+            case .leaves: return "Leaves & bark"
+            case .stones: return "Stones & crystals"
+            case .shells: return "Shells"
+            case .water: return "Water"
             }
         }
     }
@@ -369,6 +596,10 @@ struct HabitatObjectDefinition {
     var label: String
     var category: Category
     var shelf: Shelf
+    /// Its heading within its shelf, if the shelf has more than one.
+    var group: Group?
+    /// What it is, where it belongs and what it is for (see `HabitatTraits`).
+    var traits = HabitatTraits()
     var layer: Layer
     var mount: Mount
     var stretch: Stretch?
@@ -397,7 +628,7 @@ struct HabitatObjectDefinition {
          ports: @escaping (CGRect, Int, CGFloat) -> [HabitatPort] = { _, _, _ in [] }) {
         self.label = label
         self.category = category
-        self.shelf = shelf ?? (category == .perch ? .furniture : .plants)
+        self.shelf = shelf ?? (category == .perch ? .structures : .plants)
         self.layer = layer
         self.mount = mount
         self.stretch = stretch
@@ -410,6 +641,302 @@ struct HabitatObjectDefinition {
         self.note = note
         self.shape = shape
         self.ports = ports
+    }
+}
+
+// MARK: - What it is, where it belongs, what it is for
+//
+// Nothing in the spider reads these yet: they are what later behaviour
+// (drinking, basking, hiding, curiosity about things, lightweight physics
+// for what blows about) will go by — and, now, what the layouts and the
+// Add page go by: what suits which scenery, and where on what it grows.
+
+/// What a thing is made of.
+enum HabitatMaterial: String, CaseIterable {
+    case wood, bark, root, driftwood, bamboo, stem, leaf, moss, fungus, stone, crystal, sand, soil, water, shell, seed, feather
+    /// By hand: timber, metal, cloth, pottery.
+    case made
+}
+
+/// What a thing is for, to the spider.
+enum HabitatFunction: String, CaseIterable {
+    /// Water to drink.
+    case water
+    /// Where food is put.
+    case feeding
+    /// A warm place to sit in the light.
+    case basking
+    /// Somewhere high to watch from.
+    case lookout
+    /// Room and fixings for silk.
+    case silk
+    /// A face to climb.
+    case climbing
+    /// Damp: for moulting, and a drink of dew.
+    case humid
+    /// A roof: out of the rain and the sun.
+    case cover
+    /// Somewhere enclosed to withdraw into.
+    case retreat
+
+    var label: String {
+        switch self {
+        case .water: return "water"
+        case .feeding: return "feeding"
+        case .basking: return "basking"
+        case .lookout: return "lookout"
+        case .silk: return "silk"
+        case .climbing: return "climbing"
+        case .humid: return "humid"
+        case .cover: return "cover"
+        case .retreat: return "hide"
+        }
+    }
+}
+
+/// Where a thing is found: what it grows on or lies on.
+struct HabitatNiche {
+    /// The materials of what is under it (soil: the tank's own floor).
+    /// Empty: anywhere.
+    var on: Set<HabitatMaterial> = []
+    /// Out of the side of it (a bracket fungus on a trunk), not on its top.
+    var side = false
+    /// By water.
+    var damp = false
+}
+
+/// How something small and loose would move, for a light physics to come:
+/// blown by the wind, nudged by the spider, tumbling off a ledge.
+struct LooseBody {
+    enum Motion {
+        /// Rocks and drifts down like a leaf.
+        case flutter
+        /// Spins as it falls, like a winged seed.
+        case spin
+        /// Rolls: round things.
+        case roll
+        /// Tumbles end over end.
+        case tumble
+        /// Slides and stops.
+        case slide
+    }
+    var motion: Motion
+    /// Grams, more or less: how hard it is to shift.
+    var mass: CGFloat
+    /// How much the air holds it back (0: a stone … 1: a feather).
+    var drag: CGFloat
+    /// How readily a breeze moves it (0…1).
+    var windCatch: CGFloat
+    var bounce: CGFloat
+    var friction: CGFloat
+    /// Light enough for the spider to push along.
+    var pushable: Bool { mass < 3 }
+}
+
+/// A kind of thing's nature (its definition's `traits`).
+struct HabitatTraits {
+    var material: HabitatMaterial = .made
+    /// The sceneries it belongs in (empty: any).
+    var suits: Set<Biome> = []
+    var niche = HabitatNiche()
+    var functions: Set<HabitatFunction> = []
+    /// Small and light enough to move about (nil: it stays put).
+    var loose: LooseBody?
+    /// Other words for it, for searching.
+    var aka = ""
+}
+
+extension HabitatItemKind {
+    /// Its heading within its shelf.
+    fileprivate var group: HabitatObjectDefinition.Group? {
+        switch self {
+        case .branch, .thinBranch, .mediumBranch, .thickBranch, .shortBranch, .longBranch, .forkedBranch, .yBranch, .crookedBranch, .twig,
+             .twistedBranch, .threeFork:
+            return .branches
+        case .root, .climbingRoot, .exposedRoot, .rootTangle, .stump: return .roots
+        case .driftwood, .driftwoodArch, .driftwoodSnag, .driftwoodRoot, .driftwoodBranch: return .driftwood
+        case .log, .hide, .corkBark, .corkTube, .corkTunnel, .leaningBark: return .bark
+        case .bamboo, .bambooPole, .bambooSegment, .bambooTipi, .driedStem: return .bamboo
+        case .vine, .thickVine, .thinVine, .hangingBranch, .lianaLoop, .hangingRoots: return .vines
+        case .corkSlab, .barkLedge, .slateLedge, .stickRaft, .mossPlatform: return .platforms
+        case .rock, .boulder, .rockSpire, .stoneArch: return .rocks
+        case .fern, .smallFern, .largeFern, .fiddleheads: return .ferns
+        case .plant, .broadLeaf, .miniPalm: return .leafy
+        case .flower, .floweringPlant, .tinyFlowers: return .flowering
+        case .cactus, .succulent, .aloe, .jadePlant, .lithops, .airPlant, .deadPlant: return .succulents
+        case .climbingVine, .trailingPlant, .hangingFoliage: return .climbers
+        case .grass, .grassClump, .mossCushion, .creepingCover: return .grasses
+        case .mushrooms, .mushroom, .mushroomCluster, .tinyMushrooms, .glowMushrooms, .shelfFungus, .lichen: return .fungi
+        case .acorn, .seedPod, .pineCone: return .seeds
+        case .fallenLeaf, .curledLeaf, .deadLeaf, .leafHeap, .petals, .shedBark, .twigPile: return .leaves
+        case .crystal, .crystalCluster, .pebblePile, .smoothStones: return .stones
+        case .seaShell, .snailShell: return .shells
+        case .puddle: return .water
+        default: return nil
+        }
+    }
+
+    /// Its nature: see `HabitatTraits`.
+    fileprivate var traits: HabitatTraits {
+        typealias M = HabitatMaterial
+        let branchy: Set<Biome> = [.forest, .jungle, .meadow, .night, .tundra]
+        let woods: Set<Biome> = [.forest, .jungle, .night, .tundra]
+        let green: Set<Biome> = [.forest, .jungle, .meadow, .night]
+        let shady: Set<Biome> = [.forest, .jungle, .night]
+        let dry: Set<Biome> = [.desert, .beach]
+        let stony: Set<Biome> = [.desert, .cave, .beach, .tundra]
+        func T(_ m: M, _ suits: Set<Biome> = [], on: Set<M> = [], side: Bool = false, damp: Bool = false,
+               _ fn: Set<HabitatFunction> = [], loose: LooseBody? = nil, aka: String = "") -> HabitatTraits {
+            HabitatTraits(material: m, suits: suits, niche: HabitatNiche(on: on, side: side, damp: damp), functions: fn, loose: loose, aka: aka)
+        }
+        func L(_ m: LooseBody.Motion, _ mass: CGFloat, _ drag: CGFloat, _ wind: CGFloat, _ bounce: CGFloat, _ friction: CGFloat) -> LooseBody {
+            LooseBody(motion: m, mass: mass, drag: drag, windCatch: wind, bounce: bounce, friction: friction)
+        }
+        switch self {
+        // What was there before.
+        case .log: return T(.wood, woods.union([.meadow]))
+        case .hide: return T(.wood, woods.union([.meadow]), aka: "hollow")
+        case .branch, .thinBranch, .mediumBranch, .thickBranch, .shortBranch, .longBranch, .forkedBranch, .yBranch, .crookedBranch, .twig:
+            return T(.wood, branchy)
+        case .driftwood, .driftwoodArch, .driftwoodSnag: return T(.driftwood, dry)
+        case .corkBark, .corkTube, .corkSlab, .barkLedge: return T(.bark, woods.union([.meadow]))
+        case .rock, .boulder: return T(.stone, aka: "stone")
+        case .slateLedge: return T(.stone)
+        case .bamboo, .bambooPole, .bambooSegment: return T(.bamboo, [.jungle])
+        case .cactus: return T(.stem, [.desert])
+        case .plant: return T(.leaf, green)
+        case .vine, .thickVine, .thinVine: return T(.stem, [.jungle, .forest, .night, .cave])
+        case .waterDish: return T(.stone, [], [.water], aka: "drink")
+        case .fern: return T(.leaf, shady)
+        case .grass: return T(.leaf, [.forest, .jungle, .meadow, .night, .beach, .desert, .tundra])
+        case .flower: return T(.leaf, [.meadow, .forest, .jungle])
+        case .succulent: return T(.stem, dry)
+        case .mushrooms: return T(.fungus, [.forest, .jungle, .night, .cave], on: [.wood, .bark, .soil, .moss], damp: true, aka: "toadstool")
+        case .moss: return T(.moss, [.forest, .jungle, .night, .tundra, .cave], damp: true)
+        case .leafPile: return T(.leaf, [.forest, .night, .meadow, .tundra], aka: "litter")
+        case .pebbles: return T(.stone)
+        case .twigs: return T(.wood, branchy.union([.beach]))
+        case .crystal: return T(.crystal, [.cave, .night], aka: "gem")
+        case .root, .climbingRoot: return T(.root, woods)
+        case .driedStem: return T(.stem, [.desert, .meadow, .tundra, .beach])
+        case .stake: return T(.wood)
+
+        // Structures.
+        case .twistedBranch, .threeFork: return T(.wood, branchy)
+        case .exposedRoot, .rootTangle: return T(.root, woods.union([.meadow]), [.cover])
+        case .stump: return T(.wood, woods.union([.meadow]), aka: "tree")
+        case .driftwoodRoot, .driftwoodBranch: return T(.driftwood, dry)
+        case .corkTunnel: return T(.bark, woods.union([.meadow]), [.cover, .retreat], aka: "tube hide")
+        case .leaningBark: return T(.bark, woods.union([.meadow]), [.cover])
+        case .bambooTipi: return T(.bamboo, [.jungle], aka: "cane")
+        case .hangingBranch: return T(.wood, branchy, aka: "swing")
+        case .lianaLoop: return T(.stem, [.jungle, .forest, .night], aka: "vine")
+        case .hangingRoots: return T(.root, [.jungle, .forest, .night, .cave])
+        case .stickRaft: return T(.wood, [], aka: "platform")
+        case .mossPlatform: return T(.bark, green.union([.tundra]), aka: "platform shelf")
+        case .rockSpire: return T(.stone, stony, aka: "pillar")
+        case .stoneArch: return T(.stone, stony.union([.meadow]), [.cover])
+
+        // Shelters.
+        case .barkCave: return T(.bark, woods.union([.meadow]), [.cover, .retreat], aka: "hide den")
+        case .rockCrevice: return T(.stone, stony.union([.forest, .meadow]), [.cover, .retreat], aka: "hide crack")
+        case .logDen: return T(.wood, woods.union([.meadow]), [.cover, .retreat], aka: "hide hollow log")
+        case .curledLeafHide: return T(.leaf, green, [.cover, .retreat], aka: "hide")
+        case .leafCanopy: return T(.leaf, shady, [.cover], aka: "shade umbrella")
+        case .rootHollow: return T(.root, woods, [.cover, .retreat], aka: "hide den")
+        case .mossyHide: return T(.stone, [.forest, .jungle, .night, .cave, .tundra], [.cover, .retreat], aka: "hide dome")
+        case .hangingLeafShelter: return T(.leaf, shady, [.cover, .retreat], aka: "hide")
+        case .overhang: return T(.stone, stony.union([.forest]), [.cover], aka: "ledge cave")
+
+        // Plants.
+        case .smallFern, .largeFern, .fiddleheads: return T(.leaf, shady.union([.cave]))
+        case .broadLeaf: return T(.leaf, shady)
+        case .trailingPlant: return T(.leaf, green, aka: "pothos ivy")
+        case .climbingVine: return T(.stem, green, aka: "ivy")
+        case .grassClump: return T(.leaf, [.meadow, .forest, .beach, .tundra, .night])
+        case .floweringPlant: return T(.leaf, [.meadow, .forest, .jungle], aka: "daisy sunflower")
+        case .tinyFlowers: return T(.leaf, [.meadow, .forest, .night])
+        case .aloe, .jadePlant: return T(.leaf, dry, aka: "succulent")
+        case .lithops: return T(.leaf, [.desert], aka: "succulent")
+        case .airPlant: return T(.leaf, [.jungle, .desert, .forest], on: [.wood, .bark, .driftwood, .stone], aka: "tillandsia")
+        case .miniPalm: return T(.leaf, [.jungle, .beach])
+        case .deadPlant: return T(.stem, [.desert, .tundra, .beach, .meadow], aka: "dead")
+        case .creepingCover: return T(.leaf, [.meadow, .forest, .night], aka: "clover")
+        case .hangingFoliage: return T(.leaf, [.jungle, .forest, .night, .cave], aka: "ivy")
+        case .mossCushion: return T(.moss, [.forest, .jungle, .night, .tundra, .cave], damp: true)
+
+        // The ground.
+        case .gravel: return T(.stone, stony, aka: "grit")
+        case .sandDrift: return T(.sand, dry, aka: "dune")
+        case .pineNeedles: return T(.leaf, [.forest, .tundra, .night])
+
+        // Natural details.
+        case .mushroom: return T(.fungus, [.forest, .jungle, .night, .meadow], on: [.wood, .bark, .soil, .moss], damp: true, [.cover], aka: "toadstool")
+        case .mushroomCluster: return T(.fungus, shady, on: [.wood, .bark, .root, .soil])
+        case .tinyMushrooms: return T(.fungus, shady.union([.cave]), on: [.wood, .bark, .moss, .soil])
+        case .glowMushrooms: return T(.fungus, [.cave, .night, .jungle], on: [.wood, .soil, .moss, .stone], aka: "light")
+        case .shelfFungus: return T(.fungus, shady, on: [.wood, .bark, .root], side: true, aka: "bracket")
+        case .lichen: return T(.fungus, [.forest, .tundra, .night, .meadow, .cave], on: [.wood, .bark, .stone, .root], side: true)
+        case .acorn: return T(.seed, [.forest, .meadow, .night], loose: L(.roll, 3.5, 0.08, 0.05, 0.3, 0.35), aka: "nut")
+        case .seedPod: return T(.seed, [.meadow, .forest, .desert], aka: "milkweed")
+        case .pineCone: return T(.seed, [.forest, .tundra, .night], loose: L(.roll, 8, 0.12, 0.04, 0.25, 0.5))
+        case .seaShell: return T(.shell, [.beach], aka: "conch")
+        case .snailShell: return T(.shell, green)
+        case .fallenLeaf: return T(.leaf, green, loose: L(.flutter, 0.6, 0.8, 0.7, 0.05, 0.6))
+        case .curledLeaf: return T(.leaf, [.forest, .meadow, .night, .tundra], loose: L(.tumble, 0.3, 0.6, 0.8, 0.1, 0.5))
+        case .deadLeaf: return T(.leaf, [.forest, .tundra, .night, .meadow, .desert], loose: L(.flutter, 0.3, 0.8, 0.85, 0.05, 0.55))
+        case .leafHeap: return T(.leaf, [.forest, .night, .meadow, .tundra], aka: "litter")
+        case .pebblePile: return T(.stone, aka: "cairn")
+        case .smoothStones: return T(.stone, [.beach, .forest, .cave, .tundra, .meadow], aka: "cairn river")
+        case .crystalCluster: return T(.crystal, [.cave, .night], aka: "gem geode")
+        case .petals: return T(.leaf, [.meadow, .forest, .jungle])
+        case .puddle: return T(.water, [.forest, .jungle, .meadow, .night, .tundra, .cave], damp: true, [.water], aka: "drink")
+        case .shedBark: return T(.bark, woods)
+        case .twigPile: return T(.wood, branchy.union([.beach]))
+
+        // Functional.
+        case .rockPool: return T(.stone, [], damp: true, [.water], aka: "drink")
+        case .feedingPlatform: return T(.bark, [], [.feeding], aka: "food")
+        case .baskingStone: return T(.stone, [], [.basking], aka: "warm sun")
+        case .lookout: return T(.driftwood, [], [.lookout], aka: "high")
+        case .silkFrame: return T(.wood, [], [.silk], aka: "web")
+        case .climbingBark: return T(.bark, [], [.climbing], aka: "wall")
+        case .moistMoss: return T(.moss, [], damp: true, [.humid], aka: "wet damp")
+        case .shelterCanopy: return T(.bark, [], [.cover], aka: "roof")
+
+        // Loose.
+        case .looseLeaf: return T(.leaf, green.union([.tundra]), loose: L(.flutter, 0.2, 0.85, 0.8, 0.05, 0.6))
+        case .petal: return T(.leaf, [.meadow, .forest, .jungle], loose: L(.flutter, 0.05, 0.9, 0.95, 0.02, 0.5))
+        case .tinyTwig: return T(.wood, branchy, loose: L(.tumble, 0.4, 0.3, 0.3, 0.2, 0.7), aka: "stick")
+        case .feather: return T(.feather, [], loose: L(.flutter, 0.1, 0.95, 1, 0.02, 0.4))
+        case .seed: return T(.seed, [.forest, .meadow, .night], loose: L(.spin, 0.15, 0.8, 0.7, 0.1, 0.5), aka: "samara maple")
+        case .smallShell: return T(.shell, [.beach], loose: L(.slide, 1.2, 0.1, 0.1, 0.35, 0.5))
+        case .tinyPebble: return T(.stone, [], loose: L(.roll, 2, 0.05, 0.02, 0.3, 0.3), aka: "stone")
+
+        default: return T(.made)
+        }
+    }
+}
+
+extension HabitatItemKind {
+    /// What it is for, if anything.
+    var functions: Set<HabitatFunction> { definition.traits.functions }
+
+    /// How it would move, if it is loose.
+    var loose: LooseBody? { definition.traits.loose }
+
+    /// Whether it belongs in this scenery.
+    func suits(_ b: Biome) -> Bool { definition.traits.suits.isEmpty || definition.traits.suits.contains(b) }
+
+    /// Whether a search matches it: its name, what it is, what it is for.
+    func matches(_ query: String) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return true }
+        let d = definition
+        let words = [d.label, d.note ?? "", d.shelf.label, d.group?.label ?? "", d.traits.material == .made ? "" : d.traits.material.rawValue,
+                     d.traits.functions.map(\.label).joined(separator: " "), d.traits.aka, d.traits.loose == nil ? "" : "loose"]
+            .joined(separator: " ").lowercased()
+        return q.split(separator: " ").allSatisfy { words.contains($0) }
     }
 }
 

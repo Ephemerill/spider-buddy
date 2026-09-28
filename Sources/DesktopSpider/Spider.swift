@@ -3351,12 +3351,19 @@ final class Spider {
     /// (The lid of the tank is over everything: only right under it counts.)
     private func roofOver(_ p: V2) -> Bool {
         for l in map.loops {
-            for s in (l.edge.isEmpty ? l.segs : l.edge) where s.facing == .down {
+            let segs = l.edge.isEmpty ? l.segs : l.edge
+            // In the tank, the floor's own surface runs up over whatever
+            // solid stands on it — a stone, a bark cave, an overhang — so
+            // only its top is the lid; the undersides of the rest are roofs
+            // like any other.
+            let lid = l.kind == .screenBorder ? (l.owners.isEmpty ? -CGFloat.greatestFiniteMagnitude : segs.reduce(-CGFloat.greatestFiniteMagnitude) { max($0, $1.a.y, $1.b.y) } - 2) : 0
+            for s in segs where s.facing == .down {
+                // (Anywhere along it: a curved roof is made of short pieces.)
                 let lo = min(s.a.x, s.b.x), hi = max(s.a.x, s.b.x)
-                guard p.x > lo + 3, p.x < hi - 3 else { continue }
+                guard p.x >= lo, p.x < hi else { continue }
                 let y = abs(s.b.x - s.a.x) > 0.01 ? s.a.y + (s.b.y - s.a.y) * (p.x - s.a.x) / (s.b.x - s.a.x) : max(s.a.y, s.b.y)
                 guard y > p.y + 4, y - p.y < 320 * config.scale else { continue }
-                if l.kind == .screenBorder, y - p.y > 60 * config.scale { continue }
+                if l.kind == .screenBorder, min(s.a.y, s.b.y) >= lid, y - p.y > 60 * config.scale { continue }
                 return true
             }
         }

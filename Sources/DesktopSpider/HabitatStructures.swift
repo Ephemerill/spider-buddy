@@ -547,7 +547,7 @@ extension Habitat {
                     // (Leaning on something that hangs — a vine, a rope — or
                     // on a string of lights holds nothing up.)
                     out[o.id] != nil && o.id != it.id && !o.kind.isBacking && !it.kind.isBacking && !o.kind.hangs
-                        && o.kind != .thickVine && o.kind != .stringLights && o.rect.intersects(it.rect.insetBy(dx: -2, dy: -2)) && Habitat.overlaps(g(it), g(o))
+                        && !o.kind.tiedByItsEnds && o.rect.intersects(it.rect.insetBy(dx: -2, dy: -2)) && Habitat.overlaps(g(it), g(o))
                 }) {
                     out[it.id] = .wedged(in: p.id)
                 } else {
@@ -612,13 +612,16 @@ extension Habitat {
         guard let it = item(id: id), support(of: id) == .floating, !it.kind.hangs else { return [] }
         let ports = it.ports
         let shelf = it.kind.definition.shelf
-        let natural = [.structures, .vines, .bark, .platforms].contains(shelf)
+        let natural = shelf.natural
         // Where it needs holding: which of its ports, how far along, and where.
         var holds: [(port: HabitatPort, f: CGFloat)] = []
         if let l = ports.first(where: { $0.name == "baseL" }), let r = ports.first(where: { $0.name == "baseR" }), l.kind == .base {
             holds = [(l, 0), (r, 0)]
-        } else if it.kind == .thickVine || it.kind == .stringLights {
+        } else if it.kind.tiedByItsEnds {
             holds = ports.filter { $0.kind == .end }.map { ($0, 0) }
+        } else if let base = ports.first(where: { $0.kind == .base }) {
+            // (A pot: held up under its middle.)
+            holds = [(base, 0)]
         } else if let foot = ports.first(where: { $0.kind == .foot }) {
             holds = [(foot, 0)]
         } else if let line = ports.filter({ $0.kind == .along }).max(by: { Stick.cumulative($0.pts).last ?? 0 < Stick.cumulative($1.pts).last ?? 0 }) {
@@ -738,6 +741,12 @@ extension HabitatPort {
 
 /// (The global `clamp`, where `Habitat.clamp` hides it.)
 @inline(__always) func clampValue<T: Comparable>(_ v: T, _ lo: T, _ hi: T) -> T { clamp(v, lo, hi) }
+
+extension HabitatItemKind {
+    /// Slung between two things by its ends (a vine, a string of lights):
+    /// it hangs off what it is tied to, and holds nothing up.
+    var tiedByItsEnds: Bool { [.thickVine, .lianaLoop, .stringLights].contains(self) }
+}
 
 // MARK: - Doors it opens itself
 

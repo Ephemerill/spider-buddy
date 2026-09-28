@@ -350,12 +350,12 @@ struct Habitat: Codable, Equatable {
         /// end, whatever room there is for the others.
         var sides: (left: [HabitatRegion.Kind], right: [HabitatRegion.Kind]) {
             switch self {
-            case .forestFloor: return ([.shelter, .thicket, .canopy], [.clearing, .rocks, .canopy])
-            case .jungleCanopy: return ([.pool, .thicket, .canopy], [.thicket, .clearing, .canopy])
+            case .forestFloor: return ([.thicket, .shelter, .canopy], [.clearing, .canopy, .pool])
+            case .jungleCanopy: return ([.pool, .thicket, .canopy], [.thicket, .shelter, .canopy])
             case .desertScrub: return ([.clearing, .pool, .canopy], [.thicket, .shelter, .rocks])
             case .meadow: return ([.clearing, .pool, .canopy], [.thicket, .shelter, .canopy])
             case .cave: return ([.pool, .rocks, .canopy], [.shelter, .thicket, .rocks])
-            case .beach: return ([.pool, .clearing, .rocks], [.rocks, .thicket, .canopy])
+            case .beach: return ([.pool, .clearing, .rocks], [.rocks, .shelter, .canopy])
             case .tundra: return ([.clearing, .rocks, .canopy], [.shelter, .thicket, .canopy])
             case .moonlit: return ([.clearing, .thicket, .canopy], [.pool, .shelter, .canopy])
             case .empty: return ([], [])
@@ -378,6 +378,7 @@ struct Habitat: Codable, Equatable {
         let (left, right) = p.sides
         b.fill(from: x0, to: 0, kinds: left)
         b.fill(from: x0 + mid, to: world.width, kinds: right)
+        b.dress()
         // Nothing left floating: brackets on the back wall under what is up
         // in the air.
         b.h.supportFloating()
@@ -401,8 +402,25 @@ struct Habitat: Codable, Equatable {
             kinds.append(k)
         }
         b.fill(from: 0, to: world.width, kinds: kinds, open: true)
+        b.dress()
         b.h.supportFloating()
         return b.h
+    }
+
+    /// Where the side of a thing is, `y` up (world), on its right or left:
+    /// the furthest out its solid parts reach at that height.
+    static func sideAt(_ it: HabitatItem, y: CGFloat, right: Bool) -> CGFloat? {
+        var best: CGFloat?
+        for part in it.geometry.parts {
+            let o = part.outline
+            for i in o.indices {
+                let a = o[i], b = o[(i + 1) % o.count]
+                guard (a.y - y) * (b.y - y) <= 0, abs(b.y - a.y) > 1e-6 else { continue }
+                let x = a.x + (b.x - a.x) * (y - a.y) / (b.y - a.y)
+                if best.map({ right ? x > $0 : x < $0 }) ?? true { best = x }
+            }
+        }
+        return best
     }
 
     /// The parts it has, as they stand: stretches of the world with a
@@ -481,12 +499,13 @@ struct HabitatRegion: Equatable {
     }
 
     private static func character(of items: [HabitatItem]) -> Kind {
-        func count(_ ks: Set<HabitatItemKind>) -> Int { items.filter { ks.contains($0.kind) }.count }
-        if count([.waterDish]) > 0 { return .pool }
-        if items.contains(where: { ($0.kind == .branch && $0.y > 150) || (!$0.kind.hangs && $0.h > 350) }) { return .canopy }
-        if count([.rock, .boulder]) >= 2 { return .rocks }
-        if count([.hide, .corkBark, .log, .driftwood]) >= 2 { return .shelter }
-        if count([.plant, .fern, .grass, .bamboo, .cactus, .flower, .succulent]) >= 3 { return .thicket }
+        func count(_ f: (HabitatItemKind) -> Bool) -> Int { items.filter { f($0.kind) }.count }
+        if count({ $0.functions.contains(.water) }) > 0 { return .pool }
+        if items.contains(where: { ($0.kind.climbable && $0.y > 150) || (!$0.kind.hangs && $0.h > 350) }) { return .canopy }
+        if count({ $0.definition.shelf == .shelter || $0 == .hide || $0 == .corkTunnel }) > 0 { return .shelter }
+        if count({ $0.climbable && $0.definition.traits.material == .stone && $0.definition.shelf == .structures }) >= 2 { return .rocks }
+        if count({ [.hide, .corkBark, .log, .driftwood, .stump].contains($0) }) >= 2 { return .shelter }
+        if count({ $0.definition.shelf == .plants }) >= 3 { return .thicket }
         return items.isEmpty ? .open : .clearing
     }
 }
@@ -575,12 +594,12 @@ private struct LayoutBuilder {
     }
 
     /// Fills the world from `a` toward `b` (either way) with parts of
-    /// these kinds, in turn, each 600–900 across. `open`: nothing either
+    /// these kinds, in turn, each 400–700 across. `open`: nothing either
     /// side to lean on — the first part starts right at `a`.
     mutating func fill(from a: CGFloat, to b: CGFloat, kinds: [HabitatRegion.Kind], open: Bool = false) {
         let span = abs(b - a)
         guard span > 200, !kinds.isEmpty else { return }
-        let n = open ? kinds.count : max(1, Int((span / 780).rounded()))
+        let n = open ? kinds.count : max(1, Int((span / 540).rounded()))
         // With room for fewer than there are, the one by the glass is kept.
         let laid = n >= kinds.count ? (0..<n).map { kinds[$0 % kinds.count] } : Array(kinds.prefix(n - 1)) + [kinds.last!]
         let dir: CGFloat = b > a ? 1 : -1
@@ -591,14 +610,26 @@ private struct LayoutBuilder {
     }
 
     // MARK: The parts
+    //
+    // Each part has a character of its own — dense planting, open ground
+    // with litter to hunt over, branches up into the air, somewhere to hide,
+    // water, rock — in whatever grows in this scenery (see each kind's
+    // `traits.suits`). Nothing is labelled: they are just different places.
 
     private var dry: Bool { biome == .desert || biome == .beach }
+    private var green: Bool { [.forest, .jungle, .meadow, .night].contains(biome) }
 
     /// The part being laid out: where it starts, and how wide it is.
     private var partX: CGFloat = 0, partW: CGFloat = 0
 
     /// A fraction of the way across the part, give or take a little.
     private mutating func at(_ f: CGFloat) -> CGFloat { partX + partW * f + dice.range(-1, 1) * partW * 0.03 }
+
+    /// One of these, picked (the first that suits the scenery, if any does).
+    private mutating func any(_ kinds: [HabitatItemKind]) -> HabitatItemKind {
+        let fit = kinds.filter { $0.suits(biome) }
+        return dice.pick(fit.isEmpty ? kinds : fit)
+    }
 
     mutating func region(_ kind: HabitatRegion.Kind, from x0: CGFloat, to x1: CGFloat) {
         partX = x0
@@ -614,157 +645,262 @@ private struct LayoutBuilder {
         }
     }
 
+    /// Dense planting: somewhere to hide and lie in wait.
     private mutating func thicket() {
         switch biome {
         case .desert:
-            put(.cactus, at(0.22), scale: dice.range(1.2, 1.6))
-            put(.cactus, at(0.4), scale: dice.range(0.7, 0.9))
+            put(.cactus, at(0.2), scale: dice.range(1.2, 1.6))
+            put(.aloe, at(0.34), scale: dice.range(1, 1.3))
+            put(.jadePlant, at(0.5), scale: 1.2)
             put(.cactus, at(0.72), scale: dice.range(1.5, 2))
-            put(.succulent, at(0.55))
-            put(.succulent, at(0.86), scale: 0.8)
-            put(.pebbles, at(0.3))
+            put(.deadPlant, at(0.86), scale: 1.2)
+            put(.lithops, at(0.42))
+            put(.sandDrift, at(0.62), scale: 0.8)
             put(.succulent, at(0.1), front: true, scale: 0.9)
+            put(.gravel, at(0.9), front: true)
         case .beach:
-            put(.grass, at(0.18), scale: 1.3)
-            put(.grass, at(0.34), scale: 1.1)
-            put(.driftwood, at(0.55), scale: 0.9)
-            put(.grass, at(0.74), scale: 1.4)
-            put(.succulent, at(0.86))
-            put(.twigs, at(0.45))
-            put(.grass, at(0.62), front: true, scale: 1.1)
+            put(.miniPalm, at(0.16), scale: 1.3)
+            put(.grassClump, at(0.3), scale: 1.2)
+            put(.driftwoodBranch, at(0.5), scale: 0.9)
+            put(.grassClump, at(0.68), scale: 1.4)
+            put(.aloe, at(0.84))
+            put(.seaShell, at(0.42), scale: 0.8)
+            put(.sandDrift, at(0.76))
+            put(.grass, at(0.6), front: true, scale: 1.1)
         case .cave:
-            put(.mushrooms, at(0.18), scale: 1.3)
-            put(.crystal, at(0.34), scale: 1.4)
-            put(.corkBark, at(0.52), scale: 1.3, tall: 2.1)
-            put(.mushrooms, at(0.66), scale: 1)
-            put(.crystal, at(0.82), scale: 1.1)
-            put(.moss, at(0.4))
-            vine(at(0.6), down: 360 * lift)
-            put(.crystal, at(0.1), front: true, scale: 0.8)
+            put(.crystalCluster, at(0.2), scale: 1.2)
+            put(.mushroomCluster, at(0.36), scale: 1.1)
+            put(.largeFern, at(0.54), scale: 0.9)
+            put(.crystalCluster, at(0.78), scale: 0.8)
+            put(.hangingRoots, at(0.45), tall: 1.5 * lift)
+            put(.glowMushrooms, at(0.64))
+            put(.glowMushrooms, at(0.92), scale: 0.8)
+            put(.smallFern, at(0.1), front: true)
         case .tundra:
-            put(.corkBark, at(0.3), scale: 1.3, tall: 2.4)
-            put(.grass, at(0.15), scale: 0.8)
-            put(.grass, at(0.5), scale: 0.9)
-            put(.boulder, at(0.72), scale: 0.8)
-            put(.twigs, at(0.86))
-            put(.grass, at(0.62), front: true, scale: 0.8)
+            put(.stump, at(0.24), scale: 1.1)
+            put(.grassClump, at(0.12), scale: 0.9)
+            put(.deadPlant, at(0.44), scale: 1.2)
+            put(.grassClump, at(0.6))
+            put(.mossCushion, at(0.74))
+            put(.pineCone, at(0.84))
+            put(.pineNeedles, at(0.5))
+            put(.grass, at(0.66), front: true, scale: 0.8)
         default:
-            put(.plant, at(0.18), scale: dice.range(1.1, 1.4))
-            put(biome == .jungle ? .bamboo : .corkBark, at(0.38), scale: biome == .jungle ? 1.1 : 1.35, tall: dice.range(2.2, 2.8))
-            put(.plant, at(0.6), scale: dice.range(1.2, 1.6))
-            put(.fern, at(0.8), scale: 1.2)
-            put(biome == .meadow ? .flower : .fern, at(0.3), scale: 1.1)
-            put(biome == .meadow ? .flower : .moss, at(0.92))
-            vine(at(0.5), down: 300 * lift)
-            put(.fern, at(0.08), front: true, scale: 1.2)
-            put(.grass, at(0.7), front: true, scale: 1.1)
+            // A thick stand of plants under the arch of a big fern, a vine
+            // climbing through it, foliage trailing down from above.
+            put(biome == .meadow ? .floweringPlant : .largeFern, at(0.18), scale: dice.range(1.1, 1.3))
+            put(biome == .jungle ? .leafCanopy : .broadLeaf, at(0.38), scale: dice.range(1.1, 1.3))
+            put(.climbingVine, at(0.5), tall: dice.range(1.3, 1.7))
+            put(any([.grassClump, .fiddleheads, .floweringPlant]), at(0.62), scale: 1.2)
+            put(biome == .meadow ? .floweringPlant : .largeFern, at(0.8), scale: dice.range(1, 1.2))
+            put(.mossCushion, at(0.28))
+            put(any([.mushroomCluster, .tinyMushrooms, .glowMushrooms]), at(0.7))
+            put(biome == .meadow ? .tinyFlowers : .creepingCover, at(0.92))
+            put(.hangingFoliage, at(0.3), tall: dice.range(1.2, 1.6) * lift)
+            put(.smallFern, at(0.08), front: true, scale: 1.3)
+            put(biome == .meadow ? .tinyFlowers : .fern, at(0.72), front: true, scale: 1.1)
         }
     }
 
+    /// Open ground with a little litter on it: somewhere to hunt.
     private mutating func clearing() {
         switch biome {
-        case .desert, .beach:
-            put(.pebbles, at(0.2))
-            put(.twigs, at(0.45))
-            put(.rock, at(0.66), scale: 0.7)
-            put(.succulent, at(0.85), scale: 0.7)
+        case .desert:
+            put(.gravel, at(0.2))
+            put(.sandDrift, at(0.42), scale: 1.2)
+            put(.seedPod, at(0.6))
+            put(.baskingStone, at(0.8))
+            put(.tinyPebble, at(0.3))
+            put(.deadLeaf, at(0.66))
+        case .beach:
+            put(.sandDrift, at(0.2), scale: 1.3)
+            put(.seaShell, at(0.44))
+            put(.smallShell, at(0.56))
+            put(.feather, at(0.68))
+            put(.pebblePile, at(0.84), scale: 0.8)
+            put(.smallShell, at(0.3), front: true)
         case .cave:
-            put(.pebbles, at(0.25))
+            put(.gravel, at(0.2))
+            put(.puddle, at(0.45), scale: 1.2)
+            put(.pebblePile, at(0.7))
+            put(.tinyMushrooms, at(0.86))
             put(.crystal, at(0.6), scale: 0.6)
-            put(.pebbles, at(0.8), scale: 0.8)
         case .tundra:
-            put(.twigs, at(0.3))
-            put(.pebbles, at(0.62))
-            put(.rock, at(0.8), scale: 0.6)
+            put(.pineNeedles, at(0.2))
+            put(.smoothStones, at(0.4), scale: 0.9)
+            put(.twigPile, at(0.62), scale: 0.8)
+            put(.pineCone, at(0.8))
+            put(.tinyTwig, at(0.5))
         default:
-            put(.leafPile, at(0.2))
-            put(biome == .meadow ? .flower : .twigs, at(0.42))
-            put(.moss, at(0.62))
-            put(.rock, at(0.8), scale: 0.7)
-            put(biome == .meadow ? .grass : .mushrooms, at(0.5), front: biome == .meadow, scale: 0.8)
+            put(biome == .meadow ? .tinyFlowers : .leafPile, at(0.16))
+            put(.fallenLeaf, at(0.3))
+            put(any([.acorn, .snailShell, .seedPod]), at(0.4))
+            put(biome == .meadow ? .creepingCover : .pineNeedles, at(0.55))
+            put(dice.chance(0.5) ? .mushroom : .puddle, at(0.66))
+            put(.rock, at(0.82), scale: 0.7)
+            put(biome == .meadow ? .petals : .looseLeaf, at(0.74))
+            put(any([.deadLeaf, .feather, .seed]), at(0.92))
+            put(biome == .meadow ? .grass : .smallFern, at(0.5), front: true, scale: 0.8)
         }
     }
 
-    /// A trunk up from the ground and branches off it, each a leap up
-    /// from the last, and a vine down from the lid to the highest.
+    /// Branches up into the air of the tank: uprights, and branches laid
+    /// from the top of one to the next, so each holds the next up; things
+    /// hanging from above to climb down, and roots at the foot.
     private mutating func canopy() {
-        let trunk: HabitatItemKind
+        let G = HabitatLayout.ground
+        // The uprights, each taller than the last.
+        let choices: [HabitatItemKind]
         switch biome {
-        case .jungle: trunk = .bamboo
-        case .desert: trunk = .cactus
-        default: trunk = .corkBark
+        case .jungle: choices = [.bambooTipi, .threeFork, .lookout, .bambooTipi, .climbingRoot]
+        case .desert: choices = [.rockSpire, .driftwoodSnag, .lookout]
+        case .beach: choices = [.driftwoodSnag, .lookout, .rockSpire]
+        case .cave: choices = [.rockSpire, .lookout, .rockSpire]
+        default: choices = [.threeFork, .corkBark, .lookout, .climbingRoot]
         }
-        let tall: CGFloat = trunk == .cactus ? 2.6 : (trunk == .bamboo ? 2.6 * lift : 2.9 * lift)
-        put(trunk, at(0.16), scale: trunk == .corkBark ? 1.45 : 1.2, tall: tall)
-        let b1 = 190 * lift, b2 = 400 * lift, b3 = 610 * lift, b4 = 820 * lift
-        put(.branch, at(0.34), b1, scale: 1.4, flipped: false)
-        put(.branch, at(0.58), b2, scale: 1.5, flipped: true)
-        put(.branch, at(0.82), b3, scale: 1.35, flipped: false)
-        put(.branch, at(0.5), b4, scale: 1.3, flipped: true)
+        // (A different stand each time: no two alike.)
+        var uprights: [HabitatItemKind] = []
+        while uprights.count < 3 {
+            let k = dice.pick(choices)
+            if uprights.last != k || choices.count < 2 { uprights.append(k) }
+        }
+        if !uprights.contains(.lookout), choices.contains(.lookout), dice.chance(0.6) { uprights[2] = .lookout }
+        let heights: [CGFloat] = [260 * lift, 470 * lift, 680 * lift]
+        let xs: [CGFloat] = [at(0.14), at(0.48), at(0.84)]
+        var tops: [V2] = []
+        for (i, kind) in uprights.enumerated() {
+            let it = put(kind, xs[i], scale: kind == .corkBark ? 1.3 : 1.1, tall: heights[i] / kind.defaultSize.height, flipped: false)
+            // Where a branch rests on it: its top, or a fork's crotch.
+            let top = kind == .threeFork ? V2(it.x, it.rect.minY + it.h * 0.62)
+                : kind == .climbingRoot ? V2(it.x, it.rect.maxY - it.h * 0.25) : V2(it.x, it.rect.maxY - (kind == .lookout ? 4 : 10))
+            tops.append(top)
+        }
+        // Branches from one top to the next.
+        for i in 0..<2 { bridge(from: tops[i], to: tops[i + 1]) }
+        // And one out from the tallest, up toward the lid.
+        let hi = tops[2]
+        bridge(from: V2(hi.x - partW * 0.02, hi.y - 8), to: V2(min(hi.x + partW * 0.22, W - 80), hi.y + 130 * lift))
+        // Things to climb down from above.
         if biome == .desert || biome == .beach {
-            put(.driftwood, at(0.5), scale: 1.2)
+            put(.driftwoodRoot, at(0.3), scale: 1.1)
         } else {
-            vine(at(0.7), down: b3 - 40)
-            vine(at(0.95), down: b2 + 30)
-            vine(at(0.36), down: b4 - 60)
-            put(biome == .tundra ? .twigs : .leafPile, at(0.5))
+            put(any([.hangingFoliage, .hangingRoots, .vine]), at(0.66), tall: (H - G - tops[1].y + G - 60) / 240)
+            put(any([.hangingLeafShelter, .hangingBranch]), at(0.32), tall: 1.4 * lift)
+            vine(at(0.96), down: tops[2].y - G + 40)
+            put(biome == .tundra ? .pineNeedles : .leafPile, at(0.56))
+            put(any([.exposedRoot, .rootTangle]), at(0.28), scale: 0.9)
         }
-        put(dry ? .succulent : .fern, at(0.05), front: true, scale: 1.1)
+        put(dry ? .succulent : .fern, at(0.04), front: true, scale: 1.1)
     }
 
+    /// A branch laid from `p` to `q` (both world points it rests on), long
+    /// enough to overhang each a little: flat, or rising.
+    private mutating func bridge(from p: V2, to q: V2) {
+        let G = HabitatLayout.ground
+        let dx = abs(q.x - p.x), dy = q.y - p.y
+        let left = p.x < q.x ? p : q, right = p.x < q.x ? q : p
+        if abs(dy) < 60 {
+            // Flat: a twisted branch across, its middle line through both.
+            let kind: HabitatItemKind = biome == .jungle ? .bambooSegment : (dice.chance(0.5) ? .twistedBranch : .shortBranch)
+            let w = dx + 70
+            let hgt = kind.defaultSize.height * (kind == .bambooSegment ? 1 : 1.1)
+            let mid = kind == .twistedBranch ? 0.46 : (kind == .shortBranch ? 0.5 : 0.5)
+            let y = (left.y + right.y) / 2 - hgt * mid - G
+            var it = put(kind, (left.x + right.x) / 2, max(0, y), flipped: false)
+            it.w = w
+            it.h = hgt
+            h.items[h.items.count - 1] = it
+        } else {
+            // Rising: a medium branch, its line from low end to tip (2% to 98%
+            // across, 25% to 80% up) laid from one to the other.
+            let kind: HabitatItemKind = dry ? .driftwoodBranch : .mediumBranch
+            let (lx, ly, rx, ry): (CGFloat, CGFloat, CGFloat, CGFloat) = kind == .mediumBranch ? (0.02, 0.25, 0.98, 0.8) : (0.02, 0.03, 0.98, 0.9)
+            let low = left.y < right.y ? left : right, high = left.y < right.y ? right : left
+            let w = (dx + 50) / (rx - lx), hgt = abs(dy) / (ry - ly)
+            let flip = low.x > high.x
+            let cx = (low.x + high.x) / 2
+            let y = low.y - ly * hgt - G
+            var it = put(kind, cx, max(0, y), flipped: flip)
+            it.w = w
+            it.h = max(hgt, 40)
+            it.x = cx
+            it.y = max(0, y)
+            Habitat.clamp(&it, in: h.size)
+            h.items[h.items.count - 1] = it
+        }
+    }
+
+    /// Somewhere to shelter: two places it can get right inside, set apart
+    /// with their ways in facing the open ground between them (never one
+    /// across the other's mouth), and what lies about them.
     private mutating func shelter() {
+        func pair(_ a: HabitatItemKind, flip fa: Bool, _ b: HabitatItemKind, flip fb: Bool) {
+            put(a, at(0.24), flipped: fa)
+            put(b, at(0.77), flipped: fb)
+        }
         switch biome {
         case .desert:
-            put(.boulder, at(0.3), scale: 1.4)
-            put(.driftwood, at(0.55), scale: 1.2)
-            put(.rock, at(0.75))
-            put(.succulent, at(0.9), front: true)
+            pair(.overhang, flip: false, .rockCrevice, flip: false)
+            put(.aloe, at(0.02))
+            put(.gravel, at(0.5))
+            put(.deadPlant, at(0.97), scale: 0.8)
         case .beach:
-            put(.driftwood, at(0.3), scale: 1.5)
-            put(.boulder, at(0.62), scale: 1.1)
-            put(.driftwood, at(0.62), 92, scale: 1.1)
-            put(.pebbles, at(0.85))
+            pair(.driftwoodRoot, flip: false, .overhang, flip: true)
+            put(.seaShell, at(0.5), scale: 0.8)
+            put(.smallShell, at(0.56))
         case .cave:
-            put(.boulder, at(0.25), scale: 1.5)
-            put(.corkBark, at(0.5), tall: 1.4)
-            put(.boulder, at(0.75), scale: 1.1)
-            put(.mushrooms, at(0.62), scale: 0.9)
+            pair(.rockCrevice, flip: true, .mossyHide, flip: true)
+            put(.glowMushrooms, at(0.5))
+            put(.puddle, at(0.97), scale: 0.7)
         case .tundra:
-            put(.log, at(0.3), scale: 1.3)
-            put(.boulder, at(0.62), scale: 1.2)
-            put(.twigs, at(0.84))
+            pair(.logDen, flip: true, .rootHollow, flip: false)
+            put(.pineCone, at(0.5))
+            put(.pineNeedles, at(0.55))
         default:
-            put(.hide, at(0.28), scale: 1.25)
-            put(.corkBark, at(0.52), scale: 1.2)
-            put(.log, at(0.76), scale: 1.2)
-            put(.mushrooms, at(0.76), 52, scale: 0.8)
-            put(.moss, at(0.1))
-            put(.fern, at(0.92), front: true)
+            // A bark cave or a curled leaf, and a hollow log or a hollow
+            // under a stump's roots.
+            let first: HabitatItemKind = biome == .jungle || biome == .meadow ? .curledLeafHide : .barkCave
+            let second: HabitatItemKind = dice.chance(0.5) ? .logDen : .rootHollow
+            // (A log den's way in is at its left end; the others' at their right.)
+            pair(first, flip: false, second, flip: second != .logDen)
+            put(.leafPile, at(0.5))
+            put(.shedBark, at(0.03), scale: 0.8)
+            put(.fern, at(0.98), front: true)
         }
     }
 
+    /// Water, and what grows by it.
     private mutating func pool() {
-        put(.waterDish, at(0.36), scale: 1.3)
-        put(.waterDish, at(0.64), scale: 0.9)
-        put(.pebbles, at(0.18))
-        put(.rock, at(0.82), scale: 0.7)
+        put(biome == .cave || biome == .tundra ? .rockPool : .waterDish, at(0.36), scale: 1.3)
+        put(dice.chance(0.5) ? .rockPool : .puddle, at(0.64), scale: 0.9)
+        put(.smoothStones, at(0.18), scale: 0.8)
         switch biome {
-        case .desert, .beach: put(.succulent, at(0.5), front: true, scale: 0.8)
-        case .cave: put(.crystal, at(0.5), scale: 0.8)
-        case .tundra: put(.moss, at(0.5))
+        case .desert, .beach:
+            put(.aloe, at(0.84))
+            put(biome == .beach ? .seaShell : .baskingStone, at(0.5), scale: 0.8)
+            put(.succulent, at(0.5), front: true, scale: 0.8)
+        case .cave:
+            put(.glowMushrooms, at(0.5))
+            put(.crystalCluster, at(0.84), scale: 0.7)
+        case .tundra:
+            put(.mossCushion, at(0.52))
+            put(.pebblePile, at(0.84))
         default:
-            put(.moss, at(0.5))
-            put(.grass, at(0.08), scale: 1.1)
-            put(biome == .meadow || biome == .jungle ? .flower : .fern, at(0.92), front: true)
+            put(.moistMoss, at(0.52))
+            put(.broadLeaf, at(0.84), scale: 1.1)
+            put(.snailShell, at(0.1))
+            put(.grass, at(0.06), scale: 1.1)
+            put(biome == .meadow || biome == .jungle ? .flower : .smallFern, at(0.92), front: true)
         }
     }
 
+    /// Stone: boulders, a spire or an arch, and a warm flat stone to sit on.
     private mutating func rocks() {
-        let big = put(.boulder, at(0.28), scale: dice.range(1.3, 1.6))
-        put(.rock, at(0.48))
-        put(.boulder, at(0.68), scale: dice.range(0.9, 1.1))
-        put(.rock, at(0.85), scale: 0.6)
-        put(.pebbles, at(0.12))
+        let big = put(.boulder, at(0.24), scale: dice.range(1.3, 1.6))
+        put(biome == .desert || biome == .cave || biome == .beach ? .stoneArch : .rock, at(0.5))
+        put(.boulder, at(0.76), scale: dice.range(0.9, 1.1))
+        put(.baskingStone, at(0.92), scale: 0.8)
+        put(.pebblePile, at(0.1))
         // Something propped on top of the big one, resting on the top of it.
         let prop: HabitatItemKind = biome == .desert || biome == .beach ? .driftwood : .log
         let px = big.x + big.w * 0.1, half = prop.defaultSize.width * 0.8 * 0.25
@@ -772,11 +908,49 @@ private struct LayoutBuilder {
             put(prop, px, top - HabitatLayout.ground, scale: 0.8)
         }
         switch biome {
-        case .desert: put(.cactus, at(0.58), scale: 0.7)
-        case .cave: put(.crystal, at(0.58), scale: 1.2); put(.crystal, at(0.94), front: true, scale: 0.7)
-        case .tundra: put(.moss, at(0.58))
-        case .beach: put(.twigs, at(0.58))
-        default: put(.moss, at(0.58)); put(.mushrooms, at(0.94), scale: 0.8)
+        case .desert: put(.cactus, at(0.62), scale: 0.7)
+        case .cave: put(.crystalCluster, at(0.62)); put(.crystal, at(0.96), front: true, scale: 0.7)
+        case .tundra: put(.smoothStones, at(0.62))
+        case .beach: put(.seaShell, at(0.62))
+        default: put(.mossCushion, at(0.62)); put(.mushrooms, at(0.96), scale: 0.8)
+        }
+    }
+
+    // MARK: Dressing
+
+    /// Small things where they would grow or lie: fungus on the side of a
+    /// stump or a slab of bark, lichen on stone, mushrooms and moss on a
+    /// log — for each thing some suit, now and then.
+    mutating func dress() {
+        let hosts = h.items.filter { !$0.kind.hangs && $0.kind.climbable && $0.onGround && $0.w > 60 }
+        for host in hosts {
+            let m = host.kind.definition.traits.material
+            // What grows on this, in this scenery.
+            let onTop = HabitatItemKind.allCases.filter { k in
+                let n = k.definition.traits.niche
+                return !n.side && n.on.contains(m) && k.suits(biome) && k.definition.shelf == .details && k.definition.size.width < host.w * 0.6
+            }
+            let onSide = HabitatItemKind.allCases.filter { k in
+                let n = k.definition.traits.niche
+                return n.side && n.on.contains(m) && k.suits(biome)
+            }
+            if !onSide.isEmpty, host.h > 70, dice.chance(0.45) {
+                // Out of its side, part way up.
+                let k = dice.pick(onSide)
+                let right = dice.chance(0.5)
+                let y = host.h * dice.range(0.3, 0.6)
+                let edge = Habitat.sideAt(host, y: host.rect.minY + y, right: right) ?? (right ? host.rect.maxX : host.rect.minX)
+                let w = k.defaultSize.width
+                put(k, edge + (right ? w * 0.5 - 4 : -w * 0.5 + 4), y, flipped: !right)
+            }
+            if !onTop.isEmpty, dice.chance(0.35) {
+                let k = dice.pick(onTop)
+                let x = host.x + host.w * dice.range(-0.25, 0.25)
+                let half = k.defaultSize.width * 0.8 * 0.25
+                if let top = Habitat.restingTop(host, from: x - half, to: x + half) {
+                    put(k, x, top - HabitatLayout.ground, scale: 0.8)
+                }
+            }
         }
     }
 }

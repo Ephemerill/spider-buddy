@@ -1213,7 +1213,7 @@ enum WeatherArt {
     /// Where puddles form: open stretches of the ground, clear of anything
     /// standing on it (in scene units: the middle, and how wide).
     static func puddleSpots(_ h: Habitat) -> [(x: CGFloat, w: CGFloat)] {
-        let blocked = h.items.filter { !$0.kind.hangs && $0.onGround && ($0.kind.climbable || $0.kind == .moss || $0.kind == .leafPile) }
+        let blocked = h.items.filter { !$0.kind.hangs && $0.onGround && ($0.kind.climbable || $0.kind.definition.shelf == .ground || $0.kind == .puddle) }
             .map { ($0.x - $0.w * 0.5 - 12, $0.x + $0.w * 0.5 + 12) }
         var spots: [(x: CGFloat, w: CGFloat)] = []
         // Three to each old tank's width.

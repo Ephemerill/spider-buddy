@@ -51,6 +51,16 @@ struct ObjectAnchor {
         case tie
         /// The way into a hollow.
         case entrance
+        /// Deep inside something that covers it: where it would hide.
+        case refuge
+        /// At the edge of water, to drink.
+        case drink
+        /// A warm top to sit in the light.
+        case bask
+        /// The highest seat, to look out from.
+        case lookout
+        /// Where food is put.
+        case feed
     }
     var kind: Kind
     var point: V2
@@ -1335,7 +1345,7 @@ enum SurfaceTrace {
         }
         for k in pieces.indices where pieces[k].keep && !taken[k] && !seen[k] { follow(k) }
         for k in pieces.indices where pieces[k].keep && !seen[k] { follow(k) }
-        return Traced(chains: mended(chains), vertices: verts)
+        return Traced(chains: mended(chains, solid: { parts[$0].rim || parts[$0].role == .bulk }), vertices: verts)
     }
 
     /// A run that ends right by another surface (within 2 points) but not
@@ -1389,7 +1399,7 @@ enum SurfaceTrace {
     /// nothing else is (not on another surface — a real end) and with the
     /// start of a run within a few points of it goes on into that one (or,
     /// its own start, closes up).
-    static func mended(_ given: [Chain]) -> [Chain] {
+    static func mended(_ given: [Chain], solid: (Int) -> Bool = { _ in false }) -> [Chain] {
         var chains = given
         var changed = true
         while changed {
@@ -1397,13 +1407,20 @@ enum SurfaceTrace {
             var counts: [Int: Int] = [:]
             for ch in chains { for v in Set(ch.vertexIDs) { counts[v, default: 0] += 1 } }
             for a in chains.indices where !chains[a].closed {
-                guard let end = chains[a].pts.last, let endID = chains[a].vertexIDs.last, counts[endID] == 1 else { continue }
+                guard let end = chains[a].pts.last, let endID = chains[a].vertexIDs.last else { continue }
                 var best: (Int, CGFloat)?
                 for b in chains.indices where !chains[b].closed {
                     let d = chains[b].pts[0].distance(to: end)
                     if d < 4, best.map({ d < $0.1 }) ?? true { best = (b, d) }
                 }
                 guard let (b, d) = best else { continue }
+                // (Ending on another run — a limb stopping on something — is
+                // a real end; but where a fold in the surface grown round
+                // something solid has left two runs a hair apart, one's end
+                // on a point the other passes through, the start right by it
+                // is where it goes on.)
+                guard counts[endID] == 1 || (d < 2 && b != a && counts[chains[b].vertexIDs[0]] == 1
+                                             && chains[a].parts.last.map(solid) == true && chains[b].parts.first.map(solid) == true) else { continue }
                 var A = chains[a]
                 let B = chains[b]
                 if d > 0.05 { A.parts.append(A.parts.last ?? B.parts[0]) }   // (a piece across the gap)

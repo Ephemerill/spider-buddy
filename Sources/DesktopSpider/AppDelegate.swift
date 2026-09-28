@@ -345,6 +345,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let secs = ProcessInfo.processInfo.environment["SPIDER_HABITAT_OPEN"].flatMap(Double.init) {
             let restore = habitatTestSnapshot()
             if secs > 0 { openHabitat(restoring: true) }
+            // (SPIDER_HABITAT_PRESET=name: in that ready-made layout instead.)
+            if let name = ProcessInfo.processInfo.environment["SPIDER_HABITAT_PRESET"], let p = Habitat.Preset(rawValue: name) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [self] in
+                    guard let hc = habitat else { return }
+                    let world = hc.scene.habitat.size
+                    hc.scene.setHabitat(Habitat.preset(p, world: world))
+                    spider.placeInHabitat(map: hc.scene.map, at: V2(world.width / 2, HabitatLayout.ground + 30))
+                }
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + abs(secs)) { self.finishHabitatTest(restore) }
         }
         // SPIDER_WILD_TEST=secs lets something wander in every few seconds
@@ -3484,6 +3493,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let only = ProcessInfo.processInfo.environment["SPIDER_HABITAT_SHOT_ONLY"] { presets = presets.filter { $0.rawValue == only } }
             func shot(_ name: String) { self.debugShot("\(dir)/\(name).png", rect: .zero, window: hc.window) }
             func after(_ s: Double, _ f: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + s, execute: f) }
+            // The Add page: a shelf, a search, what suits the scenery; then
+            // close to some of the natural world's parts.
+            func addPageShots() {
+                let steps: [(String, () -> Void)] = [
+                    ("add_shelter", { hc.debugShowShelf(.shelter) }), ("add_plants", { hc.debugShowShelf(.plants) }),
+                    ("add_details", { hc.debugShowShelf(.details) }), ("add_search", { hc.debugSearch("mushroom") }),
+                    ("add_suits", { hc.debugSearch(""); hc.debugShowShelf(nil); hc.debugSuits(true) }),
+                ]
+                func step(_ i: Int) {
+                    guard i < steps.count else { hc.debugSuits(false); closeUps(); return }
+                    steps[i].1()
+                    after(0.6) { shot("habitat_\(steps[i].0)"); step(i + 1) }
+                }
+                step(0)
+            }
+            func closeUps() {
+                hc.scene.select(nil)
+                let kinds: [HabitatItemKind] = [.lookout, .largeFern, .logDen, .barkCave, .waterDish, .rootHollow, .threeFork]
+                let spots = kinds.compactMap { k in hc.scene.habitat.items.first { $0.kind == k }.map { (k, $0) } }
+                func look(_ i: Int) {
+                    guard i < spots.count else { self.finishHabitatTest(restore); return }
+                    let it = spots[i].1
+                    hc.scene.lookAt(V2(it.x, it.rect.minY + hc.scene.visibleWorld.height * 0.3))
+                    after(0.9) { shot("habitat_near_\(spots[i].0.rawValue)"); look(i + 1) }
+                }
+                after(1) { look(0) }
+            }
             func next() {
                 guard let p = presets.first else {
                     hc.scene.setHabitat(Habitat.preset(.forestFloor, world: world))
@@ -3505,7 +3541,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                 hc.debugShowTab(tab)
                                 after(0.5) {
                                     shot("habitat_decorating_tab\(tab)")
-                                    if tab == 3 { self.finishHabitatTest(restore) }
+                                    if tab == 3 { addPageShots() }
                                 }
                             }
                         }
