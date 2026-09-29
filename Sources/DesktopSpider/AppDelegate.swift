@@ -154,6 +154,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var learns = true
     /// What it has been through (nil with learning off).
     private var memory: SpiderMemory?
+    /// What it knows of the things in its tank (see HabitatKnowledge.swift):
+    /// kept whether or not it is learning — it is what it has seen, not
+    /// what it has come to feel.
+    private let knowledge = HabitatKnowledge.load()
     private var rainWindow: OverlayWindow!
     private var rainView: RainView!
     private var rainOffAt: CFTimeInterval = 0
@@ -166,6 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spider.apply(design: SpiderDesign.load())
         loadSettings()
         if learns { memory = SpiderMemory.load(); spider.memory = memory }
+        spider.knowledge = knowledge
         map.standoff = AppDelegate.standoff(for: spider.config.scale)
         map.rebuild(windows: [])
         toyBox.scale = spider.config.scale
@@ -311,6 +316,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // way of looking round it, coming and going, and decorating it
         // (prints [ok]/[FAIL] for each, then puts the habitat keys back).
         if ProcessInfo.processInfo.environment["SPIDER_HABITAT_CAMERA"] == "1" { runHabitatCameraTest() }
+        // SPIDER_HABITAT_CURIOUS=1 (+SPIDER_HABITAT_DIR for pictures): a
+        // toadstool added while decorating, and the spider getting to know it
+        // (notices, watches, comes closer, feels it, climbs it, knows it,
+        // leaves it be); then carried off on a stump it stands on.
+        if ProcessInfo.processInfo.environment["SPIDER_HABITAT_CURIOUS"] == "1" { runHabitatCuriousTest(dir: ProcessInfo.processInfo.environment["SPIDER_HABITAT_DIR"]) }
         // SPIDER_HABITAT_RETURN=left|right|above: carried out of the tank to
         // that side and let go; reports how long it takes to get back in.
         if let side = ProcessInfo.processInfo.environment["SPIDER_HABITAT_RETURN"] {
@@ -568,6 +578,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(inHabitat, forKey: "inHabitat")
         rememberTankPlace()
         memory?.save()
+        if !testingHabitat { knowledge.save(keeping: habitat?.scene.habitat) }
         ears.stop()
         tracker.stop()
         fallbackTimer?.invalidate()
@@ -695,6 +706,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func tick() {
         tickCount += 1
         if tickCount % 3600 == 0, let m = memory, m.dirty { m.save() }
+        if tickCount % 3600 == 1800, knowledge.dirty, !testingHabitat { knowledge.save(keeping: habitat?.scene.habitat) }
         if tickCount % 30 == 0 {
             updateRain(now: CACurrentMediaTime())
             updateEars()
@@ -2490,9 +2502,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Habitat testing
 
     /// The saved state a habitat test may touch, to put back afterwards.
+    /// A habitat test is running: what the spider comes to know of things
+    /// in it is not kept.
+    private var testingHabitat = false
+
     private func habitatTestSnapshot() -> () -> Void {
+        testingHabitat = true
+        // (What it makes of new things would change the timing of tests of
+        // other things: they run without it. The curiosity test gives it a
+        // knowledge of its own.)
+        spider.knowledge = nil
         let keys = [Habitat.key, HabitatController.tankWidthKey, HabitatController.glassKey, HabitatController.nameKey, "inHabitat",
-                    WeatherSettings.key, WeatherClock.saveKey, HabitatCamera.saveKey, AppDelegate.tankSpiderKey]
+                    WeatherSettings.key, WeatherClock.saveKey, HabitatCamera.saveKey, AppDelegate.tankSpiderKey, HabitatKnowledge.key,
+                    SpiderMemory.key]
         let saved = keys.map { UserDefaults.standard.object(forKey: $0) }
         return {
             for (k, v) in zip(keys, saved) { UserDefaults.standard.set(v, forKey: k) }
@@ -3074,6 +3096,155 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             print("habitat build: things it stood on: \(visited.keys.compactMap { scene.habitat.item(id: $0)?.kind.rawValue }.sorted().joined(separator: ", "))")
             print("habitat build: \(fails == 0 ? "all ok" : "\(fails) FAILED")")
             self.finishHabitatTest(restore)
+        }
+    }
+
+    /// SPIDER_HABITAT_CURIOUS=1: a toadstool put in while decorating, and the
+    /// spider getting to know it in real time — it notices it, watches it,
+    /// feels it, climbs it, comes to know it and then leaves it be — then a
+    /// stump it is standing on dragged off by the mouse, with it on it.
+    private func runHabitatCuriousTest(dir: String?) {
+        let restore = habitatTestSnapshot()
+        var fails = 0
+        func check(_ label: String, _ ok: Bool, _ detail: String = "") {
+            if !ok { fails += 1 }
+            print("habitat curious: [\(ok ? "ok  " : "FAIL")] \(label) \(detail)")
+            fflush(stdout)
+        }
+        func note(_ s: String) { print("habitat curious: \(s)"); fflush(stdout) }
+        func after(_ secs: Double, _ f: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + secs, execute: f) }
+        openHabitat(restoring: true)
+        guard let hc = habitat else { return }
+        hc.scene.debugKeepAnimating = true
+        let scene = hc.scene
+        func shot(_ name: String) { if let dir { debugShot("\(dir)/curious_\(name).png", rect: .null, window: hc.window) } }
+        // A tank it knows (with a knowledge of its own for the test: the
+        // real one is left be).
+        let W = scene.habitat.size.width, G = HabitatLayout.ground
+        var h = Habitat(biome: .forest, world: scene.habitat.size)
+        _ = h.add(.rock, at: CGPoint(x: W / 2 - 700, y: 0))
+        let stump = h.add(.stump, at: CGPoint(x: W / 2 - 420, y: 0))
+        _ = h.add(.fern, at: CGPoint(x: W / 2 + 700, y: 0))
+        spider.knowledge = HabitatKnowledge()
+        scene.setHabitat(h)
+        let floorY = G + scene.map.standoff
+        spider.placeInHabitat(map: scene.map, at: V2(W / 2, floorY))
+        scene.lookAt(V2(W / 2, G + 220))
+        guard let know = spider.knowledge else { return }
+        check("what was there it knows already", h.items.allSatisfy { know.isFamiliar($0.uid) })
+
+        // Decorating: a toadstool put in, where the editor puts it.
+        var mush: HabitatItem?
+        after(4) {
+            hc.toggleDecorate()
+            scene.add(.mushroom)
+            // (Some way off from it: where the editor puts it could be right
+            // by it, and that it would see at once.)
+            if let id = scene.selected {
+                let x = self.spider.worldPos.x
+                scene.moveItem(id, to: V2(x + (x < W / 2 ? 330 : -330), G))
+            }
+            mush = scene.selected.flatMap { scene.habitat.item(id: $0) }
+            after(0.8) { hc.toggleDecorate() }
+            if let m = mush {
+                note(String(format: "toadstool put in at %.0f (spider at %.0f)", m.x, self.spider.worldPos.x))
+                check("…new to it", know.stage(of: m.uid) == .unknown)
+            }
+        }
+        /// Then the stump (below).
+        var carry: () -> Void = {}
+        var t0 = 0.0, noticed: Double?, watched: Double?, touched: Double?, climbed: Double?, familiar: Double?
+        var afterInquiries = 0, floating = 0
+        var probes: Set<String> = []
+        var last = ""
+        let clock = CACurrentMediaTime()
+        Timer.scheduledTimer(withTimeInterval: 1.0 / 20.0, repeats: true) { [self] timer in
+            guard let m = mush else { return }
+            if t0 == 0 { t0 = CACurrentMediaTime() }
+            let t = CACurrentMediaTime() - t0
+            let stage = know.stage(of: m.uid)
+            let inq = spider.debugInquiryUID == m.uid ? spider.debugInquiry : "-"
+            if noticed == nil, stage != .unknown { noticed = t; after(0.6) { shot("1_noticed") } }
+            if watched == nil, inq.hasPrefix("watch") { watched = t }
+            if touched == nil, let f = spider.debugFeelAt, m.rect.insetBy(dx: -8, dy: -8).contains(f.point) { touched = t; after(0.5) { shot("2_touching") } }
+            if climbed == nil, spider.debugUnderfoot == m.id, spider.isStanding { climbed = t; after(1.0) { shot("3_on_it") } }
+            if familiar == nil, stage == .familiar { familiar = t; after(1.0) { shot("4_familiar") } }
+            if let f = familiar, t > f + 8, spider.debugInquiryUID == m.uid { afterInquiries += 1 }
+            if spider.isStanding, let a = spider.standingOn, let p = scene.map.worldPoint(a), p.distance(to: spider.worldPos) > 16 { floating += 1 }
+            if let d = inq.range(of: "done [") { for p in inq[d.upperBound...].prefix(while: { $0 != "]" }).split(separator: ",") { probes.insert(String(p)) } }
+            let line = "\(stage) | \(inq) | \(spider.debugState)"
+            if line != last { note(String(format: "%6.1fs %@", t, line)); last = line }
+            let done = familiar.map { t > $0 + 45 } ?? false
+            if done || CACurrentMediaTime() - clock > 300 {
+                timer.invalidate()
+                func f(_ x: Double?) -> String { x.map { String(format: "%.1fs", $0) } ?? "never" }
+                note("noticed \(f(noticed)), watched \(f(watched)), touched \(f(touched)), climbed \(f(climbed)), familiar \(f(familiar)); probes \(probes.sorted())")
+                check("it notices the toadstool — not the moment it lands", noticed.map { $0 > 0.2 } ?? false, f(noticed))
+                check("it watches it", watched != nil, f(watched))
+                check("it feels it with its front legs", touched != nil, f(touched))
+                check("it climbs it", climbed != nil, f(climbed))
+                check("it comes to know it", familiar != nil, f(familiar))
+                check("then leaves it be", afterInquiries == 0, "\(afterInquiries) looks into it after")
+                check("never standing on nothing", floating == 0, "\(floating)")
+                carry()
+            }
+        }
+
+        // Carried off on the stump it is standing on.
+        carry = { [self] in
+            guard let s = scene.habitat.item(id: stump.id),
+                  let top = s.interactionPoints(on: scene.map).first(where: { $0.kind == .top }), let a = top.stand else {
+                check("stump top found", false)
+                finishHabitatTest(restore)
+                return
+            }
+            scene.lookAt(V2(s.x, G + 200))
+            spider.debugAttach(loopID: a.loopID, segIdx: a.segIdx, t: a.t, dir: 1)
+            after(1.0) { [self] in
+                hc.toggleDecorate()
+                check("standing on the stump", spider.debugUnderfoot == s.id, "\(spider.debugUnderfoot ?? -1)")
+                let from = scene.viewPoint(fromWorld: V2(s.x, s.rect.midY - 10))
+                // (Away from the toadstool, so it isn't set down beside it.)
+                let by = CGPoint(x: (mush?.x ?? s.x) > s.x ? -220 : 220, y: 70)
+                func mouse(_ type: NSEvent.EventType, _ p: CGPoint) {
+                    let w = scene.convert(p, to: nil)
+                    guard let e = NSEvent.mouseEvent(with: type, location: w, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                     windowNumber: hc.window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else { return }
+                    switch type {
+                    case .leftMouseDown: scene.mouseDown(with: e)
+                    case .leftMouseDragged: scene.mouseDragged(with: e)
+                    default: scene.mouseUp(with: e)
+                    }
+                }
+                let p0 = spider.worldPos
+                var worst: CGFloat = 0
+                mouse(.leftMouseDown, from)
+                var i = 0
+                Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [self] timer in
+                    i += 1
+                    let u = CGFloat(i) / 90
+                    mouse(.leftMouseDragged, CGPoint(x: from.x + by.x * u, y: from.y + by.y * u))
+                    if let now = scene.habitat.item(id: s.id), i > 10 {
+                        let moved = V2(now.x - s.x, now.y - s.y)
+                        worst = max(worst, (spider.worldPos - p0 - moved).length)
+                    }
+                    if i == 45 { shot("5_carried") }
+                    guard i >= 90 else { return }
+                    timer.invalidate()
+                    mouse(.leftMouseUp, CGPoint(x: from.x + by.x, y: from.y + by.y))
+                    after(1.2) { [self] in
+                        let now = scene.habitat.item(id: s.id)
+                        let footed = spider.standingOn.flatMap { scene.map.worldPoint($0) }.map { $0.distance(to: spider.worldPos) < 16 } ?? false
+                        check("carried on the stump, it goes with it", worst < 30, String(format: "strayed %.0f pt", worst))
+                        check("…and stands on it where it is put down", spider.debugUnderfoot == s.id && footed,
+                              "on \(spider.debugUnderfoot ?? -1) footed \(footed), stump moved \(Int((now?.x ?? s.x) - s.x))")
+                        shot("6_put_down")
+                        hc.toggleDecorate()
+                        print("habitat curious: \(fails == 0 ? "all ok" : "\(fails) FAILED")")
+                        finishHabitatTest(restore)
+                    }
+                }
+            }
         }
     }
 
@@ -3862,6 +4033,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spider.config.paused = false
         spider.apply(design: design)
         spider.memory = memory
+        spider.knowledge = knowledge
         map.standoff = AppDelegate.standoff(for: spider.config.scale)
         map.rebuild(windows: [])
         view.spider = spider

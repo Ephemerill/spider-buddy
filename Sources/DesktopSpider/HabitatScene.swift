@@ -27,7 +27,9 @@ import QuartzCore
 /// it, pull a corner to size it.
 final class HabitatSceneView: NSView {
     let map = SurfaceMap()
-    weak var spider: Spider?
+    weak var spider: Spider? {
+        didSet { spider?.tankRebuilt(habitat, smooth: false, inIt: false) }
+    }
     private(set) var habitat = Habitat()
     /// What part of the world the glass shows.
     let camera = HabitatCamera()
@@ -304,7 +306,9 @@ final class HabitatSceneView: NSView {
     /// afresh on the nearest.
     func rebuildMap(smooth: Bool = false) {
         map.rebuild(habitat: habitat.surfaces(standoff: map.standoff))
-        if let spider, spider.inHabitat, spider.map === map { if smooth { spider.surfacesRestructured() } else { spider.mapChanged() } }
+        // It takes its footing again, and takes in what has changed (see
+        // "Things in the tank" in Spider.swift).
+        if let spider { spider.tankRebuilt(habitat, smooth: smooth, inIt: spider.inHabitat && spider.map === map) }
         refreshGeometryOverlay()
     }
 
@@ -1371,6 +1375,15 @@ final class HabitatSceneView: NSView {
             }
             if !habitat.links.isEmpty { habitat.realign() }
             syncMovedLayers()
+            // The spider sees them go — and, on one, goes with it.
+            if let spider, spider.inHabitat, spider.map === map {
+                var offsets: [Int: V2] = [:]
+                for was in [start] + carried {
+                    guard let now = habitat.item(id: was.id) else { continue }
+                    offsets[was.id] = V2(now.x - was.x, now.y - was.y)
+                }
+                spider.thingsCarried(offsets)
+            }
             showSnap(snap, engaged: snap != nil && snap != was)
             showPortHints(for: it, excluding: Set([id] + carried.map(\.id)))
         case .resize(let id, let from, let anchor, let startPoint):
@@ -1524,7 +1537,11 @@ final class HabitatSceneView: NSView {
     /// An edit is finished: paint what changed, lay the surfaces out again,
     /// and pass it on to be saved.
     private func commit() {
-        guard let before, before != habitat else { return }
+        guard let before, before != habitat else {
+            // Put back just where it was: nothing changed after all.
+            spider?.thingsPutDown()
+            return
+        }
         syncItemLayers()
         paintItems()
         rebuildMap()
@@ -1953,6 +1970,7 @@ final class HabitatSceneView: NSView {
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
         geometryLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
+        geometryLabels = [:]
         geometryLayer.isHidden = !showsGeometry
         geometryHUD.isHidden = !showsGeometry
         footingLoop = nil
@@ -1966,8 +1984,15 @@ final class HabitatSceneView: NSView {
         }
         let boxes = CGMutablePath(), bulk = CGMutablePath(), limbs = CGMutablePath(), visual = CGMutablePath()
         let hollows = CGMutablePath(), perches = CGMutablePath(), ties = CGMutablePath(), ways = CGMutablePath()
+        let places = CGMutablePath(), stands = CGMutablePath()
         for it in habitat.items {
             boxes.addRect(it.rect)
+            // Its places that mean something (see `InteractionPoint`), and
+            // where it would stand for each.
+            for p in it.interactionPoints(on: map) {
+                places.addEllipse(in: CGRect(x: p.point.x - 2, y: p.point.y - 2, width: 4, height: 4))
+                if let s = p.standPoint { stands.move(to: p.point.point); stands.addLine(to: s.point) }
+            }
             let g = it.geometry
             for part in g.parts { poly(part.role == .bulk ? bulk : limbs, part.outline) }
             for v in g.visual { poly(visual, v) }
@@ -1992,12 +2017,13 @@ final class HabitatSceneView: NSView {
                 }
             }
             let label = CATextLayer()
-            label.string = "#\(it.id) \(it.kind.label)"
+            label.string = geometryLabel(it)
+            geometryLabels[it.id] = label
             label.fontSize = 10
             label.foregroundColor = CGColor(gray: 1, alpha: 0.85)
             label.backgroundColor = CGColor(gray: 0, alpha: 0.45)
             label.contentsScale = scale
-            label.frame = CGRect(x: it.rect.minX, y: it.rect.maxY + 1, width: 120, height: 13)
+            label.frame = CGRect(x: it.rect.minX, y: it.rect.maxY + 1, width: 180, height: 13)
             geometryLayer.addSublayer(label)
         }
         let rim = CGMutablePath(), own = CGMutablePath(), edges = CGMutablePath(), dots = CGMutablePath()
@@ -2020,6 +2046,8 @@ final class HabitatSceneView: NSView {
                   shapeLayer(perches, stroke: nil, fill: c(0.4, 1, 0.3, 1)),
                   shapeLayer(ties, stroke: c(1, 1, 1, 1), width: 1.5),
                   shapeLayer(ways, stroke: nil, fill: c(1, 0.6, 0.1, 1)),
+                  shapeLayer(stands, stroke: c(0.85, 0.5, 1, 0.45), width: 0.8, dash: [2, 2]),
+                  shapeLayer(places, stroke: nil, fill: c(0.85, 0.5, 1, 0.95)),
                   geometryFooting] {
             geometryLayer.addSublayer(l)
         }
@@ -2032,12 +2060,29 @@ final class HabitatSceneView: NSView {
         geometryHUD.backgroundColor = CGColor(gray: 0, alpha: 0.6)
         geometryHUD.contentsScale = scale
         geometryHUD.anchorPoint = .zero
-        geometryHUD.frame = CGRect(x: 10, y: 10, width: 560, height: 30)
+        geometryHUD.frame = CGRect(x: 10, y: 10, width: 980, height: 30)
         geometryHUD.string = "shapes: \(map.loops.count) surfaces, \(map.junctions.count / 2) junctions"
     }
 
     /// The loop last drawn as the one it is on.
     private var footingLoop: String?
+    /// Each thing's label in the overlay, kept up to date with how well the
+    /// spider knows it.
+    private var geometryLabels: [Int: CATextLayer] = [:]
+    private var geometryLabelsAt: CFTimeInterval = 0
+
+    /// A thing's label in the overlay: its number and name, and how well
+    /// the spider knows it — for the developer's eyes only.
+    private func geometryLabel(_ it: HabitatItem) -> String {
+        let known: String
+        switch spider?.knowledge?.stage(of: it.uid) {
+        case .unknown?: known = " · new"
+        case .noticed?: known = " · noticed"
+        case .investigating?: known = " · looking into"
+        default: known = ""
+        }
+        return "#\(it.id) \(it.kind.label)\(known)"
+    }
 
     /// Where it is standing, for the overlay: the whole surface it is on,
     /// and a readout of what that is.
@@ -2045,6 +2090,14 @@ final class HabitatSceneView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
+        if CACurrentMediaTime() - geometryLabelsAt > 0.5 {
+            geometryLabelsAt = CACurrentMediaTime()
+            for it in habitat.items {
+                guard let l = geometryLabels[it.id] else { continue }
+                let s = geometryLabel(it)
+                if l.string as? String != s { l.string = s }
+            }
+        }
         guard let a, let loop = map.loop(a.loopID) else {
             if footingLoop != nil { footingLoop = nil; geometryFooting.path = nil }
             geometryHUD.string = spider?.map === map ? "in the air · \(spider?.debugState ?? "")" : "not in the tank"
@@ -2061,9 +2114,9 @@ final class HabitatSceneView: NSView {
         let seg = a.segIdx < loop.segs.count ? loop.segs[a.segIdx] : nil
         let vertex = a.dir > 0 ? a.segIdx + 1 : a.segIdx
         let ahead = map.junctions(from: a.loopID, at: vertex).count
-        geometryHUD.string = String(format: "%@ seg %d/%d t %.0f %@ · %@ · facing %@ · %d junction%@ ahead",
+        geometryHUD.string = String(format: "%@ seg %d/%d t %.0f %@ · %@ · facing %@ · %d junction%@ ahead · %@",
                                     a.loopID, a.segIdx, loop.segs.count, a.t, a.dir > 0 ? "→" : "←", what,
-                                    seg.map { "\($0.facing)" } ?? "?", ahead, ahead == 1 ? "" : "s")
+                                    seg.map { "\($0.facing)" } ?? "?", ahead, ahead == 1 ? "" : "s", spider?.debugInquiry ?? "")
         _ = p
     }
 

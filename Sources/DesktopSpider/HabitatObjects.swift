@@ -646,16 +646,19 @@ struct HabitatObjectDefinition {
 
 // MARK: - What it is, where it belongs, what it is for
 //
-// Nothing in the spider reads these yet: they are what later behaviour
-// (drinking, basking, hiding, curiosity about things, lightweight physics
-// for what blows about) will go by — and, now, what the layouts and the
-// Add page go by: what suits which scenery, and where on what it grows.
+// What the layouts and the Add page go by — what suits which scenery, and
+// where on what it grows — and what each kind's nature to the spider is
+// worked out from (see HabitatSemantics.swift). Later behaviour (drinking,
+// basking, hiding, lightweight physics for what blows about) goes by them.
 
 /// What a thing is made of.
 enum HabitatMaterial: String, CaseIterable {
     case wood, bark, root, driftwood, bamboo, stem, leaf, moss, fungus, stone, crystal, sand, soil, water, shell, seed, feather
     /// By hand: timber, metal, cloth, pottery.
     case made
+
+    /// Grown, or once alive: not stone, sand, water or anything made.
+    var organic: Bool { ![.stone, .crystal, .sand, .water, .made].contains(self) }
 }
 
 /// What a thing is for, to the spider.
@@ -744,6 +747,10 @@ struct HabitatTraits {
     var loose: LooseBody?
     /// Other words for it, for searching.
     var aka = ""
+    /// What nothing else here could tell about it — that it glows, that it
+    /// is warm, that it is for sleeping in — for its nature to the spider
+    /// (see HabitatSemantics.swift), which is otherwise worked out by rule.
+    var extra: [HabitatQuality: CGFloat] = [:]
 }
 
 extension HabitatItemKind {
@@ -786,8 +793,8 @@ extension HabitatItemKind {
         let dry: Set<Biome> = [.desert, .beach]
         let stony: Set<Biome> = [.desert, .cave, .beach, .tundra]
         func T(_ m: M, _ suits: Set<Biome> = [], on: Set<M> = [], side: Bool = false, damp: Bool = false,
-               _ fn: Set<HabitatFunction> = [], loose: LooseBody? = nil, aka: String = "") -> HabitatTraits {
-            HabitatTraits(material: m, suits: suits, niche: HabitatNiche(on: on, side: side, damp: damp), functions: fn, loose: loose, aka: aka)
+               _ fn: Set<HabitatFunction> = [], loose: LooseBody? = nil, aka: String = "", x: [HabitatQuality: CGFloat] = [:]) -> HabitatTraits {
+            HabitatTraits(material: m, suits: suits, niche: HabitatNiche(on: on, side: side, damp: damp), functions: fn, loose: loose, aka: aka, extra: x)
         }
         func L(_ m: LooseBody.Motion, _ mass: CGFloat, _ drag: CGFloat, _ wind: CGFloat, _ bounce: CGFloat, _ friction: CGFloat) -> LooseBody {
             LooseBody(motion: m, mass: mass, drag: drag, windCatch: wind, bounce: bounce, friction: friction)
@@ -806,7 +813,7 @@ extension HabitatItemKind {
         case .cactus: return T(.stem, [.desert])
         case .plant: return T(.leaf, green)
         case .vine, .thickVine, .thinVine: return T(.stem, [.jungle, .forest, .night, .cave])
-        case .waterDish: return T(.stone, [], [.water], aka: "drink")
+        case .waterDish: return T(.stone, [], [.water], aka: "drink", x: [.artificial: 1])
         case .fern: return T(.leaf, shady)
         case .grass: return T(.leaf, [.forest, .jungle, .meadow, .night, .beach, .desert, .tundra])
         case .flower: return T(.leaf, [.meadow, .forest, .jungle])
@@ -816,7 +823,7 @@ extension HabitatItemKind {
         case .leafPile: return T(.leaf, [.forest, .night, .meadow, .tundra], aka: "litter")
         case .pebbles: return T(.stone)
         case .twigs: return T(.wood, branchy.union([.beach]))
-        case .crystal: return T(.crystal, [.cave, .night], aka: "gem")
+        case .crystal: return T(.crystal, [.cave, .night], aka: "gem", x: [.interesting: 0.7])
         case .root, .climbingRoot: return T(.root, woods)
         case .driedStem: return T(.stem, [.desert, .meadow, .tundra, .beach])
         case .stake: return T(.wood)
@@ -874,7 +881,7 @@ extension HabitatItemKind {
         case .mushroom: return T(.fungus, [.forest, .jungle, .night, .meadow], on: [.wood, .bark, .soil, .moss], damp: true, [.cover], aka: "toadstool")
         case .mushroomCluster: return T(.fungus, shady, on: [.wood, .bark, .root, .soil])
         case .tinyMushrooms: return T(.fungus, shady.union([.cave]), on: [.wood, .bark, .moss, .soil])
-        case .glowMushrooms: return T(.fungus, [.cave, .night, .jungle], on: [.wood, .soil, .moss, .stone], aka: "light")
+        case .glowMushrooms: return T(.fungus, [.cave, .night, .jungle], on: [.wood, .soil, .moss, .stone], aka: "light", x: [.glowing: 1])
         case .shelfFungus: return T(.fungus, shady, on: [.wood, .bark, .root], side: true, aka: "bracket")
         case .lichen: return T(.fungus, [.forest, .tundra, .night, .meadow, .cave], on: [.wood, .bark, .stone, .root], side: true)
         case .acorn: return T(.seed, [.forest, .meadow, .night], loose: L(.roll, 3.5, 0.08, 0.05, 0.3, 0.35), aka: "nut")
@@ -888,7 +895,7 @@ extension HabitatItemKind {
         case .leafHeap: return T(.leaf, [.forest, .night, .meadow, .tundra], aka: "litter")
         case .pebblePile: return T(.stone, aka: "cairn")
         case .smoothStones: return T(.stone, [.beach, .forest, .cave, .tundra, .meadow], aka: "cairn river")
-        case .crystalCluster: return T(.crystal, [.cave, .night], aka: "gem geode")
+        case .crystalCluster: return T(.crystal, [.cave, .night], aka: "gem geode", x: [.interesting: 0.7])
         case .petals: return T(.leaf, [.meadow, .forest, .jungle])
         case .puddle: return T(.water, [.forest, .jungle, .meadow, .night, .tundra, .cave], damp: true, [.water], aka: "drink")
         case .shedBark: return T(.bark, woods)
@@ -912,6 +919,15 @@ extension HabitatItemKind {
         case .seed: return T(.seed, [.forest, .meadow, .night], loose: L(.spin, 0.15, 0.8, 0.7, 0.1, 0.5), aka: "samara maple")
         case .smallShell: return T(.shell, [.beach], loose: L(.slide, 1.2, 0.1, 0.1, 0.35, 0.5))
         case .tinyPebble: return T(.stone, [], loose: L(.roll, 2, 0.05, 0.02, 0.3, 0.3), aka: "stone")
+
+        // Made things that give out light or warmth, or are for sleeping on.
+        case .candle, .lantern, .hangingLamp, .floorLamp, .sconce, .chandelier, .stringLights:
+            return T(.made, x: [.glowing: 0.9, .warm: 0.35, .preyAttracting: 0.6])
+        case .fireplace: return T(.made, x: [.glowing: 0.8, .warm: 1])
+        case .stove: return T(.made, x: [.warm: 0.6])
+        case .tv: return T(.made, x: [.glowing: 0.6, .moving: 0.4, .interesting: 0.7])
+        case .bed, .bunkBed, .sofa, .armchair, .beanbag: return T(.made, x: [.sleepingSuitable: 0.8])
+        case .flyJar: return T(.made, x: [.preyAttracting: 1, .interesting: 0.8])
 
         default: return T(.made)
         }

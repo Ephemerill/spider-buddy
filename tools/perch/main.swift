@@ -474,6 +474,8 @@ case "build":
     buildCheck(args.count > 2 ? args[2] : nil)
 case "nature":
     natureCheck()
+case "curious":
+    curiousCheck()
 case "chains":
     chains(HabitatItemKind(rawValue: args.count > 2 ? args[2] : "driftwood") ?? .driftwood)
 #endif
