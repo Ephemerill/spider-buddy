@@ -210,6 +210,33 @@ final class Prey {
     private var cornerSlide = V2.zero
     private var lastDt: CGFloat = 1.0 / 60
 
+    // In the tank (see "In the tank", below).
+
+    /// The tank, while it is loose in one: what draws it where, where to get
+    /// out of the rain, where to lie low. Nil on the desktop, where none of
+    /// its tank ways apply.
+    weak var eco: HabitatEcology?
+    /// Where it came in, in the tank: back there to go again.
+    var den: Anchor?
+    /// Lying low, out of sight: under bark, in the litter, in the dark.
+    private(set) var hidden = false
+    /// How well hidden it is there, 0…1.
+    private(set) var cover: CGFloat = 0
+    /// Along its surface to somewhere, and what for.
+    private enum Goal { case hide, shelter, remains, home }
+    private var goal: (anchor: Anchor, why: Goal, since: CGFloat)?
+    /// In out of the rain (or hunkered down where it is), until it passes.
+    private(set) var sheltering = false
+    private var waitUntil: CGFloat = 0
+    private var tankIn: CGFloat = 0
+    /// What is left of a meal it is after, and has a nose round before it
+    /// takes it (an ant) — and carries off.
+    private var remainsAt: Int?
+    private var sniffFor: CGFloat = 0
+    private(set) var carrying: Int?
+    /// Being shown (while lying low, it is hard to make out).
+    var shownAlpha: CGFloat { hidden ? alpha * (1 - 0.6 * cover) : alpha }
+
     init(kind: PreyKind, id: Int, at p: V2, scale: CGFloat) {
         self.kind = kind
         self.id = id
@@ -240,6 +267,7 @@ final class Prey {
 
     /// Let go of the pointer: falls (or flies off) from wherever it is.
     func drop() {
+        letGo()
         anchor = nil
         airFor = 0
         perchTarget = nil
@@ -284,6 +312,7 @@ final class Prey {
     /// Pressed flat under the pointer: it stays a splat where it is for a
     /// moment, then fades away.
     func squashFlat() {
+        letGo()
         state = .squashed
         held = false
         anchor = nil
@@ -334,8 +363,9 @@ final class Prey {
         let lift = map.standoff - kind.clearance * drawScale
         pos = seg.point(at: a.t) - seg.normal * lift + cornerSlide
         surfaceNormal = seg.normal
-        // A climber tips over a corner rather than snapping round it.
-        heading = kind.climbs ? heading + angleDelta(heading, seg.angle) * min(1, lastDt * 12) : seg.angle
+        // A climber tips over a corner rather than snapping round it (and so,
+        // in the tank, does anything going over the curve of a stone).
+        heading = kind.climbs || eco != nil ? heading + angleDelta(heading, seg.angle) * min(1, lastDt * 12) : seg.angle
         travel = seg.dir * moveDir
     }
 
@@ -343,6 +373,8 @@ final class Prey {
     /// the way. Returns false if there was no room.
     @discardableResult
     private func slide(_ d: CGFloat, map: SurfaceMap) -> Bool {
+        // (In the tank, on over whatever lies on the floor.)
+        if eco != nil { return amble(d, map: map) }
         guard var a = anchor, let loop = map.loop(a.loopID), a.segIdx < loop.segs.count else { return false }
         let seg = loop.segs[a.segIdx]
         let nt = a.t + d
@@ -362,6 +394,7 @@ final class Prey {
     /// corner onto the next — up the side of a window, underneath it.
     @discardableResult
     private func crawl(_ d: CGFloat, map: SurfaceMap) -> Bool {
+        if eco != nil { return amble(d, map: map) }
         guard var a = anchor, let loop = map.loop(a.loopID), a.segIdx < loop.segs.count else { return false }
         let seg = loop.segs[a.segIdx]
         let nt = a.t + d
@@ -398,6 +431,393 @@ final class Prey {
 
     private func edgePoint(_ spot: (anchor: Anchor, point: V2, seg: Seg), map: SurfaceMap) -> V2 {
         spot.point - spot.seg.normal * (map.standoff - kind.clearance * drawScale)
+    }
+
+    // MARK: In the tank
+    //
+    // Loose in the tank it knows its way about the place (see
+    // HabitatEcology.swift). It walks on over a stone or along a log rather
+    // than turning back at the first bump. A beetle takes itself off under
+    // the bark to lie low now and then, and makes for there when something
+    // big comes at it; a cricket keeps to the dark by day; a worm gets into
+    // the litter out of the sun; an ant finds what is left of a meal, has a
+    // good nose round it, and carries it off. Anything caught out in a
+    // downpour gets in out of it — under a leaf, a log, a roof — and waits
+    // it out. A fly comes down on the flowers, a moth goes round a light
+    // after dark and rests up high on a plant, a mosquito hangs over the
+    // water. And going, a walker goes back the way it came in.
+
+    /// Whether a creature of `k` can walk on a surface facing `n`: an ant
+    /// anything, a ladybug all but undersides, a beetle up the side of a
+    /// stone or a log (not under it), the rest only what is near enough flat.
+    static func walkable(_ k: PreyKind, normal n: V2) -> Bool {
+        switch k {
+        case .ant: return true
+        // (A little way under the bulge at the foot of a stone, not under
+        // the lid or a leaf.)
+        case .ladybug, .beetle: return n.y > -0.5
+        default: return n.y > 0.45
+        }
+    }
+
+    /// On along its surface in the tank, and round onto the next piece of it
+    /// — however short: a curve is made of short pieces — so long as it can
+    /// walk on it (`walkable`): over a stone, along a log, up a stem. Back
+    /// the other way at what is too steep for it, or at an end.
+    @discardableResult
+    private func amble(_ d: CGFloat, map: SurfaceMap) -> Bool {
+        guard var a = anchor, let loop = map.loop(a.loopID), a.segIdx < loop.segs.count else { return false }
+        func turnRound() -> Bool {
+            moveDir = -moveDir
+            facing = moveDir
+            return false
+        }
+        var idx = a.segIdx
+        var seg = loop.segs[idx]
+        var t = a.t + d
+        var hops = 0
+        while t < 0 || t > seg.len {
+            let forward = t > seg.len
+            var ni = idx + (forward ? 1 : -1)
+            if loop.closed { ni = (ni + loop.segs.count) % loop.segs.count }
+            guard hops < 12, loop.segs.indices.contains(ni), ni != idx else { return turnRound() }
+            let next = loop.segs[ni]
+            let joined = forward ? next.a.distance(to: seg.b) < 2 : next.b.distance(to: seg.a) < 2
+            guard joined, Prey.walkable(kind, normal: next.dir.perp), kind.climbs || !onGlass(next, map) else { return turnRound() }
+            let over = forward ? t - seg.len : -t
+            t = forward ? over : next.len - over
+            idx = ni
+            seg = next
+            hops += 1
+        }
+        guard seg.isOpen(at: t) else { return turnRound() }
+        let before = pos
+        let turned = idx != a.segIdx
+        a.segIdx = idx
+        a.t = t
+        anchor = a
+        placeOnSurface(map)
+        // (Round onto the next piece: eased there, not jumped.)
+        if turned {
+            cornerSlide += before - pos
+            pos = before
+        }
+        return true
+    }
+
+    /// Up the glass at an end of the tank: only a climber goes up that.
+    private func onGlass(_ s: Seg, _ map: SurfaceMap) -> Bool {
+        let w = map.worldBounds, edge = map.standoff + 6
+        return abs(s.dir.y) > 0.7 && (min(s.a.x, s.b.x) < w.minX + edge || max(s.a.x, s.b.x) > w.maxX - edge)
+    }
+
+    /// Which way along its surface `a` is, and how far — nil if `a` is not
+    /// on the surface it is on.
+    private func way(to a: Anchor, map: SurfaceMap) -> (dir: CGFloat, dist: CGFloat)? {
+        guard let cur = anchor, cur.loopID == a.loopID, let loop = map.loop(cur.loopID),
+              cur.segIdx < loop.segs.count, a.segIdx < loop.segs.count else { return nil }
+        var here: CGFloat = 0, there: CGFloat = 0, run: CGFloat = 0
+        for (i, s) in loop.segs.enumerated() {
+            if i == cur.segIdx { here = run + cur.t }
+            if i == a.segIdx { there = run + a.t }
+            run += s.len
+        }
+        let d = there - here
+        guard loop.closed else { return (d >= 0 ? 1 : -1, abs(d)) }
+        let ahead = d >= 0 ? d : d + run
+        return ahead <= run - ahead ? (1, ahead) : (-1, run - ahead)
+    }
+
+    /// Where it sits on the spot at `a` (see `placeOnSurface`).
+    private func perchPoint(_ a: Anchor, map: SurfaceMap) -> V2? {
+        guard let seg = map.seg(a) else { return nil }
+        return seg.point(at: a.t) - seg.normal * (map.standoff - kind.clearance * drawScale)
+    }
+
+    /// Somewhere in the tank to come down on for `use`, as a perch to fly to.
+    private func tankPerch(_ eco: HabitatEcology, _ use: Haunt, map: SurfaceMap, spider: V2, within r: CGFloat) -> (point: V2, anchor: Anchor)? {
+        guard let s = eco.haunt(use, for: kind, near: pos + vel * 0.2, within: r, avoiding: spider),
+              s.point.distance(to: spider) > 70 * scale, let p = perchPoint(s.anchor, map: map) else { return nil }
+        return (p, s.anchor)
+    }
+
+    /// Its tank ways, before its kind's own (see the top of this part): true
+    /// if that was all it did this frame.
+    private func tankLife(dt: CGFloat, t: CGFloat, eco: HabitatEcology, map: SurfaceMap, spider: V2) -> Bool {
+        let w = eco.weather
+        let pouring = w.rain > 0.3 || w.hail > 0.1 || w.snow > 0.45 || w.storm > 0.3
+        let near = spider.distance(to: pos) < 130 * scale
+        tankIn -= dt
+        let look = tankIn <= 0
+        if look { tankIn = randRange(0.7, 1.5) }
+        if let c = carrying {
+            if eco.remains(id: c) == nil { carrying = nil } else { eco.carry(c, by: id, to: pos + travel * 5 * drawScale - surfaceNormal * 1.5) }
+        }
+
+        // Going: up and away on the wing, or back to where it came in.
+        if leaving {
+            if kind.flies || flying || (anchor == nil && kind.takesOff) {
+                if anchor != nil { anchor = nil; vel = surfaceNormal * 60 }
+                flying = !kind.flies
+                tucked = false
+                vel += (V2(vel.x * 0.5, 90) - vel) * min(1, dt * 1.5)
+                pos += vel * dt
+                if abs(vel.x) > 20 { facing = vel.x >= 0 ? 1 : -1 }
+                return true
+            }
+            if anchor != nil, !atDen, goal?.why != .home, let d = den, way(to: d, map: map) != nil {
+                hidden = false
+                sheltering = false
+                goal = (d, .home, t)
+            }
+        }
+
+        // Lying low: it keeps quite still until the coast is clear — or,
+        // something big right on it, it bolts.
+        if hidden {
+            if anchor != nil { placeOnSurface(map) }
+            let found = near && fear > 0.9
+            guard found || (t > waitUntil && !pouring && fear < 0.35) || leaving || anchor == nil else { return true }
+            hidden = false
+            cover = 0
+            if found { flush(from: spider, map: map) }
+        }
+
+        // In out of the rain: there until it has passed.
+        if sheltering {
+            if pouring { waitUntil = max(waitUntil, t + 3) }
+            if t < waitUntil, fear < 0.6 {
+                if anchor != nil {
+                    placeOnSurface(map)
+                    return true
+                }
+                // (On its way in under something, on the wing.)
+                if !(kind.flies || flying) { sheltering = false }
+            } else {
+                sheltering = false
+                hidden = false
+            }
+        }
+
+        // On its way somewhere along what it is on.
+        if let g = goal {
+            if anchor == nil { goal = nil } else if let r = pursue(g, dt: dt, t: t, eco: eco, map: map, spider: spider) { return r }
+        }
+
+        // At what is left of a meal (an ant): a good nose round it, then off
+        // with it.
+        if sniffFor > 0 {
+            sniffFor -= dt
+            if anchor != nil { placeOnSurface(map) }
+            if chance(dt * 1.5) { moveDir = -moveDir; facing = moveDir }
+            guard sniffFor <= 0 else { return true }
+            if let r = remainsAt, eco.remains(id: r)?.carrier == nil {
+                carrying = r
+                eco.carry(r, by: id)
+                // (That is what it came in for: off home with it, before long.)
+                leaveAge = min(leaveAge, age + randRange(8, 18))
+            }
+            remainsAt = nil
+            return false
+        }
+
+        // A beetle with something big coming at it makes for cover, if
+        // there is any near — else it shuts up shop where it is (see
+        // `updateBeetle`).
+        if kind.armoured, goal == nil, !tucked, alarmFor > 0.3, let a = anchor,
+           let s = eco.haunt(.hide, for: kind, near: pos, within: 170 * scale, loop: a.loopID, avoiding: spider), way(to: s.anchor, map: map) != nil {
+            goal = (s.anchor, .hide, t)
+            alarmFor = 0
+            return true
+        }
+
+        // Caught out in a downpour: in out of it.
+        if pouring, look, !sheltering, fear < 0.6, !tucked, eco.open(at: pos) > 0.5 {
+            if takeShelter(eco: eco, map: map, spider: spider, t: t) { return anchor != nil && !kind.flies }
+        }
+
+        guard look, fear < 0.5, goal == nil, !leaving, let a = anchor, !kind.flies else { return false }
+        let hide: Bool
+        switch kind {
+        case .beetle:
+            // Now and then off under the bark, or into the litter, to lie low.
+            hide = chance(0.035) || (w.sun > 0.6 && chance(0.06))
+        case .cricket:
+            // By day, into the dark.
+            hide = !eco.night && chance(0.06)
+        case .worm:
+            // Out of the sun: into the litter, under something.
+            hide = (w.sun > 0.45 || w.heat > 0.4) && eco.open(at: pos) > 0.5 && chance(0.15)
+        case .ant:
+            // What is left of a meal, not far off.
+            if carrying == nil, remainsAt == nil, let r = eco.remains(near: pos, within: 520 * scale),
+               let s = eco.spot(near: r.p, within: 44, loop: a.loopID), way(to: s.anchor, map: map) != nil {
+                goal = (s.anchor, .remains, t)
+                remainsAt = r.id
+                return true
+            }
+            hide = false
+        default:
+            hide = false
+        }
+        if hide, let s = eco.haunt(.hide, for: kind, near: pos, within: 320 * scale, loop: a.loopID, avoiding: spider),
+           way(to: s.anchor, map: map) != nil {
+            goal = (s.anchor, .hide, t)
+            return true
+        }
+        return false
+    }
+
+    /// Back where it came in, going: it slips away there.
+    private var atDen = false
+
+    /// On along its surface toward `g`: nil once that is no longer on (its
+    /// kind's own ways take over).
+    private func pursue(_ g: (anchor: Anchor, why: Goal, since: CGFloat), dt: CGFloat, t: CGFloat, eco: HabitatEcology,
+                        map: SurfaceMap, spider: V2) -> Bool? {
+        guard let w = way(to: g.anchor, map: map), t - g.since < 45 else { goal = nil; return nil }
+        // (Something big right on top of a beetle: it clams up, then and there.)
+        if kind.armoured, spider.distance(to: pos) < 55 * scale, fear > 0.8 {
+            goal = nil
+            tuck(for: randRange(2.5, 4.5))
+            return true
+        }
+        if w.dist < 4 * scale + 2 {
+            goal = nil
+            switch g.why {
+            case .hide:
+                hidden = true
+                cover = max(eco.concealment(at: pos), 0.45)
+                waitUntil = t + randRange(18, 60)
+                pauseFor = 0
+            case .shelter:
+                sheltering = true
+                waitUntil = t + randRange(3, 8)
+                cover = eco.concealment(at: pos)
+                hidden = cover > 0.5
+            case .remains:
+                sniffFor = randRange(1.8, 3.4)
+            case .home:
+                atDen = true
+            }
+            return true
+        }
+        if w.dir != moveDir {
+            moveDir = w.dir
+            facing = w.dir
+        }
+        let pace: CGFloat
+        switch kind {
+        case .ant: pace = 62
+        case .cricket: pace = 34
+        case .beetle: pace = g.why == .home || g.why == .remains ? 13 : 20
+        case .worm: pace = 12
+        case .ladybug: pace = 22
+        default: pace = 20
+        }
+        let hurry: CGFloat = g.why == .shelter || fear > 0.5 ? 1.4 : 1
+        guard amble(moveDir * pace * hurry * scale * dt, map: map) else {
+            goal = nil
+            return false
+        }
+        return true
+    }
+
+    /// Caught out in a downpour: in under something, on foot or on the wing;
+    /// nowhere near, it hunkers down where it is. True if it did either.
+    private func takeShelter(eco: HabitatEcology, map: SurfaceMap, spider: V2, t: CGFloat) -> Bool {
+        if let a = anchor, !kind.flies {
+            if let s = eco.haunt(.shelter, for: kind, near: pos, within: 260 * scale, loop: a.loopID, avoiding: spider),
+               way(to: s.anchor, map: map) != nil {
+                goal = (s.anchor, .shelter, t)
+                return true
+            }
+            sheltering = true
+            waitUntil = t + randRange(3, 6)
+            if kind.armoured { tuck(for: randRange(3, 5)) }
+            return true
+        }
+        guard kind.flies || flying else { return false }
+        if anchor != nil {
+            // Sitting out in it: off, to somewhere under something.
+            restUntil = 0
+            return false
+        }
+        guard let s = eco.haunt(.shelter, for: kind, near: pos, within: 320 * scale, avoiding: spider), let p = perchPoint(s.anchor, map: map) else { return false }
+        perchTarget = (p, s.anchor)
+        if kind == .mosquito { dartTo = p }
+        sheltering = true
+        waitUntil = t + randRange(4, 8)
+        return true
+    }
+
+    /// Found where it was lying low: out, and off.
+    private func flush(from spider: V2, map: SurfaceMap) {
+        hidden = false
+        cover = 0
+        sheltering = false
+        goal = nil
+        fear = 1
+        guard anchor != nil else { return }
+        let dir = away(from: spider, map: map)
+        moveDir = dir
+        facing = dir
+        if kind == .cricket { nextMove = 0 }
+        if kind.armoured { alarmFor = 0; pauseFor = 0 }
+    }
+
+    /// Coming into the tank on the wing, fading in, down to `landing` — what
+    /// drew it — if there is one.
+    func comeIn(landing a: Anchor?, map: SurfaceMap) {
+        alpha = 0
+        vel = V2(randRange(-40, 40), -50)
+        nextMove = randRange(2, 5)
+        if let a, let p = perchPoint(a, map: map) {
+            perchTarget = (p, a)
+            if kind == .mosquito { dartTo = p }
+        }
+    }
+
+    /// Tools only: what it is about in the tank.
+    var debugTank: String {
+        var bits: [String] = []
+        if hidden { bits.append(String(format: "hidden %.2f", Double(cover))) }
+        if sheltering { bits.append("sheltering") }
+        if let g = goal { bits.append("→ \(g.why) \(g.anchor.loopID):\(g.anchor.segIdx)") }
+        if carrying != nil { bits.append("carrying") }
+        if tucked { bits.append("tucked") }
+        if flying { bits.append("flying") }
+        if perchTarget != nil { bits.append("to a perch") }
+        return bits.joined(separator: " ")
+    }
+
+    /// Tools only: lying low where it is, until `until`.
+    func debugHide(until: CGFloat, map: SurfaceMap) {
+        hidden = true
+        cover = max(eco?.concealment(at: pos) ?? 0.6, 0.45)
+        waitUntil = until
+    }
+
+    /// Something poking about where it is lying low (the spider's front
+    /// legs): out it comes.
+    func probed(from spider: V2, map: SurfaceMap) {
+        guard hidden || sheltering else { return }
+        flush(from: spider, map: map)
+    }
+
+    /// Picked up, spat out, pressed flat: whatever it was about in the tank
+    /// is over — and what it was carrying is dropped where it is.
+    func letGo() {
+        hidden = false
+        cover = 0
+        sheltering = false
+        goal = nil
+        sniffFor = 0
+        remainsAt = nil
+        if let c = carrying {
+            eco?.carry(c, by: nil)
+            carrying = nil
+        }
     }
 
     func update(dt: CGFloat, t: CGFloat, map: SurfaceMap, spider: V2, spiderLoop: String? = nil, cursor: V2? = nil) {
@@ -489,21 +909,29 @@ final class Prey {
             return
         }
 
-        switch kind {
-        case .cricket: updateCricket(dt: dt, t: t, map: map, spider: spider)
-        case .worm: updateWorm(dt: dt, t: t, map: map)
-        case .fruitFly: updateFly(dt: dt, t: t, map: map, spider: spider)
-        case .moth: updateMoth(dt: dt, map: map, spider: spider, cursor: cursor)
-        case .beetle: updateBeetle(dt: dt, map: map, spider: spider)
-        case .ant: updateAnt(dt: dt, map: map, spider: spider)
-        case .mosquito: updateMosquito(dt: dt, map: map, spider: spider, cursor: cursor)
-        case .ladybug: updateLadybug(dt: dt, map: map, spider: spider)
+        // (In the tank, its ways there first.)
+        let tankDone = eco.map { tankLife(dt: dt, t: t, eco: $0, map: map, spider: spider) } ?? false
+        if !tankDone {
+            switch kind {
+            case .cricket: updateCricket(dt: dt, t: t, map: map, spider: spider)
+            case .worm: updateWorm(dt: dt, t: t, map: map)
+            case .fruitFly: updateFly(dt: dt, t: t, map: map, spider: spider)
+            case .moth: updateMoth(dt: dt, map: map, spider: spider, cursor: cursor)
+            case .beetle: updateBeetle(dt: dt, map: map, spider: spider)
+            case .ant: updateAnt(dt: dt, map: map, spider: spider)
+            case .mosquito: updateMosquito(dt: dt, map: map, spider: spider, cursor: cursor)
+            case .ladybug: updateLadybug(dt: dt, map: map, spider: spider)
+            }
         }
 
-        // Slipping away into a crack.
-        if leaving {
+        // Slipping away into a crack (in the tank, once it is back where it
+        // came in).
+        if leaving, goal?.why != .home {
             alpha = max(0, alpha - dt / 2.5)
-            if alpha <= 0 { gone = true }
+            if alpha <= 0 {
+                gone = true
+                if let c = carrying { eco?.removeRemains(c) }
+            }
         }
 
         // Nothing lives off the edge of the world: back onto the floor.
@@ -695,6 +1123,16 @@ final class Prey {
     /// Opens its wing cases and flies off to a ledge somewhere else, away
     /// from the spider.
     private func takeOff(map: SurfaceMap, awayFrom spider: V2) {
+        // (In the tank: onto what it likes — a ladybug a plant, a beetle bark.)
+        if let eco, let land = tankPerch(eco, .land, map: map, spider: spider, within: 450 * scale), land.point.distance(to: pos) > 120 * scale {
+            perchTarget = land
+            flying = true
+            tucked = false
+            flightFor = 0
+            anchor = nil
+            vel = surfaceNormal * 90
+            return
+        }
         let f = home ?? map.screenFrame(containing: pos)
         var best: (score: CGFloat, point: V2, anchor: Anchor)?
         for spot in map.sampleSpots(spacing: 60) where spot.seg.facing == .up && f.contains(spot.point.point) {
@@ -793,8 +1231,11 @@ final class Prey {
         if dS.length < 90 * scale { acc += dS.normalized * 500 }
         nextMove -= dt
         if nextMove <= 0, perchTarget == nil {
-            // Time to land: pick somewhere near.
-            if let spot = map.nearestSpot(to: pos + vel * 0.2 + V2(0, -60), within: 260 * scale),
+            // Time to land: pick somewhere near — in the tank, mostly on
+            // what draws it (flowers, fungus, food, leaves).
+            if let eco, let land = tankPerch(eco, .land, map: map, spider: spider, within: 280 * scale) {
+                perchTarget = land
+            } else if let spot = map.nearestSpot(to: pos + vel * 0.2 + V2(0, -60), within: 260 * scale),
                spot.point.distance(to: spider) > 60 * scale {
                 let edge = spot.point - spot.seg.normal * (map.standoff - kind.clearance * drawScale)
                 perchTarget = (edge, spot.anchor)
@@ -826,8 +1267,10 @@ final class Prey {
 
     private func updateMoth(dt: CGFloat, map: SurfaceMap, spider: V2, cursor: V2?) {
         let f = (home ?? map.screenFrame(containing: pos)).insetBy(dx: 40, dy: 40)
-        // The pointer is its lamp — if it is on this screen and not far.
+        // The pointer is its lamp — if it is on this screen and not far. (In
+        // the tank after dark, so is a light.)
         let lamp = cursor.flatMap { c in f.insetBy(dx: -30, dy: -30).contains(c.point) && c.distance(to: pos) < 420 * scale ? c : nil }
+            ?? eco?.light(near: pos, within: 1100 * scale)
         if anchor != nil {
             // Resting, wings folded back, for a good long while: the lamp
             // coming near stirs it, and so, belatedly, does the spider.
@@ -863,8 +1306,11 @@ final class Prey {
         }
         nextMove -= dt
         if nextMove <= 0, perchTarget == nil {
-            // Somewhere to rest: a wall as soon as a ledge, never underneath.
-            if let spot = map.nearestSpot(to: pos + vel * 0.3, within: 300 * scale),
+            // Somewhere to rest: a wall as soon as a ledge, never underneath
+            // — in the tank, mostly up high on a plant, or on bark.
+            if let eco, let rest = tankPerch(eco, .rest, map: map, spider: spider, within: 440 * scale) {
+                perchTarget = rest
+            } else if let spot = map.nearestSpot(to: pos + vel * 0.3, within: 300 * scale),
                spot.seg.facing != .down, spot.point.distance(to: spider) > 80 * scale {
                 perchTarget = (edgePoint((spot.anchor, spot.point, spot.seg), map: map), spot.anchor)
             } else {
@@ -946,6 +1392,13 @@ final class Prey {
         var goal: V2
         if fleeing {
             goal = pos + (pos - spider).normalized.rotated(by: randRange(-0.7, 0.7)) * randRange(150, 260) * scale
+        } else if let eco, chance(0.55), let water = eco.water(near: pos, within: 700 * scale) {
+            // In the tank: over the water, mostly.
+            goal = water.over
+        } else if let eco, chance(0.2), let land = tankPerch(eco, .land, map: map, spider: spider, within: 260 * scale) {
+            perchTarget = land
+            dartTo = land.point
+            return
         } else if let c = cursor, f.contains(c.point), c.distance(to: pos) < 600 * scale, chance(0.7) {
             // After you: it hangs about the pointer.
             goal = c + V2.angle(randRange(0, 2 * .pi)) * randRange(35, 80) * scale
@@ -985,7 +1438,7 @@ enum PreyRenderer {
         }
         ctx.rotate(by: p.heading)
         ctx.scaleBy(x: s * p.facing, y: s)
-        ctx.setAlpha(p.alpha)
+        ctx.setAlpha(p.shownAlpha)
         ctx.setLineCap(.round)
         ctx.setLineJoin(.round)
         switch p.kind {
@@ -1530,7 +1983,7 @@ final class PreyView: NSView {
             ctx.translateBy(x: p.pos.x - worldOrigin.x, y: p.pos.y - worldOrigin.y)
             // A soft contact shadow under anything sitting on an edge.
             if p.castsShadow {
-                ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.12 * Double(p.alpha)))
+                ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.12 * Double(p.shownAlpha)))
                 ctx.fillEllipse(in: CGRect(x: -9 * p.drawScale, y: -p.kind.clearance * p.drawScale - 2, width: 18 * p.drawScale, height: 3.5 * p.drawScale))
             }
             PreyRenderer.draw(p, in: ctx)

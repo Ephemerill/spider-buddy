@@ -61,6 +61,11 @@ final class WeatherLayers {
     // On the ground.
     private let wetDark = CALayer()
     private let wetMask = CALayer()
+    /// What is open to the sky along the floor (see `SkyCover`): the wet,
+    /// the snow, the splashes and the hail only there — a strip, stretched
+    /// up each of them, clear where something is over the floor.
+    private let wetBox = CALayer()
+    private let openMasks = (0..<6).map { _ in CALayer() }
     private let puddles = CALayer()
     private var ripples: [CAEmitterLayer] = []
     private let dusting = CALayer(), blanket = CALayer()
@@ -130,7 +135,15 @@ final class WeatherLayers {
         back.insertSublayer(meteors, above: nightSky)
         back.addSublayer(farBolt)
         for l in [farBox, shafts, fogHigh, dustBank, fogLow, haze, nearBolt] as [CALayer] { mid.addSublayer(l) }
-        for l in [wetDark, puddles, dusting, blanket, prints, splashes, hailFloor] as [CALayer] { ground.addSublayer(l) }
+        for l in [wetBox, puddles, dusting, blanket, prints, splashes, hailFloor] as [CALayer] { ground.addSublayer(l) }
+        wetBox.addSublayer(wetDark)
+        wetBox.anchorPoint = .zero
+        for (l, m) in zip([wetBox, dusting, blanket, prints, splashes, hailFloor] as [CALayer], openMasks) {
+            m.anchorPoint = .zero
+            m.contentsGravity = .resize
+            m.backgroundColor = CGColor(gray: 1, alpha: 1)
+            l.mask = m
+        }
         caps.addSublayer(capsThin)
         caps.addSublayer(capsThick)
         fall.addSublayer(snowE)
@@ -250,17 +263,19 @@ final class WeatherLayers {
         // Cloud: a grey deck over the sky, and a darker one under it for
         // storms — each twice the width of the backdrop and the same every
         // width along, so it can drift round for ever — from the top of the
-        // sky down to where it came down to in the old tank.
+        // sky down to where it came down to in the old tank. (Centred on
+        // its drift, 0…W, it runs from a width before the backdrop to a
+        // width after: never an edge in sight.)
         let deckH = max(air * 0.8, H - (f.y(1) - air * 0.8))
         paintLater(deck) { WeatherArt.cloudDeck(width: W, height: deckH, u: u, seed: 3,
                                                 light: HabitatArt.c(0.93, 0.94, 0.96), dark: HabitatArt.c(0.66, 0.69, 0.75)) }
         deck.bounds = CGRect(x: 0, y: 0, width: W * 2, height: deckH)
-        deck.position = CGPoint(x: W * 0.5 + deckOff, y: H - deckH / 2 + 6 * u)
+        deck.position = CGPoint(x: deckOff, y: H - deckH / 2 + 6 * u)
         let stormH = max(air * 0.66, H - (f.y(1) - air * 0.66))
         paintLater(stormDeck) { WeatherArt.cloudDeck(width: W, height: stormH, u: u, seed: 9,
                                                      light: HabitatArt.c(0.5, 0.52, 0.6), dark: HabitatArt.c(0.24, 0.26, 0.33)) }
         stormDeck.bounds = CGRect(x: 0, y: 0, width: W * 2, height: stormH)
-        stormDeck.position = CGPoint(x: W * 0.5 + stormOff, y: H - stormH / 2 + 10 * u)
+        stormDeck.position = CGPoint(x: stormOff, y: H - stormH / 2 + 10 * u)
 
         // The sun blazing: a great glare where it is (up at the right,
         // where there is none), breathing.
@@ -306,6 +321,7 @@ final class WeatherLayers {
         // dusting of snow, then a blanket; hail lying about; splashes.
         let WW = ws.width
         let gh = G + HabitatArt.groundOverhang(fw)
+        wetBox.frame = CGRect(x: 0, y: 0, width: WW, height: gh)
         wetDark.frame = CGRect(x: 0, y: 0, width: WW, height: gh)
         wetDark.backgroundColor = CGColor(red: 0.1, green: 0.09, blue: 0.12, alpha: 1)
         wetMask.frame = wetDark.bounds
@@ -316,6 +332,12 @@ final class WeatherLayers {
         paintLater(dusting) { WeatherArt.snowGround(band, f: fwNow, thick: false) }
         paintLater(blanket) { WeatherArt.snowGround(band, f: fwNow, thick: true) }
         for l in [dusting, blanket, puddles] { l.frame = CGRect(origin: .zero, size: band) }
+        // (Open all along, until the furniture says otherwise: see `layoutItems`.)
+        for m in openMasks {
+            m.frame = CGRect(x: 0, y: 0, width: WW, height: G + 60 * u)
+            m.contents = nil
+            m.backgroundColor = CGColor(gray: 1, alpha: 1)
+        }
 
         // (Splashes, hail bouncing and snow falling are born only about
         // the glass, following it — see `follow`.)
@@ -578,6 +600,21 @@ final class WeatherLayers {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         defer { CATransaction.commit() }
+        // What is open to the sky: snow lies, the ground is wet and puddles
+        // form only there — under a roof, a table, a log over the floor, it
+        // stays dry (see `SkyCover`).
+        let sky = SkyCover(h)
+        // (Under leaves some still gets through; under anything solid, none.)
+        let leafy: Set<HabitatMaterial> = [.leaf, .stem, .moss, .fungus]
+        let byID = Dictionary(h.items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let covered = sky.covered(at: HabitatLayout.ground + 2, minWidth: 8)
+        let dry = covered.map { (lo: $0.lo, hi: $0.hi) }
+        let shelter = covered.map { c in (lo: c.lo, hi: c.hi, amount: byID[c.owner].map { leafy.contains($0.kind.definition.traits.material) ? CGFloat(0.4) : 1 } ?? 1) }
+        let open = WeatherArt.openStrip(width: worldSize.width, dry: shelter)
+        for m in openMasks {
+            m.contents = open
+            m.backgroundColor = open == nil ? CGColor(gray: 1, alpha: 1) : nil
+        }
         // (Painted when snow first lies: most days it never does.)
         let items = h.items.filter { !$0.inFront }
         for (thick, box) in [(false, capsThin), (true, capsThick)] {
@@ -585,7 +622,7 @@ final class WeatherLayers {
             paintLater(box) { [weak box] in
                 for it in items {
                     let area = it.rect.insetBy(dx: -8, dy: -8)
-                    guard let img = WeatherArt.snowCaps([it], in: area, u: u, thick: thick) else { continue }
+                    guard let img = WeatherArt.snowCaps([it], in: area, u: u, thick: thick, sky: sky) else { continue }
                     let l = CALayer()
                     l.contents = img
                     l.frame = area
@@ -595,7 +632,7 @@ final class WeatherLayers {
             }
         }
         // Puddles, in the open stretches of ground.
-        let spots = WeatherArt.puddleSpots(h)
+        let spots = WeatherArt.puddleSpots(h, dry: dry)
         puddles.contents = WeatherArt.puddles(CGSize(width: worldSize.width, height: fw.groundY + 10 * u), f: fw, spots: spots)
         for r in ripples { r.removeFromSuperlayer() }
         ripples = spots.map { s in
@@ -685,8 +722,8 @@ final class WeatherLayers {
         if !deck.isHidden || !stormDeck.isHidden || m.cloud > 0 || m.storm > 0 {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            deck.position.x = W * 0.5 + deckOff
-            stormDeck.position.x = W * 0.5 + stormOff
+            deck.position.x = deckOff
+            stormDeck.position.x = stormOff
             CATransaction.commit()
         }
 
@@ -862,6 +899,10 @@ final class WeatherLayers {
         a.duration = d
         l.add(a, forKey: "flash")
     }
+
+    /// Tools only: whether the wet and the snow on the floor are kept off
+    /// where something is over it.
+    var debugOpenMasked: Bool { openMasks.allSatisfy { $0.contents != nil } }
 
     /// Tools only: this much snow lying, and this wet a ground, at once.
     func debugGround(snow: CGFloat, wet: CGFloat) {
@@ -1210,11 +1251,40 @@ enum WeatherArt {
         }
     }
 
+    /// A strip the width of the world, opaque where the floor is open to the
+    /// sky and clear (softly, at the edges) where something is over it
+    /// (`dry`): stretched up over the wet, the snow, the splashes, the hail,
+    /// as their mask. Nil: open all along.
+    static func openStrip(width W: CGFloat, dry: [(lo: CGFloat, hi: CGFloat, amount: CGFloat)]) -> CGImage? {
+        guard !dry.isEmpty, W > 1 else { return nil }
+        // How open each point across is: 1, less `amount` under each stretch
+        // with something over it, eased in and out over its ends.
+        let n = Int(W.rounded(.up)) + 1
+        var open = [CGFloat](repeating: 1, count: n)
+        let soft: CGFloat = 14
+        for s in dry {
+            let lo = max(0, Int((s.lo - soft).rounded(.down))), hi = min(n - 1, Int((s.hi + soft).rounded(.up)))
+            guard lo <= hi else { continue }
+            for x in lo...hi {
+                let fx = CGFloat(x)
+                let edge = min(fx - (s.lo - soft), (s.hi + soft) - fx) / (soft * 2)
+                open[x] = min(open[x], 1 - s.amount * smoothstep(clamp(edge, 0, 1)))
+            }
+        }
+        return HabitatArt.image(CGSize(width: W, height: 2), scale: 1) { ctx in
+            for x in 0..<n where open[x] > 0.004 {
+                ctx.setFillColor(c(1, 1, 1, open[x]))
+                ctx.fill(CGRect(x: CGFloat(x), y: 0, width: 1, height: 2))
+            }
+        }
+    }
+
     /// Where puddles form: open stretches of the ground, clear of anything
-    /// standing on it (in scene units: the middle, and how wide).
-    static func puddleSpots(_ h: Habitat) -> [(x: CGFloat, w: CGFloat)] {
+    /// standing on it, and with nothing over them (`dry`) — in scene units:
+    /// the middle, and how wide.
+    static func puddleSpots(_ h: Habitat, dry: [(lo: CGFloat, hi: CGFloat)] = []) -> [(x: CGFloat, w: CGFloat)] {
         let blocked = h.items.filter { !$0.kind.hangs && $0.onGround && ($0.kind.climbable || $0.kind.definition.shelf == .ground || $0.kind == .puddle) }
-            .map { ($0.x - $0.w * 0.5 - 12, $0.x + $0.w * 0.5 + 12) }
+            .map { ($0.x - $0.w * 0.5 - 12, $0.x + $0.w * 0.5 + 12) } + dry.map { ($0.lo - 8, $0.hi + 8) }
         var spots: [(x: CGFloat, w: CGFloat)] = []
         // Three to each old tank's width.
         let across = max(1, Int((h.size.width / HabitatLayout.width).rounded()))
@@ -1265,11 +1335,12 @@ enum WeatherArt {
 
     /// Snow on top of the furniture: along the tops of logs and stones,
     /// down the length of a branch, on the leaves of a plant; a sprinkle on
-    /// the low plants.
-    static func snowCaps(_ items: [HabitatItem], in area: CGRect, u: CGFloat, thick: Bool) -> CGImage? {
+    /// the low plants — only where nothing is over it (`sky`).
+    static func snowCaps(_ items: [HabitatItem], in area: CGRect, u: CGFloat, thick: Bool, sky: SkyCover? = nil) -> CGImage? {
         let toView: (CGRect) -> CGRect = { $0.offsetBy(dx: -area.minX, dy: -area.minY) }
         let point: (V2) -> CGPoint = { CGPoint(x: $0.x - area.minX, y: $0.y - area.minY) }
         let size = area.size
+        func open(_ p: V2) -> Bool { sky.map { $0.roof(over: p + V2(0, 2)) == nil } ?? true }
         return HabitatArt.image(size, scale: 1) { ctx in
             let depth: CGFloat = (thick ? 4.6 : 1.7) * u
             for it in items where !it.inFront {
@@ -1277,9 +1348,17 @@ enum WeatherArt {
                 var t = depth
                 switch it.kind.definition.snow {
                 case .tops(let k):
-                    // Along the tops of what is solid of it, as it is shaped.
+                    // Along the tops of what is solid of it, as it is shaped
+                    // — in stretches, where it is out under the sky.
                     t *= [.rock, .boulder, .log, .driftwood, .hide].contains(it.kind) ? 1 : (it.kind == .branch ? 0.75 : k)
-                    for line in it.geometry.topLines(step: 6) { cap(ctx, along: line.map(point), depth: t, seed: it.seed, u: u) }
+                    for line in it.geometry.topLines(step: 6) {
+                        var run: [V2] = []
+                        for p in line + [V2(.nan, .nan)] {
+                            if !p.x.isNaN, open(p) { run.append(p); continue }
+                            if run.count >= 2 { cap(ctx, along: run.map(point), depth: t, seed: it.seed, u: u) }
+                            run = []
+                        }
+                    }
                     continue
                 case .sprinkle:
                     // A sprinkle over the top of it.
@@ -1288,6 +1367,7 @@ enum WeatherArt {
                     for k in 0..<n {
                         let x = r.minX + rnd(it.seed, k) * r.width
                         let y = r.minY + r.height * (0.35 + rnd(it.seed + 1, k) * 0.65)
+                        guard open(V2(x + area.minX, y + area.minY)) else { continue }
                         let rr = (thick ? 1.3 : 0.8) * u * (0.6 + rnd(it.seed + 2, k))
                         ctx.fillEllipse(in: CGRect(x: x - rr * 1.3, y: y - rr * 0.6, width: rr * 2.6, height: rr * 1.2))
                     }

@@ -80,6 +80,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// ten minutes or so at the other, and anywhere from half to half as
     /// much again of that.
     private var wildGap: CFTimeInterval { Double(5400 * pow(600.0 / 5400, wildFrequency) * randRange(0.5, 1.5)) }
+    /// Creatures finding their own way into the tank, as its things draw
+    /// them (see HabitatEcology.swift): on unless turned off.
+    private var tankWildOn = true
+    private var nextTankWildAt: CFTimeInterval = 0
     private var allSpiders: [Spider] { [spider] + visitors.map(\.spider) }
     private let tracker = WindowTracker()
     private var statusItem: NSStatusItem!
@@ -326,6 +330,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // drink, a lookout climbed to look out from, a downpour sat out under
         // the table rather than in the nearer bark cave.
         if ProcessInfo.processInfo.environment["SPIDER_HABITAT_PLACES"] == "1" { runHabitatPlacesTest(dir: ProcessInfo.processInfo.environment["SPIDER_HABITAT_DIR"]) }
+        // SPIDER_HABITAT_ECOLOGY=1 (+SPIDER_HABITAT_DIR for pictures): the tank
+        // alive — rain rolling in and the spider going in under the table, drops
+        // on the leaves and rings on the dish, out after it and a drop drunk;
+        // snow only where open; creatures coming in to what draws them.
+        if ProcessInfo.processInfo.environment["SPIDER_HABITAT_ECOLOGY"] == "1" { runHabitatEcologyTest(dir: ProcessInfo.processInfo.environment["SPIDER_HABITAT_DIR"]) }
         // SPIDER_HABITAT_RETURN=left|right|above: carried out of the tank to
         // that side and let go; reports how long it takes to get back in.
         if let side = ProcessInfo.processInfo.environment["SPIDER_HABITAT_RETURN"] {
@@ -778,7 +787,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spider.cursorArea = inHabitat ? habitat?.scene.visibleWorld : nil
         updateWeather(now: now, dt: dt)
         // The beat of whatever is playing, as it is on the screen this frame.
-        let heard = dancesToMusic ? ears.music(at: now) : nil
+        // (Not in a habitat test: what the Mac happens to be playing would
+        // have it dancing instead of doing what is being tested.)
+        let heard = dancesToMusic && !testingHabitat ? ears.music(at: now) : nil
         for s in allSpiders { s.music = heard }
         // Wiping the pointer across the hammock tears it down.
         if spider.hammock != nil {
@@ -827,6 +838,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateCarrying()
         updateTankEntry(now: now)
         updateWildlife(now: now)
+        updateTankWildlife(now: now)
         updatePrey()
         updateTraces(dt: dt)
         updateHand()
@@ -1513,6 +1525,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// The tank alive: now and then something finds its own way into the
+    /// tank — what comes, and where, up to what is in there: flies to the
+    /// flowers, a beetle out from under the bark, moths to a light after dark,
+    /// worms in the wet (see HabitatEcology.swift) — while the spider is in
+    /// there to meet it and somebody is about. A few at most.
+    private func updateTankWildlife(now: CFTimeInterval) {
+        guard tankWildOn, !testingHabitat, inHabitat, tankOpen, let hc = habitat else { return }
+        let eco = hc.scene.ecology
+        if nextTankWildAt == 0 { nextTankWildAt = now + Double(eco.arrivalGap()) * 0.5 }
+        guard now >= nextTankWildAt else { return }
+        let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+        let loose = spider.prey.filter { $0.state == .loose }
+        guard !spider.config.paused, !spider.dormant, !spider.isHeld, idle < 600, loose.count < 4, loose.filter(\.wild).count < 3 else {
+            nextTankWildAt = now + Double(randRange(30, 90))
+            return
+        }
+        nextTankWildAt = now + Double(eco.arrivalGap())
+        let seen = hc.scene.visibleWorld
+        if let a = eco.arrival(near: V2(seen.midX, seen.midY)) { spider.releaseInTank(a) }
+    }
+
+    @objc private func toggleTankWildlife() {
+        tankWildOn.toggle()
+        nextTankWildAt = 0
+        saveSettings()
+        refreshMenu()
+    }
+
     @objc private func toggleWildlife() {
         wildOn.toggle()
         // The first comes a little sooner, so you see what it is like.
@@ -1761,6 +1801,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let mins = Int(5400 * pow(600.0 / 5400, wildFrequency) / 60)
                     return n > 0 ? "Something has wandered in." : "About one every \(mins) minutes or so. Moths come out at night, worms in the rain."
                 },
+                .toggle("Creatures Live in the Habitat",
+                        help: "In the habitat, now and then something comes in on its own — what, and where, depends on what's in there: flies to flowers, mosquitoes to water, beetles and ants under bark and in leaf litter, crickets in the dark, worms in the damp after rain, moths to a light after dark.",
+                        get: { [unowned self] in tankWildOn }, set: { [unowned self] on in if on != tankWildOn { toggleTankWildlife() } }),
             ]),
             PanelSection(title: "Appetite", rows: [
                 .status { [unowned self] in
@@ -2105,6 +2148,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let hc = habitat { return hc }
         let hc = HabitatController(spiderName: spider.name)
         hc.scene.spider = spider
+        // (The tank alive: what it and whatever is loose in it read.)
+        spider.ecology = hc.scene.ecology
+        hc.tankWildlife = { [weak self] in self?.tankWildOn ?? false }
+        hc.onToggleTankWildlife = { [weak self] in self?.toggleTankWildlife() }
         // (Its surfaces are laid out for its size: once now, then only as
         // the furniture changes.)
         hc.scene.setStandoff(map.standoff)
@@ -3394,6 +3441,197 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
             }
+        }
+    }
+
+    /// SPIDER_HABITAT_ECOLOGY=1: the tank alive (HabitatEcology.swift, and
+    /// "The tank alive" in Spider.swift), in real time. A tank it knows: a
+    /// table with plants either side, flowers, a dish, a log, cork bark, leaf
+    /// litter, a basking stone, a lantern. Rain rolls in and it goes in under
+    /// the table; drops bead on the leaves out in it (none under the table),
+    /// rings spread on the dish, the floor under the table stays dry. It
+    /// clears: out it comes, finds a drop on a leaf, drinks it, gets on. Snow
+    /// lies only where it is open. Then creatures, let in to what draws them:
+    /// a fly to the flowers, a beetle from the bark, a moth to the lantern
+    /// after dark, an ant to what is left of a meal.
+    private func runHabitatEcologyTest(dir: String?) {
+        let restore = habitatTestSnapshot()
+        var fails = 0
+        func check(_ label: String, _ ok: Bool, _ detail: String = "") {
+            if !ok { fails += 1 }
+            print("habitat ecology: [\(ok ? "ok  " : "FAIL")] \(label) \(detail)")
+            fflush(stdout)
+        }
+        func note(_ s: String) { print("habitat ecology: \(s)"); fflush(stdout) }
+        func after(_ secs: Double, _ f: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + secs, execute: f) }
+        func wait(_ secs: Double, _ test: @escaping () -> Bool, _ done: @escaping (Bool, Double) -> Void) {
+            let t0 = CACurrentMediaTime()
+            Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
+                let t = CACurrentMediaTime() - t0
+                if test() { timer.invalidate(); done(true, t) } else if t > secs { timer.invalidate(); done(false, t) }
+            }
+        }
+        openHabitat(restoring: true)
+        guard let hc = habitat else { return }
+        hc.scene.debugKeepAnimating = true
+        let scene = hc.scene
+        hc.weather.persists = false
+        hc.weather.debugForce(.clear)
+        func shot(_ name: String) { if let dir { debugShot("\(dir)/ecology_\(name).png", rect: .null, window: hc.window) } }
+        let W = scene.habitat.size.width, H = scene.habitat.size.height, G = HabitatLayout.ground, cx = W / 2
+        var h = Habitat(biome: .forest, world: scene.habitat.size)
+        let table = h.add(.table, at: CGPoint(x: cx, y: 0))
+        let leafL = h.add(.broadLeaf, at: CGPoint(x: cx - 260, y: 0))
+        let leafR = h.add(.largeFern, at: CGPoint(x: cx + 300, y: 0))
+        let flowers = h.add(.floweringPlant, at: CGPoint(x: cx + 640, y: 0))
+        let dish = h.add(.waterDish, at: CGPoint(x: cx - 560, y: 0))
+        _ = h.add(.log, at: CGPoint(x: cx - 900, y: 0))
+        let bark = h.add(.corkBark, at: CGPoint(x: cx + 980, y: 0))
+        _ = h.add(.leafPile, at: CGPoint(x: cx - 1180, y: 0))
+        _ = h.add(.baskingStone, at: CGPoint(x: cx + 1280, y: 0))
+        let lantern = h.add(.lantern, at: CGPoint(x: cx + 640, y: H))
+        spider.knowledge = HabitatKnowledge()
+        scene.setHabitat(h)
+        let eco = scene.ecology
+        let floorY = G + scene.map.standoff
+        spider.placeInHabitat(map: scene.map, at: V2(cx + 150, floorY))
+        scene.lookAt(V2(cx, G + 200))
+        spider.debugSetUrges(thirst: 0.4, view: 0, rest: 0, roam: 0)
+        // (Full up, so what it lets in stays about to be seen.)
+        spider.debugFed = 0.95
+        func gap(_ r: CGRect, _ p: V2) -> CGFloat { V2(max(r.minX - p.x, 0, p.x - r.maxX), max(r.minY - p.y, 0, p.y - r.maxY)).length }
+        func footed() -> Bool { spider.standingOn.flatMap { scene.map.worldPoint($0) }.map { $0.distance(to: spider.worldPos) < 16 } ?? false }
+        var floating = 0, offFor = 0
+        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [self] timer in
+            if !inHabitat { timer.invalidate(); return }
+            offFor = spider.isStanding && !footed() ? offFor + 1 : 0
+            if offFor == 5 { floating += 1 }
+        }
+        var last = ""
+        Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [self] timer in
+            guard inHabitat else { timer.invalidate(); return }
+            let line = "\(spider.debugState) | \(spider.debugErrand)"
+            if line != last { note(line); last = line }
+        }
+        note("\(eco.debugSummary)")
+
+        // 1. Rain rolls in.
+        // (In under the table for it — or there already, and staying put.)
+        func underTable() -> Bool { spider.sheltered && gap(table.rect, spider.worldPos) < 12 }
+        after(3) { [self] in
+            hc.weather.bring(.rain)
+            wait(90, { [self] in
+                spider.sheltered && spider.weather.rain > 0.3 && ((spider.debugErrandKind == "shelter" && spider.debugErrand.contains(" act ")) || underTable())
+            }) { [self] ok, t in
+                let pl = spider.debugErrandKind == "shelter" ? spider.debugErrandPlace : nil
+                let under = underTable() || (pl.map { $0.roofOwner == table.id || $0.thing == table.id || gap(table.rect, $0.point) < 12 } ?? false)
+                check("rain rolls in: in it goes, under the table", ok && under, String(format: "%.1fs, %@ (%@)", t, pl?.key ?? "-", spider.debugPlaceNote))
+                wait(40, { eco.droplets.count >= 8 }) { beaded, _ in
+                    let underTable = eco.droplets.filter { gap(table.rect, $0.p) < 1 }
+                    check("rain beads on the leaves out in it", beaded, "\(eco.droplets.count) drops")
+                    check("…none under the table", underTable.isEmpty, "\(underTable.count)")
+                    check("…drawn on the leaves", scene.debugDropsDrawn(on: leafL.id) || scene.debugDropsDrawn(on: leafR.id))
+                    check("rings spread on the dish in the rain", scene.debugRain(on: dish.id) > 0.3, String(format: "%.2f", scene.debugRain(on: dish.id)))
+                    check("the floor under the table stays dry", scene.weatherFX.debugOpenMasked)
+                    scene.lookAt(V2(table.rect.midX, G + 180))
+                    after(2) { shot("1_rain") }
+                    after(12) { clearing() }
+                }
+            }
+        }
+        // 2. It clears: out, a drop, on.
+        func clearing() {
+            hc.weather.bring(.clear)
+            wait(150, { [self] in spider.debugErrandKind == "emerge" }) { [self] out, t in
+                check("the rain over, out it comes", out, String(format: "%.1fs", t))
+                wait(180, { [self] in spider.debugErrandKind == "dew" && spider.debugDrinking }) { [self] drank, t2 in
+                    check("…finds a drop on a leaf and drinks it", drank, String(format: "%.1fs", t2))
+                    if drank {
+                        scene.lookAt(spider.worldPos)
+                        after(0.8) { shot("2_drop") }
+                    }
+                    wait(60, { [self] in spider.debugErrandKind == nil }) { on, _ in
+                        check("…and gets on with its life", on)
+                        after(2) { snow() }
+                    }
+                }
+            }
+        }
+        // 3. Snow lies only where it is open.
+        func snow() {
+            hc.weather.debugForce(.snow)
+            scene.weatherFX.debugGround(snow: 1, wet: 0)
+            scene.lookAt(V2(table.rect.midX, G + 180))
+            after(5) {
+                shot("3_snow")
+                check("snow on the floor kept off where the table is over it", scene.weatherFX.debugOpenMasked)
+                hc.weather.debugForce(.clear)
+                scene.weatherFX.debugGround(snow: 0, wet: 0)
+                after(2) { creatures() }
+            }
+        }
+        // 4. Creatures, to what draws them.
+        func creatures() {
+            // (Full up still, so it lets them be — minutes have gone by.)
+            spider.debugFed = 0.95
+            let flowerBox = flowers.rect.insetBy(dx: -16, dy: -16)
+            // (One the flowers drew: what else could, and sometimes does.)
+            let drawn = (0..<30).compactMap { _ in eco.arrival(near: V2(flowers.rect.midX, G + 200), kind: .fruitFly) }
+            guard let a = drawn.first(where: { $0.feature == .bloom }) ?? drawn.first else { check("a fly comes in", false); finish(); return }
+            note("of 30 flies, the flowers drew \(drawn.filter { $0.feature == .bloom }.count)")
+            let fly = spider.releaseInTank(a)
+            scene.lookAt(V2(flowers.rect.midX, G + 180))
+            wait(40, { fly.first.map { $0.onSurface && flowerBox.contains($0.pos.point) } ?? false }) { [self] landed, t in
+                check("a fly comes in and lands on the flowers", landed, String(format: "%.1fs, from %@", t, a.feature?.rawValue ?? "nowhere"))
+                if landed { after(0.5) { shot("4_fly") } }
+                guard let b = eco.arrival(near: V2(bark.rect.midX, G + 100), kind: .beetle) else { check("a beetle comes in", false); finish(); return }
+                let beetle = spider.releaseInTank(b).first
+                check("a beetle comes out by the bark", b.anchor != nil && gap(bark.rect, b.at) < 70, "\(b.feature?.rawValue ?? "-") at \(Int(b.at.x)),\(Int(b.at.y))")
+                _ = beetle
+                // After dark, a moth to the lantern.
+                scene.debugNight = true
+                after(1) { [self] in
+                    let light = V2(lantern.rect.midX, lantern.rect.minY + lantern.rect.height * 0.25)
+                    let drawnIn = (0..<30).compactMap { _ in eco.arrival(near: light, kind: .moth) }
+                    note("of 30 moths after dark, the lantern drew \(drawnIn.filter { $0.feature == .glow }.count)")
+                    guard let m = drawnIn.first(where: { $0.feature == .glow }) ?? drawnIn.first else { check("a moth comes in", false); finish(); return }
+                    let moth = spider.releaseInTank(m).first
+                    scene.lookAt(light + V2(0, -120))
+                    var near: Double = 0
+                    wait(40, {
+                        if let p = moth, p.pos.distance(to: light) < 110 { near += 0.1 }
+                        return near > 6
+                    }) { [self] round, t in
+                        check("after dark, a moth comes to the lantern and goes round it", round, String(format: "%.1fs", t))
+                        if round { shot("5_moth") }
+                        scene.debugNight = nil
+                        // What is left of a meal, and an ant to it.
+                        let at = V2(cx - 760, G)
+                        eco.leaveRemains(of: .cricket, at: at, angle: 0.2)
+                        // (Of those it would draw, one the leftovers drew — as
+                        // the flowers' fly and the lantern's moth above.)
+                        let drawnAnts = (0..<30).compactMap { _ in eco.arrival(near: at, kind: .ant) }
+                        note("of 30 ants, what was left drew \(drawnAnts.filter { $0.feature == .remains }.count)")
+                        guard let rid = eco.remains.last?.id,
+                              let ra = drawnAnts.first(where: { $0.feature == .remains }) ?? drawnAnts.min(by: { $0.at.distance(to: at) < $1.at.distance(to: at) }) else {
+                            check("an ant comes in", false); finish(); return
+                        }
+                        let ants = spider.releaseInTank(ra)
+                        scene.lookAt(at + V2(0, 120))
+                        after(1) { check("what is left of a meal is drawn", scene.debugRemainsDrawn >= 1) }
+                        wait(90, { ants.contains { $0.carrying == rid } }) { took, t in
+                            check("an ant finds it, and carries it off", took, String(format: "%.1fs, %d ants, from %@", t, ants.count, ra.feature?.rawValue ?? "nowhere"))
+                            if took { shot("6_ant") }
+                            finish()
+                        }
+                    }
+                }
+            }
+        }
+        func finish() {
+            check("never standing on nothing", floating == 0, "\(floating)")
+            print("habitat ecology: \(fails == 0 ? "all ok" : "\(fails) FAILED")")
+            finishHabitatTest(restore)
         }
     }
 
@@ -4799,6 +5037,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         d.set(dancesToMusic, forKey: "danceToMusic")
         d.set(learns, forKey: "learns")
         d.set(wildOn, forKey: "wildlife")
+        d.set(tankWildOn, forKey: "tankWildlife")
         d.set(toySounds, forKey: "toySounds")
         d.set(leavesTraces, forKey: "traces")
     }
@@ -4811,7 +5050,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "visitors": false, "visitFrequency": 0.5, "visitStay": 0.5,
             "feelPower": true, "feelWeather": true, "showRain": true, "feelCommotion": true, "danceToMusic": true,
             "learns": true, "wildlife": false, "wildFrequency": 0.35, "toySounds": true, "traces": false, "traceLimit": 0.45,
+            "tankWildlife": true,
         ])
+        tankWildOn = d.bool(forKey: "tankWildlife")
         toySounds = d.bool(forKey: "toySounds")
         leavesTraces = d.bool(forKey: "traces")
         traceLimitSetting = CGFloat(d.double(forKey: "traceLimit"))

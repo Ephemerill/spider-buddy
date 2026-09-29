@@ -13,7 +13,7 @@ if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Develope
   export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 fi
 mkdir -p build
-FILES="Math Surfaces WindowTracker Spider Beat Memory SpiderRenderer AppIcon SpiderDesign Skin Prey Toys Traces Habitat HabitatObjects HabitatGeometry HabitatStructures HabitatPieces HabitatNature HabitatSemantics HabitatKnowledge HabitatPlaces Studio"
+FILES="Math Surfaces WindowTracker Spider Beat Memory SpiderRenderer AppIcon SpiderDesign Skin Prey Toys Traces Habitat HabitatObjects HabitatGeometry HabitatStructures HabitatPieces HabitatNature HabitatSemantics HabitatKnowledge HabitatPlaces HabitatEcology Studio"
 tmp="$(mktemp -d)"
 for f in $FILES; do sed -e 's/Bool\.random()/seededBool()/g' "Sources/DesktopSpider/$f.swift" > "$tmp/$f.swift"; done
 xcrun swiftc -O -swift-version 5 -framework AppKit -o build/Walk "$tmp"/*.swift tools/legs/Seeded.swift tools/walk/main.swift

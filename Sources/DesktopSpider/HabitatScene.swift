@@ -109,6 +109,27 @@ final class HabitatSceneView: NSView {
     /// HabitatWeather.swift).
     let weatherFX = WeatherLayers()
     private var weatherDue: CGFloat = 0
+    /// The tank as a living place (HabitatEcology.swift): laid out with the
+    /// surfaces, kept up with the weather in here, read by the spider and by
+    /// whatever is loose in here.
+    let ecology = HabitatEcology()
+    /// How open to the sky each thing is (by `id`) — a plant in under a roof
+    /// hardly stirs in a gale, a dish under one gets no rain on it.
+    private var itemOpen: [Int: CGFloat] = [:]
+    /// Drawn: the drops on each thing (the ecology's `dropVersion`), and
+    /// what is left of meals.
+    private var dropsDrawn: [Int: Int] = [:]
+    private var remainsDrawn = -1
+    private var remainsLayers: [Int: CALayer] = [:]
+    private var clockNight = false
+    private var clockCheckedAt: CFTimeInterval = -100
+    /// Tools only: after dark or not, whatever the clock says.
+    var debugNight: Bool?
+    /// Tools only: how hard it is raining on a thing's water (-1: it has
+    /// none), whether its drops are drawn, what is left of meals drawn.
+    func debugRain(on id: Int) -> Float { itemLayers[id]?.debugRainRate ?? -1 }
+    func debugDropsDrawn(on id: Int) -> Bool { itemLayers[id]?.debugDropsDrawn ?? false }
+    var debugRemainsDrawn: Int { remainsLayers.values.filter { $0.contents != nil }.count }
     /// Tools only: it keeps moving even out of sight.
     var debugKeepAnimating = false
     /// Thunder, a moment after the lightning: where it came down, in the
@@ -306,6 +327,15 @@ final class HabitatSceneView: NSView {
     /// afresh on the nearest.
     func rebuildMap(smooth: Bool = false) {
         map.rebuild(habitat: habitat.surfaces(standoff: map.standoff))
+        // The tank alive, laid out the same (what the weather left on things
+        // that haven't moved stays on them).
+        ecology.relayout(habitat, map: map)
+        itemOpen = [:]
+        for it in habitat.items {
+            let at = it.water.map { V2($0.midX, $0.maxY) } ?? V2(it.rect.midX, it.kind.hangs ? it.rect.midY : it.rect.maxY)
+            itemOpen[it.id] = ecology.open(at: at, ignoring: it.id)
+        }
+        dropsDrawn = [:]
         // It takes its footing again, and takes in what has changed (see
         // "Things in the tank" in Spider.swift).
         if let spider { spider.tankRebuilt(habitat, smooth: smooth, inIt: spider.inHabitat && spider.map === map) }
@@ -794,14 +824,36 @@ final class HabitatSceneView: NSView {
         let step = weatherDue
         weatherDue = 0
         weatherFX.update(c, dt: min(step, 0.5))
-        let now = CGFloat(CACurrentMediaTime())
+        // The tank alive: rain beading on the leaves and drying off them,
+        // stone warming in the sun — by the hour, too (after dark, moths go
+        // to the lights).
+        let clock = CACurrentMediaTime()
+        if clock - clockCheckedAt > 30 {
+            clockCheckedAt = clock
+            let hour = Calendar.current.component(.hour, from: Date())
+            clockNight = hour >= 20 || hour < 6
+        }
+        ecology.night = debugNight ?? (habitat.biome == .night || c.mix.night > 0.5 || clockNight)
+        ecology.update(WeatherFeel(c), dt: min(step, 0.5))
+        let now = CGFloat(clock)
         let gust = c.mix.gust * min(abs(c.windNow), 1.5)
         for l in itemLayers.values where !l.isHidden {
+            let id = l.item.id
+            let open = itemOpen[id] ?? 1
+            // (Rings on its water where the rain comes down on it.)
+            l.setRain(editing ? 0 : c.mix.rain * open)
+            let v = ecology.dropVersion[id] ?? 0
+            if dropsDrawn[id] != v {
+                dropsDrawn[id] = v
+                l.setDrops(ecology.droplets(on: id))
+            }
             let k = ItemLayer.windLean(l.item.kind)
             guard k > 0 else { continue }
             let s = CGFloat(abs(l.item.seed % 97))
             let flutter = sin(now * (4.5 + s.truncatingRemainder(dividingBy: 3)) + s) * 0.3 * gust
-            l.setLean(editing ? 0 : clamp(c.windNow, -1.8, 1.8) * k * (1 + flutter), over: Double(step) * 1.05)
+            // (Out in the open it takes the full force of it; in under a
+            // roof, hardly any.)
+            l.setLean(editing ? 0 : clamp(c.windNow, -1.8, 1.8) * k * (1 + flutter) * lerp(0.2, 1, open), over: Double(step) * 1.05)
         }
     }
 
@@ -831,7 +883,8 @@ final class HabitatSceneView: NSView {
         for leg in pose.legs where leg.lift < 0.05 {
             let local = V2(leg.foot.x * pose.stretch * mirror, g + (leg.foot.y - g) * pose.fatten)
             let w = pose.pos + local.rotated(by: pose.heading) * pose.scale
-            guard abs(w.y - floor) < 3 else { continue }
+            // (No snow lies in under a roof to leave a print in.)
+            guard abs(w.y - floor) < 3, ecology.open(at: V2(w.x, floor + 6)) > 0.5 else { continue }
             weatherFX.footDown(at: CGPoint(x: w.x, y: floor))
         }
     }
@@ -939,13 +992,49 @@ final class HabitatSceneView: NSView {
             }
             if l.isHidden { l.isHidden = false }
             if l.bounds.width != side { l.bounds = CGRect(x: 0, y: 0, width: side, height: side) }
-            l.position = p.pos.point
+            // (Sitting on something that sways, it sways with it.)
+            var at = p.pos
+            if let a = p.anchor, let owner = map.owner(of: a), let il = itemLayers[owner], il.item.kind.sways, !il.held,
+               let tr = il.presentation()?.transform {
+                at.x += tr.m21 * (p.pos.y - il.position.y)
+            }
+            l.position = at.point
             l.setNeedsDisplay()
             didRedraw = true
         }
         for (id, l) in preyLayers where !live.contains(id) {
             l.removeFromSuperlayer()
             preyLayers[id] = nil
+        }
+        // What is left of meals: lying where they were eaten, or on the
+        // move, carried off by an ant.
+        if ecology.remainsVersion != remainsDrawn || ecology.remains.contains(where: { $0.carrier != nil || $0.age > $0.life - 20 }) {
+            showRemains(scale: spider?.config.scale ?? 1)
+        }
+    }
+
+    private func showRemains(scale sc: CGFloat) {
+        remainsDrawn = ecology.remainsVersion
+        let live = Set(ecology.remains.map(\.id))
+        for (id, l) in remainsLayers where !live.contains(id) {
+            l.removeFromSuperlayer()
+            remainsLayers[id] = nil
+        }
+        for r in ecology.remains {
+            let l = remainsLayers[r.id] ?? {
+                let n = CALayer()
+                if let art = LeftoverArt.image(for: r.kind, scale: sc) {
+                    n.contents = art.image
+                    n.bounds = CGRect(origin: .zero, size: art.size)
+                }
+                n.anchorPoint = CGPoint(x: 0.5, y: 0.3)
+                creatures.insertSublayer(n, at: 0)
+                remainsLayers[r.id] = n
+                return n
+            }()
+            l.position = r.p.point
+            l.setAffineTransform(CGAffineTransform(rotationAngle: r.angle))
+            l.opacity = Float(r.alpha)
         }
     }
 
@@ -2299,6 +2388,62 @@ final class ItemLayer: CALayer {
         leafEdge.add(edgeFade, forKey: "show")
     }
 
+    // MARK: Rain on it
+    //
+    // Drops of rain beaded on its leaves (see `HabitatEcology.droplets`),
+    // drawn on it so they sway with it; and, on its water, rings where the
+    // rain comes down on it.
+
+    private let dropBodies = CAShapeLayer(), dropGlints = CAShapeLayer()
+    private var rainRings: CAEmitterLayer?
+
+    /// The drops on it now.
+    func setDrops(_ ds: [Droplet]) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        guard !ds.isEmpty else {
+            if dropBodies.path != nil { dropBodies.path = nil; dropGlints.path = nil }
+            return
+        }
+        if dropBodies.superlayer == nil {
+            dropBodies.fillColor = CGColor(red: 0.8, green: 0.9, blue: 1, alpha: 0.62)
+            dropBodies.strokeColor = CGColor(red: 0.3, green: 0.45, blue: 0.62, alpha: 0.55)
+            dropBodies.lineWidth = 0.5
+            dropBodies.shadowColor = CGColor(gray: 0, alpha: 1)
+            dropBodies.shadowOpacity = 0.18
+            dropBodies.shadowRadius = 0.6
+            dropBodies.shadowOffset = CGSize(width: 0, height: -0.5)
+            dropGlints.fillColor = CGColor(gray: 1, alpha: 0.95)
+            addSublayer(dropBodies)
+            addSublayer(dropGlints)
+        }
+        let r = item.rect, pad = HabitatArt.itemPad(r.size)
+        let o = CGPoint(x: r.minX - pad, y: r.minY - pad)
+        let body = CGMutablePath(), glint = CGMutablePath()
+        for d in ds {
+            // (A bead sitting on the leaf, a bright point of light in it.)
+            let rr = d.r * 1.55
+            let c = CGPoint(x: d.p.x - o.x, y: d.p.y - o.y + rr * 0.72)
+            body.addEllipse(in: CGRect(x: c.x - rr, y: c.y - rr * 0.8, width: rr * 2, height: rr * 1.6))
+            glint.addEllipse(in: CGRect(x: c.x - rr * 0.55, y: c.y + rr * 0.05, width: rr * 0.6, height: rr * 0.5))
+        }
+        dropBodies.frame = bounds
+        dropGlints.frame = bounds
+        dropBodies.path = body
+        dropGlints.path = glint
+    }
+
+    var debugRainRate: Float { rainRings?.birthRate ?? -1 }
+    var debugDropsDrawn: Bool { dropBodies.superlayer != nil && dropBodies.path.map { !$0.isEmpty } == true }
+
+    /// How hard it is raining on its water (0: not at all, or none).
+    func setRain(_ r: CGFloat) {
+        guard let e = rainRings else { return }
+        let v = Float(clamp(r, 0, 1))
+        if abs(e.birthRate - v) > 0.02 || (v == 0 && e.birthRate != 0) { e.birthRate = v }
+    }
+
     /// Picked up (or moved) while it is still dropping into place: it is
     /// where it is put at once, not left bouncing where it was.
     func stopDropping() {
@@ -2441,6 +2586,29 @@ final class ItemLayer: CALayer {
                 g.timeOffset = CFTimeInterval(k) * 1.6 + CFTimeInterval(s)
                 ring.add(g, forKey: "ripple")
             }
+            // Rain on it: little rings all over it where the drops come down
+            // (as hard as it rains on it: see `setRain`).
+            let e = CAEmitterLayer()
+            let cell = CAEmitterCell()
+            cell.contents = HabitatArt.ring(size: 12, colour: CGColor(red: 0.92, green: 0.96, blue: 1, alpha: 0.9))
+            cell.birthRate = Float(3 + water.width / 9)
+            cell.lifetime = 0.6
+            cell.scale = 0.18
+            cell.scaleSpeed = 1.3
+            cell.alphaSpeed = -1.6
+            e.frame = bounds
+            e.emitterShape = .rectangle
+            e.emitterMode = .volume
+            e.emitterPosition = CGPoint(x: water.midX, y: water.midY)
+            e.emitterSize = CGSize(width: water.width * 0.8, height: max(water.height * 0.45, 1))
+            e.emitterCells = [cell]
+            e.renderMode = .unordered
+            e.birthRate = 0
+            addSublayer(e)
+            extras.append(e)
+            rainRings = e
+        } else {
+            rainRings = nil
         }
     }
 }
@@ -2453,7 +2621,7 @@ final class PreyLayer: CALayer {
         guard let p = prey else { return }
         ctx.translateBy(x: bounds.midX, y: bounds.midY)
         if p.castsShadow {
-            ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.14 * p.alpha))
+            ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.14 * p.shownAlpha))
             ctx.fillEllipse(in: CGRect(x: -9 * p.drawScale, y: -p.kind.clearance * p.drawScale - 2, width: 18 * p.drawScale, height: 3.5 * p.drawScale))
         }
         PreyRenderer.draw(p, in: ctx)

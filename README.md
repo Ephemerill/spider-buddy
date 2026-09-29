@@ -439,8 +439,8 @@ hardly at all in its sleep. Until it does they go about their business, so
 you may well see one before it does. They don't stay: after a few minutes
 anything not caught flies off the side of the screen or slips away into a
 crack. Nothing wanders in while nobody is at the Mac, while the spider is in
-the habitat, or while a full-screen app has the desktop, and never more than
-a few at once.
+the habitat (which has creatures of its own: see *The tank alive*), or while
+a full-screen app has the desktop, and never more than a few at once.
 
 You can pick the creatures up and move them, the same way as the spider:
 drag one somewhere else (or flick it) and it drops onto whatever is below,
@@ -626,6 +626,62 @@ where the lightning struck, it basks in the sun (or finds shade when it's
 too hot), reaches up for the snowflakes, and stops to look up at a rainbow
 or the northern lights — with a thought to go with it now and then. It
 dries off out on the desktop, where there is no weather.
+
+### The tank alive
+
+The things in the tank, the weather over it and the creatures that come to
+it work as one place (HabitatEcology.swift).
+
+**What the weather does to the things in it.** Rain wets, and snow lies,
+only where the sky is open: the floor under a table, a roof, a stone
+ledge, a cave stays dry and bare, and under broad leaves it only thins.
+(The tank is seen side on, so a branch or a vine over the floor keeps
+nothing off it.) Rain beads on the leaves out in it, and the drops stay
+there after, drying off quicker in the sun and the wind; a fog leaves a
+dew. Rain rings the water in a dish or a pool out under the sky. In a
+gale, plants and whatever hangs lean and flutter, those out in the open
+far more than any in under a roof. Stone warms through in the sun and
+stays warm a while after.
+
+**What comes, and where.** Now and then something finds its own way in
+(**Feed ▸ Creatures Find Their Own Way In** in the tank, or Settings ▸
+Feed ▸ Creatures Live in the Habitat — on to begin with), mostly near
+where you are looking. What comes depends on what is in there, the hour
+and the weather: flies to flowers, fungus and food; mosquitoes to water;
+beetles, worms and ants to leaf litter; beetles and ants to bark and logs;
+ladybugs to plants; crickets to dark shelters; worms to the damp and after
+rain; moths to a light after dark. None of it is certain — a lush tank
+just makes each more likely, and livelier: a bare one sees a visitor every
+half hour or so, one full of plants and litter every few minutes. Walkers
+come out from under the bark or up out of the litter; fliers come down
+onto what drew them.
+
+**What they do there.** A fly lands on the flowers; a moth rests up on a
+plant by day and goes round a light after dark; a mosquito hangs over the
+water. A beetle rushed makes for the bark and lies low under it, and
+wanders off under there now and then anyway; a cricket keeps to the dark
+by day; a worm gets into the litter out of the sun. An ant finds what is
+left of a meal — the spider leaves the husk in the tank — has a good nose
+round it, and carries it off. Anything caught out in a downpour gets in
+under something and waits it out. Crawlers walk up and over stones and
+logs rather than turning back at the first bump. Lying low, a creature is
+hard to see, for you and for the spider.
+
+**What the spider makes of it.** Out in the rain it feels it getting to it
+— sooner the harder it comes down, the stormier it is and the shyer the
+spider — and goes to the shelter it knows best (anything you built first),
+waits it out, and stays in a while after; then a look out, a look at the
+sky, and out it comes. A drop of rain on a leaf catches its eye: it goes
+over, a curious one gives it a touch (now and then it runs off the leaf),
+and it drinks it. In a hot sun it basks — on warm stone most of all — and
+after a while gets into the shade. In a gale it keeps off, and gets down
+off, whatever sways. The bold and curious go up somewhere open to watch a
+mild weather come over. It hunts by where things are: it lies in wait
+where prey comes, pokes about under bark and in the litter to turn out
+whatever is lying low, and full up, lets what wanders in be and watches it
+instead; gone a long while without, it is off hunting sooner, waits longer
+at it and sleeps less. None of it is a need or a chore; nothing goes wrong
+for going without.
 
 ## Your Mac
 

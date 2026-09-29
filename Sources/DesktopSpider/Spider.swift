@@ -3219,6 +3219,9 @@ final class Spider {
             return true
         }
         guard !w.isCalm else { return false }
+        // In its tank: the weather getting to it out here, a hot sun, a gale
+        // shaking what it is on (see "The tank alive").
+        if eco != nil, ecoWeather() { return true }
         if w.rough, !sheltered {
             // Coming down hard: into cover, if there is any within reach —
             // the timid at once, the bold once it gets heavy.
@@ -3261,8 +3264,9 @@ final class Spider {
             decisionIn = max(decisionIn, activityDur)
             return true
         }
-        // Too hot, out in a blazing sun: into the shade.
-        if w.heat > 0.65, !sheltered, chance(0.2 * lerp(1.4, 0.7, P.bravery)), placesOn ? seekShelter() : seekCover() { return true }
+        // Too hot, out in a blazing sun: into the shade. (In its tank alive,
+        // a while of basking first: see `ecoWeather`.)
+        if w.heat > 0.65, !sheltered, eco == nil, chance(0.2 * lerp(1.4, 0.7, P.bravery)), placesOn ? seekShelter() : seekCover() { return true }
         // Sunshine: it basks in it.
         if w.sun > 0.45, !sheltered, surfaceNormal.y > 0.6, chance(0.3 * lerp(0.6, 1.5, P.laziness)) {
             beginActivity(.bask, dur: randRange(6, 14))
@@ -3405,6 +3409,8 @@ final class Spider {
     func thunder(at p: V2, loud: CGFloat) {
         guard !weather.isCalm else { return }
         let fright = loud > 0.75 || chance(loud * lerp(0.8, 0.15, personality.bravery))
+        // (Out in it in its tank, a clap makes it want to be in all the more.)
+        if eco != nil, !sheltered { weatherWorry = min(1.5, weatherWorry + loud * lerp(0.7, 0.1, personality.bravery)) }
         noticeCommotion(at: p, fright: fright)
     }
 
@@ -5681,6 +5687,7 @@ final class Spider {
             guard way.dist > within else { return .there }
             headDist = way.dist
             walkGoal = (goal, within)
+            lookAhead(way.dir)
             turnTo(way.dir, then: style, for: min((way.dist - within) / pace + 1, 14))
             return .going
         }
@@ -5709,15 +5716,33 @@ final class Spider {
         headDist = b.d
         walkGoal = (goal, within)
         routeHop = b.j
+        lookAhead(b.dir)
         turnTo(b.dir, then: style, for: min(b.d / pace + 1.5, 14))
         return .going
+    }
+
+    /// Setting off along its edge `dir`: whatever it had its eyes on back
+    /// the other way, it lets go of — else, still turned to that, it comes
+    /// round to it again the moment it moves, and walks off the wrong way.
+    private func lookAhead(_ dir: CGFloat) {
+        guard let e = eyeOn, t < eyeOnUntil, let s = map.seg(anchor) else { return }
+        if (e - pos).dot(s.dir) * dir < 0 {
+            eyeOn = nil
+            eyeOnUntil = t
+        }
     }
 
     /// How much shorter a way over it knows seems (and none of them quite
     /// exactly as long as it is: it doesn't always take the very best way).
     private func routeBias(_ j: SurfaceJunction) -> CGFloat {
         guard placesOn, let know = knowledge else { return 1 }
-        return (1 - 0.35 * know.route(routeKey(j))) * randRange(0.9, 1.1)
+        var b = (1 - 0.35 * know.route(routeKey(j))) * randRange(0.9, 1.1)
+        // In a gale, not by way of what sways in it if there is any other.
+        if eco != nil, abs(weather.wind) > 0.55, let to = map.loop(j.to), let o = to.owners.first(where: { $0 != 0 }),
+           tank?.item(id: o)?.kind.sways == true {
+            b *= 1 + 2.5 * min(abs(weather.wind), 1.5)
+        }
+        return b
     }
 
     /// The first places it could go over from `from` on the fewest steps to
@@ -5839,6 +5864,8 @@ final class Spider {
 
     private enum ErrandKind: String {
         case drink, dew, shelter, hide, sleep, rest, lookout, bask, perch, revisit, mirror, explore, glass, watch, ambush, mealSite, round
+        /// (The tank as a living place: see "The tank alive", below.)
+        case emerge, shade, forage
 
         var use: PlaceUse? {
             switch self {
@@ -5846,11 +5873,11 @@ final class Spider {
             case .shelter: return .shelter
             case .hide: return .hide
             case .sleep: return .sleep
-            case .rest: return .rest
+            case .rest, .shade: return .rest
             case .lookout: return .lookout
             case .bask: return .bask
             case .perch: return .perch
-            case .ambush: return .hunt
+            case .ambush, .forage: return .hunt
             default: return nil
             }
         }
@@ -5891,6 +5918,10 @@ final class Spider {
         var aim: V2?
         /// The tank was laid out again under it: the place, as it is now.
         var stale = false
+        /// A drop of rain on a leaf it is after (`Droplet.id`), and where a
+        /// front leg goes to turn out what may be lying low there.
+        var drop: Int?
+        var probe: V2?
     }
     private var errand: Errand?
     private var errandRestUntil: CGFloat = 0
@@ -5948,6 +5979,7 @@ final class Spider {
             urges.rest = min(1.6, urges.rest + dt / lerp(560, 260, P.laziness) * lerp(1, 1.8, drowsy))
         }
         if w.rain > 0.15 { lastRainAt = t }
+        liveEcology(dt: dt)
         if isHeld, let e = errand {
             // Picked up: whatever it was about is over — and a nap cut short
             // is no good nap.
@@ -5989,6 +6021,7 @@ final class Spider {
                 if let at = sv.nearest(to: p.pos, within: 60 * sc) { know.sawPrey(at: at.key, at.point, uid: uid(of: at.owner)) }
             }
         }
+        ecologyTick(tick)
     }
 
     /// A fright in the tank (from `p`): remembered where it happened, and
@@ -6021,6 +6054,12 @@ final class Spider {
         let want = PlaceWant(use: use, from: pos, scale: sc, personality: personality, threat: threat, rough: w.rough, sun: w.sun)
         let bustle: V2? = cursorVel.length > 250 ? cursor : nil
         let stirred = stirring.keys.compactMap { tank.item(id: $0)?.rect.insetBy(dx: -120 * sc, dy: -120 * sc) }
+        // The tank alive: stone warm from the sun; prey coming by (for a
+        // hunt); in a gale, what sways and what is up high out in it.
+        let eco = self.eco
+        let loose = use == .hunt ? prey.filter { $0.state == .loose && $0.noticed }.map(\.pos) : []
+        let gale = eco == nil ? 0 : clamp((abs(w.wind) - 0.45) / 0.6, 0, 1)
+        let swaying = gale > 0 ? Set(tank.items.filter { $0.kind.sways }.map(\.id)) : []
         let ranked = sv.ranked(want) { pl in
             // (Nothing on, over or about a thing it hasn't noticed.)
             for id in [pl.owner, pl.thing, pl.roofOwner] where id != 0 && !known.contains(id) { return nil }
@@ -6029,6 +6068,18 @@ final class Spider {
             if pl.thing != 0, let u = uids[pl.thing] { s.thingFond = know.acquaintance(u)?.fond ?? 0 }
             if let b = bustle, b.distance(to: pl.point) < 160 * sc { s.disturbance += 0.5 }
             if stirred.contains(where: { $0.contains(pl.point.point) }) { s.disturbance += 0.4 }
+            if let eco {
+                if pl.standing { s.warm = eco.warmth[pl.owner] ?? 0 }
+                if use == .hunt { s.prey = eco.preyPull(at: pl.point, loose: loose) }
+                if gale > 0 {
+                    // (In a real gale, nothing that sways in it at all.)
+                    if swaying.contains(pl.owner) {
+                        if gale > 0.5 { return nil }
+                        s.disturbance += 0.6 * gale
+                    }
+                    s.disturbance += 0.35 * gale * pl.q[.exposure] * pl.q[.elevation]
+                }
+            }
             return s
         }
         // Its favourite for this, if it has one and it is still good for it:
@@ -6040,7 +6091,9 @@ final class Spider {
         func itself(_ pl: HabitatPlace, _ r: PlaceRecord?) -> CGFloat {
             var w = want
             w.from = pl.point
-            return sv.appeal(pl, w, PlaceSense(record: r))
+            var s = PlaceSense(record: r)
+            if let eco, pl.standing { s.warm = eco.warmth[pl.owner] ?? 0 }
+            return sv.appeal(pl, w, s)
         }
         if use != .hide, let f = know.favourite(for: use, where: { sv.place($0) != nil }), let fav = sv.place(f.key),
            [fav.owner, fav.thing, fav.roofOwner].allSatisfy({ $0 == 0 || known.contains($0) }), only?(fav) ?? true {
@@ -6067,11 +6120,18 @@ final class Spider {
     /// Off to `pl` for `kind`. True if it set off (or is there already).
     @discardableResult
     private func startErrand(_ kind: ErrandKind, at pl: HabitatPlace, hurry: Bool = false, threat: V2? = nil, within: CGFloat? = nil,
-                             then: [HabitatPlace] = []) -> Bool {
+                             then: [HabitatPlace] = [], drop: Int? = nil, probe: V2? = nil) -> Bool {
         guard mode == .attached, !isHeld else { return false }
+        // (Not up onto something swaying in a gale, whatever for.)
+        if eco != nil, abs(weather.wind) > 0.75, kind != .drink, let it = tank?.item(id: pl.owner), it.kind.sways {
+            debugPlaceNote = "not up that in this wind"
+            return false
+        }
         if errand != nil { endErrand(how: 0) }
         errand = Errand(kind: kind, place: pl, since: t, stageSince: t, within: within ?? 6 * config.scale, hurry: hurry, lastPos: pos,
                         threat: threat, then: then)
+        errand?.drop = drop
+        errand?.probe = probe
         lastErrand[kind] = t
         queued = nil
         walkThen = nil
@@ -6082,13 +6142,15 @@ final class Spider {
     }
 
     /// Done with it — `how` it went: 1 just right, 0 nothing to it, -1 badly.
-    private func endErrand(how: CGFloat) {
+    private func endErrand(how: CGFloat, _ caller: String = #function, _ line: Int = #line) {
         guard let e = errand else { return }
+        debugErrandEnd = "\(e.kind.rawValue) (step \(e.step)) ended by \(caller):\(line)"
         errand = nil
         walkGoal = nil
         routeHop = nil
         feelAt = nil
         sipAt = nil
+        sipDrop = nil
         waterTouch = nil
         eyeOnUntil = min(eyeOnUntil, t + 0.8)
         if let use = e.kind.use, e.stage == .act || how < 0 {
@@ -6116,7 +6178,12 @@ final class Spider {
             return false
         }
         // Caught out in it on the way to something else: the weather first.
-        if weather.rough, !sheltered, ![.shelter, .hide].contains(e.kind), !(e.kind == .sleep && e.place.q[.cover] > 0.5) {
+        if weather.rough || worried, !sheltered, ![.shelter, .hide].contains(e.kind), !(e.kind == .sleep && e.place.q[.cover] > 0.5) {
+            endErrand(how: 0)
+            return false
+        }
+        // (On something swaying in a gale: off it first.)
+        if eco != nil, shakenByGale, ![.shelter, .hide, .drink].contains(e.kind) {
             endErrand(how: 0)
             return false
         }
@@ -6131,7 +6198,21 @@ final class Spider {
             case .going:
                 errand = e
                 return true
+            case .noWay where e.kind == .emerge:
+                // (No way out to the open from here: a look round from where
+                // it is, all the same.)
+                e.stage = .act
+                e.stageSince = t
+                e.step = 0
+                walkGoal = nil
+                routeHop = nil
             case .noWay:
+                // (A drop it could find no way to: the ones on that, let be
+                // a while — there are others.)
+                if e.kind == .dew {
+                    noWayToDrops = noWayToDrops.filter { $0.value > t }
+                    noWayToDrops[e.place.thing] = t + 150
+                }
                 errand = e
                 endErrand(how: -0.4)
                 return false
@@ -6155,9 +6236,18 @@ final class Spider {
         let more = act(&e)
         decisionIn = 0.05
         errand = e
-        if !more { endErrand(how: 1) }
+        if !more {
+            endErrand(how: 1)
+            // (And straight on to what that led to: out from cover, to a drop.)
+            if let next = chainNext {
+                chainNext = nil
+                _ = next()
+            }
+        }
         return true
     }
+    /// What one errand, done, leads straight on to.
+    private var chainNext: (() -> Bool)?
 
     /// Onward to the place: along the surfaces and over onto the next; a
     /// leap where there is no walking there — or, now and then, just
@@ -6193,8 +6283,10 @@ final class Spider {
         case .going:
             // The only way on foot is the long way round (the way onto it
             // is from its far side): a leap, if it can — else not worth it.
+            // (A real way round into a house is three times as far; round
+            // the whole rim of the tank, under the lid, never is.)
             let straight = pos.distance(to: e.place.point)
-            if headDist > max(straight * 4, straight + 1200 * sc) {
+            if headDist > max(straight * 4, straight + 1200 * sc) || (eco != nil && headDist > straight + 1800 * sc) {
                 walkGoal = nil
                 routeHop = nil
                 queued = nil
@@ -6298,7 +6390,14 @@ final class Spider {
             let w = e.aim ?? e.place.focus ?? ahead(of: e.place)
             switch e.step {
             case 0:
-                if e.kind == .dew {
+                if e.kind == .dew, let id = e.drop {
+                    // A drop of rain on the leaf, really there: gone (drunk,
+                    // dried, shaken off) — nothing to it; else the curious
+                    // give it a touch first.
+                    guard let d = ecology?.droplet(id: id) else { return false }
+                    e.aim = d.p
+                    if chance(lerp(0.1, 0.65, P.curiosity)) { e.goes.append(5) }
+                } else if e.kind == .dew {
                     // (A drop beaded on the leaf just ahead of it.)
                     let fwd = (map.seg(anchor)?.dir ?? V2(1, 0)) * walkDir
                     e.aim = pos - surfaceNormal * map.standoff + fwd * 13 * sc + surfaceNormal * 1.5 * sc
@@ -6366,6 +6465,34 @@ final class Spider {
                         beginActivity(.startle, dur: 0.5)
                         queue(.look, randRange(0.8, 1.3))
                     }
+                case 5:
+                    // A drop on a leaf: a front leg to it, to see what it is.
+                    feelAt = w
+                    feelNormal = V2(0, 1)
+                    look(at: w, for: 2.5)
+                    beginActivity(.feel, dur: randRange(1.0, 1.6))
+                    e.goes.insert(6, at: 0)
+                case 6:
+                    // It wobbles — and now and then runs off the leaf
+                    // altogether: a start, and a look where it went.
+                    feelAt = nil
+                    ripple(at: w, size: 1.1)
+                    if let id = e.drop, chance(0.22) {
+                        ecology?.shed(id)
+                        startled.velocity = 3
+                        setEmote(.surprise, 0.6)
+                        look(at: w + V2(0, -40 * sc), for: 1.5)
+                        beginActivity(.look, dur: randRange(0.9, 1.4))
+                        e.step = 5
+                        // (Another, near by: that one, then.)
+                        if let eco = ecology, let d = eco.droplet(near: pos, within: 120 * sc), chance(0.4 + 0.5 * P.curiosity) {
+                            chainNext = { self.goForDrop(d) }
+                        }
+                        return true
+                    }
+                    look(at: w, for: 2)
+                    beginActivity(.peer, dur: randRange(0.8, 1.4))
+                    if chance(0.3) { setEmote(.question, 0.8) }
                 default:
                     break
                 }
@@ -6380,10 +6507,14 @@ final class Spider {
                     e.step = 5
                     return true
                 }
+                if let id = e.drop, ecology?.droplet(id: id) == nil { return false }
                 sipAt = w
                 sipWater = e.kind == .drink
                 let dur = e.kind == .drink ? randRange(4, 8) : randRange(2.2, 3.4)
-                if e.kind == .dew { drops.append(Drop(p: w, v: .zero, r: 1.9, kind: .water, life: dur + 0.4, floor: nil, gravity: 0, sip: true)) }
+                // (A real drop on the leaf goes down as it drinks: see
+                // `liveEcology`. Otherwise one is there for it to sip.)
+                sipDrop = e.drop
+                if e.kind == .dew, e.drop == nil { drops.append(Drop(p: w, v: .zero, r: 1.9, kind: .water, life: dur + 0.4, floor: nil, gravity: 0, sip: true)) }
                 // (Side on to it, head down: eyes held on the water right
                 // under it would turn it round to face you.)
                 eyeOn = nil
@@ -6391,8 +6522,10 @@ final class Spider {
                 faceThen(w, .drink, for: dur)
                 e.step = 3
             case 3:
-                // A pause after.
+                // A pause after (and the last of the drop gone).
                 sipAt = nil
+                if let id = sipDrop { ecology?.sip(id, by: 99) }
+                sipDrop = nil
                 urges.thirst = e.kind == .drink ? 0 : max(0, urges.thirst - 0.5)
                 look(at: w, for: 2)
                 beginActivity(chance(0.4) ? .rest : .look, dur: randRange(1.0, 2.2))
@@ -6415,8 +6548,33 @@ final class Spider {
                 faceThen(ahead(of: e.place), .look, for: randRange(1.0, 1.8))
                 return true
             }
-            if weather.rough { e.until = 0 } else if e.until == 0 { e.until = t + randRange(6, 16) }
-            if (e.until > 0 && t > e.until) || t - e.stageSince > 300 { return false }
+            // (Coming down again while it was coming out: back to waiting.)
+            if weather.rough || worried, e.step >= 50 { e.step = 1 }
+            if weather.rough || (eco != nil && weather.rain > 0.08) { e.until = 0 } else if e.until == 0 {
+                // In the tank, how long it stays in after is its own: the
+                // timid, and the lazy, the longer.
+                e.until = t + randRange(6, 16) * (eco != nil ? lerp(2.6, 0.55, P.bravery) * lerp(0.8, 1.5, P.laziness) : 1)
+            }
+            if (e.until > 0 && t > e.until) || t - e.stageSince > 300 {
+                guard eco != nil, t - e.stageSince <= 300 else { return false }
+                // Out again: a look out from under it first, a look at the
+                // sky — and out into the open.
+                switch e.step {
+                case ..<50:
+                    e.step = 50
+                    look(at: ahead(of: e.place) + V2(0, 30 * sc), for: 2)
+                    faceThen(ahead(of: e.place), .peer, for: randRange(1.0, 1.8))
+                case 50:
+                    e.step = 51
+                    skyLook(randRange(1.2, 2))
+                    beginActivity(.look, dur: randRange(1.0, 1.8))
+                default:
+                    let from = e.place
+                    chainNext = { self.goEmerge(from: from) }
+                    return false
+                }
+                return true
+            }
             // Still getting wet here: no good — somewhere else.
             if weather.rough, !sheltered, t - e.stageSince > 3 {
                 e.upset += 1.2
@@ -6479,13 +6637,14 @@ final class Spider {
             case 2:
                 e.step = 3
                 urges.rest = 0
-                beginActivity(.sleep, dur: randRange(40, 140) * (0.7 + P.laziness))
+                beginActivity(.sleep, dur: randRange(40, 140) * (0.7 + P.laziness) * (1 - 0.5 * hunger))
             default:
                 return false
             }
 
-        case .rest, .perch:
-            // Settled there a while; on a perch, a look about from it first.
+        case .rest, .perch, .shade:
+            // Settled there a while; on a perch, a look about from it first
+            // (in the shade: out of a hot sun, a while).
             switch e.step {
             case 0:
                 e.step = 1
@@ -6517,7 +6676,7 @@ final class Spider {
                 e.step = 1
                 let view = e.place.focus ?? ahead(of: e.place)
                 e.until = t + (e.kind == .lookout ? randRange(25, 60) * lerp(0.8, 1.3, P.curiosity)
-                               : e.kind == .ambush ? randRange(20, 45) : randRange(14, 28))
+                               : e.kind == .ambush ? randRange(20, 45) * (1 + 0.8 * hunger) : randRange(14, 28))
                 if e.kind == .lookout { urges.view = 0 }
                 look(at: view, for: 2)
                 faceThen(view, .look, for: randRange(1.4, 2.4))
@@ -6646,6 +6805,9 @@ final class Spider {
                 return false
             }
 
+        case .emerge, .forage:
+            return actAlive(&e)
+
         case .round:
             // Round its places: a moment at each, on to the next.
             if e.step == 0 {
@@ -6673,8 +6835,13 @@ final class Spider {
     private func startTankGoal() -> Bool {
         guard places() != nil, let tank, mode == .attached, !isHeld, riding == nil, inquiry == nil else { return false }
         // (Caught out in a downpour: the weather first.)
-        guard !(weather.rough && !sheltered) else { return false }
+        guard !((weather.rough || worried) && !sheltered) else { return false }
         wakeUrges()
+        // (The rain over while it was in under something: out.)
+        if let due = emergeDue, t > due {
+            emergeDue = nil
+            if sheltered, let sv = places(), let here = sv.nearest(to: pos, within: 40 * config.scale), goEmerge(from: here) { return true }
+        }
         let P = personality
         let u = urges
         func since(_ k: ErrandKind) -> CGFloat { t - (lastErrand[k] ?? -9999) }
@@ -6682,10 +6849,20 @@ final class Spider {
         if u.thirst > 0.3 { wants.append((3 * (u.thirst - 0.3), { self.goFor(.drink) })) }
         // Its water, now and then, just to see it is there.
         if u.thirst <= 0.3, since(.drink) > 400 { wants.append((0.25 * lerp(0.6, 1.4, P.curiosity), { self.goFor(.drink) })) }
-        if t - lastRainAt < 900, weather.rain < 0.1, since(.dew) > 90 { wants.append(((0.3 + u.thirst) * 0.7, { self.goForDew() })) }
+        if let eco {
+            // The tank alive (see "The tank alive"): rain on the leaves;
+            // somewhere open to watch mild weather from; a poke about where
+            // something might be lying low; stone warm from the sun.
+            ecoWants(eco, into: &wants)
+        } else if t - lastRainAt < 900, weather.rain < 0.1, since(.dew) > 90 {
+            wants.append(((0.3 + u.thirst) * 0.7, { self.goForDew() }))
+        }
+        // (Gone a long while without, in its tank alive: less of a rest, and
+        // the hunt sooner — see `hunger`.)
+        let hungry = hunger
         if u.view > 0.35 { wants.append((2 * (u.view - 0.35) * lerp(0.6, 1.4, P.curiosity), { self.goFor(.lookout) })) }
-        if u.rest > 0.35 { wants.append((1.6 * (u.rest - 0.35) * lerp(0.6, 1.5, P.laziness), { self.goFor(.rest) })) }
-        if u.rest > 1.0 { wants.append((1.2 * (u.rest - 1.0) * lerp(0.5, 1.6, P.laziness), { self.goFor(.sleep) })) }
+        if u.rest > 0.35 { wants.append((1.6 * (u.rest - 0.35) * lerp(0.6, 1.5, P.laziness) * (1 - 0.5 * hungry), { self.goFor(.rest) })) }
+        if u.rest > 1.0 { wants.append((1.2 * (u.rest - 1.0) * lerp(0.5, 1.6, P.laziness) * (1 - 0.7 * hungry), { self.goFor(.sleep) })) }
         if chill > 0.2 || (weather.sun > 0.45 && !sheltered) {
             wants.append((1.6 * chill + 0.5 * weather.sun * lerp(0.5, 1.5, P.laziness), { self.goFor(.bask) }))
         }
@@ -6700,7 +6877,9 @@ final class Spider {
             wants.append((0.15 + 0.25 * P.curiosity + (out ? 0.3 : 0), { self.goToGlass() }))
         }
         if since(.watch) > 90 { wants.append((0.2 + (weather.isCalm ? 0 : 0.35) + (stirring.isEmpty ? 0 : 0.3), { self.goWatch() })) }
-        if fed < 0.7, since(.ambush) > 180 { wants.append((0.6 * (1 - fed) * lerp(0.6, 1.4, P.energy), { self.goFor(.hunt) })) }
+        if fed < 0.7, since(.ambush) > lerp(180, 40, hungry) {
+            wants.append((0.6 * (1 - fed) * (1 + 2.5 * hungry) * lerp(0.6, 1.4, P.energy), { self.goFor(.hunt) }))
+        }
         if since(.mealSite) > 300 { wants.append((0.3 * lerp(0.5, 1.5, P.curiosity), { self.goToMealSite() })) }
         if since(.round) > 300 { wants.append((0.3 * lerp(0.5, 1.5, P.energy), { self.goRound() })) }
         let total = wants.reduce(0) { $0 + $1.0 }
@@ -6965,6 +7144,423 @@ final class Spider {
         }
         return out
     }
+
+    // MARK: The tank alive
+    //
+    // Its tank as a living place (HabitatEcology.swift): the weather on its
+    // things, and the creatures that come to them.
+    //
+    // Out in the rain it feels it getting to it — sooner the harder it comes
+    // down, the stormier, and the timider it is — and doesn't wait for a
+    // soaking: off to cover it knows (the house first). There it waits it
+    // out, and stays a while after, the timid and the lazy the longer; then
+    // a look out, a look at the sky, and out into the open again. Rain left
+    // beaded on the leaves catches its eye: over to a drop, a touch of it
+    // (the curious), and a drink of it. In a hot sun it basks — on stone
+    // warmed through, most of all — until it has had enough, and then into
+    // the shade. In a gale it keeps off what sways in it, and gets down off
+    // it. The bold and the curious go up somewhere open to watch a mild
+    // weather come over. And it hunts by where things are: it knows where
+    // prey comes (flowers, water, the litter), and pokes about under bark
+    // and in the litter for what may be lying low there. Gone a long while
+    // without, it is off to do it sooner and waits longer at it, sleeps
+    // less, and misses less of what moves.
+    //
+    // None of it is a need, and none of it is shown: there is only what it
+    // does. Full up, it lets what wanders in be, and watches it instead.
+
+    /// The tank as a living place, handed over with the tank. Nil — the
+    /// desktop, the tools unless they give it one — and none of this applies.
+    var ecology: HabitatEcology?
+    /// In its tank with a mind of its own, and the tank alive.
+    private var eco: HabitatEcology? { placesOn ? ecology : nil }
+    /// How much the weather out here is getting to it, 0…1.5 (see the top).
+    private var weatherWorry: CGFloat = 0
+    /// Whether it is getting worse: how the wet was a moment ago, and how
+    /// fast it has been rising.
+    private var rainWas: CGFloat = 0
+    private var rainRising: CGFloat = 0
+    /// Out in a hot sun, all told (seconds, about).
+    private var sunOn: CGFloat = 0
+    /// Last caught sight of a drop on a leaf, went out from cover, poked about.
+    private var lastDropSeen: CGFloat = -9999
+    /// Things it found no way onto to drink the rain off, and till when it
+    /// lets them be.
+    private var noWayToDrops: [Int: CGFloat] = [:]
+    private var emergedAt: CGFloat = -9999
+    /// The drop of rain it is drinking (`Droplet.id`).
+    private var sipDrop: Int?
+    /// The rain over with it under cover, but not sitting it out on purpose
+    /// (a meal in between, say): out it comes all the same, then.
+    private var emergeDue: CGFloat?
+    private var wasRough = false
+
+    /// Had enough of the weather out here: in, before it is soaked.
+    private var worried: Bool { eco != nil && weatherWorry > lerp(0.3, 1.0, personality.bravery) }
+
+    /// How long it has gone without, in its tank alive, 0…1: nothing until
+    /// what it last ate is mostly gone (`fed` under 0.3), all of it with
+    /// nothing in it. Only ever in what it does (see the top); 0 elsewhere.
+    private var hunger: CGFloat { eco == nil ? 0 : clamp((0.3 - fed) / 0.3, 0, 1) }
+
+    /// On something that sways, in a gale out in the open.
+    private var shakenByGale: Bool {
+        guard mode == .attached, abs(weather.wind) > 0.75, !sheltered, let id = map.owner(of: anchor) else { return false }
+        return tank?.item(id: id)?.kind.sways == true
+    }
+
+    /// Every frame in the tank: the weather getting to it, the sun on it,
+    /// the drop it is drinking going down.
+    private func liveEcology(dt: CGFloat) {
+        guard let eco else {
+            weatherWorry = 0
+            sunOn = 0
+            return
+        }
+        let w = weather, P = personality
+        let wetNow = max(w.rain, w.snow * 0.7, w.hail * 1.5)
+        rainRising = approach(rainRising, (wetNow - rainWas) / max(dt, 1e-3), 0.8, dt)
+        rainWas = wetNow
+        let rough = wetNow + w.storm * 0.6
+        if mode == .attached, !sheltered, rough > 0.04 {
+            // (Storms, and hail, the timid can't abide.)
+            let dislike = lerp(1.8, 0.45, P.bravery) * (w.storm > 0.3 || w.hail > 0.1 ? 1.7 : 1)
+            weatherWorry = min(1.5, weatherWorry + rough * dislike * dt / 5 * (rainRising > 0.002 ? 1.5 : 1))
+        } else {
+            weatherWorry = max(0, weatherWorry - dt / (sheltered ? 10 : 30))
+        }
+        let sun = mode == .attached && !sheltered ? w.sun : 0
+        if sun > 0.3 { sunOn += dt * (sun + w.heat * 0.5) } else { sunOn = max(0, sunOn - dt * 2) }
+        if activity == .drink, let id = sipDrop, activityTime > 0.6 { eco.sip(id, by: dt * 0.3) }
+        // Over, with it in under something but not sitting it out on purpose:
+        // out in its own time (see `startTankGoal`).
+        if w.rough {
+            emergeDue = nil
+            wasRough = true
+        } else if wasRough, w.rain < 0.08, w.snow < 0.1 {
+            wasRough = false
+            if sheltered, errand?.kind != .shelter {
+                emergeDue = t + randRange(6, 16) * lerp(2.6, 0.55, P.bravery) * lerp(0.8, 1.5, P.laziness)
+            }
+        }
+    }
+
+    /// A few times a second in the tank: a drop of rain on a leaf just by it
+    /// catches its eye — the curious go over for a closer look, and a drink.
+    private func ecologyTick(_ tick: CGFloat) {
+        guard let eco, mode == .attached, !isHeld, !eco.droplets.isEmpty, t - lastDropSeen > 14, weather.rain < 0.12 else { return }
+        guard caught == nil, huntTarget == nil, inquiry == nil, riding == nil, alertness >= 0.6,
+              [.walk, .sneak, .idle, .look, .glance, .groom, .fidget, .peer].contains(activity) else { return }
+        if let e = errand, !e.kind.yields || e.kind == .emerge || e.stage == .act { return }
+        let sc = config.scale
+        // (A glint of water on a leaf: seen from a little way off, up on the
+        // leaves over it too.)
+        guard let d = eco.droplet(near: pos, within: 140 * sc), (noWayToDrops[d.thing] ?? -1) < t else { return }
+        lastDropSeen = t
+        look(at: d.p, for: 1.4)
+        let P = personality
+        if chance(lerp(0.2, 0.85, P.curiosity) * (urges.thirst > 0.3 ? 1.3 : 1)) {
+            _ = goForDrop(d)
+        } else if [.idle, .look].contains(activity) {
+            beginActivity(.look, dur: randRange(0.8, 1.4))
+        }
+    }
+
+    /// What the weather has it do in its tank, if anything: in before it is
+    /// soaked, off something swaying in a gale, into the shade after long in
+    /// a hot sun. True if it did something.
+    private func ecoWeather() -> Bool {
+        guard mode == .attached else { return false }
+        let P = personality
+        if worried, !sheltered, errand?.kind != .shelter {
+            if seekShelter() {
+                debugPlaceNote = String(format: "had enough of it (%.2f): in", Double(weatherWorry))
+                if emote == .none, chance(0.5) { think(weatherThought() ?? .rain, for: 2.2) }
+                return true
+            }
+        }
+        if shakenByGale {
+            // Holding on, then down off it and in somewhere steady.
+            if activity != .brace, chance(0.5) {
+                beginActivity(.brace, dur: randRange(1.0, 1.8))
+                return true
+            }
+            if seekShelter() { return true }
+        }
+        // Long enough out in a hot sun: the shade (cooler there) — the lazy
+        // bask the longest, and the hotter it is the sooner.
+        let enough = lerp(35, 130, P.laziness) * (1.2 - 0.5 * weather.heat)
+        if weather.sun > 0.45 || weather.heat > 0.5, !sheltered, sunOn > enough, goToShade() { return true }
+        // Sun out, and stone it knows warmed through by it: over to bask on it.
+        if weather.sun > 0.45, !sheltered, sunOn < enough * 0.6, t - (lastErrand[.bask] ?? -9999) > 60, eco?.warmth.values.contains(where: { $0 > 0.35 }) == true,
+           chance(0.35 * lerp(0.6, 1.5, P.laziness)), goFor(.bask) {
+            return true
+        }
+        return false
+    }
+
+    /// What it might feel like doing in its tank, alive (see `startTankGoal`).
+    private func ecoWants(_ eco: HabitatEcology, into wants: inout [(CGFloat, () -> Bool)]) {
+        let P = personality, w = weather, u = urges
+        func since(_ k: ErrandKind) -> CGFloat { t - (lastErrand[k] ?? -9999) }
+        // Rain left on the leaves: a drop to drink, the curious the likelier.
+        if w.rain < 0.1, since(.dew) > 45, let d = nearestDrop(eco) {
+            wants.append(((0.35 + u.thirst) * lerp(0.6, 1.5, P.curiosity) * (eco.sinceRain < 300 ? 2 : 1), { self.goForDrop(d) }))
+        }
+        // A mild weather coming over: the bold and curious go up somewhere
+        // open to watch it.
+        let mild = !w.isCalm && !w.rough && (w.rain > 0.02 || w.snow > 0.03 || w.fog > 0.2 || abs(w.wind) > 0.25 || w.cold > 0.05)
+        if mild, !worried, since(.lookout) > 90 {
+            let keen = max(0, P.bravery + P.curiosity - 0.9)
+            if keen > 0 { wants.append((1.2 * keen, { self.goFor(.lookout) })) }
+        }
+        // Hungry: a poke about where something may be lying low — at once,
+        // where it saw something go to ground.
+        let lying = prey.contains { $0.state == .loose && $0.hidden && $0.noticed }
+        let hungry = hunger
+        if lying || (fed < 0.6 && since(.forage) > lerp(150, 60, hungry)) {
+            wants.append(((lying ? 2.5 : 0.55 * (1 - fed) * (1 + 1.5 * hungry)) * lerp(0.6, 1.4, P.curiosity), { self.goForage() }))
+        }
+        // Stone warm from the sun, out there: somewhere to bask (the lazy most).
+        if !w.rough, eco.warmth.values.contains(where: { $0 > 0.35 }), since(.bask) > 120 {
+            wants.append((0.5 * lerp(0.5, 1.6, P.laziness), { self.goFor(.bask) }))
+        }
+    }
+
+    /// The nearest drop of rain it could get to, not too far off — and
+    /// somewhere to stand by it to drink it (see `goForDrop`).
+    private func nearestDrop(_ eco: HabitatEcology) -> Droplet? {
+        guard let tank, let know = knowledge else { return nil }
+        let sc = config.scale
+        return eco.droplets.filter { d in
+            d.reachable && d.r > 0.9 && d.p.distance(to: pos) < 900 * sc && (noWayToDrops[d.thing] ?? -1) < t
+                && tank.item(id: d.thing).map { know.stage(of: $0.uid) != .unknown } ?? false
+        }.sorted { $0.p.distance(to: pos) < $1.p.distance(to: pos) }
+            .first { eco.spot(near: $0.p + V2(0, map.standoff), within: 34 * sc) != nil }
+    }
+
+    /// Over to a drop of rain on a leaf, to drink it.
+    @discardableResult
+    private func goForDrop(_ d: Droplet) -> Bool {
+        guard let eco else { return false }
+        let sc = config.scale
+        // (Stood on what it is on, just short of it, head to it.)
+        guard let s = eco.spot(near: d.p + V2(0, map.standoff), within: 34 * sc) else { return false }
+        var pl = HabitatPlace(key: "\(uid(of: d.thing) ?? "tank"):dew", kind: nil, anchor: s.anchor, point: s.point, facing: s.facing,
+                              owner: s.owner, thing: d.thing)
+        pl.focus = d.p
+        pl.along = (d.p - s.point).dot(map.seg(s.anchor)?.dir ?? V2(1, 0)) >= 0 ? 1 : -1
+        return startErrand(.dew, at: pl, within: 13 * sc, drop: d.id)
+    }
+
+    /// Out from under cover, the rain over: out into the open, a little way
+    /// — somewhere it can walk out to; or, with nowhere like that, a look
+    /// round from where it is.
+    private func goEmerge(from shelter: HabitatPlace) -> Bool {
+        guard let sv = places(), mode == .attached else { return false }
+        let sc = config.scale
+        let here = anchor.loopID
+        let open = sv.places.filter {
+            $0.standing && $0.q[.exposure] > 0.6 && $0.q[.cover] < 0.3 && $0.q[.access] > 0.5
+                && (60 * sc ... 260 * sc).contains($0.point.distance(to: shelter.point))
+                && ($0.anchor.loopID == here || firstHops(from: here, to: $0.anchor.loopID) != nil)
+        }
+        emergedAt = t
+        if let pl = open.sorted(by: { $0.point.distance(to: pos) < $1.point.distance(to: pos) }).prefix(4).randomElement() {
+            return startErrand(.emerge, at: pl, within: 12 * sc)
+        }
+        guard let seg = map.seg(anchor) else { return false }
+        let spot = HabitatPlace(key: shelter.key, kind: nil, anchor: anchor, point: pos, facing: seg.facing, owner: map.owner(of: anchor) ?? 0, thing: 0)
+        return startErrand(.emerge, at: spot, within: 30 * sc)
+    }
+
+    /// Out of a hot sun, into the shade a while.
+    private func goToShade() -> Bool {
+        guard let pl = choose(.rest, only: { $0.q[.cover] >= 0.45 && !$0.hanging }) else { return false }
+        sunOn = 0
+        return startErrand(.shade, at: pl)
+    }
+
+    /// Somewhere something may be lying low — where it saw something go to
+    /// ground, first; else under bark, in the litter, in the dark, by what
+    /// it knows of them — to poke about there.
+    private func goForage() -> Bool {
+        guard let eco, let tank, let know = knowledge else { return false }
+        let sc = config.scale
+        let options = eco.hidingPlaces(near: pos, within: 1100 * sc).filter { o in
+            let th = eco.sites[o.site].thing
+            return th <= 0 || tank.item(id: th).map { know.stage(of: $0.uid) != .unknown } ?? false
+        }
+        guard !options.isEmpty else { return false }
+        var pick = options[0]
+        if let p = prey.first(where: { $0.state == .loose && $0.hidden && $0.noticed }),
+           let o = options.min(by: { $0.probe.distance(to: p.pos) < $1.probe.distance(to: p.pos) }), o.probe.distance(to: p.pos) < 140 * sc {
+            pick = o
+        } else {
+            // (The likeliest few, and where it has done well before.)
+            let few = Array(options.prefix(5))
+            let weights = few.map { o -> CGFloat in
+                let r = places()?.nearest(to: o.stand.point, within: 40 * sc).flatMap { know.record($0.key) }
+                return 1 + (r?.catches ?? 0) * 0.8 + (r?.sightings ?? 0) * 0.4
+            }
+            var r = randRange(0, weights.reduce(0, +))
+            for (o, wt) in zip(few, weights) {
+                r -= wt
+                if r <= 0 { pick = o; break }
+            }
+        }
+        let th = eco.sites[pick.site].thing
+        let key = th > 0 ? "\(uid(of: th) ?? "tank"):forage" : "tank:forage:\(Int(pick.probe.x / 64))"
+        var pl = HabitatPlace(key: key, kind: nil, anchor: pick.stand.anchor, point: pick.stand.point, facing: pick.stand.facing,
+                              owner: pick.stand.owner, thing: max(th, 0))
+        pl.focus = pick.probe
+        pl.along = (pick.probe - pick.stand.point).dot(map.seg(pick.stand.anchor)?.dir ?? V2(1, 0)) >= 0 ? 1 : -1
+        return startErrand(.forage, at: pl, within: 8 * sc, probe: pick.probe)
+    }
+
+    /// What it does at the end of an errand of the tank alive, a step at a time.
+    private func actAlive(_ e: inout Errand) -> Bool {
+        let sc = config.scale, P = personality
+        switch e.kind {
+        case .emerge:
+            // Out: a look round, and up at the sky; wet, a shake — and a drop
+            // of rain on a leaf nearby catches its eye.
+            switch e.step {
+            case 0:
+                e.step = 1
+                skyLook(randRange(1.2, 2.2))
+                beginActivity(.look, dur: randRange(1.2, 2.2))
+            case 1:
+                e.step = 2
+                if wet > 0.3, t - lastShakeOff > 6 {
+                    beginActivity(.shake, dur: 0.7)
+                    return true
+                }
+                return actAlive(&e)
+            default:
+                if let eco, let d = nearestDrop(eco), d.p.distance(to: pos) < 460 * sc,
+                   chance(lerp(0.45, 0.95, P.curiosity) * (urges.thirst > 0.3 ? 1.2 : 1) / (1 + d.p.distance(to: pos) / (600 * sc))) {
+                    chainNext = { self.goForDrop(d) }
+                }
+                return false
+            }
+
+        case .forage:
+            // A look in under it, eyes low; a front leg in there, feeling
+            // about — whatever is lying low there is turned out — and a
+            // last look.
+            let f = e.probe ?? e.place.focus ?? ahead(of: e.place)
+            switch e.step {
+            case 0:
+                e.step = 1
+                look(at: f, for: 3)
+                faceThen(f, .peer, for: randRange(1.0, 1.8))
+            case 1:
+                e.step = 2
+                feelAt = pos + (f - pos).clampedLength(30 * sc)
+                feelNormal = V2(0, 1)
+                look(at: f, for: 2.5)
+                beginActivity(.feel, dur: randRange(1.2, 2.0))
+                for p in prey where p.state == .loose && (p.hidden || p.sheltering) && p.pos.distance(to: f) < 80 * sc {
+                    p.probed(from: pos, map: map)
+                    if !p.noticed {
+                        p.noticed = true
+                        memory?.meet(p.kind.memoryName)
+                    }
+                    setEmote(.exclaim, 0.8)
+                    decisionIn = 0.3
+                }
+            case 2:
+                e.step = 3
+                feelAt = nil
+                look(at: f, for: 2)
+                beginActivity(chance(0.4) ? .peer : .look, dur: randRange(0.8, 1.6))
+            default:
+                return false
+            }
+
+        default:
+            return false
+        }
+        return true
+    }
+
+    /// Over to where it went to ground, and a front leg in under there to
+    /// turn it out.
+    private func probe(for p: Prey, eco: HabitatEcology) {
+        let sc = config.scale
+        if pos.distance(to: p.pos) < 36 * sc {
+            feelAt = pos + (p.pos - pos).clampedLength(30 * sc)
+            feelNormal = V2(0, 1)
+            look(at: p.pos, for: 2)
+            faceThen(p.pos, .feel, for: randRange(0.9, 1.4))
+            p.probed(from: pos, map: map)
+            return
+        }
+        if let s = eco.spot(near: p.pos + V2(0, map.standoff), within: 70 * sc), headFor(s.anchor, style: .sneak, within: 22 * sc) == .going {
+            return
+        }
+        walkToward(p.pos)
+    }
+
+    /// Where what is left of a meal lies: on what it is standing on, just
+    /// ahead of it; else down on whatever is under it.
+    private func remainsSpot(under p: V2) -> V2? {
+        let sc = config.scale
+        if mode == .attached, surfaceNormal.y > 0.6, let seg = map.seg(anchor) {
+            return anchorPos - surfaceNormal * map.standoff + seg.dir * walkDir * 10 * sc
+        }
+        return HabitatItem.floor(below: p, on: map, notOwnedBy: -1).map { $0.point - V2(0, map.standoff) }
+    }
+
+    /// Something finding its own way into the tank (see
+    /// `HabitatEcology.arrival`): on the wing down to what drew it, or out
+    /// from under bark, out of the litter, out of the dark. It has to be
+    /// noticed before it is hunted, and it goes again after a while.
+    @discardableResult
+    func releaseInTank(_ a: EcoArrival) -> [Prey] {
+        guard !inCinema, inHabitat else { return [] }
+        var out: [Prey] = []
+        func make(at p: V2) -> Prey {
+            let c = Prey(kind: a.kind, id: nextPreyID, at: p, scale: config.scale)
+            nextPreyID += 1
+            c.wild = true
+            c.noticed = false
+            c.leaveAge = randRange(150, 330)
+            c.home = a.patch
+            c.eco = ecology
+            out.append(c)
+            return c
+        }
+        if a.kind.flies {
+            make(at: a.at).comeIn(landing: a.land?.anchor, map: map)
+        } else if let an = a.anchor, let seg = map.seg(an) {
+            for i in 0..<a.count {
+                var at = an
+                at.t = clamp(an.t - a.dir * CGFloat(i) * 22 * config.scale, 4, max(seg.len - 4, 4))
+                let c = make(at: a.at)
+                c.emerge(on: at, dir: a.dir, map: map)
+                c.den = an
+            }
+        } else {
+            return []
+        }
+        prey += out
+        return out
+    }
+
+    /// Tools only: how it is in its tank alive.
+    var debugEcology: String {
+        String(format: "worry %.2f%@ sun %.0fs rising %.3f%@", Double(weatherWorry), worried ? " (worried)" : "", Double(sunOn), Double(rainRising),
+               sipDrop != nil ? " sipping a drop" : "")
+    }
+    var debugWorry: CGFloat { weatherWorry }
+    var debugFed: CGFloat { get { fed } set { fed = newValue } }
+    var debugHuntTarget: Int? { huntTarget }
+    /// Tools only: how its last errand came to an end.
+    private(set) var debugErrandEnd = ""
+    var debugSunOn: CGFloat { sunOn }
+    var debugDropID: Int? { errand?.drop }
 
     // MARK: First entrance
 
@@ -7548,10 +8144,22 @@ final class Spider {
     /// Whatever it is after: the nearest thing still loose.
     private func quarry() -> Prey? {
         guard t > huntPauseUntil, !inCinema else { return nil }
-        if let id = huntTarget, let p = prey.first(where: { $0.id == id && $0.state == .loose && !$0.spurned && !$0.gone }) { return p }
-        // Only what it has spotted, and not what it knows tastes horrible.
+        // In its tank with it coming down hard: in out of it first, bar a
+        // meal right by it — and sitting it out under cover, only what comes
+        // right by it.
+        let stormy = eco != nil && (weather.rough || worried)
+        let reach: CGFloat = stormy ? (sheltered ? 110 : 150) * config.scale : .greatestFiniteMagnitude
+        if let id = huntTarget, let p = prey.first(where: { $0.id == id && $0.state == .loose && !$0.spurned && !$0.gone }) {
+            if p.pos.distance(to: pos) < reach { return p }
+            huntTarget = nil
+        }
+        // Only what it has spotted, and not what it knows tastes horrible —
+        // nor, in its tank, what is lying low out of sight, nor (full up)
+        // what has only wandered in: it lets those be, and watches them.
+        let full = eco != nil && fed > lerp(0.7, 0.9, personality.energy)
         let loose = prey.filter {
-            $0.state == .loose && $0.noticed && !$0.spurned && $0.alpha > 0.4
+            $0.state == .loose && $0.noticed && !$0.spurned && $0.alpha > 0.4 && !$0.hidden && !(full && $0.wild)
+                && (!stormy || $0.pos.distance(to: pos) < reach)
                 && !($0.kind.bitter && (memory?.fondness(of: $0.kind.memoryName) ?? 0) < -0.15)
         }
         // The nearest — though what it has come to like best looks nearer.
@@ -7564,7 +8172,12 @@ final class Spider {
 
     private func updatePrey(dt: CGFloat) {
         let onLoop = mode == .attached ? anchor.loopID : nil
-        for p in prey { p.update(dt: dt, t: t, map: map, spider: pos, spiderLoop: onLoop, cursor: cursor) }
+        // (In the tank, they know their way about it: see HabitatEcology.swift.)
+        let tankEco = inHabitat ? ecology : nil
+        for p in prey {
+            p.eco = tankEco
+            p.update(dt: dt, t: t, map: map, spider: pos, spiderLoop: onLoop, cursor: cursor)
+        }
         spotNewcomers(dt: dt)
         // Lying in wait for an ant, or creeping after one: it walks right
         // into its jaws.
@@ -7598,10 +8211,12 @@ final class Spider {
     private func spotNewcomers(dt: CGFloat) {
         for p in prey where p.state == .loose && !p.noticed && p.alpha > 0.5 {
             let asleep = activity == .sleep || dormant || inHammock
-            let sight = (asleep ? 90 : 340) * config.scale
+            // (Hungry in its tank, it is quicker to anything moving.)
+            let sight = (asleep ? 90 : 340) * config.scale * (1 + 0.5 * hunger)
             let d = p.pos.distance(to: pos)
             guard d < sight, !inCinema else { continue }
-            let rate = (p.astir ? 0.9 : 0.2) * remap(d, 0, sight, 3, 0.4) * (asleep ? 0.3 : 1)
+            // (Lying low under bark or in the litter, it is hard to make out.)
+            let rate = (p.astir ? 0.9 : 0.2) * remap(d, 0, sight, 3, 0.4) * (asleep ? 0.3 : 1) * (p.hidden ? (1 - p.cover) * 0.25 : 1)
             guard chance(rate * dt) else { continue }
             p.noticed = true
             memory?.meet(p.kind.memoryName)
@@ -7615,6 +8230,12 @@ final class Spider {
     /// stalking the last stretch, and pounce; or leap to wherever it can get
     /// nearest to; a fly in the air is snatched when it comes within range.
     private func hunt(_ p: Prey) {
+        // Gone to ground under something in its tank: over to where it went,
+        // and a front leg in under there to turn it out.
+        if p.hidden, let eco {
+            probe(for: p, eco: eco)
+            return
+        }
         let d = p.pos - pos
         let dist = d.length
         let sc = config.scale
@@ -7810,6 +8431,7 @@ final class Spider {
             setEmote(.question, 0.9)
             return
         }
+        p.letGo()
         p.state = .caught
         caught = p
         remember(.huntWon)
@@ -7854,6 +8476,10 @@ final class Spider {
         mealCarry = nil
         // What is left of it is left where it was eaten.
         if leavesTraces, traceOdds(0.85) { traces?.leaveLeftover(of: c.kind, at: c.pos, facing: facing) }
+        // (In its tank, for the ants.)
+        if let eco, c.kind.leavesRemains, chance(0.85), let at = remainsSpot(under: c.pos) {
+            eco.leaveRemains(of: c.kind, at: at, angle: randRange(-0.35, 0.35))
+        }
         fed = min(1, fed + c.kind.nourishment)
         remember(.fed)
         memory?.warm(to: c.kind.memoryName, by: 0.15)
@@ -10880,8 +11506,8 @@ final class Spider {
         if caught == nil, !inCinema, let q = quarry() {
             decisionIn = randRange(0.25, 0.7) / max(config.liveliness, 0.25) / (1 + learned.prowess * 2)
             endToyPlay(bored: false)
-            // (Lying in wait for just this: that went well.)
-            if let e = errand { endErrand(how: e.kind == .ambush && e.stage == .act ? 1 : 0) }
+            // (Lying in wait for just this, or poking about for it: that went well.)
+            if let e = errand { endErrand(how: [.ambush, .forage].contains(e.kind) && e.stage == .act ? 1 : 0) }
             hunt(q)
             return
         }
@@ -10919,7 +11545,7 @@ final class Spider {
         // Left alone, it settles down and eventually nods off. The lazy ones
         // do not wait to be left alone — and if it has a hammock, that is
         // where it goes.
-        if idleFor > lerp(120, 20, P.laziness) * lerp(1, 0.35, drowsy) || habits.sleep >= 0.995,
+        if idleFor > lerp(120, 20, P.laziness) * lerp(1, 0.35, drowsy) * (1 + 2 * hunger) || habits.sleep >= 0.995,
            chance(min(1, lerp(0.1, 0.6, P.laziness) * lerp(1, 1.8, drowsy) * hw(\.sleep))) {
             // In its tank: to where it sleeps best.
             if placesOn, goFor(.sleep) { return }

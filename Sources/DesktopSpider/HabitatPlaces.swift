@@ -156,8 +156,12 @@ struct PlaceSense {
     /// How it feels about the thing it is at, -1…1.
     var thingFond: CGFloat = 0
     /// What is going on there just now: the pointer bustling about, things
-    /// being moved. 0…1.
+    /// being moved, a gale shaking it. 0…1.
     var disturbance: CGFloat = 0
+    /// What the tank is like there just now (HabitatEcology.swift): stone
+    /// warmed through by the sun, 0…1; and how much prey comes by, 0…1.
+    var warm: CGFloat = 0
+    var prey: CGFloat = 0
 }
 
 // MARK: - The survey
@@ -554,7 +558,8 @@ final class PlaceSurvey {
         q[.novelty] = clamp(pl.q[.novelty] * (1 - fam) + (r == nil ? 0.3 : 0), 0, 1)
         q[.disturbance] = disturb
         q[.safety] = clamp(pl.q[.safety] * 0.75 + fam * 0.25 - disturb * 0.6, 0, 1)
-        q[.preyActivity] = clamp(pl.q[.preyActivity] + (r?.catches ?? 0) * 0.35 + (r?.sightings ?? 0) * 0.15, 0, 1)
+        q[.preyActivity] = clamp(pl.q[.preyActivity] + (r?.catches ?? 0) * 0.35 + (r?.sightings ?? 0) * 0.15 + sense.prey * 0.6, 0, 1)
+        if pl.standing { q[.warmth] = max(q[.warmth], min(1, sense.warm * 1.1)) }
         return q
     }
 
@@ -620,7 +625,7 @@ final class PlaceSurvey {
             s *= far(900)
         case .perch:
             guard pl.owner != 0, pl.standing, q[.elevation] > 0.05 else { return 0 }
-            s = 0.4 * q[.elevation] + 0.3 * q[.visibility] + 0.3 * q[.rest] + 1.3 * fond + 1.0 * max(sense.thingFond, 0) + 0.3 * fam
+            s = 0.4 * q[.elevation] + 0.3 * q[.visibility] + 0.3 * q[.rest] + 1.3 * fond + 1.0 * max(sense.thingFond, 0) + 0.3 * fam - 0.6 * disturb
             s *= far(1000)
         }
         return max(s, 0)

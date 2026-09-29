@@ -37,6 +37,10 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     var onFeed: ((PreyKind) -> Void)?
     /// Whether another creature may be let loose now.
     var canFeed: () -> Bool = { true }
+    /// Whether creatures find their own way into the tank, and turning that
+    /// on or off (the Feed menu).
+    var tankWildlife: () -> Bool = { true }
+    var onToggleTankWildlife: (() -> Void)?
 
     private(set) var decorating = false
     private var undoStack: [Habitat] = []
@@ -316,6 +320,12 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
             full.isEnabled = false
             menu.addItem(full)
         }
+        menu.addItem(.separator())
+        let wild = NSMenuItem(title: "Creatures Find Their Own Way In", action: #selector(toggleTankWildlife), keyEquivalent: "")
+        wild.target = self
+        wild.state = tankWildlife() ? .on : .off
+        wild.toolTip = "Now and then something comes into the tank on its own — what, and where, depends on what’s in there: flies to flowers, beetles under bark, worms in damp litter, moths to a light after dark"
+        menu.addItem(wild)
         menu.autoenablesItems = false
         let below = feedButton.isFlipped ? feedButton.bounds.height + 4 : -4
         menu.popUp(positioning: nil, at: CGPoint(x: 0, y: below), in: feedButton)
@@ -325,6 +335,8 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         guard let raw = item.representedObject as? Int, let kind = PreyKind(rawValue: raw) else { return }
         onFeed?(kind)
     }
+
+    @objc private func toggleTankWildlife() { onToggleTankWildlife?() }
 
     @objc func letOut() { onLetOut?() }
 
