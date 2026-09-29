@@ -324,7 +324,7 @@ final class HabitatSceneView: NSView {
         swing(open, to: .door)
         swing(shut, to: .doorClosed)
         // (It opened it to go through: on it goes.)
-        if let through { spider.summon(to: through) }
+        if let through { spider.summon(to: through, door: true) }
     }
 
     /// Doors the spider left open, shut again (decorating starts).
@@ -2117,6 +2117,7 @@ final class HabitatSceneView: NSView {
         geometryHUD.string = String(format: "%@ seg %d/%d t %.0f %@ · %@ · facing %@ · %d junction%@ ahead · %@",
                                     a.loopID, a.segIdx, loop.segs.count, a.t, a.dir > 0 ? "→" : "←", what,
                                     seg.map { "\($0.facing)" } ?? "?", ahead, ahead == 1 ? "" : "s", spider?.debugInquiry ?? "")
+            + " · errand " + (spider?.debugErrand ?? "-")
         _ = p
     }
 

@@ -10,13 +10,14 @@
 #   ./tools/perch.sh build [prefix]                structures built by snapping, checked (pictures to prefix_*.png)
 #   ./tools/perch.sh nature                        the natural world: reach, shelters, the spider on each, supports
 #   ./tools/perch.sh curious                       things as things: natures, places, the notice-to-familiar loop, decorating
+#   ./tools/perch.sh places                        using the tank: water, shelter (built first), hiding, lookouts, favourites, a life
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Developer ]; then
   export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 fi
 mkdir -p build
-FILES="Math Surfaces WindowTracker Spider Beat Memory SpiderRenderer AppIcon SpiderDesign Skin Prey Toys Traces Habitat HabitatObjects HabitatGeometry HabitatStructures HabitatPieces HabitatNature HabitatSemantics HabitatKnowledge HabitatArt HabitatItems HabitatPieceArt HabitatHomeArt HabitatNatureArt Studio"
+FILES="Math Surfaces WindowTracker Spider Beat Memory SpiderRenderer AppIcon SpiderDesign Skin Prey Toys Traces Habitat HabitatObjects HabitatGeometry HabitatStructures HabitatPieces HabitatNature HabitatSemantics HabitatKnowledge HabitatPlaces HabitatArt HabitatItems HabitatPieceArt HabitatHomeArt HabitatNatureArt Studio"
 
 # build <sources dir> <binary>: seeded, as the leg check is (tools/legs).
 build() {
@@ -24,7 +25,7 @@ build() {
   tmp="$(mktemp -d)"
   for f in $FILES; do [ -f "$1/$f.swift" ] || continue; sed -e 's/Bool\.random()/seededBool()/g' "$1/$f.swift" > "$tmp/$f.swift"; done
   [ -f "$1/HabitatGeometry.swift" ] && shaped="-DSHAPED"
-  xcrun swiftc -O -swift-version 5 $shaped -framework AppKit -o "$2" "$tmp"/*.swift tools/legs/Seeded.swift tools/perch/structures.swift tools/perch/nature.swift tools/perch/curious.swift tools/perch/main.swift
+  xcrun swiftc -O -swift-version 5 $shaped -framework AppKit -o "$2" "$tmp"/*.swift tools/legs/Seeded.swift tools/perch/structures.swift tools/perch/nature.swift tools/perch/curious.swift tools/perch/places.swift tools/perch/main.swift
   rm -rf "$tmp"
 }
 

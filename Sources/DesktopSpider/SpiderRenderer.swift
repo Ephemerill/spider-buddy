@@ -604,8 +604,8 @@ enum SpiderRenderer {
                 let g = s.r * 0.35
                 ctx.fillEllipse(in: CGRect(x: s.p.x - s.r * 0.45 - g, y: drop.maxY - s.r * 0.9 - g, width: g * 2, height: g * 2))
             case .ring:
-                ctx.setStrokeColor(CGColor(red: 0.82, green: 0.9, blue: 1, alpha: 0.75 * a))
-                ctx.setLineWidth(0.7)
+                ctx.setStrokeColor(CGColor(red: 0.93, green: 0.97, blue: 1, alpha: 0.9 * a))
+                ctx.setLineWidth(0.85)
                 ctx.strokeEllipse(in: CGRect(x: s.p.x - s.r, y: s.p.y - s.r * 0.28, width: s.r * 2, height: s.r * 0.56))
             case .snow:
                 ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.45 * a))

@@ -70,14 +70,8 @@ extension HabitatArt {
     }
 
     /// Where on it there is open water, as fractions of its rectangle.
-    static func waterSurface(_ kind: HabitatItemKind) -> CGRect? {
-        switch kind {
-        case .waterDish: return CGRect(x: 0.1, y: 0.45, width: 0.8, height: 0.36)
-        case .rockPool: return CGRect(x: 0.16, y: 0.75, width: 0.68, height: 0.16)
-        case .puddle: return CGRect(x: 0.08, y: 0.05, width: 0.84, height: 0.8)
-        default: return nil
-        }
-    }
+    /// (The spider drinks at the same water: see `HabitatItemKind.waterArea`.)
+    static func waterSurface(_ kind: HabitatItemKind) -> CGRect? { kind.waterArea }
 
     static func crystalHue(_ seed: Int) -> CGColor {
         [c(0.62, 0.45, 0.95), c(0.35, 0.8, 0.98), c(0.98, 0.55, 0.75), c(0.45, 0.95, 0.75)][abs(seed) % 4]

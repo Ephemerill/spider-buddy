@@ -446,6 +446,7 @@ private enum Activity {
     case brace      // hunkered down low, legs spread, against a gust or a downpour
     case bask       // stretched out low in the sun, eyes half shut
     case feel       // front legs out to something in front of it, feeling it (see `feelAt`)
+    case drink      // head down to water, front legs at its edge, sipping (see `sipAt`)
 }
 
 /// How it carries itself on a given walk.
@@ -547,6 +548,11 @@ final class Spider {
         var hold: CGFloat = 0
         var at: V2 = .zero
         var gravity: CGFloat = 900
+        /// A ring: how far it spreads (its radius grows to 1 + this times).
+        var spread: CGFloat = 1.2
+        /// A drop it is drinking (on a leaf): it sits where it is, and
+        /// shrinks as it drinks.
+        var sip = false
     }
     private var drops: [Drop] = []
     private var dripIn: CGFloat = 0
@@ -677,7 +683,7 @@ final class Spider {
     private static let poseEaseIn: CGFloat = 0.42
     private static let poseEaseOut: CGFloat = 0.32
     private static let easedPoses: Set<Activity> = [.wave, .curious, .armsUp, .dance, .drum, .fidget, .scratch,
-                                                    .groom, .legStretch, .greet, .eat, .sleep, .stretch, .feel]
+                                                    .groom, .legStretch, .greet, .eat, .sleep, .stretch, .feel, .drink]
     private var decisionIn: CGFloat = 1.2
     private var airTime: CGFloat = 0
     private var noAttachFor: CGFloat = 0
@@ -2061,6 +2067,7 @@ final class Spider {
         startled.velocity = 11 * jumpy
         setEmote(.surprise, 0.8)
         remember(.startled)
+        noteFright(from: p)
         guard settled else { return }
         wake()
         queued = nil
@@ -2105,9 +2112,11 @@ final class Spider {
     }
 
     /// Menu command: walk / jump toward a point.
-    func summon(to p: V2) {
+    func summon(to p: V2, door: Bool = false) {
         wake()
-        // Called: whatever it was looking into can wait a while.
+        // Called: whatever it was looking into can wait a while. (Through a
+        // door it opened on its way somewhere, it is still on its way.)
+        if !door, errand != nil { endErrand(how: 0) }
         if inquiry != nil { endInquiry() }
         freshlyNoticed = nil
         inquiryRestUntil = max(inquiryRestUntil, t + 20)
@@ -3214,7 +3223,7 @@ final class Spider {
             // Coming down hard: into cover, if there is any within reach —
             // the timid at once, the bold once it gets heavy.
             let urge = lerp(0.95, 0.35, P.bravery) * (w.hail > 0.1 || w.storm > 0.3 ? 1.5 : 1) * (wet > 0.5 ? 1.2 : 1)
-            if chance(min(urge, 1)), seekCover() { return true }
+            if chance(min(urge, 1)), placesOn ? seekShelter() : seekCover() { return true }
             // Nowhere to go, or it does not mind: a playful one splashes
             // about in a warm rain; otherwise it hunkers down and holds on.
             if w.rain > 0.25, w.storm < 0.2, w.hail < 0.05, w.cold < 0.5, chance(lerp(0, 0.45, P.playfulness)) {
@@ -3228,6 +3237,15 @@ final class Spider {
             }
             return false
         }
+        // Only up under the lid of its tank, at a pinch: better cover it
+        // knows of, it goes to.
+        if w.rough, sheltered, placesOn, mode == .attached, surfaceNormal.y < -0.5, map.owner(of: anchor) == 0,
+           map.loop(anchor.loopID)?.kind == .screenBorder, chance(0.5), seekShelter() {
+            return true
+        }
+        // In under something that grew there, with the house it was given
+        // not far: over to that instead, now and then.
+        if w.rough, sheltered, placesOn, errand == nil, chance(0.5), moveToBuiltShelter() { return true }
         if w.rough, sheltered {
             // Under cover: it sits it out — resting, watching it come down,
             // grooming the wet off.
@@ -3244,7 +3262,7 @@ final class Spider {
             return true
         }
         // Too hot, out in a blazing sun: into the shade.
-        if w.heat > 0.65, !sheltered, chance(0.2 * lerp(1.4, 0.7, P.bravery)), seekCover() { return true }
+        if w.heat > 0.65, !sheltered, chance(0.2 * lerp(1.4, 0.7, P.bravery)), placesOn ? seekShelter() : seekCover() { return true }
         // Sunshine: it basks in it.
         if w.sun > 0.45, !sheltered, surfaceNormal.y > 0.6, chance(0.3 * lerp(0.6, 1.5, P.laziness)) {
             beginActivity(.bask, dur: randRange(6, 14))
@@ -3527,6 +3545,9 @@ final class Spider {
                 d.hold -= dt
                 d.p = toWorld(d.at)
                 if d.hold <= 0 { d.v = vel * 0.3 + V2(0, -30 * sc) }
+            } else if d.sip {
+                // (Drunk from: going down.)
+                if activity == .drink { d.r = max(0.35, d.r - dt * 0.45) }
             } else if d.kind != .ring {
                 d.v.y -= d.gravity * sc * dt
                 // The light ones blow about.
@@ -3566,7 +3587,7 @@ final class Spider {
             switch d.kind {
             case .ring:
                 let u = clamp(d.age / d.life, 0, 1)
-                return Speck(p: d.p - pos, r: d.r * sc * (1 + u * 1.2), kind: .ring, alpha: 1 - u)
+                return Speck(p: d.p - pos, r: d.r * sc * (1 + u * d.spread), kind: .ring, alpha: 1 - u)
             default:
                 let grow = d.hold > 0 ? clamp(d.age / max(d.age + d.hold, 0.01), 0.35, 1) : 1
                 let fade = clamp((d.life - d.age) / 0.25, 0, 1)
@@ -4720,7 +4741,7 @@ final class Spider {
         if huntTarget != nil || laser != nil || cursorHunt != .none { return 0.25 }
         if toyPlay != nil { return 0.45 }
         switch activity {
-        case .rest, .bask, .watch, .brace: return 0.6
+        case .rest, .bask, .watch, .brace, .drink: return 0.6
         case .look, .stare, .peer, .glance, .feel: return 1.3
         case .walk, .sneak: return 1.1
         case .scurry: return 0.7
@@ -4737,6 +4758,11 @@ final class Spider {
         let old = tank
         tank = h
         knowledge?.meet(h)
+        // (Its places are sized up again when next wanted; an errand under
+        // way finds its place as it is now.)
+        survey = nil
+        placeAt = nil
+        if errand != nil { errand!.stale = true }
         guard inIt else {
             riding = nil
             rideShift = .zero
@@ -4888,6 +4914,11 @@ final class Spider {
             changesAt = []
         }
         for it in change.added { stirring[it.id] = (t + 1.6, 1) }
+        // Something put down near it: whatever it was idly off to can wait.
+        if let e = errand, e.kind.yields, change.added.contains(where: { worthKnowing($0) && distance(to: $0) < 300 * sc }) {
+            endErrand(how: 0)
+            if mode == .attached, [.walk, .sneak, .scurry].contains(activity) { activityDur = min(activityDur, activityTime) }
+        }
         for m in change.moved {
             stirring[m.now.id] = (t + 1.2, 0.8)
             guard distance(to: m.now) < 420 * sc || distance(to: m.was) < 420 * sc else { continue }
@@ -4929,6 +4960,7 @@ final class Spider {
         guard let tank, let know = knowledge else { return }
         guard inHabitat else {
             if inquiry != nil { endInquiry() }
+            if errand != nil { endErrand(how: 0) }
             eyeOn = nil
             riding = nil
             rideShift = .zero
@@ -4954,12 +4986,14 @@ final class Spider {
             if underfoot == it.id { rate += 0.03 }
             if rate > 0, know.expose(it, by: rate * dt) { cameToKnow(it) }
         }
+        livePlaces(dt: dt)
 
         senseIn -= dt
         guard senseIn <= 0, !config.paused else { return }
         let tick: CGFloat = 0.25
         senseIn = tick
         know.calm(for: tick)
+        placesTick(tick)
         let alert = alertness
         let sight = (alert < 0.2 ? 110 : 520) * sc * (exploring ? 1.25 : 1)
         let P = personality
@@ -5070,6 +5104,8 @@ final class Spider {
         remember(.startled, 0.3)
         knowledge?.unsettle(it, by: 0.3)
         let from = focusPoint(it)
+        noteFright(from: from)
+        if errand != nil { endErrand(how: 0) }
         if inquiry != nil { endInquiry() }
         beginInquiry(it, retreating: personality.bravery < 0.65)
         if surfaceNormal.y > 0.85 {
@@ -5124,6 +5160,7 @@ final class Spider {
 
     private func beginInquiry(_ it: HabitatItem, retreating: Bool = false) {
         guard let know = knowledge else { return }
+        if errand != nil { endErrand(how: 0) }
         let P = personality
         let sc = config.scale
         let unease = know.acquaintance(it.uid)?.unease ?? 0.3
@@ -5628,6 +5665,8 @@ final class Spider {
     // Getting about by the surfaces themselves.
 
     private enum Headway { case there, going, noWay }
+    /// How far the way `headFor` set off on goes, all told.
+    private var headDist: CGFloat = 0
 
     /// Off toward `goal` over the surfaces themselves — along what it is on,
     /// and over onto whatever meets it on the way (a stem off the ground, the
@@ -5640,6 +5679,7 @@ final class Spider {
         if goal.loopID == anchor.loopID {
             guard let way = loopWay(to: goal) else { return .noWay }
             guard way.dist > within else { return .there }
+            headDist = way.dist
             walkGoal = (goal, within)
             turnTo(way.dir, then: style, for: min((way.dist - within) / pace + 1, 14))
             return .going
@@ -5661,14 +5701,23 @@ final class Spider {
                     guard let on = loopDistance(next, to: goal, dir: dir, from: entry) else { continue }
                     dd += on
                 }
+                dd *= routeBias(j)
                 if dd < best?.d ?? .greatestFiniteMagnitude { best = (dd, dir, j) }
             }
         }
         guard let b = best else { return .noWay }
+        headDist = b.d
         walkGoal = (goal, within)
         routeHop = b.j
         turnTo(b.dir, then: style, for: min(b.d / pace + 1.5, 14))
         return .going
+    }
+
+    /// How much shorter a way over it knows seems (and none of them quite
+    /// exactly as long as it is: it doesn't always take the very best way).
+    private func routeBias(_ j: SurfaceJunction) -> CGFloat {
+        guard placesOn, let know = knowledge else { return 1 }
+        return (1 - 0.35 * know.route(routeKey(j))) * randRange(0.9, 1.1)
     }
 
     /// The first places it could go over from `from` on the fewest steps to
@@ -5758,6 +5807,1164 @@ final class Spider {
     var debugUnderfoot: Int? { underfoot }
     var debugFeelAt: V2? { activity == .feel ? feelAt : nil }
     var debugEyeOn: V2? { t < eyeOnUntil ? eyeOn : nil }
+
+    // MARK: Places in the tank
+    //
+    // What its tank is good for (HabitatPlaces.swift), and making use of it:
+    // to the water it knows for a drink when it feels like one; in under
+    // cover when it comes down hard, or into somewhere shut in after a
+    // fright; up somewhere high to look out over it all; back to where it
+    // likes to rest, and to sleep; to the warm; round its favourite spots.
+    //
+    // None of it is a need. Nothing goes wrong for going without, and
+    // nothing of it is ever shown: there is what it gets to feeling like
+    // (`urges`, building up in their own time), what is going on round it
+    // (the weather, a fright, you, prey about) and what it has come to like
+    // — every place it uses, and how that went, is remembered
+    // (HabitatKnowledge.swift), and it goes back to what went well, by the
+    // ways that got it there before, so it comes to have its favourites for
+    // you to find out by watching. And it improvises: another good spot now
+    // and then instead of the usual, a leap where the way round is long.
+    //
+    // Each is an errand: somewhere to get to (`travel`: along the surfaces
+    // and over onto the next, a leap where there is no other way, in
+    // through a door) and then what it does there (`act`), one step at a
+    // time, between its ordinary decisions.
+
+    /// Its tank's places as laid out now: sized up the first time they are
+    /// wanted after each layout.
+    private var survey: PlaceSurvey?
+    /// In a tank, with a mind of its own about it.
+    private var placesOn: Bool { inHabitat && tank != nil && knowledge != nil }
+
+    private enum ErrandKind: String {
+        case drink, dew, shelter, hide, sleep, rest, lookout, bask, perch, revisit, mirror, explore, glass, watch, ambush, mealSite, round
+
+        var use: PlaceUse? {
+            switch self {
+            case .drink: return .drink
+            case .shelter: return .shelter
+            case .hide: return .hide
+            case .sleep: return .sleep
+            case .rest: return .rest
+            case .lookout: return .lookout
+            case .bask: return .bask
+            case .perch: return .perch
+            case .ambush: return .hunt
+            default: return nil
+            }
+        }
+        /// Put off for something new it has just noticed.
+        var yields: Bool { ![.drink, .dew, .shelter, .hide, .sleep].contains(self) }
+    }
+    private enum ErrandStage: String { case travel, act }
+    private struct Errand {
+        var kind: ErrandKind
+        var place: HabitatPlace
+        var stage: ErrandStage = .travel
+        var since: CGFloat
+        var stageSince: CGFloat
+        /// How far into what it does there.
+        var step = 0
+        /// Staying until then.
+        var until: CGFloat = 0
+        /// There, within this of it along the surface.
+        var within: CGFloat
+        var hurry = false
+        /// Getting there: set off from `lastPos`, and how often it has got
+        /// nowhere, leapt, tried a door.
+        var went = false
+        var lastPos = V2.zero
+        var stalls = 0, leaps = 0, doors = 0
+        /// The ways over from one surface to the next it took (`routeKey`).
+        var hops: [String] = []
+        /// What went wrong while it was about it (a fright, woken).
+        var upset: CGFloat = 0
+        /// Hiding from.
+        var threat: V2?
+        /// On round its places: where next.
+        var then: [HabitatPlace] = []
+        /// At the water: what more it means to do than drink (see `act`).
+        var goes: [Int] = []
+        var plays = 0
+        /// Where it looks, or puts its mouth.
+        var aim: V2?
+        /// The tank was laid out again under it: the place, as it is now.
+        var stale = false
+    }
+    private var errand: Errand?
+    private var errandRestUntil: CGFloat = 0
+    private var lastErrand: [ErrandKind: CGFloat] = [:]
+    /// What it gets to feeling like, in its own time — a drink, a look out
+    /// over it all, a rest, a wander somewhere it hasn't been — 0 just had,
+    /// past 1 wanting it. Never shown; nothing comes of going without.
+    private struct Urges { var thirst: CGFloat = 0, view: CGFloat = 0, rest: CGFloat = 0, roam: CGFloat = 0, set = false }
+    private var urges = Urges()
+    /// Its last fright in the tank: when, and where from.
+    private var lastFright: (at: CGFloat, from: V2)?
+    private var lastRainAt: CGFloat = -9999
+    /// The place it is at (`HabitatPlace.key`), and for how long.
+    private var placeAt: String?
+    private var placeFor: CGFloat = 0
+    private var placeCounted = false
+    private var sightingIn: CGFloat = 0
+    /// Drinking (`.drink`): where its mouth goes — open water (rings spread
+    /// from it) or a drop on a leaf.
+    private var sipAt: V2?
+    private var sipWater = false
+    /// A front leg at the water: rings spread from it.
+    private var waterTouch: V2?
+    private var rippleIn: CGFloat = 0
+
+    private func uid(of id: Int) -> String? { id == 0 ? nil : tank?.item(id: id)?.uid }
+
+    private func places() -> PlaceSurvey? {
+        guard placesOn, let tank else { return nil }
+        if survey == nil || surveyMap != ObjectIdentifier(map) {
+            survey = PlaceSurvey(tank, map: map, scale: config.scale)
+            surveyMap = ObjectIdentifier(map)
+        }
+        return survey
+    }
+    /// The surfaces it was sized up on.
+    private var surveyMap: ObjectIdentifier?
+
+    private func wakeUrges() {
+        guard !urges.set else { return }
+        urges = Urges(thirst: randRange(0.1, 0.55), view: randRange(0, 0.4), rest: randRange(0, 0.5), roam: randRange(0, 0.4), set: true)
+    }
+
+    /// Every frame in the tank: its urges, in their own time.
+    private func livePlaces(dt: CGFloat) {
+        wakeUrges()
+        let P = personality, w = weather
+        urges.thirst = min(1.6, urges.thirst + dt / lerp(820, 520, P.energy) * (1 + w.heat * 1.5 + w.sun * 0.3) * (w.rain > 0.2 ? 0.4 : 1)
+                           * (activity == .scurry ? 1.5 : 1))
+        urges.view = min(1.4, urges.view + dt / lerp(640, 360, P.curiosity))
+        urges.roam = min(1.4, urges.roam + dt / lerp(760, 380, P.curiosity))
+        if [.rest, .sleep, .bask].contains(activity) {
+            urges.rest = max(0, urges.rest - dt / (errand == nil ? 70 : 25))
+        } else {
+            urges.rest = min(1.6, urges.rest + dt / lerp(560, 260, P.laziness) * lerp(1, 1.8, drowsy))
+        }
+        if w.rain > 0.15 { lastRainAt = t }
+        if isHeld, let e = errand {
+            // Picked up: whatever it was about is over — and a nap cut short
+            // is no good nap.
+            errand!.upset += [.sleep, .rest, .hide].contains(e.kind) && e.stage == .act ? 0.8 : 0
+            endErrand(how: e.stage == .act ? 0.2 : 0)
+        }
+    }
+
+    /// A few times a second in the tank: where it is, and what it makes of it.
+    private func placesTick(_ tick: CGFloat) {
+        guard let know = knowledge, let sv = places() else { return }
+        know.tick(tick)
+        guard mode == .attached, !isHeld else { placeAt = nil; return }
+        let sc = config.scale
+        guard let pl = sv.nearest(to: pos, within: 18 * sc) else { placeAt = nil; return }
+        if pl.key != placeAt {
+            placeAt = pl.key
+            placeFor = 0
+            placeCounted = false
+        }
+        placeFor += tick
+        let still = speed < 3
+        if still, placeFor >= 2.5, !placeCounted {
+            placeCounted = true
+            know.stopped(at: pl.key, pl.point, uid: uid(of: pl.owner))
+        }
+        // Settled there in peace: it grows on it, and on what it is on.
+        if still, [.rest, .sleep, .bask].contains(activity) {
+            know.settled(at: pl.key, pl.point, uid: uid(of: pl.owner), for: activity == .sleep ? .sleep : .rest, secs: tick)
+        }
+        if still, pl.owner != 0, [.rest, .sleep, .bask, .look, .groom].contains(activity), let it = tank?.item(id: pl.owner) {
+            know.warm(to: it, by: tick / 60 * 0.03)
+        }
+        // Prey about: where it comes.
+        sightingIn -= tick
+        if sightingIn <= 0 {
+            sightingIn = 2
+            for p in prey where p.state == .loose && p.noticed && p.pos.distance(to: pos) < 500 * sc {
+                if let at = sv.nearest(to: p.pos, within: 60 * sc) { know.sawPrey(at: at.key, at.point, uid: uid(of: at.owner)) }
+            }
+        }
+    }
+
+    /// A fright in the tank (from `p`): remembered where it happened, and
+    /// whatever it was about is over — hiding, or under cover, it stays put.
+    private func noteFright(from p: V2) {
+        guard placesOn else { return }
+        lastFright = (t, p)
+        if let sv = places(), let pl = sv.nearest(to: pos, within: 30 * config.scale) {
+            knowledge?.fright(at: pl.key, pl.point, uid: uid(of: pl.owner))
+        }
+        guard let e = errand else { return }
+        errand!.upset += 0.6
+        if ![.hide, .shelter].contains(e.kind) { endErrand(how: 0) }
+    }
+
+    /// A catch, at `p`: somewhere prey comes.
+    private func noteCatch(at p: V2) {
+        guard placesOn, let sv = places(), let pl = sv.nearest(to: p, within: 60 * config.scale) ?? sv.nearest(to: pos, within: 60 * config.scale) else { return }
+        knowledge?.caught(at: pl.key, pl.point, uid: uid(of: pl.owner))
+    }
+
+    /// Somewhere for `use` it knows of, as it sees it now: mostly the best,
+    /// now and then — the curious the more — another good one, to see.
+    private func choose(_ use: PlaceUse, threat: V2? = nil, only: ((HabitatPlace) -> Bool)? = nil) -> HabitatPlace? {
+        guard let sv = places(), let tank, let know = knowledge else { return nil }
+        let sc = config.scale
+        let known = Set(tank.items.filter { know.stage(of: $0.uid) != .unknown }.map(\.id))
+        let uids = Dictionary(tank.items.map { ($0.id, $0.uid) }, uniquingKeysWith: { a, _ in a })
+        let w = weather
+        let want = PlaceWant(use: use, from: pos, scale: sc, personality: personality, threat: threat, rough: w.rough, sun: w.sun)
+        let bustle: V2? = cursorVel.length > 250 ? cursor : nil
+        let stirred = stirring.keys.compactMap { tank.item(id: $0)?.rect.insetBy(dx: -120 * sc, dy: -120 * sc) }
+        let ranked = sv.ranked(want) { pl in
+            // (Nothing on, over or about a thing it hasn't noticed.)
+            for id in [pl.owner, pl.thing, pl.roofOwner] where id != 0 && !known.contains(id) { return nil }
+            if let only, !only(pl) { return nil }
+            var s = PlaceSense(record: know.record(pl.key))
+            if pl.thing != 0, let u = uids[pl.thing] { s.thingFond = know.acquaintance(u)?.fond ?? 0 }
+            if let b = bustle, b.distance(to: pl.point) < 160 * sc { s.disturbance += 0.5 }
+            if stirred.contains(where: { $0.contains(pl.point.point) }) { s.disturbance += 0.4 }
+            return s
+        }
+        // Its favourite for this, if it has one and it is still good for it:
+        // mostly back there, the fonder of it the likelier — from right
+        // across the tank if need be.
+        // (Only if it is about as good in itself as the best of the rest,
+        // wherever each is: a table top it took to once is no lookout
+        // beside a real one.)
+        func itself(_ pl: HabitatPlace, _ r: PlaceRecord?) -> CGFloat {
+            var w = want
+            w.from = pl.point
+            return sv.appeal(pl, w, PlaceSense(record: r))
+        }
+        if use != .hide, let f = know.favourite(for: use, where: { sv.place($0) != nil }), let fav = sv.place(f.key),
+           [fav.owner, fav.thing, fav.roofOwner].allSatisfy({ $0 == 0 || known.contains($0) }), only?(fav) ?? true {
+            let mine = itself(fav, f.record)
+            let best = ranked.reduce(CGFloat(0)) { max($0, itself($1.place, know.record($1.place.key))) }
+            let worth = best > 0 ? min(1, mine / best) : 1
+            if mine > 0.05, chance((0.45 + 0.45 * f.record.fond(use)) * worth / (1 + fav.point.distance(to: pos) / (3000 * sc))) {
+                return fav
+            }
+        }
+        guard let top = ranked.first else { return nil }
+        if ranked.count > 1, chance(lerp(0.04, 0.2, personality.curiosity)) {
+            return ranked[min(Int(randRange(1, CGFloat(min(ranked.count, 5)))), ranked.count - 1)].place
+        }
+        let weights = ranked.map { pow($0.score / top.score, 4) }
+        var r = randRange(0, weights.reduce(0, +))
+        for (wt, c) in zip(weights, ranked) {
+            if r <= wt { return c.place }
+            r -= wt
+        }
+        return top.place
+    }
+
+    /// Off to `pl` for `kind`. True if it set off (or is there already).
+    @discardableResult
+    private func startErrand(_ kind: ErrandKind, at pl: HabitatPlace, hurry: Bool = false, threat: V2? = nil, within: CGFloat? = nil,
+                             then: [HabitatPlace] = []) -> Bool {
+        guard mode == .attached, !isHeld else { return false }
+        if errand != nil { endErrand(how: 0) }
+        errand = Errand(kind: kind, place: pl, since: t, stageSince: t, within: within ?? 6 * config.scale, hurry: hurry, lastPos: pos,
+                        threat: threat, then: then)
+        lastErrand[kind] = t
+        queued = nil
+        walkThen = nil
+        coverGoal = nil
+        if pl.thing != 0, let it = tank?.item(id: pl.thing) { knowledge?.visited(it) }
+        if !pursueErrand() { return errand != nil }
+        return true
+    }
+
+    /// Done with it — `how` it went: 1 just right, 0 nothing to it, -1 badly.
+    private func endErrand(how: CGFloat) {
+        guard let e = errand else { return }
+        errand = nil
+        walkGoal = nil
+        routeHop = nil
+        feelAt = nil
+        sipAt = nil
+        waterTouch = nil
+        eyeOnUntil = min(eyeOnUntil, t + 0.8)
+        if let use = e.kind.use, e.stage == .act || how < 0 {
+            knowledge?.used(e.place.key, e.place.point, uid: uid(of: e.place.owner), for: use, how: how - e.upset)
+        }
+        knowledge?.travelled(e.hops, ok: false)
+        errandRestUntil = t + randRange(6, 18) * lerp(1.4, 0.7, personality.energy)
+    }
+
+    /// One decision's worth of it. False once it is over, for now.
+    private func pursueErrand() -> Bool {
+        guard var e = errand else { return false }
+        // (In the air, or dangling: once it is down, on with it.)
+        guard mode == .attached else { return true }
+        decisionIn = randRange(0.3, 0.6)
+        if e.stale {
+            guard let pl = places()?.place(e.place.key) else { endErrand(how: 0); return false }
+            e.place = pl
+            e.stale = false
+            if e.stage == .travel { e.went = false }
+        }
+        // Something new, just noticed: that first, unless this matters more.
+        if e.kind.yields, freshlyNoticed != nil {
+            endErrand(how: 0)
+            return false
+        }
+        // Caught out in it on the way to something else: the weather first.
+        if weather.rough, !sheltered, ![.shelter, .hide].contains(e.kind), !(e.kind == .sleep && e.place.q[.cover] > 0.5) {
+            endErrand(how: 0)
+            return false
+        }
+        switch e.stage {
+        case .travel:
+            if t - e.stageSince > ([.sleep, .round, .shelter].contains(e.kind) ? 150 : 90) {
+                errand = e
+                endErrand(how: -0.3)
+                return false
+            }
+            switch travel(&e) {
+            case .going:
+                errand = e
+                return true
+            case .noWay:
+                errand = e
+                endErrand(how: -0.4)
+                return false
+            case .there:
+                e.stage = .act
+                e.stageSince = t
+                e.step = 0
+                walkGoal = nil
+                routeHop = nil
+                // It stops here: noted, and so is the way that got it here.
+                knowledge?.stopped(at: e.place.key, e.place.point, uid: uid(of: e.place.owner))
+                knowledge?.travelled(e.hops, ok: true)
+                e.hops = []
+                placeAt = e.place.key
+                placeFor = 0
+                placeCounted = true
+            }
+        case .act:
+            break
+        }
+        let more = act(&e)
+        decisionIn = 0.05
+        errand = e
+        if !more { endErrand(how: 1) }
+        return true
+    }
+
+    /// Onward to the place: along the surfaces and over onto the next; a
+    /// leap where there is no walking there — or, now and then, just
+    /// because the way round is long; in through a door, if one is shut.
+    private func travel(_ e: inout Errand) -> Headway {
+        let sc = config.scale
+        let goal = e.place.anchor
+        if pos.distance(to: e.place.point) < max(e.within, 6 * sc) + 2 * sc { return .there }
+        if e.went { e.stalls = pos.distance(to: e.lastPos) < 4 * sc ? e.stalls + 1 : 0 }
+        let first = !e.went && e.stalls == 0 && t - e.stageSince < 0.5
+        e.went = false
+        e.lastPos = pos
+        if e.stalls > 3 {
+            // Getting nowhere: a leap, if it can make one.
+            guard e.leaps < 3, let p = leapTo(e.place) else { return .noWay }
+            e.leaps += 1
+            e.stalls = 0
+            startJump(to: p)
+            e.went = true
+            return .going
+        }
+        if first, e.leaps == 0, goal.loopID != anchor.loopID, chance(lerp(0.04, 0.3, personality.bravery) * (e.hurry ? 1.5 : 1)),
+           let p = leapTo(e.place) {
+            e.leaps += 1
+            startJump(to: p)
+            e.went = true
+            return .going
+        }
+        let style: Activity = e.hurry ? .scurry : .walk
+        switch headFor(goal, style: style, within: e.within) {
+        case .there:
+            return .there
+        case .going:
+            // The only way on foot is the long way round (the way onto it
+            // is from its far side): a leap, if it can — else not worth it.
+            let straight = pos.distance(to: e.place.point)
+            if headDist > max(straight * 4, straight + 1200 * sc) {
+                walkGoal = nil
+                routeHop = nil
+                queued = nil
+                if [.walk, .sneak, .scurry].contains(activity) { activityDur = min(activityDur, activityTime) }
+                guard e.leaps < 3, let p = leapTo(e.place) else { return .noWay }
+                e.leaps += 1
+                startJump(to: p)
+            }
+            e.went = true
+            return .going
+        case .noWay:
+            if e.leaps < 3, let p = leapTo(e.place) {
+                e.leaps += 1
+                startJump(to: p)
+                e.went = true
+                return .going
+            }
+            if e.doors < 4, throughDoor(&e) { return .going }
+            return .noWay
+        }
+    }
+
+    /// A leap onto the place from here, if it can make it.
+    private func leapTo(_ pl: HabitatPlace) -> V2? {
+        let p = pl.point
+        guard p.distance(to: pos) < 340 * config.scale, ballistic(from: pos, to: p) != nil else { return nil }
+        return p
+    }
+
+    /// The way there is shut: through a door, if one leads there — along to
+    /// it, and into it (it opens for it: see `DoorKeeper`).
+    private func throughDoor(_ e: inout Errand) -> Bool {
+        guard let sv = places() else { return false }
+        let sc = config.scale
+        var best: (d: CGFloat, side: (anchor: Anchor, point: V2), door: PlaceSurvey.Door)?
+        for dr in sv.doors {
+            let dx = dr.rect.midX
+            guard dr.rect.insetBy(dx: -600 * sc, dy: -300 * sc).contains(e.place.point.point) else { continue }
+            for s in dr.sides {
+                // (From the side away from where it is going.)
+                guard (s.point.x - dx) * (e.place.point.x - dx) < 0 else { continue }
+                guard s.anchor.loopID == anchor.loopID || firstHops(from: anchor.loopID, to: s.anchor.loopID) != nil else { continue }
+                let d = s.point.distance(to: pos)
+                if d < best?.d ?? .greatestFiniteMagnitude { best = (d, s, dr) }
+            }
+        }
+        guard let b = best else { return false }
+        e.doors += 1
+        if b.d > 12 * sc {
+            if headFor(b.side.anchor, style: .walk, within: 4 * sc) == .going { e.went = true; return true }
+            if b.d > 40 * sc { return false }
+        }
+        // At it: on into the doorway.
+        walkGoal = nil
+        routeHop = nil
+        turnTo(walkDirToward(V2(b.door.rect.midX, pos.y)), then: .walk, for: 1.6)
+        e.went = true
+        return true
+    }
+
+    /// Faces `p` along its surface, then `next`.
+    private func faceThen(_ p: V2, _ next: Activity, for dur: CGFloat) {
+        if let dir = alongEdge(to: p), dir != walkDir, abs((p - pos).dot(map.seg(anchor)?.dir ?? V2(1, 0))) > 3 * config.scale {
+            turnTo(dir, then: next, for: dur)
+        } else {
+            beginActivity(next, dur: dur)
+        }
+    }
+
+    /// The way it faces at a place (`HabitatPlace.along`), as a point ahead.
+    private func ahead(of pl: HabitatPlace) -> V2 {
+        pos + (map.seg(pl.anchor)?.dir ?? V2(1, 0)) * pl.along * 40 * config.scale
+    }
+
+    /// What there is to watch from where it is: you at the glass, prey,
+    /// something moving, the sky — or nothing in particular.
+    private func watchable() -> V2? {
+        let sc = config.scale
+        if let area = cursorArea, area.contains(cursor.point), cursor.distance(to: pos) < 800 * sc, chance(0.6) { return cursor }
+        if let p = prey.filter({ $0.state == .loose && $0.pos.distance(to: pos) < 700 * sc }).min(by: { $0.pos.distance(to: pos) < $1.pos.distance(to: pos) }) {
+            return p.pos
+        }
+        if let id = stirring.keys.first, let it = tank?.item(id: id) { return V2(it.rect.midX, it.rect.midY) }
+        if !weather.isCalm, chance(0.4) {
+            skyLook(2.5)
+            return pos + V2(randRange(-120, 120), 300) * sc
+        }
+        return nil
+    }
+
+    /// What it does there, a step at a time. False once it is done.
+    private func act(_ e: inout Errand) -> Bool {
+        let sc = config.scale
+        let P = personality
+        switch e.kind {
+        case .drink, .dew:
+            // To the water: a look at it first; now and then more to it
+            // than a drink — a long look, a front leg to it and the rings
+            // spreading, its own face in it looking back; then down to it,
+            // and a drink; a pause; a groom, perhaps.
+            let w = e.aim ?? e.place.focus ?? ahead(of: e.place)
+            switch e.step {
+            case 0:
+                if e.kind == .dew {
+                    // (A drop beaded on the leaf just ahead of it.)
+                    let fwd = (map.seg(anchor)?.dir ?? V2(1, 0)) * walkDir
+                    e.aim = pos - surfaceNormal * map.standoff + fwd * 13 * sc + surfaceNormal * 1.5 * sc
+                } else {
+                    e.aim = w
+                    if chance(0.35 * lerp(0.6, 1.3, P.curiosity)) { e.goes.append(0) }
+                    if chance(lerp(0.15, 0.55, P.curiosity)) { e.goes.append(1) }
+                    if chance(lerp(0.1, 0.35, P.curiosity)) { e.goes.append(2) }
+                }
+                look(at: e.aim!, for: 3)
+                faceThen(e.aim!, .peer, for: randRange(1.0, 1.6))
+                e.step = 1
+            case 1:
+                guard !e.goes.isEmpty else {
+                    e.step = 2
+                    return act(&e)
+                }
+                switch e.goes.removeFirst() {
+                case 0:
+                    // Watching the water.
+                    look(at: w, for: 4)
+                    beginActivity(.look, dur: randRange(2.0, 3.6))
+                case 1:
+                    // A front leg to it.
+                    let touch = pos + (w - pos).clampedLength(30 * sc)
+                    feelAt = touch
+                    feelNormal = V2(0, 1)
+                    waterTouch = touch
+                    rippleIn = 0.35
+                    look(at: touch, for: 2.5)
+                    beginActivity(.feel, dur: randRange(1.3, 2.0))
+                    e.goes.insert(3, at: 0)
+                case 2:
+                    // Nose down over it: a face looking back up.
+                    look(at: V2(pos.x + (w.x - pos.x) * 0.5, w.y), for: 3)
+                    beginActivity(.peer, dur: randRange(2.0, 3.0))
+                    e.goes.insert(4, at: 0)
+                case 3:
+                    // The rings spreading: a start, a long look — or, a
+                    // playful one, another go for the fun of it.
+                    feelAt = nil
+                    waterTouch = nil
+                    if P.playfulness > 0.5, e.plays < 2, chance(0.6 * P.playfulness) {
+                        e.plays += 1
+                        e.goes.insert(1, at: 0)
+                        beginActivity(.wiggle, dur: 0.6)
+                    } else if P.bravery < 0.45, chance(0.7) {
+                        startled.velocity = 3
+                        setEmote(.surprise, 0.45)
+                        look(at: w, for: 2)
+                        beginActivity(.look, dur: randRange(1.0, 1.6))
+                    } else {
+                        look(at: w, for: 2.5)
+                        beginActivity(.look, dur: randRange(1.2, 2.2))
+                        if chance(0.3) { setEmote(.question, 0.8) }
+                    }
+                case 4:
+                    // What looks back squares up to it: it squares up back —
+                    // or, a timid one, it starts back from it.
+                    if P.bravery > 0.45 || chance(0.3) {
+                        beginActivity(.armsUp, dur: randRange(0.9, 1.3))
+                        if chance(0.5) { setEmote(.exclaim, 0.6) }
+                    } else {
+                        startled.velocity = 4
+                        beginActivity(.startle, dur: 0.5)
+                        queue(.look, randRange(0.8, 1.3))
+                    }
+                default:
+                    break
+                }
+            case 2:
+                // Down to it, and a drink — unless it only came to see its
+                // water was there: a last look, and it is off.
+                feelAt = nil
+                waterTouch = nil
+                if e.kind == .drink, urges.thirst < 0.15 {
+                    look(at: w, for: 2)
+                    beginActivity(.look, dur: randRange(1.0, 2.0))
+                    e.step = 5
+                    return true
+                }
+                sipAt = w
+                sipWater = e.kind == .drink
+                let dur = e.kind == .drink ? randRange(4, 8) : randRange(2.2, 3.4)
+                if e.kind == .dew { drops.append(Drop(p: w, v: .zero, r: 1.9, kind: .water, life: dur + 0.4, floor: nil, gravity: 0, sip: true)) }
+                // (Side on to it, head down: eyes held on the water right
+                // under it would turn it round to face you.)
+                eyeOn = nil
+                eyeOnUntil = t
+                faceThen(w, .drink, for: dur)
+                e.step = 3
+            case 3:
+                // A pause after.
+                sipAt = nil
+                urges.thirst = e.kind == .drink ? 0 : max(0, urges.thirst - 0.5)
+                look(at: w, for: 2)
+                beginActivity(chance(0.4) ? .rest : .look, dur: randRange(1.0, 2.2))
+                e.step = 4
+            case 4:
+                e.step = 5
+                guard chance(0.55) else { return false }
+                beginActivity(.groom, dur: randRange(1.4, 2.4))
+            default:
+                return false
+            }
+
+        case .shelter:
+            // In out of it: turned to look out at it, and sat out there —
+            // resting, watching it come down, grooming the wet off — until
+            // it has been over a little while.
+            if e.step == 0 {
+                e.step = 1
+                skyLook(1.5)
+                faceThen(ahead(of: e.place), .look, for: randRange(1.0, 1.8))
+                return true
+            }
+            if weather.rough { e.until = 0 } else if e.until == 0 { e.until = t + randRange(6, 16) }
+            if (e.until > 0 && t > e.until) || t - e.stageSince > 300 { return false }
+            // Still getting wet here: no good — somewhere else.
+            if weather.rough, !sheltered, t - e.stageSince > 3 {
+                e.upset += 1.2
+                return false
+            }
+            if wet > 0.4 || snowOn > 0.3, t - lastShakeOff > 6, chance(0.5) {
+                beginActivity(.shake, dur: 0.7)
+                queue(.groom, randRange(1.2, 2.0))
+            } else {
+                let r = randRange(0, 1)
+                if r < 0.45 {
+                    beginActivity(.rest, dur: randRange(5, 12))
+                } else if r < 0.75 {
+                    skyLook(2.5)
+                    beginActivity(.look, dur: randRange(1.5, 3))
+                } else {
+                    beginActivity(.groom, dur: randRange(1.4, 2.4))
+                }
+            }
+
+        case .hide:
+            // Tucked in, low, eyes on where the fright came from; a while
+            // of that — the timid the longer — a careful look out, and it is
+            // over it.
+            let threat = e.threat ?? ahead(of: e.place)
+            if e.step == 0 {
+                e.step = 1
+                look(at: threat, for: 3)
+                faceThen(threat, .brace, for: randRange(1.6, 3.0))
+                e.until = t + randRange(12, 36) * lerp(1.6, 0.6, P.bravery)
+                return true
+            }
+            if t > e.until {
+                guard e.step < 99 else { return false }
+                e.step = 99
+                look(at: threat, for: 2)
+                beginActivity(.peer, dur: randRange(1.0, 1.6))
+                return true
+            }
+            let r = randRange(0, 1)
+            if r < 0.5 {
+                beginActivity(.rest, dur: randRange(4, 8))
+            } else if r < 0.85 {
+                look(at: threat, for: 2.5)
+                beginActivity(.look, dur: randRange(1.2, 2.2))
+            } else {
+                beginActivity(.groom, dur: randRange(1.2, 2.0))
+            }
+
+        case .sleep:
+            // Settled in, a rest, and off to sleep; up again, stretched and
+            // shaken out (see `finishActivity`), and that is that.
+            switch e.step {
+            case 0:
+                e.step = 1
+                faceThen(ahead(of: e.place), chance(0.5) ? .groom : .rest, for: randRange(1.4, 2.6))
+            case 1:
+                e.step = 2
+                beginActivity(.rest, dur: randRange(3, 6))
+            case 2:
+                e.step = 3
+                urges.rest = 0
+                beginActivity(.sleep, dur: randRange(40, 140) * (0.7 + P.laziness))
+            default:
+                return false
+            }
+
+        case .rest, .perch:
+            // Settled there a while; on a perch, a look about from it first.
+            switch e.step {
+            case 0:
+                e.step = 1
+                faceThen(ahead(of: e.place), .look, for: randRange(0.8, 1.6))
+            case 1:
+                e.step = 2
+                if e.kind == .perch {
+                    eyeOn = nil
+                    beginActivity(.look, dur: randRange(1.5, 3))
+                } else if chance(0.35) {
+                    beginActivity(.groom, dur: randRange(1.4, 2.4))
+                } else {
+                    return act(&e)
+                }
+            case 2:
+                e.step = 3
+                beginActivity(.rest, dur: (e.kind == .perch ? randRange(6, 14) : randRange(8, 22)) * (0.7 + P.laziness))
+            default:
+                if e.kind == .rest { urges.rest = max(0, urges.rest - 0.5) }
+                if e.place.owner != 0, let it = tank?.item(id: e.place.owner) { knowledge?.warm(to: it, by: 0.08) }
+                return false
+            }
+
+        case .lookout, .watch, .ambush:
+            // Settled, facing out over the best of the view; then a slow
+            // look round — and whatever there is to watch: you, prey,
+            // something moving, the sky. Lying in wait, eyes low and close.
+            if e.step == 0 {
+                e.step = 1
+                let view = e.place.focus ?? ahead(of: e.place)
+                e.until = t + (e.kind == .lookout ? randRange(25, 60) * lerp(0.8, 1.3, P.curiosity)
+                               : e.kind == .ambush ? randRange(20, 45) : randRange(14, 28))
+                if e.kind == .lookout { urges.view = 0 }
+                look(at: view, for: 2)
+                faceThen(view, .look, for: randRange(1.4, 2.4))
+                return true
+            }
+            guard t < e.until else { return false }
+            e.step += 1
+            if let c = watchable() {
+                look(at: c, for: 3)
+                beginActivity(.look, dur: randRange(1.8, 3.2))
+                return true
+            }
+            if e.kind != .ambush, chance(0.2) {
+                eyeOn = nil
+                beginActivity(.rest, dur: randRange(3, 6))
+                return true
+            }
+            // (A slow sweep across what is in front of it, one way and then
+            // back, a little way further round each time.)
+            let sweep: [CGFloat] = [-1.8, -1.3, -0.8, 0.8, 1.3, 1.8]
+            let k = e.step % 12
+            let a = sweep[k < 6 ? k : 11 - k] + randRange(-0.15, 0.15)
+            let reach = e.kind == .ambush ? randRange(90, 220) : randRange(260, 520)
+            look(at: pos + surfaceNormal.rotated(by: a) * reach * sc, for: 3.5)
+            beginActivity(e.kind == .ambush && chance(0.3) ? .peer : .look, dur: randRange(2.0, 3.6))
+
+        case .bask:
+            guard e.step == 0 else { return false }
+            e.step = 1
+            beginActivity(.bask, dur: randRange(10, 26) * (0.7 + P.laziness))
+            happy.velocity = 2
+
+        case .revisit, .mirror, .mealSite:
+            // A thing it likes, again: a feel of it, a look. Its face in a
+            // mirror: squared up to, and drummed at. Where it had a meal: a
+            // nose about the ground there.
+            let f = e.place.focus ?? ahead(of: e.place)
+            switch e.step {
+            case 0:
+                e.step = 1
+                look(at: f, for: 3)
+                if e.kind == .revisit, e.place.kind == .touch {
+                    feelAt = f
+                    feelNormal = (pos - f).normalized
+                    faceThen(f, .feel, for: randRange(1.4, 2.2))
+                } else {
+                    faceThen(f, .peer, for: randRange(1.2, 2.2))
+                }
+            case 1:
+                e.step = 2
+                feelAt = nil
+                switch e.kind {
+                case .mirror:
+                    beginActivity(.armsUp, dur: randRange(1.0, 1.5))
+                    setEmote(chance(0.5) ? .question : .exclaim, 0.8)
+                case .mealSite:
+                    feelAt = pos - surfaceNormal * map.standoff + (map.seg(anchor)?.dir ?? V2(1, 0)) * walkDir * 14 * sc
+                    feelNormal = surfaceNormal
+                    beginActivity(.feel, dur: randRange(1.2, 1.8))
+                default:
+                    look(at: f, for: 2)
+                    beginActivity(.look, dur: randRange(1.0, 2.0))
+                }
+            case 2:
+                e.step = 3
+                feelAt = nil
+                if e.kind == .mirror {
+                    if chance(0.5 * (0.5 + P.playfulness)) {
+                        beginActivity(.drum, dur: randRange(2.2, 3.4))
+                        setEmote(.note, 1.2)
+                    } else {
+                        beginActivity(.wiggle, dur: 0.8)
+                    }
+                } else {
+                    beginActivity(.look, dur: randRange(0.8, 1.6))
+                }
+            default:
+                if e.place.thing != 0, let it = tank?.item(id: e.place.thing) { knowledge?.warm(to: it, by: 0.04) }
+                return false
+            }
+
+        case .explore:
+            // Somewhere it hasn't been: a look about.
+            switch e.step {
+            case 0:
+                e.step = 1
+                eyeOn = nil
+                beginActivity(.look, dur: randRange(1.2, 2.4))
+            case 1:
+                e.step = 2
+                guard chance(0.4) else { return false }
+                beginActivity(.peer, dur: randRange(1.0, 1.6))
+            default:
+                return false
+            }
+
+        case .glass:
+            // Up to the glass: a peer out through it, front legs up against
+            // it, a look at what is out there — you, if you are.
+            let world = places()?.world ?? CGRect(x: pos.x - 1, y: 0, width: 2, height: 1)
+            let left = e.place.point.x < world.midX
+            let out = V2(pos.x + (left ? -400 : 400) * sc, pos.y + 20 * sc)
+            switch e.step {
+            case 0:
+                e.step = 1
+                look(at: out, for: 3)
+                faceThen(out, .peer, for: randRange(1.2, 2.0))
+            case 1:
+                e.step = 2
+                let wallX = left ? world.minX : world.maxX
+                guard surfaceNormal.y > 0.8, abs(wallX - pos.x) < 45 * sc else { return act(&e) }
+                feelAt = V2(wallX, pos.y + 6 * sc)
+                feelNormal = V2(left ? 1 : -1, 0)
+                look(at: out, for: 2.5)
+                beginActivity(.feel, dur: randRange(1.2, 1.8))
+            case 2:
+                e.step = 3
+                feelAt = nil
+                if let a = cursorArea, !a.contains(cursor.point), (cursor.x - pos.x) * (out.x - pos.x) > 0 {
+                    look(at: cursor, for: 3)
+                } else {
+                    look(at: out, for: 3)
+                }
+                beginActivity(.look, dur: randRange(1.6, 3.2))
+            default:
+                return false
+            }
+
+        case .round:
+            // Round its places: a moment at each, on to the next.
+            if e.step == 0 {
+                e.step = 1
+                beginActivity(chance(0.25) ? .groom : .look, dur: randRange(1.0, 2.0))
+                return true
+            }
+            guard !e.then.isEmpty else { return false }
+            e.place = e.then.removeFirst()
+            e.stage = .travel
+            e.stageSince = t
+            e.step = 0
+            e.stalls = 0
+            e.leaps = 0
+            e.went = false
+        }
+        return true
+    }
+
+    // What it feels like doing next.
+
+    /// With nothing else on: what it feels like doing in its tank, if
+    /// anything — each weighed by what it has been feeling like, the
+    /// weather, what it knows is there, and who it is. True if it set off.
+    private func startTankGoal() -> Bool {
+        guard places() != nil, let tank, mode == .attached, !isHeld, riding == nil, inquiry == nil else { return false }
+        // (Caught out in a downpour: the weather first.)
+        guard !(weather.rough && !sheltered) else { return false }
+        wakeUrges()
+        let P = personality
+        let u = urges
+        func since(_ k: ErrandKind) -> CGFloat { t - (lastErrand[k] ?? -9999) }
+        var wants: [(CGFloat, () -> Bool)] = []
+        if u.thirst > 0.3 { wants.append((3 * (u.thirst - 0.3), { self.goFor(.drink) })) }
+        // Its water, now and then, just to see it is there.
+        if u.thirst <= 0.3, since(.drink) > 400 { wants.append((0.25 * lerp(0.6, 1.4, P.curiosity), { self.goFor(.drink) })) }
+        if t - lastRainAt < 900, weather.rain < 0.1, since(.dew) > 90 { wants.append(((0.3 + u.thirst) * 0.7, { self.goForDew() })) }
+        if u.view > 0.35 { wants.append((2 * (u.view - 0.35) * lerp(0.6, 1.4, P.curiosity), { self.goFor(.lookout) })) }
+        if u.rest > 0.35 { wants.append((1.6 * (u.rest - 0.35) * lerp(0.6, 1.5, P.laziness), { self.goFor(.rest) })) }
+        if u.rest > 1.0 { wants.append((1.2 * (u.rest - 1.0) * lerp(0.5, 1.6, P.laziness), { self.goFor(.sleep) })) }
+        if chill > 0.2 || (weather.sun > 0.45 && !sheltered) {
+            wants.append((1.6 * chill + 0.5 * weather.sun * lerp(0.5, 1.5, P.laziness), { self.goFor(.bask) }))
+        }
+        if since(.perch) > 120 { wants.append((0.35 * lerp(0.6, 1.4, P.laziness), { self.goFor(.perch) })) }
+        if since(.revisit) > 150 { wants.append((0.3 * lerp(0.4, 1.6, P.curiosity), { self.goRevisit() })) }
+        if since(.mirror) > 300, tank.items.contains(where: { $0.kind == .mirror }) {
+            wants.append((0.1 + 0.4 * (P.bravery + P.playfulness) / 2, { self.goToMirror() }))
+        }
+        if u.roam > 0.4 { wants.append((1.2 * (u.roam - 0.4) * lerp(0.4, 1.4, P.curiosity), { self.goExplore() })) }
+        if since(.glass) > 240 {
+            let out = cursorArea.map { !$0.contains(cursor.point) } ?? false
+            wants.append((0.15 + 0.25 * P.curiosity + (out ? 0.3 : 0), { self.goToGlass() }))
+        }
+        if since(.watch) > 90 { wants.append((0.2 + (weather.isCalm ? 0 : 0.35) + (stirring.isEmpty ? 0 : 0.3), { self.goWatch() })) }
+        if fed < 0.7, since(.ambush) > 180 { wants.append((0.6 * (1 - fed) * lerp(0.6, 1.4, P.energy), { self.goFor(.hunt) })) }
+        if since(.mealSite) > 300 { wants.append((0.3 * lerp(0.5, 1.5, P.curiosity), { self.goToMealSite() })) }
+        if since(.round) > 300 { wants.append((0.3 * lerp(0.5, 1.5, P.energy), { self.goRound() })) }
+        let total = wants.reduce(0) { $0 + $1.0 }
+        guard total > 0.01, chance(total / (total + 1.8)) else {
+            errandRestUntil = t + randRange(5, 12)
+            return false
+        }
+        var pool = wants
+        while !pool.isEmpty {
+            var r = randRange(0, pool.reduce(0) { $0 + $1.0 })
+            var k = 0
+            while k < pool.count - 1, r > pool[k].0 { r -= pool[k].0; k += 1 }
+            if pool[k].1() { return true }
+            pool.remove(at: k)
+        }
+        errandRestUntil = t + randRange(5, 12)
+        return false
+    }
+
+    /// Off to the best place it knows for `use`.
+    private func goFor(_ use: PlaceUse) -> Bool {
+        let kind: ErrandKind
+        switch use {
+        case .drink: kind = .drink
+        case .rest: kind = .rest
+        case .sleep: kind = .sleep
+        case .lookout: kind = .lookout
+        case .bask: kind = .bask
+        case .perch: kind = .perch
+        case .hunt: kind = .ambush
+        case .shelter: kind = .shelter
+        case .hide: kind = .hide
+        }
+        guard let pl = choose(use) else { return false }
+        return startErrand(kind, at: pl, within: kind == .drink ? 3 * config.scale : 6 * config.scale)
+    }
+
+    /// Something big in the weather, and out in it: into the best cover it
+    /// knows (the house first, if it has one); failing that, the nearest.
+    private func seekShelter() -> Bool {
+        guard let pl = choose(.shelter) else { return sheltered ? false : seekCover() }
+        let w = weather
+        return startErrand(.shelter, at: pl, hurry: w.hail > 0.1 || w.storm > 0.3 || w.rain > 0.6 || w.sand > 0.5)
+    }
+
+    /// Sheltering under something natural: over to built cover it knows,
+    /// if there is some worth the trip.
+    private func moveToBuiltShelter() -> Bool {
+        guard let sv = places(), mode == .attached else { return false }
+        let sc = config.scale
+        if let here = sv.nearest(to: pos, within: 24 * sc), here.q[.made] >= 0.3 { debugPlaceNote = "built: here already"; return false }
+        guard let pl = choose(.shelter, only: { $0.q[.made] >= 0.5 }) else { debugPlaceNote = "built: none"; return false }
+        guard pl.point.distance(to: pos) > 40 * sc, pl.point.distance(to: pos) < 900 * sc else {
+            debugPlaceNote = "built: too far/near \(Int(pl.point.distance(to: pos)))"
+            return false
+        }
+        debugPlaceNote = "built: off to \(pl.key)"
+        return startErrand(.shelter, at: pl, hurry: true)
+    }
+
+    /// After a fright: somewhere shut in, away from it, to get over it —
+    /// the timid all but always, the bold hardly ever.
+    private func startHiding(from p: V2) -> Bool {
+        lastFright = nil
+        guard chance(lerp(0.97, 0.1, personality.bravery)) else { debugPlaceNote = "shrugged it off"; return false }
+        guard let pl = choose(.hide, threat: p) else { debugPlaceNote = "nowhere to hide"; return false }
+        debugPlaceNote = "hiding at \(pl.key)"
+        return startErrand(.hide, at: pl, hurry: true, threat: p)
+    }
+    /// Tools only: what came of its last fright in the tank, or its last
+    /// look for built cover.
+    private(set) var debugPlaceNote = ""
+
+    /// After rain: drops beaded on a leaf, a frond, the moss — a sip from one.
+    private func goForDew() -> Bool {
+        guard let sv = places(), let tank, let know = knowledge else { return false }
+        let sc = config.scale
+        var best: (s: CGFloat, pl: HabitatPlace)?
+        for pl in sv.places where pl.standing && pl.owner != 0 && pl.q[.exposure] > 0.35 {
+            guard let it = tank.item(id: pl.owner), know.stage(of: it.uid) != .unknown else { continue }
+            let m = it.kind.definition.traits.material
+            guard [.leaf, .moss, .stem, .fungus].contains(m) || it.kind.definition.shelf == .plants else { continue }
+            let d = pl.point.distance(to: pos)
+            guard d < 900 * sc else { continue }
+            let s = (1 + pl.q[.moisture]) / (1 + d / (400 * sc)) * randRange(0.8, 1.2)
+            if s > best?.s ?? 0 { best = (s, pl) }
+        }
+        guard let b = best else { return false }
+        return startErrand(.dew, at: b.pl)
+    }
+
+    /// Back to something it knows and likes the look of, that it hasn't
+    /// been to in a while: a feel of it, a look.
+    private func goRevisit() -> Bool {
+        guard places() != nil, let tank, let know = knowledge else { return false }
+        let sc = config.scale
+        var best: (s: CGFloat, it: HabitatItem)?
+        for it in tank.items where worthKnowing(it) {
+            guard know.isFamiliar(it.uid), (know.sinceVisit(it.uid) ?? 99_999) > 600 else { continue }
+            let d = distance(to: it)
+            guard d < 1000 * sc else { continue }
+            let s = (tank.qualities(of: it)[.interesting] + 0.4 * max(know.acquaintance(it.uid)?.fond ?? 0, 0)) / (1 + d / (400 * sc)) * randRange(0.7, 1.3)
+            if s > best?.s ?? 0 { best = (s, it) }
+        }
+        // Where to be by it: in reach of it, or where it can take it in.
+        guard let it = best?.it else { return false }
+        let pts = it.interactionPoints(on: map).filter { ($0.kind == .touch || $0.kind == .inspect) && $0.stand != nil }
+        guard let ip = pts.min(by: { ($0.kind == .touch ? 0 : 60) + ($0.standPoint ?? $0.point).distance(to: pos)
+                                      < ($1.kind == .touch ? 0 : 60) + ($1.standPoint ?? $1.point).distance(to: pos) }),
+              let a = ip.stand, let sp = ip.standPoint, let seg = map.seg(a) else { return false }
+        var pl = HabitatPlace(key: "\(it.uid):\(ip.kind.rawValue)", kind: ip.kind, anchor: a, point: sp, facing: seg.facing,
+                              owner: map.owner(of: a) ?? 0, thing: it.id)
+        pl.focus = ip.point
+        pl.along = ip.facing
+        return startErrand(.revisit, at: pl)
+    }
+
+    /// Up to a mirror on the wall, below it, to see who is in it.
+    private func goToMirror() -> Bool {
+        guard let sv = places(), let tank else { return false }
+        let sc = config.scale
+        var best: (d: CGFloat, pl: HabitatPlace)?
+        for m in tank.items where m.kind == .mirror {
+            let r = m.rect
+            guard V2(r.midX, r.midY).distance(to: pos) < 1400 * sc else { continue }
+            for pl in sv.places where pl.standing && pl.point.x > r.minX - 20 * sc && pl.point.x < r.maxX + 20 * sc
+                && pl.point.y < r.minY + 10 * sc && pl.point.y > r.minY - 160 * sc {
+                var p = pl
+                p.focus = V2(r.midX, r.midY)
+                let d = pl.point.distance(to: pos) + (r.minY - pl.point.y)
+                if d < best?.d ?? .greatestFiniteMagnitude { best = (d, p) }
+            }
+        }
+        guard let b = best else { return false }
+        return startErrand(.mirror, at: b.pl)
+    }
+
+    /// Somewhere in the tank it hasn't been yet (or not for a long while).
+    private func goExplore() -> Bool {
+        guard let sv = places(), let tank, let know = knowledge else { return false }
+        let sc = config.scale
+        let been = know.places.values.map(\.p)
+        let known = Set(tank.items.filter { know.stage(of: $0.uid) != .unknown }.map(\.id))
+        var best: (s: CGFloat, pl: HabitatPlace)?
+        for (i, pl) in sv.places.enumerated() where i % 3 == 0 && pl.q[.access] > 0.5 && !pl.hanging {
+            guard pl.owner == 0 || known.contains(pl.owner) else { continue }
+            let d = pl.point.distance(to: pos)
+            guard d > 150 * sc, d < 1600 * sc, !been.contains(where: { $0.distance(to: pl.point) < 160 * sc }) else { continue }
+            let s = randRange(0.5, 1.5) / (1 + d / (700 * sc))
+            if s > best?.s ?? 0 { best = (s, pl) }
+        }
+        guard let b = best else { return false }
+        urges.roam = 0
+        return startErrand(.explore, at: b.pl, within: 20 * sc)
+    }
+
+    /// Over to the glass at an end of the tank — the side you are on, if
+    /// you are out past it.
+    private func goToGlass() -> Bool {
+        guard let sv = places() else { return false }
+        let sc = config.scale
+        let outside = cursorArea.map { !$0.contains(cursor.point) } ?? false
+        var best: (s: CGFloat, pl: HabitatPlace)?
+        for pl in sv.places where pl.glass && !pl.hanging {
+            let d = pl.point.distance(to: pos)
+            var s = randRange(0.6, 1.4) / (1 + d / (900 * sc))
+            if outside, (cursor.x - sv.world.midX) * (pl.point.x - sv.world.midX) > 0 { s *= 2 }
+            if s > best?.s ?? 0 { best = (s, pl) }
+        }
+        guard let b = best else { return false }
+        return startErrand(.glass, at: b.pl, within: 4 * sc)
+    }
+
+    /// A while watching whatever is going on — from here, or from a spot
+    /// near by with more of a view.
+    private func goWatch() -> Bool {
+        guard let sv = places() else { return false }
+        let sc = config.scale
+        var best: (s: CGFloat, pl: HabitatPlace)?
+        for pl in sv.places where pl.standing && pl.point.distance(to: pos) < 350 * sc {
+            let s = (pl.q[.visibility] + 0.3 * pl.q[.cover] + 0.2) * randRange(0.8, 1.2) / (1 + pl.point.distance(to: pos) / (250 * sc))
+            if s > best?.s ?? 0 { best = (s, pl) }
+        }
+        guard let b = best else { return false }
+        return startErrand(.watch, at: b.pl, within: 10 * sc)
+    }
+
+    /// Back to where it made a catch not long ago, for a nose about.
+    private func goToMealSite() -> Bool {
+        guard let sv = places(), let know = knowledge else { return false }
+        let recent = know.places.filter { $0.value.catches > 0.3 && know.clock - $0.value.last < 1800 }
+        guard let site = recent.min(by: { $0.value.p.distance(to: pos) < $1.value.p.distance(to: pos) }),
+              let pl = sv.place(site.key) ?? sv.nearest(to: site.value.p, within: 40 * config.scale) else { return false }
+        return startErrand(.mealSite, at: pl)
+    }
+
+    /// Round its favourite places — its bed, its lookout, the water — by
+    /// the ways it knows between them.
+    private func goRound() -> Bool {
+        guard let sv = places(), let know = knowledge else { return false }
+        var stops: [HabitatPlace] = []
+        for use in [PlaceUse.sleep, .rest, .lookout, .drink, .perch, .bask] {
+            guard let f = know.favourite(for: use, where: { sv.place($0) != nil }), let pl = sv.place(f.key),
+                  !stops.contains(where: { $0.point.distance(to: pl.point) < 60 * config.scale }) else { continue }
+            stops.append(pl)
+        }
+        guard stops.count >= 2 else { return false }
+        var order: [HabitatPlace] = []
+        var from = pos
+        while !stops.isEmpty, order.count < 3 {
+            let k = stops.indices.min { stops[$0].point.distance(to: from) < stops[$1].point.distance(to: from) }!
+            order.append(stops.remove(at: k))
+            from = order.last!.point
+        }
+        return startErrand(.round, at: order[0], then: Array(order.dropFirst()))
+    }
+
+    /// Rings on the water where it touches it, or drinks.
+    private func ripple(at p: V2, size: CGFloat) {
+        guard drops.count < 26 else { return }
+        drops.append(Drop(p: p, v: .zero, r: size, kind: .ring, life: randRange(0.9, 1.3), floor: nil, spread: 2.6))
+    }
+
+    /// Tools only: what it is off doing in its tank.
+    var debugErrand: String {
+        guard let e = errand else { return "-" }
+        return String(format: "%@ %@ step %d at %@ (%.0f,%.0f)%@", e.kind.rawValue, e.stage.rawValue, e.step, e.place.key,
+                      Double(e.place.point.x), Double(e.place.point.y), e.hurry ? " hurry" : "")
+    }
+    var debugErrandKind: String? { errand?.kind.rawValue }
+    var debugErrandPlace: HabitatPlace? { errand?.place }
+    var debugUrges: (thirst: CGFloat, view: CGFloat, rest: CGFloat, roam: CGFloat) { (urges.thirst, urges.view, urges.rest, urges.roam) }
+    var debugDrinking: Bool { activity == .drink }
+    var debugSipAt: V2? { activity == .drink ? sipAt : nil }
+    var debugPlaces: PlaceSurvey? { places() }
+    /// Tools only: where it would go for `use` just now.
+    func debugChoose(_ use: PlaceUse, threat: V2? = nil) -> HabitatPlace? { choose(use, threat: threat) }
+    /// Tools only: set its urges.
+    func debugSetUrges(thirst: CGFloat? = nil, view: CGFloat? = nil, rest: CGFloat? = nil, roam: CGFloat? = nil) {
+        wakeUrges()
+        if let thirst { urges.thirst = thirst }
+        if let view { urges.view = view }
+        if let rest { urges.rest = rest }
+        if let roam { urges.roam = roam }
+    }
+    /// Tools only: its favourite places and things, as it would choose them.
+    var debugFavourites: [String: String] {
+        guard let know = knowledge, let tank else { return [:] }
+        var out: [String: String] = [:]
+        for use in PlaceUse.allCases {
+            if let f = know.favourite(for: use, where: { _ in true }) {
+                out[use.rawValue] = String(format: "%@ (%.0f,%.0f) %.2f", f.key, Double(f.record.x), Double(f.record.y), Double(f.record.fond(use)))
+            }
+        }
+        let groups: [(String, (HabitatItem) -> Bool)] = [
+            ("branch", { $0.kind.definition.group == .branches }),
+            ("plant", { $0.kind.definition.shelf == .plants }),
+            ("thing", { _ in true }),
+        ]
+        for (name, f) in groups {
+            if let u = know.favouriteThing(among: tank.items.filter(f).map(\.uid)), let it = tank.item(uid: u) { out[name] = "\(it.kind.rawValue) #\(it.id)" }
+        }
+        return out
+    }
 
     // MARK: First entrance
 
@@ -6606,6 +7813,7 @@ final class Spider {
         p.state = .caught
         caught = p
         remember(.huntWon)
+        noteCatch(at: p.pos)
         huntTarget = nil
         huntPounce = false
         happy.velocity = 6
@@ -9040,6 +10248,16 @@ final class Spider {
             p.pitch = -0.06 + up * 0.35
             p.lift = 1
             p.legsFree = true
+        case .drink:
+            // Let down low on its legs, head tipped right down to the water
+            // — as far down as the water is — and held there, sipping; up
+            // again at the end.
+            let down = smoothstep(clamp(activityTime / 0.7, 0, 1)) * smoothstep(clamp((activityDur - activityTime) / 0.5, 0, 1))
+            let deep = sipAt.map { clamp(-toLocal($0).y / 30, 0.3, 1) } ?? 0.6
+            p.pitch = -0.46 * down * (0.6 + 0.4 * deep)
+            p.lift = -3.5 * down * deep
+            p.crouch = 0.2 * down
+            p.legsFree = true
         }
         // Standing, it is never quite still: a slow shift of weight.
         if p.speed == 0 && activity != .sleep && activity != .roll {
@@ -9090,6 +10308,20 @@ final class Spider {
             if emote == .none, drumBeat() > 0.5, chance(dt * 1.2) { setEmote(.note, 1.0) }
         case .peekaboo:
             progressPeekaboo(dt: dt)
+        case .drink:
+            // Sipping: now and then a ring spreads from its mouth.
+            rippleIn -= dt
+            if sipWater, let w = sipAt, rippleIn <= 0, activityTime > 0.6 {
+                rippleIn = randRange(0.9, 1.6)
+                ripple(at: w + V2(randRange(-1.5, 1.5), 0) * config.scale, size: 1.6)
+            }
+        case .feel:
+            // A front leg on the water: rings spread with each touch.
+            rippleIn -= dt
+            if let w = waterTouch, rippleIn <= 0 {
+                rippleIn = 0.57
+                ripple(at: w + V2(randRange(-3, 3), 0) * config.scale, size: 1.8)
+            }
         case .groove:
             progressGroove(dt: dt)
         case .eat:
@@ -9150,6 +10382,7 @@ final class Spider {
                 startled.velocity = 10
                 setEmote(.surprise, 0.7)
                 remember(.startled, 0.6)
+                noteFright(from: cursor)
             }
         default:
             break
@@ -9445,13 +10678,14 @@ final class Spider {
                let way = ways.first(where: { $0.j.to == hop.to && $0.j.toVertex == hop.toVertex }) {
                 routeHop = nil
                 crossedHop = true
+                if errand != nil { errand!.hops.append(routeKey(hop)) }
                 return way.anchor
             }
         }
         if ownWayOn {
             let onItsWay = huntTarget != nil || laser != nil || homing != nil || build != nil || towLine != nil || mealCarry != nil
                 || departing != nil || cursorHunt != .none || coverGoal != nil || toyPlay != nil || friendChase != nil || friendFlee != nil
-                || caught != nil || pendingDemo != nil || walkGoal != nil || routeHop != nil || inquiry != nil
+                || caught != nil || pendingDemo != nil || walkGoal != nil || routeHop != nil || inquiry != nil || errand != nil
             guard !onItsWay, chance(Spider.junctionChance) else { return nil }
         }
         // Mostly the way that turns it least.
@@ -9646,6 +10880,8 @@ final class Spider {
         if caught == nil, !inCinema, let q = quarry() {
             decisionIn = randRange(0.25, 0.7) / max(config.liveliness, 0.25) / (1 + learned.prowess * 2)
             endToyPlay(bored: false)
+            // (Lying in wait for just this: that went well.)
+            if let e = errand { endErrand(how: e.kind == .ambush && e.stage == .act ? 1 : 0) }
             hunt(q)
             return
         }
@@ -9664,11 +10900,17 @@ final class Spider {
             startGroove()
             return
         }
+        // Somewhere it is off to in its tank, or something it is doing
+        // there: on with it.
+        if errand != nil, pursueErrand() { return }
         // The weather: shaking itself off, running for cover and sitting it
         // out, bracing, basking, looking up at the sky.
         if weatherOnIt || wet > 0.3 || snowOn > 0.3 || dust > 0.3 || coverGoal != nil, weatherMind() {
             return
         }
+        // Just had a fright in its tank: off to somewhere shut in, to get
+        // over it.
+        if placesOn, let f = lastFright, t - f.at < 10, startHiding(from: f.from) { return }
         // Something new in the tank: looking into it, or starting to.
         if inHabitat, tank != nil, inquiry != nil || startInquiry(), pursueInquiry() {
             return
@@ -9679,6 +10921,8 @@ final class Spider {
         // where it goes.
         if idleFor > lerp(120, 20, P.laziness) * lerp(1, 0.35, drowsy) || habits.sleep >= 0.995,
            chance(min(1, lerp(0.1, 0.6, P.laziness) * lerp(1, 1.8, drowsy) * hw(\.sleep))) {
+            // In its tank: to where it sleeps best.
+            if placesOn, goFor(.sleep) { return }
             if let h = hammock, h.progress >= 1, chance(0.7) {
                 goHome(.sleep)
                 return
@@ -9725,6 +10969,10 @@ final class Spider {
             if startPeekaboo(reach: asked ? 600 : 260) { wantsPeekabooUntil = -1; return }
             if asked { goHideSomewhere() ; return }
         }
+
+        // In its tank: what it feels like doing there, if anything — a
+        // drink, a look out, a rest in its spot, somewhere it hasn't been…
+        if placesOn, t >= errandRestUntil, interest < 0.5, startTankGoal() { return }
 
         // Everything else is a weighted draw. Each weight is the plain
         // frequency scaled by whichever trait it expresses, so a shy spider
@@ -9774,7 +11022,11 @@ final class Spider {
             }
         }))
         options.append((10 * hw(\.look), { self.beginActivity(.look, dur: randRange(0.7, 2.2)) }))
-        options.append((6 * lazy * hw(\.rest), { self.beginActivity(.rest, dur: randRange(3, 8)) }))
+        options.append((6 * lazy * hw(\.rest), {
+            // In its tank, a rest is mostly in its spot for resting.
+            if self.placesOn, self.t >= self.errandRestUntil - 4, chance(0.65), self.goFor(.rest) { return }
+            self.beginActivity(.rest, dur: randRange(3, 8))
+        }))
         options.append((6 * hw(\.groom), { self.beginActivity(.groom, dur: randRange(1.4, 2.8)) }))
         options.append((6 * (0.5 + busy * 0.5) * hw(\.fidget), { self.beginActivity(.fidget, dur: randRange(0.7, 1.2)) }))
         options.append((4 * hw(\.scratch), { self.beginActivity(.scratch, dur: randRange(1.0, 1.6)) }))
@@ -13033,6 +14285,20 @@ final class Spider {
             }
             if liftsOuterPair, let out = faceOnOuter(i) { return out }
             return standingFoot(i, braced: k == 1)
+        case (.attached, .drink):
+            // The front pair down at the water's edge either side of the
+            // mouth, holding it there; the rest braced.
+            if k == 0, let w = sipAt {
+                let rig = SpiderRenderer.rig(i)
+                let reach = ((rig.knee - rig.hip).length + (rig.foot - rig.knee).length) * 0.9
+                var aim = toLocal(w) + V2(near ? -5 : -1, 3)
+                let v = aim - leg.hip
+                if v.length > reach { aim = leg.hip + v.normalized * reach }
+                let down = smoothstep(clamp(activityTime / 0.6, 0, 1)) * smoothstep(clamp((activityDur - activityTime) / 0.45, 0, 1))
+                return Spider.swing(rest, aim, about: leg.hip, down)
+            }
+            if liftsOuterPair, let out = faceOnOuter(i) { return out }
+            return standingFoot(i, braced: k == 1)
         case (.attached, .fidget):
             // The near front foot taps twice.
             if k == 0 && near {
@@ -15165,6 +16431,7 @@ final class Spider {
         p.blink = clamp(max(blinkValue, sleepiness.value, lid.value), 0, 1)
         p.happy = clamp(happy.value + pettingScore * 0.5 + fed * 0.3, 0, 1)
         if activity == .eat, mode == .attached { p.chew = 0.5 + 0.5 * sin(t * 11) }
+        if activity == .drink, mode == .attached { p.chew = 0.25 + 0.25 * max(0, sin(t * 8)) }
         // A nibble at the pointer it has caught, now and then.
         if mode == .clinging { p.chew = max(0, sin(t * 7)) * (0.5 + 0.5 * sin(t * 0.9)) }
         p.headTilt = headTilt.value + gf.nod

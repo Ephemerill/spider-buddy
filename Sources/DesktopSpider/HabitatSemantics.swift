@@ -278,8 +278,10 @@ struct InteractionPoint {
 
 extension HabitatItem {
     /// Its places that mean something (see `InteractionPoint`), on the
-    /// surfaces of `map` as they are laid out now.
-    func interactionPoints(on map: SurfaceMap) -> [InteractionPoint] {
+    /// surfaces of `map` as they are laid out now. (`fromBeside`: the bits
+    /// of it within reach from beside it, and the spots to take it in from
+    /// — the dearest of them to find.)
+    func interactionPoints(on map: SurfaceMap, fromBeside: Bool = true) -> [InteractionPoint] {
         let g = geometry
         let r = rect
         let off = map.standoff
@@ -384,7 +386,7 @@ extension HabitatItem {
         // From beside it, on whatever is round it: a bit of it within reach
         // of the front legs, and somewhere a little way off to take it in.
         let outlines = g.parts.isEmpty ? g.visual : g.parts.map(\.outline)
-        if !outlines.isEmpty {
+        if fromBeside, !outlines.isEmpty {
             func nearest(to p: V2) -> V2 {
                 var best = (d: CGFloat.greatestFiniteMagnitude, q: p)
                 for o in outlines {

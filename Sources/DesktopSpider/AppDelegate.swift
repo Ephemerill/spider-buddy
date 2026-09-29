@@ -321,6 +321,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // (notices, watches, comes closer, feels it, climbs it, knows it,
         // leaves it be); then carried off on a stump it stands on.
         if ProcessInfo.processInfo.environment["SPIDER_HABITAT_CURIOUS"] == "1" { runHabitatCuriousTest(dir: ProcessInfo.processInfo.environment["SPIDER_HABITAT_DIR"]) }
+        // SPIDER_HABITAT_PLACES=1 (+SPIDER_HABITAT_DIR for pictures): the tank
+        // put to use, in real time — a dish found and later gone back to for a
+        // drink, a lookout climbed to look out from, a downpour sat out under
+        // the table rather than in the nearer bark cave.
+        if ProcessInfo.processInfo.environment["SPIDER_HABITAT_PLACES"] == "1" { runHabitatPlacesTest(dir: ProcessInfo.processInfo.environment["SPIDER_HABITAT_DIR"]) }
         // SPIDER_HABITAT_RETURN=left|right|above: carried out of the tank to
         // that side and let go; reports how long it takes to get back in.
         if let side = ProcessInfo.processInfo.environment["SPIDER_HABITAT_RETURN"] {
@@ -3241,6 +3246,150 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         shot("6_put_down")
                         hc.toggleDecorate()
                         print("habitat curious: \(fails == 0 ? "all ok" : "\(fails) FAILED")")
+                        finishHabitatTest(restore)
+                    }
+                }
+            }
+        }
+    }
+
+    /// SPIDER_HABITAT_PLACES=1: the tank put to use (see HabitatPlaces.swift
+    /// and "Places in the tank" in Spider.swift), in real time. A tank it
+    /// knows — a rock, a table, a bark cave, a lookout — and a water dish put
+    /// in while decorating. It finds the dish; later, thirsty, goes back and
+    /// drinks. Up the lookout to look out over it all. Then a downpour: in
+    /// under the table (built) rather than the bark cave (nearer).
+    private func runHabitatPlacesTest(dir: String?) {
+        let restore = habitatTestSnapshot()
+        var fails = 0
+        func check(_ label: String, _ ok: Bool, _ detail: String = "") {
+            if !ok { fails += 1 }
+            print("habitat places: [\(ok ? "ok  " : "FAIL")] \(label) \(detail)")
+            fflush(stdout)
+        }
+        func note(_ s: String) { print("habitat places: \(s)"); fflush(stdout) }
+        func after(_ secs: Double, _ f: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + secs, execute: f) }
+        /// Checks `test` every tenth of a second until it holds or `secs` pass, then `done(held, secs taken)`.
+        func wait(_ secs: Double, _ test: @escaping () -> Bool, _ done: @escaping (Bool, Double) -> Void) {
+            let t0 = CACurrentMediaTime()
+            Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
+                let t = CACurrentMediaTime() - t0
+                if test() { timer.invalidate(); done(true, t) } else if t > secs { timer.invalidate(); done(false, t) }
+            }
+        }
+        openHabitat(restoring: true)
+        guard let hc = habitat else { return }
+        hc.scene.debugKeepAnimating = true
+        let scene = hc.scene
+        hc.weather.persists = false
+        hc.weather.debugForce(.clear)
+        func shot(_ name: String) { if let dir { debugShot("\(dir)/places_\(name).png", rect: .null, window: hc.window) } }
+        let W = scene.habitat.size.width, G = HabitatLayout.ground
+        var h = Habitat(biome: .forest, world: scene.habitat.size)
+        _ = h.add(.rock, at: CGPoint(x: W / 2 - 900, y: 0))
+        let table = h.add(.table, at: CGPoint(x: W / 2 - 420, y: 0))
+        let cave = h.add(.barkCave, at: CGPoint(x: W / 2 + 260, y: 0))
+        let look = h.add(.lookout, at: CGPoint(x: W / 2 + 760, y: 0))
+        spider.knowledge = HabitatKnowledge()
+        scene.setHabitat(h)
+        let floorY = G + scene.map.standoff
+        spider.placeInHabitat(map: scene.map, at: V2(W / 2, floorY))
+        scene.lookAt(V2(W / 2, G + 220))
+        guard let know = spider.knowledge else { return }
+        spider.debugSetUrges(thirst: 0, view: 0, rest: 0, roam: 0)
+        func gap(_ it: HabitatItem) -> CGFloat {
+            let r = it.rect, p = spider.worldPos
+            return V2(max(r.minX - p.x, 0, p.x - r.maxX), max(r.minY - p.y, 0, p.y - r.maxY)).length
+        }
+        func footed() -> Bool { spider.standingOn.flatMap { scene.map.worldPoint($0) }.map { $0.distance(to: spider.worldPos) < 16 } ?? false }
+        // (Off its surface for a moment — a hop, a landing, put down — is
+        // nothing; for half a second, it is standing on nothing.)
+        var floating = 0, offFor = 0
+        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [self] timer in
+            if !inHabitat { timer.invalidate(); return }
+            offFor = spider.isStanding && !footed() ? offFor + 1 : 0
+            if offFor == 5 { floating += 1 }
+        }
+        var last = ""
+        Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [self] timer in
+            guard inHabitat else { timer.invalidate(); return }
+            let line = "\(spider.debugState) | \(spider.debugErrand)"
+            if line != last { note(line); last = line }
+        }
+
+        // Decorating: a water dish put in, some way off.
+        var dish: HabitatItem?
+        after(4) {
+            hc.toggleDecorate()
+            scene.add(.waterDish)
+            if let id = scene.selected {
+                let x = self.spider.worldPos.x
+                scene.moveItem(id, to: V2(x - 330, G))
+            }
+            dish = scene.selected.flatMap { scene.habitat.item(id: $0) }
+            after(0.8) { hc.toggleDecorate() }
+        }
+        // It finds it; goes off; later, thirsty, comes back to it.
+        after(6) { [self] in
+            guard let d = dish else { check("dish put in", false); finishHabitatTest(restore); return }
+            note(String(format: "water dish at %.0f (spider at %.0f)", d.x, spider.worldPos.x))
+            wait(120, { know.stage(of: d.uid) != .unknown }) { [self] found, t in
+                check("it finds the dish", found, String(format: "%.1fs", t))
+                if !found { know.notice(d, unease: 0) }
+                // Off about its business, a way from it.
+                wait(90, { gap(d) > 220 }) { [self] away, _ in
+                    if !away { spider.summon(to: V2(d.x + 500, floorY)) }
+                    after(away ? 0.5 : 6) { [self] in
+                        note(String(format: "away from it (%.0f pt); now it feels like a drink", gap(d)))
+                        spider.debugSetUrges(thirst: 1.3)
+                        wait(150, { [self] in spider.debugDrinking && spider.debugSipAt.map { d.water!.insetBy(dx: -6, dy: -6).contains($0.point) } == true }) { [self] drank, t in
+                            check("…later it goes back to it and drinks", drank, String(format: "%.1fs", t))
+                            if drank { after(1.5) { shot("1_drinking") } }
+                            wait(40, { [self] in spider.debugErrandKind == nil }) { _, _ in lookout() }
+                        }
+                    }
+                }
+            }
+        }
+        // Up the lookout, to look out.
+        func lookout() {
+            // (From beside it: the best view about, by a long way.)
+            spider.placeInHabitat(map: scene.map, at: V2(look.rect.minX - 90, floorY))
+            scene.lookAt(V2(look.rect.midX, G + 260))
+            spider.debugSetUrges(view: 1.3)
+            var dirs: [V2] = []
+            wait(120, { [self] in
+                guard spider.debugErrandKind == "lookout", spider.debugUnderfoot == look.id, spider.debugErrand.contains(" act ") else { return false }
+                if let e = spider.debugEyeOn {
+                    let v = (e - spider.worldPos).normalized
+                    if !dirs.contains(where: { $0.dot(v) > 0.9 }) { dirs.append(v) }
+                }
+                return dirs.count >= 3
+            }) { [self] ok, t in
+                check("it climbs the lookout and looks out from it, scanning", ok,
+                      String(format: "%.1fs, %d directions (%@)", t, dirs.count, spider.debugErrandPlace?.key ?? spider.debugErrand))
+                if ok { scene.lookAt(spider.worldPos); after(0.8) { shot("2_lookout") } }
+                after(2) { downpour() }
+            }
+        }
+        // A downpour: in under the table, not the cave.
+        func downpour() {
+            spider.debugSetUrges(thirst: 0, view: 0)
+            spider.placeInHabitat(map: scene.map, at: V2(W / 2 + 120, floorY))
+            after(1.5) { [self] in
+                hc.weather.debugForce(.rain)
+                wait(80, { [self] in spider.isStanding && spider.debugErrandKind == "shelter" && spider.debugErrand.contains(" act ") }) { [self] ok, t in
+                    let pl = spider.debugErrandPlace
+                    let underTable = pl.map { $0.roofOwner == table.id || $0.thing == table.id || $0.q[.made] >= 0.5 } ?? false
+                    let inCave = gap(cave) < 20
+                    check("in the rain it shelters under the table (built), not in the nearer cave", ok && underTable && !inCave,
+                          String(format: "%.1fs at %@ %@", t, pl?.key ?? "-", "\(pl?.q ?? PlaceQualities())"))
+                    scene.lookAt(spider.worldPos)
+                    after(3) { shot("3_sheltering") }
+                    after(5) { [self] in
+                        hc.weather.debugForce(.clear)
+                        check("never standing on nothing", floating == 0, "\(floating)")
+                        print("habitat places: \(fails == 0 ? "all ok" : "\(fails) FAILED")")
                         finishHabitatTest(restore)
                     }
                 }

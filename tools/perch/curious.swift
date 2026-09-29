@@ -363,8 +363,16 @@ private func decorCheck(_ b: inout Builder) {
         let small = h.add(.pineCone, at: CGPoint(x: s.worldPos.x + 110, y: 0))
         rebuilt(h, tank, s)
         var went = false
-        step(s, 40) { if s.debugInquiryUID == small.uid, near(s, small) < 40 { went = true } }
+        var errands: [String] = [s.debugErrandKind ?? "-"]
+        step(s, 40) {
+            if s.debugInquiryUID == small.uid, near(s, small) < 40 { went = true }
+            let k = s.debugErrandKind ?? "-"
+            if k != errands.last { errands.append(k) }
+        }
         if went { saw += 1 }
+        if env["PC_TRACE"] != nil {
+            print("    small \(sd): went \(went), noticed \(s.knowledge!.stage(of: small.uid)), errands \(errands.joined(separator: " > ")), now \(s.debugState) | \(s.debugInquiry)")
+        }
     }
     b.check("small thing put down: a curious one goes to see it", saw >= 5, "\(saw)/6")
 
