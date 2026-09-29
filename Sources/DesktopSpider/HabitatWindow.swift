@@ -9,7 +9,6 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     let window: NSWindow
     let scene = HabitatSceneView(frame: CGRect(x: 0, y: 0, width: 860, height: 516))
     private let root = HabitatRootView()
-    private let panel = DecorPanel()
     let titleView = HabitatTitleView()
     private let decorateButton = HabitatButton(title: "Decorate", symbol: "paintbrush.pointed")
     private let feedButton = HabitatButton(title: "Feed", symbol: "fork.knife", menu: true)
@@ -58,7 +57,14 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         didSet { root.glass = glass }
     }
 
-    init(spiderName: String) {
+    /// The window and everything round the glass, laid out — but not the
+    /// tank itself, which is set up the first time it is opened (see
+    /// `load`): the app makes this ahead, as it starts, so that opening the
+    /// tank has only the tank to do.
+    /// `standoff`: the spider's height off what it stands on, for laying the
+    /// surfaces out (the first time, before anything else is laid out, so it
+    /// is done once).
+    init(spiderName: String, standoff: CGFloat? = nil, syncMaps: Bool = false) {
         name = spiderName
         if let a = UserDefaults.standard.array(forKey: HabitatController.glassKey) as? [Double], a.count == 2 {
             glass = CGSize(width: CGFloat(a[0]), height: CGFloat(a[1]))
@@ -70,13 +76,24 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 880, height: 600),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                           backing: .buffered, defer: false)
-        weather = WeatherClock(biome: Habitat.load().biome)
+        let saved = Habitat.load()
+        weather = WeatherClock(biome: saved.biome)
         super.init()
+        pending = saved
+        if let standoff { scene.presetStandoff(standoff) }
+        scene.syncMaps = syncMaps
         window.title = HabitatController.title(for: spiderName)
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.appearance = NSAppearance(named: .darkAqua)
         window.backgroundColor = NSColor(white: 0.1, alpha: 1)
+        // The tank's pictures are painted in sRGB: in a window of the same
+        // space Core Animation takes them as they are, rather than painting
+        // each afresh into the display's colours on the main thread as it
+        // is put up (a big picture took a tenth of a second or more), and
+        // the window server matches the colours to the display as it shows
+        // them.
+        window.colorSpace = .sRGB
         window.isReleasedWhenClosed = false
         window.collectionBehavior = [.fullScreenNone]
         window.tabbingMode = .disallowed
@@ -84,10 +101,8 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         root.glass = glass
         window.contentView = root
         root.addSubview(scene)
-        root.addSubview(panel)
         root.scene = scene
-        root.panel = panel
-        panel.isHidden = true
+        // (The decorating panel is made the first time it is wanted.)
 
         let toolbar = NSToolbar(identifier: "habitat")
         toolbar.delegate = self
@@ -119,10 +134,10 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         weatherButton.target = self
         weatherButton.action = #selector(showWeatherMenu)
         weatherButton.toolTip = "Rain, snow, wind, sun and more — change what the weather does in the tank"
-        weather.onChange = { [weak self] in self?.panel.refreshWeather() }
+        weather.onChange = { [weak self] in self?.decorPanel?.refreshWeather() }
 
         scene.onEdit = { [weak self] before, after in self?.edited(from: before, to: after) }
-        scene.onSelect = { [weak self] _ in self?.panel.refresh() }
+        scene.onSelect = { [weak self] _ in self?.decorPanel?.refresh() }
         scene.onCommand = { [weak self] c in
             switch c {
             case .undo: self?.undo()
@@ -132,14 +147,47 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         }
         scene.onOverviewChange = { [weak self] on in self?.overviewButton.isOn = on }
         scene.spiderName = spiderName
-        panel.controller = self
-        scene.setHabitat(Habitat.load())
-        if let o = HabitatCamera.saved() { scene.camera.jump(to: o) }
-        panel.build()
         glass = fitted(glass)
         window.setContentSize(size(forGlass: glass))
         window.minSize = size(forGlass: HabitatController.minGlass)
         root.needsLayout = true
+    }
+
+    /// The habitat the tank shows, once it has been set up (see `load`);
+    /// nil before.
+    var loadedHabitat: Habitat? { pending == nil ? scene.habitat : nil }
+    /// The saved habitat, until the tank is set up with it.
+    private var pending: Habitat?
+
+    /// Sets the tank up with its habitat, the first time it is opened: its
+    /// pictures painted and its surfaces laid out off the main thread (see
+    /// `HabitatPainter`, `HabitatSceneView.rebuildMap`). `mapNow`: its
+    /// surfaces laid out at once (the spider is put straight into it).
+    func load(mapNow: Bool = false) {
+        guard let saved = pending else { return }
+        pending = nil
+        Perf.measure("habitat: scene set") { scene.setHabitat(saved, mapNow: mapNow) }
+        if let o = HabitatCamera.saved() { scene.camera.jump(to: o) }
+        glass = fitted(glass)
+        window.setContentSize(size(forGlass: glass))
+        root.needsLayout = true
+    }
+
+    /// The decorating panel, if it has been made.
+    private var decorPanel: DecorPanel?
+
+    /// The decorating panel: made, and built, the first time it is wanted.
+    private var panel: DecorPanel {
+        if let p = decorPanel { return p }
+        let p = DecorPanel()
+        p.controller = self
+        p.isHidden = true
+        root.addSubview(p)
+        root.panel = p
+        decorPanel = p
+        Perf.measure("habitat: decorating panel built") { p.build() }
+        root.needsLayout = true
+        return p
     }
 
     static let nameKey = "habitatName"
@@ -208,7 +256,8 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// A glass no smaller than the least, and no bigger than the world or
     /// than would fit on the screen.
     private func fitted(_ g: CGSize, screen: NSScreen? = nil) -> CGSize {
-        let world = scene.habitat.size
+        // (Before the tank is set up, the world it will be.)
+        let world = (pending ?? scene.habitat).size
         let vis = (screen ?? window.screen ?? NSScreen.main)?.visibleFrame.size ?? CGSize(width: 1400, height: 900)
         let extra = decorating ? HabitatController.sidebarWidth : 0
         let maxW = min(world.width, vis.width - extra - HabitatRootView.rim * 2)
@@ -348,9 +397,9 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// Tools only: the decorating panel at a tab.
     func debugShowTab(_ i: Int) { panel.debugShowTab(i) }
     /// Tools only: the Add tab showing one part of it.
-    func debugShowShelf(_ s: HabitatObjectDefinition.Shelf?) { panel.debugShowTab(1); panel.showShelf(s) }
-    func debugSearch(_ q: String) { panel.debugShowTab(1); panel.debugSearch(q) }
-    func debugSuits(_ on: Bool) { panel.debugShowTab(1); panel.debugSuits(on) }
+    func debugShowShelf(_ s: HabitatObjectDefinition.Shelf?) { debugShowTab(1); panel.showShelf(s) }
+    func debugSearch(_ q: String) { debugShowTab(1); panel.debugSearch(q) }
+    func debugSuits(_ on: Bool) { debugShowTab(1); panel.debugSuits(on) }
 
     // MARK: Editing
 
@@ -366,7 +415,7 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         if undoStack.count > 60 { undoStack.removeFirst() }
         redoStack = []
         after.save()
-        panel.refresh()
+        decorPanel?.refresh()
     }
 
     func undo() {
@@ -374,7 +423,7 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         redoStack.append(scene.habitat)
         scene.setHabitat(prev, fade: prev.biome != scene.habitat.biome)
         prev.save()
-        panel.refresh()
+        decorPanel?.refresh()
     }
 
     func redo() {
@@ -382,7 +431,7 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         undoStack.append(scene.habitat)
         scene.setHabitat(next, fade: next.biome != scene.habitat.biome)
         next.save()
-        panel.refresh()
+        decorPanel?.refresh()
     }
 
     var canUndo: Bool { !undoStack.isEmpty }
@@ -446,7 +495,7 @@ extension HabitatController {
         shownKind = k
         weatherButton.set(title: "Weather", symbol: k.symbol)
         weatherButton.toolTip = "\(weather.summary()) — click to change the weather"
-        panel.refreshWeather()
+        decorPanel?.refreshWeather()
         guard !first else { return }
         let line = k.arriving
         if titleView.status == nil || titleView.status == weatherNotice {
@@ -533,7 +582,7 @@ extension HabitatController {
     func setWeatherMode(_ m: WeatherSettings.Mode) {
         if m == .outside, !outsideAvailable() { enableOutside?() }
         weather.settings.mode = m
-        panel.refreshWeather()
+        decorPanel?.refreshWeather()
     }
 
     @objc private func weatherKept(_ sender: NSMenuItem) {
@@ -544,23 +593,23 @@ extension HabitatController {
     func keepWeather(_ k: WeatherKind) {
         weather.settings.always = k
         weather.settings.mode = .always
-        panel.refreshWeather()
+        decorPanel?.refreshWeather()
     }
 
     @objc private func weatherBrought(_ sender: NSMenuItem) {
         guard WeatherKind.allCases.indices.contains(sender.tag) else { return }
         weather.bring(WeatherKind.allCases[sender.tag])
-        panel.refreshWeather()
+        decorPanel?.refreshWeather()
     }
 
     @objc func weatherChangeNow() {
         weather.changeNow()
-        panel.refreshWeather()
+        decorPanel?.refreshWeather()
     }
 
     @objc func weatherClear() {
         weather.bring(.clear)
-        panel.refreshWeather()
+        decorPanel?.refreshWeather()
     }
 
     /// The decorating panel, open at its Weather tab.
@@ -623,61 +672,101 @@ final class HabitatRootView: NSView {
         scene?.frame = sceneFrame
         let lidTop = sceneFrame.maxY + HabitatRootView.topRim
         panel?.frame = CGRect(x: tankWidth, y: 0, width: HabitatController.sidebarWidth, height: lidTop)
+        layOutFrame()
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+    // The frame round the glass is made of Core Animation layers, which the
+    // window server draws: painted here, its gradients the size of the
+    // window were a good part of the main thread's time as the tank opened
+    // (and at every step of a resize).
+    private let lidFill = CAGradientLayer(), lidMesh = CAShapeLayer()
+    private let bodyFill = CAGradientLayer()
+    private let lipDark = CALayer(), lipLight = CALayer()
+    private let baseFill = CAGradientLayer(), baseLight = CALayer()
+    private let vents = CAShapeLayer(), ventLights = CAShapeLayer()
+    private let groove = CAShapeLayer(), grooveRim = CAShapeLayer()
+    private var framed = false
+
+    private func makeFrame() {
+        guard !framed, let root = layer else { return }
+        framed = true
         func c(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> CGColor { HabitatArt.c(r, g, b, a) }
+        // The lid: brushed dark metal with a mesh.
+        lidFill.colors = [c(0.13, 0.13, 0.15), c(0.2, 0.2, 0.22)]
+        lidMesh.strokeColor = c(1, 1, 1, 0.035)
+        lidMesh.fillColor = nil
+        lidMesh.lineWidth = 1
+        lidMesh.masksToBounds = true
+        // The body of the tank.
+        bodyFill.colors = [c(0.12, 0.12, 0.13), c(0.2, 0.2, 0.22)]
+        // A lip of light between lid and body.
+        lipDark.backgroundColor = c(0, 0, 0, 0.5)
+        lipLight.backgroundColor = c(1, 1, 1, 0.07)
+        // The base: a slightly lighter band with a row of vent slots.
+        baseFill.colors = [c(0.1, 0.1, 0.11), c(0.17, 0.17, 0.19)]
+        baseLight.backgroundColor = c(1, 1, 1, 0.06)
+        vents.fillColor = c(0, 0, 0, 0.55)
+        ventLights.fillColor = c(1, 1, 1, 0.05)
+        // The glass sits in a groove.
+        groove.fillColor = c(0.03, 0.03, 0.04)
+        groove.fillRule = .evenOdd
+        grooveRim.fillColor = nil
+        grooveRim.strokeColor = c(1, 1, 1, 0.06)
+        grooveRim.lineWidth = 1
+        // (In order, back to front, all under the subviews' own layers.)
+        for (i, l) in ([lidFill, lidMesh, bodyFill, lipDark, lipLight, baseFill, baseLight, vents, ventLights, groove, grooveRim] as [CALayer]).enumerated() {
+            l.actions = ["position": NSNull(), "bounds": NSNull(), "path": NSNull(), "frame": NSNull()]
+            l.zPosition = -100 + CGFloat(i)
+            root.addSublayer(l)
+        }
+    }
+
+    private func layOutFrame() {
+        wantsLayer = true
+        makeFrame()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
         let glass = sceneFrame
         let lidBottom = glass.maxY + HabitatRootView.topRim
-        // The lid: brushed dark metal with a mesh.
-        let lid = CGRect(x: 0, y: lidBottom, width: bounds.width, height: bounds.height - lidBottom)
-        HabitatArt.linear(ctx, [c(0.2, 0.2, 0.22), c(0.13, 0.13, 0.15)], from: CGPoint(x: 0, y: lid.maxY), to: CGPoint(x: 0, y: lid.minY))
-        ctx.saveGState()
-        ctx.clip(to: lid)
-        ctx.setStrokeColor(c(1, 1, 1, 0.035))
-        ctx.setLineWidth(1)
+        let lid = CGRect(x: 0, y: lidBottom, width: bounds.width, height: max(bounds.height - lidBottom, 0))
+        lidFill.frame = lid
+        lidMesh.frame = lid
+        let mesh = CGMutablePath()
         var x: CGFloat = -lid.height
-        while x < lid.maxX {
-            ctx.move(to: CGPoint(x: x, y: lid.minY)); ctx.addLine(to: CGPoint(x: x + lid.height, y: lid.maxY))
-            ctx.move(to: CGPoint(x: x + lid.height, y: lid.minY)); ctx.addLine(to: CGPoint(x: x, y: lid.maxY))
+        while x < lid.width {
+            mesh.move(to: CGPoint(x: x, y: 0)); mesh.addLine(to: CGPoint(x: x + lid.height, y: lid.height))
+            mesh.move(to: CGPoint(x: x + lid.height, y: 0)); mesh.addLine(to: CGPoint(x: x, y: lid.height))
             x += 5
         }
-        ctx.strokePath()
-        ctx.restoreGState()
-        // The body of the tank.
-        let body = CGRect(x: 0, y: 0, width: tankWidth, height: lidBottom)
-        HabitatArt.linear(ctx, [c(0.2, 0.2, 0.22), c(0.12, 0.12, 0.13)], from: CGPoint(x: 0, y: body.maxY), to: CGPoint(x: 0, y: 0))
-        // A lip of light between lid and body.
-        ctx.setFillColor(c(0, 0, 0, 0.5))
-        ctx.fill(CGRect(x: 0, y: lidBottom - 1, width: bounds.width, height: 1))
-        ctx.setFillColor(c(1, 1, 1, 0.07))
-        ctx.fill(CGRect(x: 0, y: lidBottom, width: bounds.width, height: 1))
-        // The base: a slightly lighter band with a row of vent slots.
+        lidMesh.path = mesh
+        bodyFill.frame = CGRect(x: 0, y: 0, width: tankWidth, height: lidBottom)
+        lipDark.frame = CGRect(x: 0, y: lidBottom - 1, width: bounds.width, height: 1)
+        lipLight.frame = CGRect(x: 0, y: lidBottom, width: bounds.width, height: 1)
         let base = CGRect(x: 0, y: 0, width: tankWidth, height: HabitatRootView.base - 4)
-        HabitatArt.linear(ctx, [c(0.17, 0.17, 0.19), c(0.1, 0.1, 0.11)], from: CGPoint(x: 0, y: base.maxY), to: CGPoint(x: 0, y: 0))
-        ctx.setFillColor(c(1, 1, 1, 0.06))
-        ctx.fill(CGRect(x: 0, y: base.maxY - 1, width: tankWidth, height: 1))
+        baseFill.frame = base
+        baseLight.frame = CGRect(x: 0, y: base.maxY - 1, width: tankWidth, height: 1)
         let slots = 9
         let slotW: CGFloat = 16, gap: CGFloat = 6
         let total = CGFloat(slots) * slotW + CGFloat(slots - 1) * gap
+        let slotPath = CGMutablePath(), slotLights = CGMutablePath()
         for k in 0..<slots {
             let r = CGRect(x: tankWidth / 2 - total / 2 + CGFloat(k) * (slotW + gap), y: base.midY - 2, width: slotW, height: 4)
-            ctx.addPath(CGPath(roundedRect: r, cornerWidth: 2, cornerHeight: 2, transform: nil))
-            ctx.setFillColor(c(0, 0, 0, 0.55))
-            ctx.fillPath()
-            ctx.setFillColor(c(1, 1, 1, 0.05))
-            ctx.fill(CGRect(x: r.minX + 1, y: r.minY - 1, width: r.width - 2, height: 1))
+            slotPath.addRoundedRect(in: r, cornerWidth: 2, cornerHeight: 2)
+            slotLights.addRect(CGRect(x: r.minX + 1, y: r.minY - 1, width: r.width - 2, height: 1))
         }
-        // The glass sits in a groove.
-        let groove = glass.insetBy(dx: -3, dy: -3)
-        ctx.addPath(CGPath(roundedRect: groove, cornerWidth: 5, cornerHeight: 5, transform: nil))
-        ctx.setFillColor(c(0.03, 0.03, 0.04))
-        ctx.fillPath()
-        ctx.addPath(CGPath(roundedRect: groove.insetBy(dx: -1, dy: -1), cornerWidth: 6, cornerHeight: 6, transform: nil))
-        ctx.setStrokeColor(c(1, 1, 1, 0.06))
-        ctx.setLineWidth(1)
-        ctx.strokePath()
+        vents.frame = bounds
+        vents.path = slotPath
+        ventLights.frame = bounds
+        ventLights.path = slotLights
+        let g = glass.insetBy(dx: -3, dy: -3)
+        let groovePath = CGMutablePath()
+        groovePath.addRoundedRect(in: g, cornerWidth: 5, cornerHeight: 5)
+        groovePath.addRect(glass.insetBy(dx: 2, dy: 2))
+        groove.frame = bounds
+        groove.path = groovePath
+        grooveRim.frame = bounds
+        grooveRim.path = CGPath(roundedRect: g.insetBy(dx: -1, dy: -1), cornerWidth: 6, cornerHeight: 6, transform: nil)
     }
 }
 
@@ -1003,7 +1092,29 @@ final class DecorPanel: NSView {
         CGRect(x: 1, y: 0, width: 1, height: bounds.height).fill()
     }
 
+    /// Built the first time it is wanted (decorating), not with the tank:
+    /// its hundreds of little pictures would hold up the tank opening, and
+    /// the spider with it.
+    private(set) var built = false
+
+    /// The tiles' pictures, painted off the main thread and put on each tile
+    /// as it comes — the panel is there at once, and nothing waits on them.
+    private static let painter = DispatchQueue(label: "habitat.thumbnails", qos: .userInitiated)
+    /// `still`: whether the picture is still wanted when it is ready (the
+    /// weather tiles are painted afresh for each scenery).
+    private func paintLater(_ tile: TileButton, still: @escaping () -> Bool = { true }, _ paint: @escaping () -> NSImage) {
+        DecorPanel.painter.async {
+            let img = paint()
+            DispatchQueue.main.async { [weak tile] in
+                guard still() else { return }
+                tile?.setImage(img)
+            }
+        }
+    }
+
     func build() {
+        guard !built else { return }
+        built = true
         let pad: CGFloat = 16
         let inner = HabitatController.sidebarWidth - pad * 2
 
@@ -1117,8 +1228,9 @@ final class DecorPanel: NSView {
         let tileW = (width - 8) / 2
         let thumb = CGSize(width: tileW - 12, height: ((tileW - 12) * HabitatLayout.aspect).rounded())
         biomeTiles = Biome.allCases.map { b in
-            let t = TileButton(image: HabitatArt.biomeThumbnail(b, size: thumb), title: b.label, subtitle: b.blurb, imageSize: thumb)
+            let t = TileButton(image: NSImage(size: thumb), title: b.label, subtitle: b.blurb, imageSize: thumb)
             t.onClick = { [weak self] in self?.controller?.setBiome(b) }
+            paintLater(t) { HabitatArt.biomeThumbnail(b, size: thumb) }
             return t
         }
         return page([note("The backdrop behind the glass. Everything in it moves — clouds, leaves, snow, fireflies.", width: width),
@@ -1130,7 +1242,8 @@ final class DecorPanel: NSView {
         addWidth = width
         let tileW = (width - 16) / 3
         for k in HabitatItemKind.allCases {
-            let t = TileButton(image: HabitatArt.thumbnail(k, side: 56), title: k.label, subtitle: nil, imageSize: CGSize(width: 56, height: 56), titleSize: 10.5)
+            let t = TileButton(image: NSImage(size: CGSize(width: 56, height: 56)), title: k.label, subtitle: nil, imageSize: CGSize(width: 56, height: 56), titleSize: 10.5)
+            paintLater(t) { HabitatArt.thumbnail(k, side: 56) }
             t.onClick = { [weak self] in self?.controller?.scene.add(k) }
             t.toolTip = k.definition.note.map { "\(k.label): \($0)" } ?? "Add \(k.label.lowercased())"
             t.translatesAutoresizingMaskIntoConstraints = false
@@ -1273,8 +1386,9 @@ final class DecorPanel: NSView {
         let world = controller?.scene.habitat.size ?? HabitatLayout.defaultWorld
         let thumb = CGSize(width: width - 12, height: ((width - 12) * min(world.height / world.width, 0.45)).rounded())
         let tiles = Habitat.Preset.allCases.map { p -> NSView in
-            let t = TileButton(image: HabitatArt.habitatThumbnail(Habitat.preset(p, world: world), size: thumb), title: p.label, subtitle: nil, imageSize: thumb)
+            let t = TileButton(image: NSImage(size: thumb), title: p.label, subtitle: nil, imageSize: thumb)
             t.onClick = { [weak self] in self?.controller?.loadPreset(p) }
+            paintLater(t) { HabitatArt.habitatThumbnail(Habitat.preset(p, world: world), size: thumb) }
             return t
         }
         let shuffle = HabitatButton(title: "Surprise Me", symbol: "dice")
@@ -1396,7 +1510,8 @@ final class DecorPanel: NSView {
         if tilesBiome != b, pages.count > 3, !pages[3].isHidden {
             tilesBiome = b
             for (k, t) in weatherTiles {
-                t.setImage(WeatherArt.thumbnail(k, biome: b, size: t.imageSize))
+                let size = t.imageSize
+                paintLater(t, still: { [weak self] in self?.tilesBiome == b }) { WeatherArt.thumbnail(k, biome: b, size: size) }
             }
         }
         let list = s.rotation(b)
@@ -1570,7 +1685,7 @@ final class DecorPanel: NSView {
 
     /// Back in step with the tank.
     func refresh() {
-        guard let c = controller else { return }
+        guard built, let c = controller else { return }
         refreshWeather()
         let h = c.scene.habitat
         for (b, t) in zip(Biome.allCases, biomeTiles) { t.selected = b == h.biome }

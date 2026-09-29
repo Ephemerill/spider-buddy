@@ -1,20 +1,106 @@
 import AppKit
 import QuartzCore
 
-// MARK: - Spider layer
+// MARK: - The spider, shown
 
-/// Small layer that rasterises just the critter. Positioned every frame; the
-/// rest of the overlay never redraws.
-final class SpiderLayer: CALayer {
-    var pose = SpiderPose()
+/// Puts a spider up on a layer, pose by pose. Most of what a frame costs is
+/// drawing the spider — and the main thread, where it lives, has everything
+/// else to do — so when its shape has changed enough to want a new picture,
+/// the picture is drawn off the main thread, and the pose goes up on the
+/// screen with it the moment it is ready (the same frame, on any Mac that
+/// can draw it in less than one). A pose never goes up without its own
+/// picture: where the layer is, what is drawn on it, the window moved to it
+/// and its silk all go up together. Should the drawing ever fall behind, the
+/// newest pose waits its turn rather than the main thread waiting on it.
+final class SpriteShower {
+    /// The spider's square: its picture, where it is.
+    let layer = CALayer()
+    /// Where the layer goes for a pose, in its superlayer.
+    var place: (SpiderPose) -> CGPoint = { $0.pos.point }
+    /// What else goes up with each pose, before the layer is placed: the
+    /// window moved to it, its silk.
+    var alongside: ((SpiderPose) -> Void)?
+    /// Whether the last `show` asked for a new picture.
+    private(set) var didRedraw = false
+    /// The pose whose picture is up, or being drawn, and when it was drawn.
+    private var drawn: SpiderPose?
+    private var drawnAt: CFTimeInterval = 0
+    private var drawing = false
+    /// The newest pose, waiting for the picture being drawn.
+    private var waiting: SpiderPose?
 
-    override func draw(in ctx: CGContext) {
-        SpiderRenderer.draw(pose, in: ctx, bounds: bounds)
+    private static let queue = DispatchQueue(label: "spider.sprite", qos: .userInteractive)
+    private static let space = CGColorSpace(name: CGColorSpace.sRGB)!
+
+    init() {
+        layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        // No implicit animations: everything is driven frame by frame.
+        layer.actions = ["contents": NSNull(), "position": NSNull(), "bounds": NSNull(), "hidden": NSNull(),
+                         "contentsScale": NSNull(), "opacity": NSNull()]
     }
 
-    override func action(forKey event: String) -> CAAction? {
-        // No implicit animations: we drive everything ourselves.
-        nil
+    /// The next pose is drawn afresh, whatever its shape (the square has
+    /// been resized, the pixels rescaled, it has just been shown again).
+    func invalidate() { drawn = nil }
+
+    func show(_ pose: SpiderPose) {
+        didRedraw = false
+        if drawing { waiting = pose; return }
+        put(pose)
+    }
+
+    private func put(_ pose: SpiderPose) {
+        // The picture only depends on the spider's *shape*: moving the layer
+        // costs nothing, so a spider standing still — or asleep, or gliding
+        // along a straight edge — is all but free. A living coat changes
+        // colour on its own, so it is repainted at a steady rate whatever
+        // the shape is doing (drips falling off it too); a change of outfit
+        // is a new picture at once.
+        let now = CACurrentMediaTime()
+        let hold: CFTimeInterval = pose.outfit.isAnimated || !pose.specks.isEmpty ? 1.0 / 30.0 : 0.5
+        if let old = drawn, now - drawnAt < hold, old.outfit == pose.outfit, SpiderView.shapeDelta(old, pose) < 0.04 {
+            commit(pose, picture: nil)
+            return
+        }
+        drawn = pose
+        drawnAt = now
+        didRedraw = true
+        drawing = true
+        let side = layer.bounds.width, scale = layer.contentsScale
+        SpriteShower.queue.async { [weak self] in
+            let img = SpriteShower.picture(of: pose, side: side, scale: scale)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.drawing = false
+                // (Resized or rescaled while it was being drawn: drawn again.)
+                if self.layer.bounds.width == side, self.layer.contentsScale == scale {
+                    self.commit(pose, picture: img)
+                } else {
+                    self.drawn = nil
+                }
+                if let w = self.waiting {
+                    self.waiting = nil
+                    self.put(w)
+                }
+            }
+        }
+    }
+
+    private func commit(_ pose: SpiderPose, picture: CGImage?) {
+        alongside?(pose)
+        if let picture { layer.contents = picture }
+        layer.position = place(pose)
+    }
+
+    /// The spider in `pose`, drawn in the middle of a `side`-point square at
+    /// `scale` pixels a point (8 bits a channel, sRGB).
+    static func picture(of pose: SpiderPose, side: CGFloat, scale: CGFloat) -> CGImage? {
+        let px = max(1, Int((side * scale).rounded()))
+        guard let ctx = CGContext(data: nil, width: px, height: px, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return nil }
+        ctx.scaleBy(x: CGFloat(px) / side, y: CGFloat(px) / side)
+        SpiderRenderer.draw(pose, in: ctx, bounds: CGRect(x: 0, y: 0, width: side, height: side))
+        return ctx.makeImage()
     }
 }
 
@@ -24,11 +110,19 @@ final class SpiderLayer: CALayer {
 /// instead of screen-sized is the difference between a few percent of a core
 /// and a quarter of one.
 final class SpiderView: NSView {
-    private let spiderLayer = SpiderLayer()
+    /// The spider, drawn off the main thread (see `SpriteShower`).
+    private let shower = SpriteShower()
+    private var spiderLayer: CALayer { shower.layer }
 
     var spider: Spider?
     /// World-space origin of this view, i.e. the window's origin.
     var worldOrigin = CGPoint.zero
+    /// What goes up on the screen with each pose, before the spider is
+    /// placed in the window: the window moved along to it, its silk.
+    var onShow: ((SpiderPose) -> Void)? {
+        get { shower.alongside }
+        set { shower.alongside = newValue }
+    }
 
     private var dragSamples: [(p: V2, t: TimeInterval)] = []
     private var dragging = false
@@ -45,53 +139,46 @@ final class SpiderView: NSView {
         layer?.isOpaque = false
         spiderLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
         spiderLayer.bounds = CGRect(x: 0, y: 0, width: 160, height: 160)
-        spiderLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
-        spiderLayer.needsDisplayOnBoundsChange = true
         layer?.addSublayer(spiderLayer)
+        shower.place = { [weak self] p in
+            guard let self else { return p.pos.point }
+            return CGPoint(x: p.pos.x - self.worldOrigin.x, y: p.pos.y - self.worldOrigin.y)
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
-        spiderLayer.contentsScale = window?.backingScaleFactor ?? 2
+        let s = window?.backingScaleFactor ?? 2
+        if spiderLayer.contentsScale != s {
+            spiderLayer.contentsScale = s
+            shower.invalidate()
+        }
     }
 
     /// The layer is only as big as the spider itself, because every pixel of
-    /// it is re-rasterised when the pose changes. The window around it is
+    /// it is drawn afresh when the pose changes. The window around it is
     /// larger, so it only has to be repositioned now and then.
     func resize(sprite: CGFloat, window: CGFloat) {
         frame = CGRect(x: 0, y: 0, width: window, height: window)
-        spiderLayer.bounds = CGRect(x: 0, y: 0, width: sprite, height: sprite)
-    }
-
-    private var drawn: SpiderPose?
-    private var sinceDraw: CFTimeInterval = 0
-    /// Whether the last `apply` actually had to re-rasterise anything.
-    private(set) var didRedraw = false
-
-    func apply(_ pose: SpiderPose) {
-        spiderLayer.position = CGPoint(x: pose.pos.x - worldOrigin.x, y: pose.pos.y - worldOrigin.y)
-        spiderLayer.pose = pose
-        didRedraw = false
-
-        // Moving the layer costs nothing; re-rasterising it does. The picture
-        // only depends on the spider's *shape*, so a spider that is standing
-        // still — or asleep, or gliding along a straight edge — is nearly free.
-        // A living coat changes colour on its own, so it is repainted at a
-        // steady rate whatever the shape is doing; a change of outfit is a
-        // new picture at once.
-        let now = CACurrentMediaTime()
-        // (Drips falling off it too.)
-        let hold: CFTimeInterval = pose.outfit.isAnimated || !pose.specks.isEmpty ? 1.0 / 30.0 : 0.5
-        if let old = drawn, now - sinceDraw < hold, old.outfit == pose.outfit, SpiderView.shapeDelta(old, pose) < 0.04 {
-            return
+        if spiderLayer.bounds.width != sprite {
+            spiderLayer.bounds = CGRect(x: 0, y: 0, width: sprite, height: sprite)
+            shower.invalidate()
         }
-        drawn = pose
-        sinceDraw = now
-        didRedraw = true
-        spiderLayer.setNeedsDisplay()
     }
+
+    /// Whether the last `apply` asked for a new picture.
+    var didRedraw: Bool { shower.didRedraw }
+
+    /// Its next pose: up on the screen now if it has the shape it had, or
+    /// as soon as its new picture is drawn (see `SpriteShower`).
+    func apply(_ pose: SpiderPose) {
+        shower.show(pose)
+    }
+
+    /// The next pose is drawn afresh, whatever its shape.
+    func redrawNext() { shower.invalidate() }
 
     /// Roughly "how many points of outline moved", so the threshold is in
     /// units a person could actually see.
@@ -286,6 +373,11 @@ final class OverlayWindow: NSPanel {
                    backing: .buffered,
                    defer: false)
         isOpaque = false
+        // Everything drawn in here is in sRGB: in a window of the same space
+        // its layers are 8 bits a channel and taken as they are, rather than
+        // drawn at 16 bits a channel for a wide-gamut display and converted
+        // (the window server matches the colours to the display instead).
+        colorSpace = .sRGB
         backgroundColor = .clear
         hasShadow = false
         collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]

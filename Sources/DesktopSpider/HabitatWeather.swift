@@ -122,8 +122,78 @@ final class WeatherLayers {
     private var later: [ObjectIdentifier: () -> Any?] = [:]
 
     private func paintLater(_ l: CALayer, _ paint: @escaping () -> Any?) {
+        HabitatPainter.cancel(l)
         l.contents = nil
         later[ObjectIdentifier(l)] = paint
+    }
+
+    /// The first time a picture left for later is wanted: painted off the
+    /// main thread (see `HabitatPainter`), the layer kept out of sight until
+    /// it is up. True while it is not ready.
+    private func stillPainting(_ l: CALayer) -> Bool {
+        let id = ObjectIdentifier(l)
+        if let kids = kidsLater.removeValue(forKey: id) {
+            // Pictures on what is in it (the northern lights' curtains):
+            // shown once they are all painted.
+            painting.insert(id)
+            var left = kids.count
+            for (kid, paint) in kids {
+                HabitatPainter.fill(kid, fade: 0, then: { [weak self] _ in
+                    left -= 1
+                    if left == 0 { self?.painting.remove(id) }
+                }, paint)
+            }
+            return true
+        }
+        if let caps = capsLater.removeValue(forKey: id) {
+            // Snow on each thing: its pictures painted off the main thread,
+            // its layers made on it.
+            painting.insert(id)
+            capsGen += 1
+            let gen = capsGen
+            capsAsked[id] = gen
+            HabitatPainter.paint(caps) { [weak self, weak l] pics in
+                guard let self, let l, self.painting.contains(id), self.capsAsked[id] == gen else { return }
+                self.painting.remove(id)
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                for (area, img) in pics {
+                    let s = CALayer()
+                    s.contents = img
+                    s.frame = area
+                    l.addSublayer(s)
+                }
+                CATransaction.commit()
+                self.showCaps(near: self.visible.insetBy(dx: -160, dy: -160))
+            }
+            return true
+        }
+        guard let paint = later.removeValue(forKey: id) else { return painting.contains(id) }
+        painting.insert(id)
+        HabitatPainter.fill(l, fade: 0, then: { [weak self] _ in self?.painting.remove(id) }) {
+            // (A picture, or nothing.)
+            let p = paint()
+            guard let p, CFGetTypeID(p as CFTypeRef) == CGImage.typeID else { return nil }
+            return (p as! CGImage)
+        }
+        return true
+    }
+    /// Pictures being painted just now.
+    private var painting: Set<ObjectIdentifier> = []
+    /// Snow on the things, to be painted when it first lies (see
+    /// `layoutItems`): a picture and where it goes for each.
+    private var capsLater: [ObjectIdentifier: () -> [(CGRect, CGImage)]] = [:]
+    /// Layers whose pictures are on what is in them, to be painted when the
+    /// layer is first wanted.
+    private var kidsLater: [ObjectIdentifier: [(CALayer, () -> CGImage?)]] = [:]
+    /// Which painting of the snow on things is the one wanted.
+    private var capsGen = 0
+    private var capsAsked: [ObjectIdentifier: Int] = [:]
+
+    /// The substrate's picture is painted (see `HabitatSceneView.repaint`):
+    /// what gets darker when it is wet.
+    func groundPainted(_ img: Any?) {
+        wetMask.contents = img
     }
 
     init() {
@@ -191,6 +261,9 @@ final class WeatherLayers {
     func build(backdrop bs: CGSize, world ws: CGSize, view vs: CGSize, biome b: Biome, groundImage: Any?) {
         guard vs.width > 100, vs.height > 100, bs.width > 100, ws.width > 100 else { return }
         later = [:]
+        painting = []
+        capsLater = [:]
+        kidsLater = [:]
         backSize = bs
         worldSize = ws
         viewSize = vs
@@ -220,16 +293,19 @@ final class WeatherLayers {
         paintLater(nightSky) { WeatherArt.nightSky(nightSize, u: u) }
         auroraBox.frame = CGRect(origin: .zero, size: bs)
         auroraBox.sublayers?.forEach { $0.removeFromSuperlayer() }
+        var auroraPaints: [(CALayer, () -> CGImage?)] = []
         for (k, cols) in [[HabitatArt.c(0.3, 1, 0.65), HabitatArt.c(0.3, 0.85, 1)], [HabitatArt.c(0.5, 1, 0.55), HabitatArt.c(0.75, 0.45, 1)]].enumerated() {
             let sz = CGSize(width: W * 1.3, height: air * (0.55 - CGFloat(k) * 0.1))
             let l = CALayer()
-            l.contents = HabitatArt.aurora(sz, seed: 160 + k * 7, colours: cols)
+            // (Painted the first time the lights come out: see `kidsLater`.)
+            auroraPaints.append((l, { HabitatArt.aurora(sz, seed: 160 + k * 7, colours: cols) }))
             l.frame = CGRect(x: -W * 0.15, y: f.y(0.42 + CGFloat(k) * 0.08), width: sz.width, height: sz.height)
             l.opacity = k == 0 ? 0.95 : 0.65
             auroraBox.addSublayer(l)
             l.add(loop(basic("opacity", k == 0 ? 0.5 : 0.3, k == 0 ? 1 : 0.75), 6 + Double(k) * 3, reverse: true), forKey: "glow")
             l.add(loop(basic("position.x", l.position.x - 40 * u, l.position.x + 40 * u), 22 + Double(k) * 9, reverse: true), forKey: "drift")
         }
+        kidsLater[ObjectIdentifier(auroraBox)] = auroraPaints
         // Shooting stars: a few to each scene's width, each streaking
         // across now and then.
         meteors.sublayers?.forEach { $0.removeFromSuperlayer() }
@@ -281,7 +357,7 @@ final class WeatherLayers {
         // where there is none), breathing.
         let sun = HabitatArt.sun(b, f)?.point ?? CGPoint(x: f.mid(0.8), y: f.y(0.84))
         let gr = 200 * u
-        glare.contents = HabitatArt.softDot(gr, HabitatArt.c(1, 0.94, 0.72, 0.8), core: 0.1)
+        paintLater(glare) { HabitatArt.softDot(gr, HabitatArt.c(1, 0.94, 0.72, 0.8), core: 0.1) }
         glare.frame = CGRect(x: sun.x - gr, y: sun.y - gr, width: gr * 2, height: gr * 2)
         glare.removeAllAnimations()
         let breathe = CAAnimationGroup()
@@ -610,30 +686,41 @@ final class WeatherLayers {
         let covered = sky.covered(at: HabitatLayout.ground + 2, minWidth: 8)
         let dry = covered.map { (lo: $0.lo, hi: $0.hi) }
         let shelter = covered.map { c in (lo: c.lo, hi: c.hi, amount: byID[c.owner].map { leafy.contains($0.kind.definition.traits.material) ? CGFloat(0.4) : 1 } ?? 1) }
-        let open = WeatherArt.openStrip(width: worldSize.width, dry: shelter)
-        for m in openMasks {
-            m.contents = open
-            m.backgroundColor = open == nil ? CGColor(gray: 1, alpha: 1) : nil
+        // (Painted off the main thread, and put on every mask once it is.)
+        let width = worldSize.width
+        let openKey = key
+        HabitatPainter.paint({ WeatherArt.openStrip(width: width, dry: shelter) }) { [weak self] open in
+            guard let self, self.itemsKey == openKey else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            for m in self.openMasks {
+                m.contents = open
+                m.backgroundColor = open == nil ? CGColor(gray: 1, alpha: 1) : nil
+            }
+            CATransaction.commit()
         }
         // (Painted when snow first lies: most days it never does.)
         let items = h.items.filter { !$0.inFront }
         for (thick, box) in [(false, capsThin), (true, capsThick)] {
             box.sublayers?.forEach { $0.removeFromSuperlayer() }
-            paintLater(box) { [weak box] in
-                for it in items {
+            let id = ObjectIdentifier(box)
+            later[id] = nil
+            painting.remove(id)
+            capsAsked[id] = nil
+            capsLater[id] = {
+                items.compactMap { it in
                     let area = it.rect.insetBy(dx: -8, dy: -8)
-                    guard let img = WeatherArt.snowCaps([it], in: area, u: u, thick: thick, sky: sky) else { continue }
-                    let l = CALayer()
-                    l.contents = img
-                    l.frame = area
-                    box?.addSublayer(l)
+                    return WeatherArt.snowCaps([it], in: area, u: u, thick: thick, sky: sky).map { (area, $0) }
                 }
-                return nil
             }
         }
         // Puddles, in the open stretches of ground.
         let spots = WeatherArt.puddleSpots(h, dry: dry)
-        puddles.contents = WeatherArt.puddles(CGSize(width: worldSize.width, height: fw.groundY + 10 * u), f: fw, spots: spots)
+        let puddleSize = CGSize(width: worldSize.width, height: fw.groundY + 10 * u)
+        let fwNow = fw
+        HabitatPainter.fill(puddles, fade: 0, still: { [weak self] in self?.itemsKey == openKey }) {
+            WeatherArt.puddles(puddleSize, f: fwNow, spots: spots)
+        }
         for r in ripples { r.removeFromSuperlayer() }
         ripples = spots.map { s in
             let e = CAEmitterLayer()
@@ -892,7 +979,8 @@ final class WeatherLayers {
     }
 
     private func flicker(_ l: CALayer, _ peaks: [CGFloat], over d: CFTimeInterval) {
-        if let paint = later.removeValue(forKey: ObjectIdentifier(l)) { l.contents = paint() }
+        // (Its picture being painted still, the first strike goes without it.)
+        if stillPainting(l) { return }
         let a = CAKeyframeAnimation(keyPath: "opacity")
         a.values = [0, peaks[0], peaks[1], peaks[2], 0]
         a.keyTimes = [0, 0.05, 0.15, 0.25, 1]
@@ -944,12 +1032,8 @@ final class WeatherLayers {
     private func fade(_ l: CALayer, _ v: CGFloat) {
         let o = Float(clamp(v, 0, 1))
         if o > 0.002 {
-            if let paint = later.removeValue(forKey: ObjectIdentifier(l)) {
-                CATransaction.begin()
-                CATransaction.setDisableActions(true)
-                l.contents = paint()
-                CATransaction.commit()
-            }
+            // (Out of sight until its picture is painted: it fades in then.)
+            if stillPainting(l) { return }
             if l.isHidden {
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)

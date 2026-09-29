@@ -298,7 +298,12 @@ final class SurfaceMap {
         return out
     }
 
+    /// Goes up every time the loops are laid out afresh: what was worked out
+    /// from them before (the tank's ways, see HabitatNav.swift) is out of date.
+    private(set) var generation = 0
+
     private func reclip() {
+        generation += 1
         var ls = unclipped
         if let box = confine { ls = SurfaceMap.clip(ls, to: box, standoff: standoff) }
         loops = ls
@@ -362,14 +367,17 @@ final class SurfaceMap {
         return [rim]
     }
 
-    func rebuild(windows: [TrackedWindow], cinema: [CGRect] = []) {
+    /// `docks`: where the Dock is, as the window tracker found it (off the
+    /// main thread: see `dockStrips`); nil to look now.
+    func rebuild(windows: [TrackedWindow], cinema: [CGRect] = [], docks found: [CGRect]? = nil) {
         let off = standoff
         var newLoops: [SurfaceLoop] = []
         var frames: [CGRect] = []
         cinemaScreens = cinema
 
         // --- Screens ---------------------------------------------------------
-        let docks = dockStrips().filter { d in !cinema.contains(where: { $0.intersects(d) }) }
+        let docks = (found ?? SurfaceMap.dockStrips(screens: NSScreen.screens.map { ($0.frame, $0.visibleFrame) }))
+            .filter { d in !cinema.contains(where: { $0.intersects(d) }) }
         dockRects = docks
         var bottomDocks: [CGRect] = []
         /// A Dock along the bottom of this screen, not reaching right
@@ -558,6 +566,15 @@ final class SurfaceMap {
 
     func rebuild(habitat s: HabitatSurfaces) { rebuild(habitat: s.air, loops: s.loops, junctions: s.junctions) }
 
+    /// A habitat's map, again, as a map of its own: to work things out from
+    /// off the main thread while this one goes on being used.
+    func habitatCopy() -> SurfaceMap {
+        let m = SurfaceMap()
+        m.standoff = standoff
+        m.rebuild(habitat: worldBounds, loops: unclipped, junctions: allJunctions)
+        return m
+    }
+
     /// Builds a map for an arbitrary rectangle instead of the real displays,
     /// so tooling can lay the spider out on a mock desktop.
     func debugRebuild(screen: CGRect, menuBarHeight: CGFloat, windows: [TrackedWindow], cinema: Bool = false, dock: CGRect? = nil) {
@@ -645,15 +662,21 @@ final class SurfaceMap {
     /// screen out of `visibleFrame`, which says which screen and edge it is
     /// on; its exact frame comes from Accessibility if the app happens to
     /// be allowed it, and is otherwise worked out from its tiles.
-    private func dockStrips() -> [CGRect] {
-        for s in NSScreen.screens {
-            let f = s.frame, vf = s.visibleFrame
+    ///
+    /// Given the screens (frame, visible frame), so it can be worked out off
+    /// the main thread — asking Accessibility, or reading the Dock's
+    /// settings, is a trip to another process (see `WindowTracker`). Its
+    /// settings are kept a while between reads: only ever call it from one
+    /// thread at a time (the tracker's queue, or before that has started).
+    static func dockStrips(screens: [(frame: CGRect, visible: CGRect)]) -> [CGRect] {
+        for s in screens {
+            let f = s.frame, vf = s.visible
             // A hidden Dock keeps back nothing (a few points, on older
             // systems); a showing one keeps back its own thickness.
             let bottom = vf.minY - f.minY, left = vf.minX - f.minX, right = f.maxX - vf.maxX
             let edge: DockEdge
             if bottom > 20 { edge = .bottom } else if left > 20 { edge = .left } else if right > 20 { edge = .right } else { continue }
-            if let ax = SurfaceMap.accessibleDock(), f.insetBy(dx: -2, dy: -2).contains(ax) {
+            if let ax = SurfaceMap.accessibleDock(primaryTop: screens.first?.frame.maxY), f.insetBy(dx: -2, dy: -2).contains(ax) {
                 return [ax]
             }
             return SurfaceMap.estimatedDock(on: f, edge: edge).map { [$0] } ?? []
@@ -664,10 +687,10 @@ final class SurfaceMap {
     enum DockEdge { case bottom, left, right }
 
     /// The Dock's icon strip as Accessibility reports it, if the app may ask.
-    private static func accessibleDock() -> CGRect? {
+    private static func accessibleDock(primaryTop: CGFloat?) -> CGRect? {
         guard AXIsProcessTrusted(),
               let pid = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first?.processIdentifier,
-              let primaryTop = NSScreen.screens.first?.frame.maxY else { return nil }
+              let primaryTop else { return nil }
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.1)
         var kids: CFTypeRef?

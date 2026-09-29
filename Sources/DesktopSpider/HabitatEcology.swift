@@ -320,9 +320,8 @@ final class HabitatEcology {
     /// The body's height standing on the floor.
     private(set) var floor: CGFloat = HabitatLayout.ground + 22
     private(set) var standoff: CGFloat = 22
-    /// Spots filed by column, for looking up what is near.
+    /// Spots filed by column (`spotBand` wide), for looking up what is near.
     private var spotCols: [Int: [Int]] = [:]
-    private let band: CGFloat = 64
     private var items: [Int: HabitatItem] = [:]
 
     /// The weather as it is in the tank, and whether it is dark out.
@@ -357,46 +356,63 @@ final class HabitatEcology {
     /// The tank as it is laid out now, on its surfaces. What was on things
     /// that are still where they were (drops, warmth) is kept.
     func relayout(_ h: Habitat, map: SurfaceMap) {
-        let old = items
-        items = Dictionary(h.items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        world = CGRect(origin: .zero, size: h.size)
-        standoff = map.standoff
-        floor = HabitatLayout.ground + map.standoff
-        sky = SkyCover(h)
+        install(HabitatEcology.layout(h, map: map))
+    }
+
+    /// Everything about the tank's layout the ecology works from — worked
+    /// out on its own, with nothing of the ecology's state, so it can be done
+    /// off the main thread (with the surfaces: see `HabitatSceneView.rebuildMap`)
+    /// and put in place with `install`.
+    struct Layout {
+        fileprivate var items: [Int: HabitatItem] = [:]
+        fileprivate var world = CGRect.zero
+        fileprivate var standoff: CGFloat = 22
+        fileprivate var floor: CGFloat = 0
+        fileprivate var sky = SkyCover(Habitat())
+        fileprivate var spots: [EcoSpot] = []
+        fileprivate var spotCols: [Int: [Int]] = [:]
+        fileprivate var sites: [EcoSite] = []
+        fileprivate var wetSpots: [(thing: Int, p: V2, reachable: Bool)] = []
+        fileprivate var stones: [Int: CGFloat] = [:]
+    }
+
+    static func layout(_ h: Habitat, map: SurfaceMap) -> Layout {
+        var L = Layout()
+        L.items = Dictionary(h.items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        L.world = CGRect(origin: .zero, size: h.size)
+        L.standoff = map.standoff
+        L.floor = HabitatLayout.ground + map.standoff
+        let sky = SkyCover(h)
+        L.sky = sky
 
         // Every spot on the surfaces, a few to each thing.
-        spots = []
-        spotCols = [:]
-        for s in HabitatItem.spots(on: map, in: world.insetBy(dx: -10, dy: -10), spacing: 12) {
-            if s.owner != 0, let it = items[s.owner], !PlaceSurvey.counts(it) { continue }
+        for s in HabitatItem.spots(on: map, in: L.world.insetBy(dx: -10, dy: -10), spacing: 12) {
+            if s.owner != 0, let it = L.items[s.owner], !PlaceSurvey.counts(it) { continue }
             let n = s.seg.dir.perp
             var e = EcoSpot(anchor: s.anchor, point: s.point, surface: s.point - n * map.standoff, normal: n, facing: s.seg.facing,
-                            owner: s.owner, open: sky.open(at: s.point), height: s.point.y - floor)
+                            owner: s.owner, open: sky.open(at: s.point), height: s.point.y - L.floor)
             e.deep = e.open == 0 && sky.roof(over: s.point + V2(-20, 0)) != nil && sky.roof(over: s.point + V2(20, 0)) != nil
-            spotCols[Int((s.point.x / band).rounded(.down)), default: []].append(spots.count)
-            spots.append(e)
+            L.spotCols[Int((s.point.x / spotBand).rounded(.down)), default: []].append(L.spots.count)
+            L.spots.append(e)
         }
 
         // What draws what.
-        sites = []
         for it in h.items where PlaceSurvey.counts(it) {
             for (f, s) in HabitatEcology.features(of: it) {
                 var site = EcoSite(feature: f, thing: it.id, rect: it.rect, strength: s)
-                fill(&site)
-                sites.append(site)
+                fill(&site, spots: L.spots, cols: L.spotCols)
+                L.sites.append(site)
             }
         }
         // A room under a built roof is somewhere dark too.
-        for c in sky.covered(at: floor, minWidth: 60) {
-            guard let roofOwner = items[c.owner], roofOwner.kind.builtForIt else { continue }
+        for c in sky.covered(at: L.floor, minWidth: 60) {
+            guard let roofOwner = L.items[c.owner], roofOwner.kind.builtForIt else { continue }
             var site = EcoSite(feature: .dark, thing: 0, rect: CGRect(x: c.lo, y: HabitatLayout.ground, width: c.hi - c.lo, height: 120), strength: 0.5)
-            fill(&site)
-            sites.append(site)
+            fill(&site, spots: L.spots, cols: L.spotCols)
+            L.sites.append(site)
         }
-        for r in remains { addRemainsSite(r) }
 
         // Where rain beads: along the tops of what is leafy, open to it.
-        wetSpots = []
         for it in h.items where PlaceSurvey.counts(it) && HabitatEcology.holdsDrops(it) {
             let g = it.geometry
             for (polys, reach) in [(g.parts.map(\.outline), true), (g.visual, false)] {
@@ -407,34 +423,56 @@ final class HabitatEcology {
                         let a = line[max(i - 1, 0)], b = line[min(i + 1, line.count - 1)]
                         guard abs(b.y - a.y) <= abs(b.x - a.x) * 2.4 + 0.5 else { continue }
                         guard sky.open(at: p + V2(0, 3)) > 0.5 else { continue }
-                        wetSpots.append((it.id, p, reach))
+                        L.wetSpots.append((it.id, p, reach))
                     }
                 }
             }
         }
-        // Drops on what hasn't moved stay.
-        let before = droplets
-        droplets = before.filter { d in items[d.thing].map { it in old[d.thing].map { $0.rect == it.rect } ?? false } ?? false }
-        for d in before where !droplets.contains(where: { $0.id == d.id }) { bump(d.thing) }
 
         // What holds the sun's warmth.
-        stones = [:]
         for it in h.items where PlaceSurvey.counts(it) {
             let m = it.kind.definition.traits.material
             let holds: CGFloat = it.kind.functions.contains(.basking) ? 1 : [.stone, .crystal].contains(m) ? 0.85
                 : [.wood, .driftwood, .bark].contains(m) && it.kind.definition.category == .perch ? 0.35 : 0
             guard holds > 0 else { continue }
             let top = V2(it.rect.midX, it.rect.maxY + 4)
-            stones[it.id] = holds * sky.open(at: top)
+            L.stones[it.id] = holds * sky.open(at: top)
         }
+        return L
+    }
+
+    /// Puts a layout in place (see `layout`), keeping what is on things that
+    /// have not moved: the drops of rain on them, their warmth.
+    func install(_ L: Layout) {
+        let old = items
+        items = L.items
+        world = L.world
+        standoff = L.standoff
+        floor = L.floor
+        sky = L.sky
+        spots = L.spots
+        spotCols = L.spotCols
+        sites = L.sites
+        for r in remains { addRemainsSite(r) }
+        wetSpots = L.wetSpots
+        // Drops on what hasn't moved stay.
+        let before = droplets
+        droplets = before.filter { d in items[d.thing].map { it in old[d.thing].map { $0.rect == it.rect } ?? false } ?? false }
+        for d in before where !droplets.contains(where: { $0.id == d.id }) { bump(d.thing) }
+        stones = L.stones
         warmth = warmth.filter { stones[$0.key] != nil }
     }
 
+    /// How wide the columns spots are filed by are.
+    private static let spotBand: CGFloat = 64
+
     /// Its spots: on the thing, and on the ground by it or under it.
-    private func fill(_ site: inout EcoSite) {
+    private func fill(_ site: inout EcoSite) { HabitatEcology.fill(&site, spots: spots, cols: spotCols) }
+
+    private static func fill(_ site: inout EcoSite, spots: [EcoSpot], cols: [Int: [Int]]) {
         let r = site.rect
         let around = r.insetBy(dx: -50, dy: -30)
-        for i in near(around) {
+        for i in near(around, spots: spots, cols: cols) {
             let s = spots[i]
             if site.thing != 0, s.owner == site.thing {
                 site.on.append(i)
@@ -445,12 +483,14 @@ final class HabitatEcology {
     }
 
     /// Spot indices within `r`.
-    private func near(_ r: CGRect) -> [Int] {
+    private func near(_ r: CGRect) -> [Int] { HabitatEcology.near(r, spots: spots, cols: spotCols) }
+
+    private static func near(_ r: CGRect, spots: [EcoSpot], cols: [Int: [Int]]) -> [Int] {
         var out: [Int] = []
-        let c0 = Int((r.minX / band).rounded(.down)), c1 = Int((r.maxX / band).rounded(.down))
+        let c0 = Int((r.minX / spotBand).rounded(.down)), c1 = Int((r.maxX / spotBand).rounded(.down))
         guard c0 <= c1 else { return [] }
         for c in c0...c1 {
-            for i in spotCols[c] ?? [] where r.contains(spots[i].point.point) { out.append(i) }
+            for i in cols[c] ?? [] where r.contains(spots[i].point.point) { out.append(i) }
         }
         return out
     }

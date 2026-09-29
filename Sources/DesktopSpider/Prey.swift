@@ -181,6 +181,9 @@ final class Prey {
     private(set) var leaving = false
     /// Gone for good: to be cleared away.
     private(set) var gone = false
+    /// In the tank: how long the spider has had no way at all to where it
+    /// is (see `Spider.updatePrey`).
+    var unreachableFor: CGFloat = 0
     /// Moved this frame.
     private(set) var astir = false
     /// Which way it is going over the world while it walks.
@@ -294,6 +297,15 @@ final class Prey {
         facing = dir
         alpha = 0
         placeOnSurface(map)
+    }
+
+    /// Somewhere nothing can get to it, for a good while (shut in, up out of
+    /// reach): it slips away — into a crack, there where it is; up and off,
+    /// if it has wings.
+    func slipAway() {
+        guard !leaving else { return }
+        leaveAge = min(leaveAge, age)
+        den = nil
     }
 
     /// Spat out: none the worse for it, and off it goes.
@@ -791,6 +803,19 @@ final class Prey {
         return bits.joined(separator: " ")
     }
 
+    /// Tools only: kept quite still where it is (for measuring how the
+    /// spider gets to it).
+    var debugStill = false
+
+    /// Tools only: sat down on `a`, just there.
+    func debugPlace(on a: Anchor, map: SurfaceMap) {
+        anchor = a
+        vel = .zero
+        airFor = 0
+        placeOnSurface(map)
+        cornerSlide = .zero
+    }
+
     /// Tools only: lying low where it is, until `until`.
     func debugHide(until: CGFloat, map: SurfaceMap) {
         hidden = true
@@ -848,6 +873,16 @@ final class Prey {
             heading = approach(heading, sin(phase * 8) * 0.25, 8, dt)
             fear = min(1, fear + dt * 2)
             astir = true
+            return
+        }
+        if debugStill, anchor != nil {
+            placeOnSurface(map)
+            // (Kept still — though it may still slip away: see `slipAway`.)
+            if !leaving, age > leaveAge, alpha >= 1 { leaving = true }
+            if leaving {
+                alpha = max(0, alpha - dt / 2.5)
+                if alpha <= 0 { gone = true }
+            }
             return
         }
         let before = pos

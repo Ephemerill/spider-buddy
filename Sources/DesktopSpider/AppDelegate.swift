@@ -199,9 +199,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusItem.button?.appearsDisabled = true
         }
 
-        tracker.onUpdate = { [weak self] windows, fullScreens in
+        // (Each window's corners measured on the tracker's own queue.)
+        tracker.measureCorner = { w, top in AppDelegate.measureCornerRadius(of: w, primaryTop: top) }
+        tracker.onUpdate = { [weak self] windows, fullScreens, docks in
             guard let self else { return }
-            let windows = self.withCornerRadii(windows)
+            let t0 = Perf.timing ? CACurrentMediaTime() : 0
+            defer {
+                if Perf.timing, CACurrentMediaTime() - t0 > 0.004 { Perf.note("windows: update (\(windows.count) windows)", ms: (CACurrentMediaTime() - t0) * 1000) }
+            }
             // Entering full screen counts at once; leaving it only after a
             // few quiet polls, so a player's controls flickering over the
             // video cannot keep unsettling the spider.
@@ -213,7 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.cinemaClearPolls += 1
                 if self.cinemaClearPolls >= 4 { self.cinemaScreens = [] }
             }
-            self.map.rebuild(windows: windows, cinema: self.cinemaScreens)
+            self.map.rebuild(windows: windows, cinema: self.cinemaScreens, docks: docks)
             // The rim of a taken screen is a different set of edges: the
             // spider re-reads its footing from where it stands rather than
             // carrying its place over by index and jumping.
@@ -287,7 +292,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             name: .spiderContextMenu, object: nil)
         watchForYouComingBack()
 
-        startClock()
+        // (Before the spider is off: see `makeHabitatAhead`, `makePanel`,
+        // `warmUpPanel` — which starts it off.)
+        makeHabitatAhead()
+        makePanel()
+        warmUpPanel { [weak self] in self?.startClock() }
         // Back into the tank if that is where it was.
         if UserDefaults.standard.bool(forKey: "inHabitat") { openHabitat(restoring: true) }
         // SPIDER_HABITAT_TEST=1 runs the habitat through its paces on the real
@@ -379,6 +388,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + abs(secs)) { self.finishHabitatTest(restore) }
+        }
+        // SPIDER_OPEN_TIMING=secs opens the habitat two seconds in, the way
+        // clicking Open Habitat does (the spider climbing in from the
+        // desktop), leaves it open that long, then puts things back and
+        // quits — for timing it with SPIDER_TIMING / SPIDER_FRAMES.
+        if let secs = ProcessInfo.processInfo.environment["SPIDER_OPEN_TIMING"].flatMap(Double.init) {
+            testMapsNow = false
+            let restore = habitatTestSnapshot()
+            spider.knowledge = knowledge
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [self] in
+                openHabitat()
+                DispatchQueue.main.asyncAfter(deadline: .now() + secs) { self.finishHabitatTest(restore) }
+            }
         }
         // SPIDER_WILD_TEST=secs lets something wander in every few seconds
         // for that long (the setting itself is left alone), reports on
@@ -592,7 +614,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(inHabitat, forKey: "inHabitat")
         rememberTankPlace()
         memory?.save()
-        if !testingHabitat { knowledge.save(keeping: habitat?.scene.habitat) }
+        if !testingHabitat { knowledge.save(keeping: habitat?.loadedHabitat) }
         ears.stop()
         tracker.stop()
         fallbackTimer?.invalidate()
@@ -616,6 +638,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window = OverlayWindow(frame: CGRect(x: 0, y: 0, width: side, height: side))
         view = SpiderView(frame: CGRect(x: 0, y: 0, width: side, height: side))
         view.spider = spider
+        view.onShow = { [weak self] pose in
+            // (A picture that turns up after it has gone into the tank is
+            // for nothing: it is drawn in there now.)
+            guard let self, !self.drawnInTank else { return }
+            if self.place(pose) { self.placeMoved = true }
+            if self.frontWithPicture {
+                self.frontWithPicture = false
+                self.window.orderFrontRegardless()
+            }
+        }
         window.contentView = view
         window.orderFrontRegardless()
 
@@ -689,7 +721,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         traceView.worldOrigin = frame.origin
         rainWindow.setFrame(frame, display: false)
         rainView.frame = CGRect(origin: .zero, size: frame.size)
-        map.rebuild(windows: [], cinema: cinemaScreens)
+        // (Where the Dock is now comes with the next look at the windows,
+        // asked for straight away: see `SurfaceMap.dockStrips`.)
+        map.rebuild(windows: [], cinema: cinemaScreens, docks: map.dockRects)
+        tracker.pollNow()
         for s in allSpiders { s.surfacesRestructured() }
         spider.refitHammock()
     }
@@ -719,8 +754,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var tickCount = 0
     @objc private func tick() {
         tickCount += 1
-        if tickCount % 3600 == 0, let m = memory, m.dirty { m.save() }
-        if tickCount % 3600 == 1800, knowledge.dirty, !testingHabitat { knowledge.save(keeping: habitat?.scene.habitat) }
+        if tickCount % 3600 == 0, let m = memory, m.dirty { Perf.measure("saved: memory") { m.save() } }
+        if tickCount % 3600 == 1800, knowledge.dirty, !testingHabitat { Perf.measure("saved: habitat knowledge") { knowledge.save(keeping: habitat?.loadedHabitat) } }
         if tickCount % 30 == 0 {
             updateRain(now: CACurrentMediaTime())
             updateEars()
@@ -763,6 +798,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             calmSkip += 1
             guard calmSkip % (lowPowerClock || critterPace ? 2 : 3) == 0 else { return }
         }
+        if let meter = Perf.meter {
+            meter.tickBegan()
+            meter.context = "\(inHabitat ? "tank" : "desktop")\(calm ? " calm" : "") \(spider.debugState.prefix(28))"
+        }
+        defer { Perf.meter?.tickEnded(redrew: view.didRedraw || (habitat?.scene.didRedraw ?? false)) }
+        // Everything the frame changes goes to the screen together, once, at
+        // the end of it — rather than a part-way commit wherever something
+        // sets its layers in a transaction of its own (the tank's creatures
+        // did: a second commit a frame, walking the tank's whole layer tree).
+        CATransaction.begin()
+        defer { CATransaction.commit() }
         lastFrame = now
         let dt = CGFloat(min(max(now - lastTime, 1.0 / 240.0), 1.0 / 20.0))
         lastTime = now
@@ -857,6 +903,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if inHabitat, !spider.isHeld, let hc = habitat {
             if !drawnInTank {
                 drawnInTank = true
+                frontWithPicture = false
                 window.orderOut(nil)
                 silkView.clear(slot: 0)
             }
@@ -864,8 +911,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return hc.scene.didRedraw
         }
         if drawnInTank {
+            // Back out over the desktop: its window comes up with its first
+            // picture there, not the last one it had before it went in.
             drawnInTank = false
-            window.orderFrontRegardless()
+            view.redrawNext()
+            frontWithPicture = true
         }
         // In your hand, it is drawn over everything — out on the screen,
         // from where it is in the tank's world; what is loose in the tank
@@ -875,10 +925,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hc.scene.showCreatures(nil, sprite: spriteSide, prey: spider.prey)
             pose = pose.shifted(by: hc.scene.worldToScreen)
         }
-        let moved = place(pose)
+        // (The window follows it, and its silk is laid, as each pose goes
+        // up with its picture: see `placeMoved`.)
         view.apply(pose)
+        let moved = placeMoved
+        placeMoved = false
         return moved
     }
+
+    /// The window moved, or the silk is out, since the last frame: set as
+    /// each pose goes up on the screen (see `SpriteShower`), which may be a
+    /// moment after the frame that made it.
+    private var placeMoved = false
+    /// The spider's window is to come up with the next picture drawn.
+    private var frontWithPicture = false
 
     /// The tank's camera, each frame while the tank is open: it follows the
     /// spider while it is in there (not while it is in your hand). And a
@@ -1175,40 +1235,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Window corners
 
-    /// How round each window's corners are, measured once per window.
-    private var cornerRadii: [CGWindowID: CGFloat] = [:]
-
-    /// Fills in each window's corner radius — the spider's feet go on the
-    /// curve of a window's corner, not out on the square corner where
-    /// there is no window. Allowed to see the screen, it measures each
-    /// window once (a couple of new ones a poll, so a crowded desktop is
-    /// not all done at once); otherwise every window gets the default.
-    private func withCornerRadii(_ windows: [TrackedWindow]) -> [TrackedWindow] {
-        let canSee = CGPreflightScreenCaptureAccess()
-        var budget = 2
-        let live = Set(windows.map(\.id))
-        cornerRadii = cornerRadii.filter { live.contains($0.key) }
-        return windows.map { w in
-            var w = w
-            if let r = cornerRadii[w.id] {
-                w.cornerRadius = r
-            } else if canSee, budget > 0 {
-                budget -= 1
-                let r = AppDelegate.measureCornerRadius(of: w) ?? SurfaceMap.windowCornerRadius
-                cornerRadii[w.id] = r
-                w.cornerRadius = r
-            }
-            return w
-        }
-    }
-
     /// Looks at a window's top-left corner on its own: how far along its
     /// top row from the corner the window is still see-through is the
-    /// radius of its rounding.
-    private static func measureCornerRadius(of w: TrackedWindow) -> CGFloat? {
-        guard let primary = NSScreen.screens.first else { return nil }
+    /// radius of its rounding. (Called on the window tracker's queue: see
+    /// `WindowTracker.withCornerRadii`.)
+    static func measureCornerRadius(of w: TrackedWindow, primaryTop: CGFloat) -> CGFloat? {
         let side: CGFloat = 48
-        let rect = CGRect(x: w.frame.minX, y: primary.frame.maxY - w.frame.maxY, width: side, height: side)
+        let rect = CGRect(x: w.frame.minX, y: primaryTop - w.frame.maxY, width: side, height: side)
         guard let img = CGWindowListCreateImage(rect, .optionIncludingWindow, w.id, [.boundsIgnoreFraming, .nominalResolution]),
               img.width > 4, img.height > 4 else { return nil }
         let n = img.width
@@ -1698,11 +1731,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Clicking the menu bar icon drops the panel down from it.
     @objc private func togglePanel() {
         guard let button = statusItem.button else { return }
-        if panel == nil {
-            panel = PanelController(pages: panelPages(), footer: panelFooter(),
-                                    design: { [weak self] in self?.spider.design ?? SpiderDesign() })
+        makePanel()
+        Perf.measure("panel: shown") { panel?.toggle(from: button) }
+    }
+
+    /// The panel's popover shown once, unseen, as the app starts (see
+    /// `PanelController.warmUp`) — as soon as the icon is in the menu bar,
+    /// a moment after launch — and then `go`: the spider set off. (Within a
+    /// second, or it goes anyway.)
+    private func warmUpPanel(tries: Int = 0, then go: @escaping () -> Void) {
+        if let button = statusItem.button, let panel, Perf.measure("panel: warmed up", { panel.warmUp(from: button) }) {
+            go()
+            return
         }
-        panel?.toggle(from: button)
+        guard tries < 20 else { go(); return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.warmUpPanel(tries: tries + 1, then: go) }
+    }
+
+    /// The panel, made once. The app makes it as it starts, laid out and
+    /// ready, before the spider is out and about (see
+    /// `applicationDidFinishLaunching`): made the first time the icon was
+    /// clicked, it held the spider up for a good part of a second.
+    private func makePanel() {
+        guard panel == nil else { return }
+        panel = Perf.measure("panel: built") {
+            PanelController(pages: panelPages(), footer: panelFooter(),
+                            design: { [weak self] in self?.spider.design ?? SpiderDesign() })
+        }
+        Perf.measure("panel: laid out") { panel?.refresh() }
     }
 
     private func panelFooter() -> [PanelButton] {
@@ -2144,10 +2200,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var spiderName: String { spider.name.isEmpty ? "Your spider" : spider.name }
 
+    /// The tank's window, made once (ahead of time, as the app starts: see
+    /// `makeHabitatAhead`). The tank itself is set up the first time it is
+    /// opened (`HabitatController.load`).
     private func makeHabitat() -> HabitatController {
         if let hc = habitat { return hc }
-        let hc = HabitatController(spiderName: spider.name)
-        hc.scene.spider = spider
+        let hc = HabitatController(spiderName: spider.name, standoff: map.standoff, syncMaps: testingHabitat && testMapsNow)
         // (The tank alive: what it and whatever is loose in it read.)
         spider.ecology = hc.scene.ecology
         hc.tankWildlife = { [weak self] in self?.tankWildOn ?? false }
@@ -2179,6 +2237,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         habitat = hc
         return hc
+    }
+
+    /// The tank's window made and laid out now, while the app is starting
+    /// and the spider isn't out and about yet: making a window with a
+    /// toolbar, and laying it out and drawing it the first time, holds up
+    /// the main thread — where the spider lives — for a good part of a
+    /// second. Only the window: the tank itself is set up when it is first
+    /// opened (off the main thread, mostly).
+    private func makeHabitatAhead() {
+        let hc = Perf.measure("habitat: window made ahead") { makeHabitat() }
+        Perf.measure("habitat: window laid out ahead") {
+            hc.window.contentView?.layoutSubtreeIfNeeded()
+            hc.window.displayIfNeeded()
+        }
+    }
+
+    /// The tank set up for opening: given its habitat, and the spider.
+    /// `mapNow`: its surfaces laid out at once (the spider is being put
+    /// straight into it), rather than off the main thread.
+    private func loadHabitat(_ hc: HabitatController, mapNow: Bool) {
+        hc.load(mapNow: mapNow)
+        if hc.scene.spider !== spider { hc.scene.spider = spider }
     }
 
     // MARK: The habitat's weather
@@ -2230,7 +2310,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if hidden { toggleHidden() }
-        let hc = makeHabitat()
+        let opening = CACurrentMediaTime()
+        defer { if Perf.timing { Perf.note("habitat: opened, all told", ms: (CACurrentMediaTime() - opening) * 1000) } }
+        let hc = Perf.measure("habitat: controller made") { makeHabitat() }
+        Perf.measure("habitat: loaded") { loadHabitat(hc, mapNow: restoring) }
+        // (Put straight into it, it needs its surfaces there now.)
+        if restoring, !hc.scene.mapCurrent { hc.scene.rebuildMap(now: true) }
         tankClosing = false
         closeWhenSeen = nil
         boxWhileInTank = spider.confine
@@ -2238,14 +2323,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             spider.confine = nil
             boxWindow.orderOut(nil)
         }
-        updateDockPresence()
+        Perf.measure("habitat: in the Dock") { updateDockPresence() }
         let target = tankFrame(hc)
-        // It rises into place and fades in.
-        hc.window.setFrame(target.offsetBy(dx: 0, dy: -24), display: false)
+        // It fades in where it goes. (Not rising into place as well: every
+        // step of a window moving has AppKit asking the window server about
+        // the displays, on the main thread — a good part of a tenth of a
+        // second, all told, which the spider would feel.)
+        hc.window.setFrame(target, display: false)
         hc.window.alphaValue = 0
-        NSApp.activate(ignoringOtherApps: true)
-        hc.window.makeKeyAndOrderFront(nil)
-        hc.scene.syncToScreen()
+        Perf.measure("habitat: window up") {
+            NSApp.activate(ignoringOtherApps: true)
+            hc.window.makeKeyAndOrderFront(nil)
+            hc.scene.syncToScreen()
+        }
         headInAfter = CACurrentMediaTime() + 0.45
         hc.setStatus(restoring ? nil : "\(spiderName) is on the way in…")
         if restoring {
@@ -2272,10 +2362,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.35
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            hc.window.animator().setFrame(target, display: true)
             hc.window.animator().alphaValue = 1
         }, completionHandler: { [weak self] in
-            hc.window.setFrame(target, display: true)
             hc.scene.syncToScreen()
             self?.refreshMenu()
         })
@@ -2462,10 +2550,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hc.scene.showCreatures(nil, sprite: spriteSide, prey: [])
         hc.scene.showOverview(false)
         if drawnInTank {
-            // Straight back over the desktop, this frame, where it was.
+            // Straight back over the desktop, where it was — the window up
+            // with its first picture (see `frontWithPicture`).
             drawnInTank = false
-            _ = place(spider.pose())
-            window.orderFrontRegardless()
+            view.redrawNext()
+            frontWithPicture = true
+            view.apply(spider.pose())
         }
         if hc.decorating { hc.toggleDecorate() }
         if let box = boxWhileInTank {
@@ -2486,11 +2576,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.refreshMenu()
         }
         guard animated else { finish(); return }
+        // (Fading where it is: see the opening, in `openHabitat`.)
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.3
             ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
             hc.window.animator().alphaValue = 0
-            hc.window.animator().setFrame(f.offsetBy(dx: 0, dy: -18), display: true)
         }, completionHandler: finish)
     }
 
@@ -2557,9 +2647,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A habitat test is running: what the spider comes to know of things
     /// in it is not kept.
     private var testingHabitat = false
+    /// The self-tests look at the surfaces straight after changing them, so
+    /// they have them laid out at once (see `HabitatSceneView.rebuildMap`).
+    private var testMapsNow = true
 
     private func habitatTestSnapshot() -> () -> Void {
         testingHabitat = true
+        habitat?.scene.syncMaps = testMapsNow
         // (What it makes of new things would change the timing of tests of
         // other things: they run without it. The curiosity test gives it a
         // knowledge of its own.)
@@ -4422,7 +4516,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spider.memory = memory
         spider.knowledge = knowledge
         map.standoff = AppDelegate.standoff(for: spider.config.scale)
-        map.rebuild(windows: [])
+        map.rebuild(windows: [], docks: map.dockRects)
         view.spider = spider
         spider.toys = toyBox
         spider.traces = traces

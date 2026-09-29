@@ -1290,15 +1290,17 @@ final class Spider {
     private var bodyWobble = Wobble(seed: 3, freq: 0.7)
     private var swayWobble = Wobble(seed: 9, freq: 1.3)
 
-    private let gravity = V2(0, -1950)
+    private let gravity = Spider.gravityPull
+    /// How hard it falls (and what it leaps against).
+    static let gravityPull = V2(0, -1950)
     /// Body units travelled per gait cycle.
     private static let strideLength: CGFloat = 28
     /// Fraction of the cycle a leg spends in the air.
     private static let swingDuty: CGFloat = 0.34
     /// The hardest it can push off.
-    private static let maxJumpSpeed: CGFloat = 1250
+    static let maxJumpSpeed: CGFloat = 1250
     /// How far a corner is rounded off, in points at scale 1.
-    private static let cornerRadius: CGFloat = 38
+    static let cornerRadius: CGFloat = 38
 
     init(map: SurfaceMap) {
         self.map = map
@@ -4760,13 +4762,23 @@ final class Spider {
     /// time. What it knows is brought up to date; and in it (`inIt`) it takes
     /// its footing again — `smooth`: the same surfaces, reshaped (a door
     /// swung), so it carries on as it was — and takes in what has changed.
-    func tankRebuilt(_ h: Habitat, smooth: Bool, inIt: Bool) {
+    /// `survey`: its places, sized up already on these surfaces (off the
+    /// main thread) for `tankMap`; without one they are sized up when next
+    /// wanted.
+    /// `ways`: the tank's ways for `tankMap`'s surfaces, worked out already;
+    /// `waysComing`: the tank is working them out, to hand over soon.
+    func tankRebuilt(_ h: Habitat, smooth: Bool, inIt: Bool, survey sv: PlaceSurvey? = nil, of tankMap: SurfaceMap? = nil,
+                     ways: TankNav? = nil, waysComing: Bool = false) {
         let old = tank
         tank = h
         knowledge?.meet(h)
-        // (Its places are sized up again when next wanted; an errand under
-        // way finds its place as it is now.)
-        survey = nil
+        // (An errand under way finds its place as it is now.)
+        survey = sv
+        surveyMap = sv != nil ? tankMap.map { ObjectIdentifier($0) } : nil
+        // (And the ways about it: a trip under way is planned afresh.)
+        if let ways, let tankMap { waysWorkedOut(ways, for: tankMap) } else { navComing = waysComing ? t : nil }
+        navTrip = nil
+        navLive = false
         placeAt = nil
         if errand != nil { errand!.stale = true }
         guard inIt else {
@@ -5678,6 +5690,8 @@ final class Spider {
     /// and over onto whatever meets it on the way (a stem off the ground, the
     /// cap on the stem) — at `style`, to stop within `within` of it.
     private func headFor(_ goal: Anchor, style: Activity, within: CGFloat) -> Headway {
+        // (In the tank, by its ways: see "Its ways about the tank".)
+        if let way = navGo(to: goal, within: within, style: style) { return way }
         guard mode == .attached, let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count, map.loop(goal.loopID) != nil else { return .noWay }
         walkGoal = nil
         routeHop = nil
@@ -5800,10 +5814,313 @@ final class Spider {
         return Anchor(loopID: loop.id, segIdx: i, t: 0)
     }
 
+    // MARK: Its ways about the tank
+    //
+    // (HabitatNav.swift.) In its tank it plans its way — walks, the ways
+    // over from one surface to the next, leaps, doors — and follows it a
+    // leg at a time: the cheapest way there, found afresh each time it
+    // decides, so it keeps to the way it set off on unless something
+    // changes. Without its ways (on the desktop, or for the moment it takes
+    // to work them out after the tank is laid out again) it goes by the
+    // surfaces alone, as `headFor` always has.
+
+    /// The tank's ways, as worked out for the surfaces it has now.
+    private var nav: TankNav?
+    /// Working them out itself, for surfaces of this `generation`.
+    private var navAsked: Int?
+    /// The tank is working them out for it (see `tankRebuilt`), since then.
+    private var navComing: CGFloat?
+    /// The app has them worked out off the main thread (`workOutWays`); the
+    /// tools — no run loop going — there and then, the first time they are
+    /// wanted.
+    static var waysOffMain = false
+    private static let navQueue = DispatchQueue(label: "spider.ways", qos: .utility)
+
+    /// A trip under way by the tank's ways.
+    private struct NavTrip {
+        var goal: Anchor
+        var within: CGFloat
+        var point: V2
+        /// The ways it is planned on.
+        var nav: ObjectIdentifier
+        /// What it has found out on the way (see `NavLean.penalty`).
+        var penalty: [Int32: Float] = [:]
+        /// How it feels about leaping, this trip.
+        var leapMood: Float
+        /// The least it has had left to go, and when; and how often it has
+        /// got no nearer for a good while.
+        var bestLeft: Float = .infinity
+        var bestAt: CGFloat
+        var strikes = 0
+        /// On the walk under way: the ways over it has still to take.
+        var hops: [SurfaceJunction] = []
+        var hopEdges: [Int32] = []
+        /// A leap it set off to make — which, from where, and how many
+        /// leaps it had launched before (see `launches`) — or a door.
+        var leap: (edge: Int32, from: V2, launches: Int)?
+        var door: (edge: Int32, from: V2)?
+    }
+    private var navTrip: NavTrip?
+    /// A leg of it set going since it last decided.
+    private var navLive = false
+    /// How many leaps it has launched (a leap made, from one called off).
+    private var launches = 0
+    /// Prey it found it had no way to, let be until then.
+    private var huntIgnore: [Int: CGFloat] = [:]
+    private var reachCheckIn: CGFloat = 0
+    /// The ways over it knows, as they bear on its plans (see `navLean`).
+    private var navHopLean: (nav: ObjectIdentifier, at: CGFloat, hops: [Float])?
+
+    /// The tank's ways for the surfaces it has now: nil on the desktop, or
+    /// while they are being worked out.
+    private func tankNav() -> TankNav? {
+        guard inHabitat, !map.loops.isEmpty else { return nil }
+        if let n = nav, n.fits(map, scale: config.scale) { return n }
+        if !Spider.waysOffMain {
+            let n = TankNav(map: map, habitat: tank, scale: config.scale)
+            n.adopt(map)
+            nav = n
+            return n
+        }
+        // (The tank is working them out: unless that is taking far too long.)
+        if let since = navComing, t - since < 4 { return nil }
+        if navAsked != map.generation { workOutWays() }
+        return nil
+    }
+
+    /// Works out the ways for the surfaces as they are, off the main thread.
+    private func workOutWays() {
+        let m = map, gen = m.generation, copy = m.habitatCopy(), h = tank, sc = config.scale
+        navAsked = gen
+        navComing = nil
+        Spider.navQueue.async {
+            let n = TankNav(map: copy, habitat: h, scale: sc)
+            DispatchQueue.main.async { [weak self, weak m] in
+                guard let self, let m, self.map === m, m.generation == gen else { return }
+                n.adopt(m)
+                self.nav = n
+            }
+        }
+    }
+
+    /// The tank has worked out its ways for the surfaces `m` has now.
+    func waysWorkedOut(_ n: TankNav, for m: SurfaceMap) {
+        n.adopt(m)
+        nav = n
+        navComing = nil
+    }
+
+    /// Whether it can get to `a` at all, as far as it knows: in its tank, by
+    /// its ways (by what meets what, while they are being worked out).
+    private func canGet(to a: Anchor) -> Bool {
+        guard inHabitat, !map.loops.isEmpty, mode == .attached else { return true }
+        if let n = tankNav() { return n.canReach(from: anchor, dir: walkDir, to: a) }
+        return a.loopID == anchor.loopID || firstHops(from: anchor.loopID, to: a.loopID) != nil
+    }
+
+    /// `canGet`, to ask of one place after another (worked out once for all
+    /// of them). While its ways are being worked out, anywhere will do.
+    private func gettable() -> (Anchor) -> Bool {
+        guard inHabitat, !map.loops.isEmpty, mode == .attached, let n = tankNav() else { return { _ in true } }
+        return n.reachable(from: anchor, dir: walkDir)
+    }
+
+    /// Whether it can get to where a creature is, in its tank.
+    private func canGet(to p: Prey) -> Bool {
+        guard inHabitat, let a = p.anchor else { return true }
+        return canGet(to: a)
+    }
+
+    /// What getting about costs it just now (see `NavLean`).
+    private func navLean(_ n: TankNav, _ trip: NavTrip, hurry: Bool) -> NavLean {
+        var l = NavLean()
+        l.leap = Float(lerp(1.35, 0.72, personality.bravery)) * trip.leapMood * (hurry || huntTarget != nil ? 0.85 : 1)
+        if placesOn, let know = knowledge {
+            let id = ObjectIdentifier(n)
+            if let h = navHopLean, h.nav == id, t - h.at < 5 {
+                l.hops = h.hops
+            } else {
+                l.hops = n.hops.map { Float(1 - 0.35 * know.route($0.key)) }
+                navHopLean = (id, t, l.hops)
+            }
+        }
+        // (In a gale, not by way of what sways in it if there is any other.)
+        if eco != nil, abs(weather.wind) > 0.55, let tank {
+            let swaying = Set(tank.items.filter { $0.kind.sways }.map(\.id))
+            l.keepOff = Set(n.owner.indices.filter { swaying.contains(n.owner[$0]) }.map { Int32($0) })
+            l.keepOffCost = Float(1 + 2.5 * min(abs(weather.wind), 1.5))
+        }
+        l.penalty = trip.penalty
+        return l
+    }
+
+    /// Off toward `goal` by the tank's ways: the next leg of the cheapest way
+    /// there — a walk (over onto the next surface, and on, where the way
+    /// goes over), a leap, a door. Nil where it has no ways to go by (the
+    /// desktop): then it goes by the surfaces alone.
+    private func navGo(to goal: Anchor, within: CGFloat, style: Activity) -> Headway? {
+        guard inHabitat, !map.loops.isEmpty else { return nil }
+        guard mode == .attached, map.loop(goal.loopID) != nil else { return .noWay }
+        // There already.
+        if goal.loopID == anchor.loopID, let way = loopWay(to: goal), way.dist <= within {
+            navTrip = nil
+            return .there
+        }
+        guard let n = tankNav() else {
+            // (Its ways are being worked out for the tank as it is now: a
+            // moment's look about.)
+            walkGoal = nil
+            routeHop = nil
+            beginActivity(.look, dur: 0.35)
+            return .going
+        }
+        let sc = config.scale
+        let gp = map.worldPoint(goal) ?? pos
+        var trip: NavTrip
+        if let tr = navTrip, tr.nav == ObjectIdentifier(n), tr.goal.loopID == goal.loopID, tr.point.distance(to: gp) < 40 * sc {
+            trip = tr
+        } else {
+            trip = NavTrip(goal: goal, within: within, point: gp, nav: ObjectIdentifier(n), leapMood: Float(randRange(0.85, 1.2)), bestAt: t)
+        }
+        trip.goal = goal
+        trip.point = gp
+        trip.within = within
+        trip.hops = []
+        trip.hopEdges = []
+        // How the last leg went: a leap never made (called off — twice, and
+        // it is not on from here); one that came down somewhere else is not
+        // to be counted on; a door that did not open for it.
+        var foundOut = false
+        if let lp = trip.leap {
+            trip.leap = nil
+            if launches == lp.launches {
+                trip.penalty[lp.edge] = (trip.penalty[lp.edge] ?? 0) >= 600 ? .infinity : 600
+                foundOut = true
+            } else {
+                let want = n.nodes[Int(n.leaps[Int(n.edges[Int(lp.edge)].ref)].to)]
+                let ok = n.locate(anchor).map { $0.loop == Int(want.loop) && abs($0.along - want.along) <= 45 } ?? false
+                if !ok {
+                    trip.penalty[lp.edge, default: 0] += 300
+                    foundOut = true
+                }
+            }
+        }
+        if let dr = trip.door {
+            trip.door = nil
+            if pos.distance(to: dr.from) < 40 * sc {
+                trip.penalty[dr.edge] = .infinity
+                foundOut = true
+            }
+        }
+        // (Found out something about the way: how near it is getting is
+        // measured afresh, on the way it goes now.)
+        if foundOut {
+            trip.bestLeft = .infinity
+            trip.bestAt = t
+        }
+        let hurry = style == .scurry
+        guard var plan = n.plan(from: anchor, dir: walkDir, to: goal, within: within, lean: navLean(n, trip, hurry: hurry)) else {
+            navTrip = nil
+            return .noWay
+        }
+        // Getting no nearer for a good while: whatever it is stuck on costs
+        // more; and after a few goes at it, it gives up.
+        if plan.cost < trip.bestLeft - 20 {
+            trip.bestLeft = plan.cost
+            trip.bestAt = t
+        } else if t - trip.bestAt > 14 {
+            trip.strikes += 1
+            trip.bestAt = t
+            trip.bestLeft = .infinity
+            guard trip.strikes <= 3 else { navTrip = nil; return .noWay }
+            if let e = plan.vias.dropFirst().first(where: { $0 >= 0 }) {
+                trip.penalty[e, default: 0] += 400
+                guard let again = n.plan(from: anchor, dir: walkDir, to: goal, within: within, lean: navLean(n, trip, hurry: hurry)) else {
+                    navTrip = nil
+                    return .noWay
+                }
+                plan = again
+            }
+        }
+        // At a spot of the goal's already (on something right by it, say).
+        if plan.direct == nil, plan.states.count == 1, plan.vias.first ?? -1 < 0, plan.cost <= Float(max(within, 3) + 2) {
+            navTrip = nil
+            return .there
+        }
+        guard let leg = n.leg(of: plan, from: anchor) else {
+            navTrip = nil
+            return .noWay
+        }
+        headDist = CGFloat(plan.cost)
+        if Spider.debugNavPlans {
+            let at = n.locate(anchor).map { String(format: "%@@%.0f%@", anchor.loopID, Double($0.along), walkDir > 0 ? "+" : "-") } ?? "?"
+            print("          plan from \(at): \(n.describe(plan))")
+        }
+        lastLeg = (leg, plan.cost, plan.states.count)
+        switch leg {
+        case .walk(let dir, let to, let w, let hops, let hopEdges, let length):
+            walkGoal = (to, w)
+            routeHop = hops.first
+            trip.hops = hops
+            trip.hopEdges = hopEdges
+            lookAhead(dir)
+            let pace = max(config.walkSpeed * (style == .scurry ? 1.9 : style == .sneak ? 0.42 : 1) * 0.5, 1)
+            turnTo(dir, then: style, for: min(length / pace + 2, 40))
+        case .leap(let edge, let aim):
+            walkGoal = nil
+            routeHop = nil
+            trip.leap = (edge, pos, launches)
+            startJump(to: aim)
+        case .door(let edge, let at):
+            walkGoal = nil
+            routeHop = nil
+            trip.door = (edge, pos)
+            turnTo(walkDirToward(at), then: .walk, for: 1.6)
+        }
+        navTrip = trip
+        navLive = true
+        return .going
+    }
+
+    /// Tools: its ways about the tank, and the trip it is on.
+    var debugNav: TankNav? { tankNav() }
+    func debugCanGet(to p: Prey) -> Bool { canGet(to: p) }
+    func debugCanGet(to a: Anchor) -> Bool { canGet(to: a) }
+    /// The leg it set off on last: what, and of how long a way (in `navGo`'s
+    /// costs), in how many steps.
+    private var lastLeg: (leg: TankNav.Leg, cost: Float, steps: Int)?
+    /// Tools: every plan printed as it is made.
+    static var debugNavPlans = false
+    var debugNavTrip: String {
+        guard let tr = navTrip else { return "-" }
+        var leg = ""
+        switch lastLeg?.leg {
+        case .walk(let dir, let to, _, let hops, _, let length)?:
+            leg = String(format: "walk %+.0f to %@/%d/%.0f over %d, %.0f", Double(dir), to.loopID, to.segIdx, Double(to.t), hops.count, Double(length))
+        case .leap(_, let aim)?:
+            leg = String(format: "leap to (%.0f,%.0f)", Double(aim.x), Double(aim.y))
+        case .door?:
+            leg = "door"
+        case nil:
+            break
+        }
+        return String(format: "strikes %d penalties %d%@: %@ (of %.0f, %d steps)", tr.strikes, tr.penalty.count, navLive ? " live" : "", leg,
+                      Double(lastLeg?.cost ?? 0), lastLeg?.steps ?? 0)
+    }
+
     /// Just gone over onto the next surface of its way: on along it if the
     /// goal is ahead on this one, else a stop to take the next step.
     private func replanAfterHop() {
         guard [.walk, .sneak, .scurry].contains(activity) else { return }
+        // By the tank's ways: on to the next way over on this leg, if there
+        // is one, and on to where the leg ends.
+        if navLive, var trip = navTrip {
+            if !trip.hops.isEmpty { trip.hops.removeFirst() }
+            if !trip.hopEdges.isEmpty { trip.hopEdges.removeFirst() }
+            routeHop = trip.hops.first
+            navTrip = trip
+            return
+        }
         // (On along it only if that is the way to go: not the long way round.)
         if let g = walkGoal, g.anchor.loopID == anchor.loopID, let loop = map.loop(anchor.loopID),
            let dd = loopDistance(loop, to: g.anchor, dir: walkDir), let way = loopWay(to: g.anchor), dd <= way.dist * 1.2 + 20 * config.scale {
@@ -6060,10 +6377,13 @@ final class Spider {
         let loose = use == .hunt ? prey.filter { $0.state == .loose && $0.noticed }.map(\.pos) : []
         let gale = eco == nil ? 0 : clamp((abs(w.wind) - 0.45) / 0.6, 0, 1)
         let swaying = gale > 0 ? Set(tank.items.filter { $0.kind.sways }.map(\.id)) : []
+        let reachable = gettable()
         let ranked = sv.ranked(want) { pl in
             // (Nothing on, over or about a thing it hasn't noticed.)
             for id in [pl.owner, pl.thing, pl.roofOwner] where id != 0 && !known.contains(id) { return nil }
             if let only, !only(pl) { return nil }
+            // (Nor anywhere it has no way to get to.)
+            if !reachable(pl.anchor) { return nil }
             var s = PlaceSense(record: know.record(pl.key))
             if pl.thing != 0, let u = uids[pl.thing] { s.thingFond = know.acquaintance(u)?.fond ?? 0 }
             if let b = bustle, b.distance(to: pl.point) < 160 * sc { s.disturbance += 0.5 }
@@ -6096,7 +6416,7 @@ final class Spider {
             return sv.appeal(pl, w, s)
         }
         if use != .hide, let f = know.favourite(for: use, where: { sv.place($0) != nil }), let fav = sv.place(f.key),
-           [fav.owner, fav.thing, fav.roofOwner].allSatisfy({ $0 == 0 || known.contains($0) }), only?(fav) ?? true {
+           [fav.owner, fav.thing, fav.roofOwner].allSatisfy({ $0 == 0 || known.contains($0) }), only?(fav) ?? true, reachable(fav.anchor) {
             let mine = itself(fav, f.record)
             let best = ranked.reduce(CGFloat(0)) { max($0, itself($1.place, know.record($1.place.key))) }
             let worth = best > 0 ? min(1, mine / best) : 1
@@ -6256,6 +6576,12 @@ final class Spider {
         let sc = config.scale
         let goal = e.place.anchor
         if pos.distance(to: e.place.point) < max(e.within, 6 * sc) + 2 * sc { return .there }
+        // In the tank, by its ways: a leap where a leap is the way (see
+        // "Its ways about the tank").
+        if let way = navGo(to: goal, within: e.within, style: e.hurry ? .scurry : .walk) {
+            e.went = way == .going
+            return way
+        }
         if e.went { e.stalls = pos.distance(to: e.lastPos) < 4 * sc ? e.stalls + 1 : 0 }
         let first = !e.went && e.stalls == 0 && t - e.stageSince < 0.5
         e.went = false
@@ -7117,6 +7443,11 @@ final class Spider {
     var debugPlaces: PlaceSurvey? { places() }
     /// Tools only: where it would go for `use` just now.
     func debugChoose(_ use: PlaceUse, threat: V2? = nil) -> HabitatPlace? { choose(use, threat: threat) }
+    /// Tools only: off to `pl` to look round there (as when exploring).
+    @discardableResult
+    func debugGo(to pl: HabitatPlace) -> Bool { startErrand(.explore, at: pl, within: 12 * config.scale) }
+    /// Tools only: which way along its surface it is going (+1, -1).
+    var debugWalkDir: CGFloat { walkDir }
     /// Tools only: set its urges.
     func debugSetUrges(thirst: CGFloat? = nil, view: CGFloat? = nil, rest: CGFloat? = nil, roam: CGFloat? = nil) {
         wakeUrges()
@@ -7363,7 +7694,7 @@ final class Spider {
         let open = sv.places.filter {
             $0.standing && $0.q[.exposure] > 0.6 && $0.q[.cover] < 0.3 && $0.q[.access] > 0.5
                 && (60 * sc ... 260 * sc).contains($0.point.distance(to: shelter.point))
-                && ($0.anchor.loopID == here || firstHops(from: here, to: $0.anchor.loopID) != nil)
+                && ($0.anchor.loopID == here || canGet(to: $0.anchor))
         }
         emergedAt = t
         if let pl = open.sorted(by: { $0.point.distance(to: pos) < $1.point.distance(to: pos) }).prefix(4).randomElement() {
@@ -7497,8 +7828,19 @@ final class Spider {
             p.probed(from: pos, map: map)
             return
         }
-        if let s = eco.spot(near: p.pos + V2(0, map.standoff), within: 70 * sc), headFor(s.anchor, style: .sneak, within: 22 * sc) == .going {
-            return
+        if let s = eco.spot(near: p.pos + V2(0, map.standoff), within: 70 * sc) {
+            switch headFor(s.anchor, style: .sneak, within: 22 * sc) {
+            case .going:
+                return
+            case .noWay where inHabitat && !map.loops.isEmpty:
+                // (No way to it from here: it lets it be a while.)
+                huntIgnore[p.id] = t + 30
+                huntTarget = nil
+                decisionIn = 0.2
+                return
+            default:
+                break
+            }
         }
         walkToward(p.pos)
     }
@@ -8150,17 +8492,19 @@ final class Spider {
         let stormy = eco != nil && (weather.rough || worried)
         let reach: CGFloat = stormy ? (sheltered ? 110 : 150) * config.scale : .greatestFiniteMagnitude
         if let id = huntTarget, let p = prey.first(where: { $0.id == id && $0.state == .loose && !$0.spurned && !$0.gone }) {
-            if p.pos.distance(to: pos) < reach { return p }
+            if p.pos.distance(to: pos) < reach, canGet(to: p) { return p }
             huntTarget = nil
         }
         // Only what it has spotted, and not what it knows tastes horrible —
         // nor, in its tank, what is lying low out of sight, nor (full up)
         // what has only wandered in: it lets those be, and watches them.
         let full = eco != nil && fed > lerp(0.7, 0.9, personality.energy)
+        // (In its tank, nor what it has no way to get to.)
         let loose = prey.filter {
             $0.state == .loose && $0.noticed && !$0.spurned && $0.alpha > 0.4 && !$0.hidden && !(full && $0.wild)
                 && (!stormy || $0.pos.distance(to: pos) < reach)
                 && !($0.kind.bitter && (memory?.fondness(of: $0.kind.memoryName) ?? 0) < -0.15)
+                && (huntIgnore[$0.id] ?? -1) < t && canGet(to: $0)
         }
         // The nearest — though what it has come to like best looks nearer.
         func far(_ p: Prey) -> CGFloat { p.pos.distance(to: pos) / (1 + 0.5 * max(memory?.fondness(of: p.kind.memoryName) ?? 0, 0)) }
@@ -8198,6 +8542,26 @@ final class Spider {
             c.facing = facing
         }
         prey.removeAll { ($0.state == .eaten && $0.alpha <= 0) || $0.gone }
+        // In its tank: something where it has no way to get to it for a good
+        // while — shut in, up out of reach — slips away (see `Prey.slipAway`).
+        reachCheckIn -= dt
+        if reachCheckIn <= 0 {
+            let step = 1 - reachCheckIn
+            reachCheckIn = 1
+            if inHabitat, mode == .attached, !prey.isEmpty, let n = tankNav() {
+                let reachable = n.reachable(from: anchor, dir: walkDir)
+                for p in prey where p.state == .loose && !p.held {
+                    guard let a = p.anchor else { continue }
+                    if reachable(a) {
+                        p.unreachableFor = 0
+                    } else {
+                        p.unreachableFor += step
+                        if p.unreachableFor > 45 { p.slipAway() }
+                    }
+                }
+            }
+            if !huntIgnore.isEmpty { huntIgnore = huntIgnore.filter { $0.value > t } }
+        }
         fed = max(0, fed - dt / 900)
         // Lost track of it for too long: leave it be for a while.
         if huntTarget != nil, t - huntSince > 150 {
@@ -8316,6 +8680,15 @@ final class Spider {
             }
         }
 
+        // In its tank: along what it is on to it, if it is on that too; a
+        // spring straight onto it, if it has one from here; else its way
+        // there (see "Its ways about the tank") — and if there is none, it
+        // lets it be for a while.
+        if inHabitat, !map.loops.isEmpty, let pa = p.anchor {
+            huntInTank(p, pa, dist: dist, reach: reach)
+            return
+        }
+
         let sameEdge = p.anchor?.loopID == anchor.loopID && p.anchor?.segIdx == anchor.segIdx
         if sameEdge || (off < 30 * sc && abs(along) < 140 * sc) {
             let settled = p.onSurface && p.vel.length < 20
@@ -8376,6 +8749,116 @@ final class Spider {
         } else {
             walkToward(p.pos)
         }
+    }
+
+    /// The hunt in its tank, for something on a surface (see `hunt`).
+    private func huntInTank(_ p: Prey, _ pa: Anchor, dist: CGFloat, reach: CGFloat) {
+        let sc = config.scale
+        let settled = p.onSurface && p.vel.length < 20
+        if dist < 14 * sc {
+            catchPrey(p)
+            return
+        }
+        // On the same surface, not far round it: along it, creeping the last
+        // of the way; and a pounce once it is near, facing it, and the thing
+        // keeps still — or, where no pounce would get there cleanly, right
+        // up to it.
+        // (A pounce from right here that came to nothing: not that one again.)
+        let refused = t - pounceRefused.at < 4 && pos.distance(to: pounceRefused.from) < 10 * sc
+        if pa.loopID == anchor.loopID, let way = loopWay(to: pa), way.dist < 220 * sc {
+            // (Right over it, whichever way it faces is facing it.)
+            let facing = way.dir == walkDir || way.dist < 6 * sc
+            if p.tucked, way.dist < reach * 1.4 {
+                // Shut up in its shell: nothing for it but to keep quite
+                // still beside it, and wait for it to come out.
+                beginActivity(.crouch, dur: randRange(0.6, 1.0))
+                pendingJump = nil
+                return
+            }
+            // (Down onto it even from right on top of it: the pounce is a
+            // hop along the surface, and it comes down with it pinned.)
+            if way.dist < reach, facing, settled, t - lastPounceAt > 1.2, !refused, Spider.arc(from: pos, to: p.mouthPoint) != nil {
+                pounce(at: p.mouthPoint)
+                return
+            }
+            if way.dist < reach * 0.8, facing, !settled {
+                // It is on the move: wait, poised, for it to settle.
+                beginActivity(.crouch, dur: randRange(0.3, 0.6))
+                pendingJump = nil
+                return
+            }
+            // (A beetle shuts up at anything walking at it: creep from further off.)
+            let style: Activity = way.dist < (p.kind.armoured ? 380 : 230) * sc ? .sneak : .walk
+            let speed = style == .sneak ? config.walkSpeed * 0.42 : config.walkSpeed
+            walkGoal = (pa, (refused ? 2 : 8) * sc)
+            routeHop = nil
+            lookAhead(way.dir)
+            turnTo(way.dir, then: style, for: clamp(way.dist / max(speed, 1) * 1.3, 0.4, 8))
+            debugHuntNote = "along its surface"
+            return
+        }
+        // Near, and a clean spring straight onto it from here.
+        if dist < reach * 1.8, settled, !p.tucked, t - lastPounceAt > 1.2, !refused, pounceable(p.mouthPoint) {
+            pounce(at: p.mouthPoint)
+            debugHuntNote = "spring"
+            return
+        }
+        debugHuntNote = "by its ways"
+        switch navGo(to: pa, within: 30 * sc, style: dist < 400 * sc ? .sneak : .walk) ?? .noWay {
+        case .going:
+            return
+        case .there:
+            // As near as its ways go, on something right by where it is: a
+            // pounce from here (along what it stands on, if need be) — and
+            // if that comes to nothing, it lets it be a while.
+            if refused {
+                huntIgnore[p.id] = t + 20
+                huntTarget = nil
+                decisionIn = 0.2
+            } else if settled, t - lastPounceAt > 1.2, Spider.arc(from: pos, to: p.mouthPoint) != nil {
+                pounce(at: p.mouthPoint)
+                debugHuntNote = "pounce from by it"
+            } else {
+                beginActivity(.crouch, dur: randRange(0.4, 0.8))
+                pendingJump = nil
+            }
+        case .noWay:
+            // No way to it from here: it lets it be a while.
+            huntIgnore[p.id] = t + 30
+            huntTarget = nil
+            decisionIn = 0.2
+            setEmote(.question, 0.8)
+        }
+    }
+
+    /// A pounce it gathered itself for and then could not make (out of
+    /// reach after all, or only through something): when, and from where.
+    private var pounceRefused: (at: CGFloat, from: V2) = (-99, .zero)
+    /// Tools: how the hunt in its tank went, last it decided.
+    private(set) var debugHuntNote = ""
+
+    /// The leap it was gathering itself for is off: if it was a pounce, it
+    /// is no longer one (a pounce grabs nothing on the way to its mark: see
+    /// `updateAirborne`), and that pounce from here is noted.
+    private func calledOffPounce() {
+        guard huntPounce else { return }
+        huntPounce = false
+        pounceMark = nil
+        pounceRefused = (t, pos)
+    }
+
+    /// A pounce at `point` from here would get there, clean.
+    private func pounceable(_ point: V2) -> Bool {
+        guard let launch = ballistic(from: pos, to: point) else { return false }
+        return launch.normalized.dot(surfaceNormal) > -0.15
+    }
+
+    /// On a walk to its prey by its ways: the prey has gone somewhere else
+    /// since it planned it, or it is close now — time to decide again.
+    private func huntMoved() -> Bool {
+        guard let trip = navTrip, let p = prey.first(where: { $0.id == huntTarget }), let a = p.anchor,
+              let there = map.worldPoint(a) else { return true }
+        return there.distance(to: trip.point) > 40 * config.scale || p.pos.distance(to: pos) < 200 * config.scale
     }
 
     /// Which way along a loop is the shorter walk to `target`: +1 with the
@@ -10326,7 +10809,9 @@ final class Spider {
         if caught == nil, huntTarget != nil, prey.contains(where: { $0.id == huntTarget && $0.state == .loose }) {
             let hunting: Set<Activity> = [.walk, .sneak, .scurry, .look, .turn, .crouch, .idle, .startle, .shake]
             if !hunting.contains(activity) { queued = nil; finishActivity() }
-            else if [.walk, .sneak, .scurry].contains(activity), activityTime > 1.0 { activityDur = min(activityDur, activityTime) }
+            else if [.walk, .sneak, .scurry].contains(activity), activityTime > 1.0, !navLive || huntMoved() {
+                activityDur = min(activityDur, activityTime)
+            }
         }
         // Playing: no settling down to anything else, and a chase is
         // re-aimed as the toy goes.
@@ -11170,6 +11655,23 @@ final class Spider {
             decisionIn = 0
             return
         }
+        if navLive {
+            // On its way by the tank's ways, and this is the end of the
+            // surface: if the way over it was counting on here is not to be
+            // had, that way costs more — then it decides again from here.
+            if var trip = navTrip, routeHop != nil, let e = trip.hopEdges.first {
+                trip.penalty[e, default: 0] += 400
+                trip.bestLeft = .infinity
+                trip.bestAt = t
+                navTrip = trip
+            }
+            walkGoal = nil
+            routeHop = nil
+            activity = .idle
+            activityTime = 0
+            decisionIn = 0
+            return
+        }
         if caught == nil, huntTarget != nil {
             // Mid-hunt: no sightseeing, just decide again from here.
             activity = .idle
@@ -11363,6 +11865,7 @@ final class Spider {
         // (A walk to somewhere is over once it is deciding again.)
         walkGoal = nil
         routeHop = nil
+        navLive = false
 
         // Holding on to something being carried about: nothing else till it
         // is put down.
@@ -11922,52 +12425,10 @@ final class Spider {
 
     /// In the tank: whether a leap launched at `launch` from `a`, meant to
     /// come down at `b`, would pass right through something solid on the
-    /// way — in one side and out the other through more than a few points
-    /// of it (a twig or a vine it could brush past; a wall, never).
+    /// way (see `SurfaceMap.arcBlocked`).
     private func leapBlocked(from a: V2, launch: V2, to b: V2) -> Bool {
-        guard inHabitat, map.hasJunctions else { return false }
-        // The arc, a few dozen points along it, as far as its nearest to `b`.
-        var pts: [V2] = []
-        var best = CGFloat.greatestFiniteMagnitude
-        var t: CGFloat = 0
-        while t < 3 {
-            let p = a + launch * t + gravity * (0.5 * t * t)
-            let d = p.distance(to: b)
-            pts.append(p)
-            if d < best { best = d } else if d > best + 30 { break }
-            t += 1.0 / 30
-        }
-        guard pts.count >= 2 else { return false }
-        // Every place it crosses the outline of something, by how far along.
-        var crossings: [CGFloat] = []
-        var run: CGFloat = 0
-        let box = Poly.bounds(pts).insetBy(dx: -2, dy: -2)
-        let near = map.loops.filter { $0.rect.isNull || $0.rect.insetBy(dx: -4, dy: -4).intersects(box) }
-        for i in 1..<pts.count {
-            let p = pts[i - 1], q = pts[i]
-            let r = q - p, len = r.length
-            for loop in near {
-                for e in loop.edge {
-                    guard max(e.a.x, e.b.x) >= box.minX, min(e.a.x, e.b.x) <= box.maxX,
-                          max(e.a.y, e.b.y) >= box.minY, min(e.a.y, e.b.y) <= box.maxY else { continue }
-                    let s = e.b - e.a
-                    let den = r.cross(s)
-                    guard abs(den) > 1e-9 else { continue }
-                    let w = e.a - p
-                    let u = w.cross(s) / den, v = w.cross(r) / den
-                    if u >= 0, u <= 1, v >= 0, v <= 1 { crossings.append(run + u * len) }
-                }
-            }
-            run += len
-        }
-        // (Not what it takes off from or lands on.)
-        let inner = crossings.filter { $0 > 10 && $0 < run - 10 }.sorted()
-        var k = 0
-        while k + 1 < inner.count {
-            if inner[k + 1] - inner[k] >= 6 { return true }
-            k += 2
-        }
-        return false
+        guard inHabitat, !map.loops.isEmpty else { return false }
+        return map.arcBlocked(from: a, launch: launch, to: b)
     }
 
     private func launchPendingJump() {
@@ -11980,28 +12441,13 @@ final class Spider {
             crouch.velocity = -6
             // A pounce at a pointer that has got out of range: nothing doing.
             if cursorHunt == .pouncing { endCursorHunt(nextIn: randRange(5, 10)); setEmote(.question, 1.0) }
+            calledOffPounce()
             return
         }
         // Hanging under something and aiming below: it lets go and drops,
         // with a push away from the surface, rather than leaping into it —
         // unless the surface is glass it means to go through.
-        if !glassLeap, launch.length < 1 || launch.normalized.dot(surfaceNormal) < -0.05 {
-            if surfaceNormal.y < -0.9, point.y < pos.y - 4 {
-                // Under something flat with the mark below: let go with the
-                // push down, and drift out just enough over the fall to come
-                // down on it — not short of it, or it drops straight past
-                // the ledge it was meant for.
-                let g = -gravity.y
-                let push: CGFloat = 90
-                let fall = pos.y - point.y
-                let time = (-push + (push * push + 2 * g * fall).squareRoot()) / g
-                let drift = (point.x - pos.x) / max(time, 0.05) * (1 + 0.11 * time)   // (the air's drag)
-                launch = V2(clamp(drift, -700, 700), -push)
-            } else {
-                let along = launch - surfaceNormal * launch.dot(surfaceNormal)
-                launch = along.clampedLength(220) + surfaceNormal * 90
-            }
-        }
+        if !glassLeap { launch = Spider.pushOff(launch, from: pos, to: point, normal: surfaceNormal) }
         // In the tank, it doesn't leap through walls: an arc that would go
         // right through something solid (a wall, a shut door, a log) on the
         // way, it doesn't try.
@@ -12011,11 +12457,13 @@ final class Spider {
             activity = .idle
             crouch.velocity = -6
             if cursorHunt == .pouncing { endCursorHunt(nextIn: randRange(5, 10)); setEmote(.question, 1.0) }
+            calledOffPounce()
             return
         }
         glassLeap = false
         pendingJump = nil
         launchLoop = anchor.loopID
+        launches += 1
         let trailFrom = mode == .attached ? ledgePin() : nil
         mode = .airborne
         air = .jump
@@ -12038,27 +12486,55 @@ final class Spider {
     }
 
     /// Launch velocity that actually lands on `p1`, or nil if it is out of
-    /// range. Picks the flattest arc the spider has the legs for, just above
-    /// the minimum-energy solution — so a jump either looks like a jump or is
-    /// never attempted.
+    /// range (see `arc`) — or, in the tank, only through something solid.
     private func ballistic(from p0: V2, to p1: V2) -> V2? {
+        guard let v = Spider.arc(from: p0, to: p1) else { return nil }
+        // (In the tank, no leap through walls: a mark it could only reach
+        // through something solid is out of reach.)
+        if leapBlocked(from: p0, launch: v, to: p1) { return nil }
+        return v
+    }
+
+    /// Launch velocity that lands on `p1` (the air's drag aside), or nil if
+    /// it is out of range. Picks the flattest arc the spider has the legs
+    /// for, just above the minimum-energy solution — so a jump either looks
+    /// like a jump or is never attempted.
+    static func arc(from p0: V2, to p1: V2) -> V2? {
         let d = p1 - p0
-        let g = -gravity.y
+        let g = -gravityPull.y
         let r = d.length
         guard r > 1 else { return nil }
         let vMin = (g * (d.y + r)).squareRoot()
-        guard vMin.isFinite, vMin <= Spider.maxJumpSpeed else { return nil }
-        let v = min(vMin * 1.06, Spider.maxJumpSpeed)
+        guard vMin.isFinite, vMin <= maxJumpSpeed else { return nil }
+        let v = min(vMin * 1.06, maxJumpSpeed)
         if abs(d.x) < 1 { return V2(0, v) }
         let dx = abs(d.x)
         let v2 = v * v
         let disc = max(0, v2 * v2 - g * (g * dx * dx + 2 * d.y * v2))
         let theta = atan((v2 - disc.squareRoot()) / (g * dx))
-        let dir = V2(cos(theta) * (d.x >= 0 ? 1 : -1), sin(theta))
-        // (In the tank, no leap through walls: a mark it could only reach
-        // through something solid is out of reach.)
-        if leapBlocked(from: p0, launch: dir * v, to: p1) { return nil }
-        return dir * v
+        return V2(cos(theta) * (d.x >= 0 ? 1 : -1), sin(theta)) * v
+    }
+
+    /// The push it really goes with, meaning to leap at `launch` from `p`
+    /// for `point` off a surface facing `normal`: aimed into what it stands
+    /// on, it lets go and drops instead (hanging under something, with the
+    /// mark below), or pushes off along it.
+    static func pushOff(_ launch: V2, from p: V2, to point: V2, normal: V2) -> V2 {
+        guard launch.length < 1 || launch.normalized.dot(normal) < -0.05 else { return launch }
+        if normal.y < -0.9, point.y < p.y - 4 {
+            // Under something flat with the mark below: let go with the
+            // push down, and drift out just enough over the fall to come
+            // down on it — not short of it, or it drops straight past
+            // the ledge it was meant for.
+            let g = -gravityPull.y
+            let push: CGFloat = 90
+            let fall = p.y - point.y
+            let time = (-push + (push * push + 2 * g * fall).squareRoot()) / g
+            let drift = (point.x - p.x) / max(time, 0.05) * (1 + 0.11 * time)   // (the air's drag)
+            return V2(clamp(drift, -700, 700), -push)
+        }
+        let along = launch - normal * launch.dot(normal)
+        return along.clampedLength(220) + normal * 90
     }
 
     private func bestJumpSpot(from p: V2, exclude: String) -> (anchor: Anchor, point: V2)? {

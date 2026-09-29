@@ -117,17 +117,56 @@ final class PanelController: NSObject, NSPopoverDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            refresh()
-            NSApp.activate(ignoringOtherApps: true)
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            // (Laid out once it is up, in its own window, rather than here
+            // too: out of a window, a layout is done from scratch each time —
+            // every page of it, a good part of the main thread's frame.)
+            Perf.measure("panel: refreshed") { refresh(fitting: false, evenAway: true) }
+            Perf.measure("panel: app activated") { NSApp.activate(ignoringOtherApps: true) }
+            Perf.measure("panel: popover shown") { popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY) }
             popover.contentViewController?.view.window?.makeKey()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.popover.isShown else { return }
+                Perf.measure("panel: fitted") { self.fit() }
+            }
         }
     }
 
     func close() { popover.performClose(nil) }
 
+    /// The popover's own window is made the first time it is shown — a good
+    /// tenth of a second, with the spider held up while it is. The app shows
+    /// it once as it starts, before the spider is out (see `warmUpPanel`):
+    /// unseen, laid out in its window, and shut again at once — so the first
+    /// click finds it made. False if it could not be shown yet (the icon not
+    /// in the menu bar yet, a moment after launch).
+    @discardableResult
+    func warmUp(from button: NSStatusBarButton) -> Bool {
+        // (Shown from a button not yet in the menu bar, it would throw.)
+        guard !popover.isShown, button.window != nil else { return false }
+        let animates = popover.animates
+        popover.animates = false
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        guard popover.isShown else {
+            popover.animates = animates
+            return false
+        }
+        let window = popover.contentViewController?.view.window
+        window?.alphaValue = 0
+        refresh()
+        popover.close()
+        window?.alphaValue = 1
+        popover.animates = animates
+        return true
+    }
+
     /// Back in step with the spider: every control on the page re-reads.
-    func refresh() {
+    /// `fitting`: and the panel sized to fit them. Put away, it has nothing
+    /// to be in step for — it is brought into step as it opens (`toggle`) —
+    /// so unless `evenAway`, it waits till then: every change to anything
+    /// used to lay all of it out again, the spider held up while it did (a
+    /// good 40 ms, going into its tank).
+    func refresh(fitting: Bool = true, evenAway: Bool = false) {
+        guard popover.isShown || evenAway else { return }
         let d = design()
         if d != shownDesign {
             shownDesign = d
@@ -137,7 +176,7 @@ final class PanelController: NSObject, NSPopoverDelegate {
         // tall the panel is too.
         for page in syncers { for s in page { s() } }
         for s in footerSyncers { s() }
-        fit()
+        if fitting { fit() }
     }
 
     func show(page i: Int) {
@@ -172,7 +211,7 @@ final class PanelController: NSObject, NSPopoverDelegate {
         root.removeFromSuperview()
         host.addSubview(root)
         show(page: page)
-        refresh()
+        refresh(evenAway: true)
         root.layoutSubtreeIfNeeded()
         let size = CGSize(width: PanelController.width, height: root.fittingSize.height)
         host.frame = CGRect(origin: .zero, size: size)
@@ -364,10 +403,15 @@ final class PanelController: NSObject, NSPopoverDelegate {
             r.widthAnchor.constraint(equalToConstant: w).isActive = true
             r.toolTip = help
             l.toolTip = help
+            // (Only what has changed is set: every set has it drawn again.)
             syncers.append { [weak sw, weak l] in
-                sw?.state = get() ? .on : .off
-                sw?.isEnabled = enabled()
-                l?.textColor = enabled() ? .labelColor : .disabledControlTextColor
+                guard let sw, let l else { return }
+                let state: NSControl.StateValue = get() ? .on : .off
+                if sw.state != state { sw.state = state }
+                let on = enabled()
+                if sw.isEnabled != on { sw.isEnabled = on }
+                let colour: NSColor = on ? .labelColor : .disabledControlTextColor
+                if l.textColor != colour { l.textColor = colour }
             }
             return r
 
@@ -396,8 +440,10 @@ final class PanelController: NSObject, NSPopoverDelegate {
             syncers.append { [weak s, weak t] in
                 guard let s, let t else { return }
                 if abs(s.doubleValue - Double(get())) > 0.001 { s.doubleValue = Double(get()) }
-                s.isEnabled = enabled()
-                t.textColor = enabled() ? .labelColor : .disabledControlTextColor
+                let on = enabled()
+                if s.isEnabled != on { s.isEnabled = on }
+                let colour: NSColor = on ? .labelColor : .disabledControlTextColor
+                if t.textColor != colour { t.textColor = colour }
             }
             return col
 
@@ -410,7 +456,10 @@ final class PanelController: NSObject, NSPopoverDelegate {
             seg.translatesAutoresizingMaskIntoConstraints = false
             seg.widthAnchor.constraint(equalToConstant: w).isActive = true
             wire(seg) { set(($0 as? NSSegmentedControl)?.selectedSegment ?? 0) }
-            syncers.append { [weak seg] in seg?.selectedSegment = get() }
+            syncers.append { [weak seg] in
+                let i = get()
+                if seg?.selectedSegment != i { seg?.selectedSegment = i }
+            }
             return seg
 
         case .buttons(let specs):
@@ -618,7 +667,13 @@ final class PanelActionButton: NSButton {
         }
     }
 
-    override var isEnabled: Bool { didSet { needsDisplay = true; alphaValue = isEnabled ? 1 : 0.45 } }
+    override var isEnabled: Bool {
+        didSet {
+            guard isEnabled != oldValue else { return }
+            needsDisplay = true
+            alphaValue = isEnabled ? 1 : 0.45
+        }
+    }
 
     override func mouseDown(with event: NSEvent) {
         pressed = true

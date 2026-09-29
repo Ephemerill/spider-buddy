@@ -23,15 +23,23 @@ enum SpiderRenderer {
     /// Palettes are derived from the look, so the still ones are cached;
     /// a living coat is worked out afresh every frame.
     private static var paletteCache: [SpiderLook: Palette] = [:]
+    /// (The spider is drawn off the main thread — see `SpriteDrawer` — while
+    /// the main thread may draw it too: the caches are shared between them.)
+    private static let cacheLock = NSLock()
     static func palette(for look: SpiderLook, time: CGFloat = 0, surroundings: RGB = SpiderPose.defaultSurroundings) -> Palette {
         if look.isAnimated { return look.palette(time: time, surroundings: surroundings) }
         var key = look
         key.hat = .none; key.accessory = .none; key.eyes = .classic; key.brows = .none; key.fangs = .none
         key.body = .classic; key.fuzz = 0; key.faceOverLegs = true; key.pattern = .plain
-        if let p = paletteCache[key] { return p }
+        cacheLock.lock()
+        let cached = paletteCache[key]
+        cacheLock.unlock()
+        if let cached { return cached }
         let p = look.palette(time: 0, surroundings: surroundings)
+        cacheLock.lock()
         if paletteCache.count > 64 { paletteCache.removeAll() }
         paletteCache[key] = p
+        cacheLock.unlock()
         return p
     }
 
@@ -1191,7 +1199,10 @@ enum SpiderRenderer {
     /// side of the front view. Worked out once per look by drawing the upper
     /// body both ways round and comparing.
     static func faceOnSymmetric(_ look: SpiderLook) -> Bool {
-        if let known = symmetryKnown[look] { return known }
+        cacheLock.lock()
+        let known = symmetryKnown[look]
+        cacheLock.unlock()
+        if let known { return known }
         var p = SpiderPose()
         p.outfit = look
         p.grounded = 0
@@ -1217,7 +1228,9 @@ enum SpiderRenderer {
             if d > 90 { off += 1 }
         }
         let symmetric = !a.isEmpty && off <= 40
+        cacheLock.lock()
         symmetryKnown[look] = symmetric
+        cacheLock.unlock()
         return symmetric
     }
     private static var symmetryKnown: [SpiderLook: Bool] = [:]

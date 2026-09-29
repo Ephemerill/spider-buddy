@@ -1,6 +1,84 @@
 import AppKit
 import QuartzCore
 
+// MARK: - Painting off the main thread
+
+/// Paints the tank's pictures — the sky and scenery, the ground, every thing
+/// in it, the weather — off the main thread, a couple at a time and below
+/// the main thread's priority, handing each back on the main thread when it
+/// is ready. The spider lives on the main thread: nothing painted for the
+/// tank, however big, may hold it up. A picture turns up a moment after it
+/// is asked for, and fades in.
+enum HabitatPainter {
+    private static let queue: OperationQueue = {
+        let q = OperationQueue()
+        q.name = "habitat.painter"
+        q.maxConcurrentOperationCount = 2
+        q.qualityOfService = .userInitiated
+        return q
+    }()
+    /// The newest request for each layer: an older one not yet started is
+    /// dropped, and one that finishes after a newer was asked for is not used.
+    private static var latest: [ObjectIdentifier: Int] = [:]
+    private static var counter = 0
+    private static let lock = NSLock()
+
+    private static func claim(_ id: ObjectIdentifier) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        counter += 1
+        latest[id] = counter
+        return counter
+    }
+
+    private static func isLatest(_ id: ObjectIdentifier, _ gen: Int, finishing: Bool = false) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        let yes = latest[id] == gen
+        if yes, finishing { latest[id] = nil }
+        return yes
+    }
+
+    /// Paints `work` off the main thread; `done` has it on the main thread.
+    static func paint<T>(_ work: @escaping () -> T, done: @escaping (T) -> Void) {
+        queue.addOperation {
+            let r = work()
+            DispatchQueue.main.async { done(r) }
+        }
+    }
+
+    /// Paints `work` off the main thread and puts it up as `layer`'s
+    /// picture — faded in if the layer had none — unless something newer
+    /// was asked of the layer in the meantime, or `still` says no.
+    static func fill(_ layer: CALayer, fade: CFTimeInterval = 0.2, still: @escaping () -> Bool = { true },
+                     then: ((CGImage?) -> Void)? = nil, _ work: @escaping () -> CGImage?) {
+        let id = ObjectIdentifier(layer)
+        let gen = claim(id)
+        queue.addOperation { [weak layer] in
+            guard layer != nil, isLatest(id, gen) else { return }
+            let img = work()
+            DispatchQueue.main.async {
+                guard isLatest(id, gen, finishing: true), let layer, still() else { return }
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                if fade > 0, layer.contents == nil, img != nil {
+                    let t = CATransition()
+                    t.type = .fade
+                    t.duration = fade
+                    layer.add(t, forKey: "painted")
+                }
+                layer.contents = img
+                then?(img)
+                CATransaction.commit()
+            }
+        }
+    }
+
+    /// Whatever was asked of `layer` and not yet done is no longer wanted.
+    static func cancel(_ layer: CALayer) {
+        lock.lock(); defer { lock.unlock() }
+        latest[ObjectIdentifier(layer)] = nil
+    }
+}
+
 // MARK: - The inside of the tank
 
 /// Everything behind the glass. The glass is a window onto a world bigger
@@ -28,8 +106,14 @@ import QuartzCore
 final class HabitatSceneView: NSView {
     let map = SurfaceMap()
     weak var spider: Spider? {
-        didSet { spider?.tankRebuilt(habitat, smooth: false, inIt: false) }
+        didSet { spider?.tankRebuilt(habitat, smooth: false, inIt: false, survey: lastSurvey, of: map, ways: lastWays, waysComing: waysComing) }
     }
+    /// Its places as last sized up (see `rebuildMap`).
+    private var lastSurvey: PlaceSurvey?
+    /// Its ways about the surfaces as they are, once worked out (see
+    /// `rebuildMap`); and whether they are on their way.
+    private var lastWays: TankNav?
+    private var waysComing = false
     private(set) var habitat = Habitat()
     /// What part of the world the glass shows.
     let camera = HabitatCamera()
@@ -67,12 +151,18 @@ final class HabitatSceneView: NSView {
     private var airMid = CALayer()
     private let content = CALayer()
     private let ground = CALayer()
+    /// The ground's colour while its picture is painted.
+    private let groundStandIn = CALayer()
     /// Hardware fixed to the back wall: behind all the furniture.
     private let rearItems = CALayer()
     private let backItems = CALayer()
     private let creatures = CALayer()
     private let silk = CAShapeLayer()
-    private let spiderLayer = SpiderLayer()
+    /// The spider, drawn off the main thread (see `SpriteShower`).
+    private let shower = SpriteShower()
+    private var spiderLayer: CALayer { shower.layer }
+    /// Out of sight until its first picture since it came into sight is up.
+    private var showWithPicture = false
     private var preyLayers: [ObjectIdentifier: PreyLayer] = [:]
     private let frontItems = CALayer()
     private var airFront = CALayer()
@@ -171,6 +261,8 @@ final class HabitatSceneView: NSView {
         creatures.addSublayer(spiderLayer)
         silk.fillColor = nil
         silk.lineCap = .round
+        // (Laid frame by frame with the spider, never eased: see `layLine`.)
+        silk.actions = ["path": NSNull(), "opacity": NSNull(), "hidden": NSNull()]
         silk.strokeColor = CGColor(red: 1, green: 1, blue: 1, alpha: 0.62)
         silk.lineWidth = 1.1
         silk.shadowColor = CGColor(red: 0, green: 0, blue: 0, alpha: 0.45)
@@ -178,9 +270,16 @@ final class HabitatSceneView: NSView {
         silk.shadowRadius = 1.2
         silk.shadowOpacity = 1
         silk.isHidden = true
-        spiderLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
-        spiderLayer.needsDisplayOnBoundsChange = true
         spiderLayer.isHidden = true
+        shower.alongside = { [weak self] pose in
+            guard let self else { return }
+            // Its line goes up with it.
+            self.layLine(pose)
+            if self.showWithPicture {
+                self.showWithPicture = false
+                self.spiderLayer.isHidden = false
+            }
+        }
         for l in [sky, scenery, ground, glass] { l.contentsGravity = .resize }
         // The editing overlay: an outline round the chosen thing, handles
         // at its corners, a fainter outline round whatever is under the
@@ -325,20 +424,84 @@ final class HabitatSceneView: NSView {
     /// `smooth`: the spider carries on as it was, read off the new surfaces
     /// where it stands (a door opened in front of it), rather than set down
     /// afresh on the nearest.
-    func rebuildMap(smooth: Bool = false) {
-        map.rebuild(habitat: habitat.surfaces(standoff: map.standoff))
+    ///
+    /// Tracing the surfaces takes a good while for a big tank (tens of
+    /// milliseconds, far more on a slow Mac), so it is done off the main
+    /// thread — with the spider's survey of its places, sized up on the same
+    /// surfaces — and put in place when it is ready, a moment later; the
+    /// spider goes on as it was until then. `now`: at once, here (the app
+    /// opening with the spider in the tank, and the self-tests).
+    func rebuildMap(smooth: Bool = false, now: Bool = false) {
+        mapGen += 1
+        let gen = mapGen, h = habitat, standoff = map.standoff
+        if now || syncMaps {
+            let built = Perf.measure("map: surfaces traced") { h.surfaces(standoff: standoff) }
+            applyMap(built, of: h, smooth: smooth, survey: nil, eco: nil)
+            return
+        }
+        // (The spider's size, which the standoff is laid out for — whether or
+        // not it has been handed the tank yet.)
+        let sc = spider?.config.scale ?? standoff / -SpiderRenderer.ground
+        HabitatSceneView.mapQueue.async {
+            let built = Perf.measure("map: surfaces traced (off the main thread)") { h.surfaces(standoff: standoff) }
+            // Its places, sized up on a copy of the same surfaces (see
+            // `PlaceSurvey`): otherwise the spider would size them up itself
+            // the first time it wanted them, on the main thread.
+            let m = SurfaceMap()
+            m.standoff = standoff
+            m.rebuild(habitat: built)
+            let survey: PlaceSurvey? = Perf.measure("map: places surveyed (off the main thread)") { PlaceSurvey(h, map: m, scale: sc) }
+            // (And the tank alive laid out on them: see `HabitatEcology.layout`.)
+            let eco = Perf.measure("map: ecology laid out (off the main thread)") { HabitatEcology.layout(h, map: m) }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.mapGen == gen, abs(self.map.standoff - standoff) < 0.01 else { return }
+                self.applyMap(built, of: h, smooth: smooth, survey: survey, eco: eco, waysComing: true)
+            }
+            // Then its ways about them (HabitatNav.swift), handed over when
+            // they are ready, a moment later again.
+            let ways = Perf.measure("map: ways worked out (off the main thread)") { TankNav(map: m, habitat: h, scale: sc) }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.mapGen == gen, self.appliedGen == gen else { return }
+                self.lastWays = ways
+                self.waysComing = false
+                self.spider?.waysWorkedOut(ways, for: self.map)
+            }
+        }
+    }
+
+    /// The surfaces are traced off the main thread, one layout at a time.
+    private static let mapQueue = DispatchQueue(label: "habitat.surfaces", qos: .userInitiated)
+    /// Which layout of the surfaces is the newest asked for.
+    private var mapGen = 0
+    /// Tools and the self-tests: every layout at once, as it is asked for.
+    var syncMaps = false
+    /// Whether the surfaces are laid out for the habitat as it is now.
+    var mapCurrent: Bool { appliedGen == mapGen }
+    private var appliedGen = 0
+
+    private func applyMap(_ built: HabitatSurfaces, of h: Habitat, smooth: Bool, survey: PlaceSurvey?, eco: HabitatEcology.Layout?,
+                          waysComing coming: Bool = false) {
+        appliedGen = mapGen
+        lastSurvey = survey
+        lastWays = nil
+        waysComing = coming
+        map.rebuild(habitat: built)
         // The tank alive, laid out the same (what the weather left on things
         // that haven't moved stays on them).
-        ecology.relayout(habitat, map: map)
+        if let eco { ecology.install(eco) } else { Perf.measure("map: ecology laid out") { ecology.relayout(h, map: map) } }
         itemOpen = [:]
-        for it in habitat.items {
+        for it in h.items {
             let at = it.water.map { V2($0.midX, $0.maxY) } ?? V2(it.rect.midX, it.kind.hangs ? it.rect.midY : it.rect.maxY)
             itemOpen[it.id] = ecology.open(at: at, ignoring: it.id)
         }
         dropsDrawn = [:]
         // It takes its footing again, and takes in what has changed (see
         // "Things in the tank" in Spider.swift).
-        if let spider { spider.tankRebuilt(habitat, smooth: smooth, inIt: spider.inHabitat && spider.map === map) }
+        if let spider {
+            Perf.measure("map: spider told") {
+                spider.tankRebuilt(h, smooth: smooth, inIt: spider.inHabitat && spider.map === map, survey: survey, of: map, waysComing: coming)
+            }
+        }
         refreshGeometryOverlay()
     }
 
@@ -376,8 +539,14 @@ final class HabitatSceneView: NSView {
     func setStandoff(_ s: CGFloat) {
         guard abs(map.standoff - s) > 0.01 else { return }
         map.standoff = s
+        // (Nothing to lay out until it has its habitat.)
+        guard given else { return }
         rebuildMap()
     }
+
+    /// The standoff to lay the surfaces out for, given before there is
+    /// anything to lay out (so the first layout is the only one).
+    func presetStandoff(_ s: CGFloat) { map.standoff = s }
 
     /// Spots along the open ground, left to right, in the world (in `r`,
     /// if given): the body line, where it would stand.
@@ -469,21 +638,30 @@ final class HabitatSceneView: NSView {
     /// Only what is near the glass is shown (and painted, the first time
     /// it comes near); the rest is left out — still there, not drawn.
     private func cull() {
+        let lookKey = "\(habitat.biome.rawValue)-\(scale)"
         let near = visibleWorld.insetBy(dx: -160, dy: -160)
         let soon = visibleWorld.insetBy(dx: -bounds.width, dy: -bounds.height * 0.8)
         let far = visibleWorld.insetBy(dx: -bounds.width * 2.5, dy: -bounds.height * 2)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        var wanted: [ItemLayer] = []
         for l in itemLayers.values {
             let f = l.frame
             if f.intersects(soon) {
-                l.paint(biome: habitat.biome, scale: scale, size: l.item.rect.size)
+                if l.lookChanged || l.paintedKey.isEmpty || lookKey != l.paintedFor { wanted.append(l) }
             } else if !f.intersects(far) {
                 // Well away: its picture goes, until it comes near again.
                 l.unpaint()
             }
             let out = !f.intersects(near)
             if l.isHidden != out { l.isHidden = out }
+        }
+        // (Painted off the main thread, what is on the glass first.)
+        let mid = CGPoint(x: visibleWorld.midX, y: visibleWorld.midY)
+        func away(_ l: ItemLayer) -> CGFloat { hypot(l.frame.midX - mid.x, l.frame.midY - mid.y) }
+        for l in wanted.sorted(by: { away($0) < away($1) }) {
+            l.paint(biome: habitat.biome, scale: scale, size: l.item.rect.size)
+            l.paintedFor = lookKey
         }
         weatherFX.showCaps(near: near)
         CATransaction.commit()
@@ -648,7 +826,9 @@ final class HabitatSceneView: NSView {
     /// world, the ground, the glass for its size, the furniture near it,
     /// and the moving air.
     private func repaint() {
-        guard bounds.width > 100 else { return }
+        // (Nothing to paint until it is given its habitat: the window laying
+        // itself out before then would paint an empty tank for nothing.)
+        guard bounds.width > 100, given else { return }
         let b = habitat.biome, s = scale
         let bs = backdropWanted, ws = habitat.size
         let bkey = "\(b.rawValue)-\(Int(bs.width))x\(Int(bs.height))-\(s)"
@@ -657,33 +837,48 @@ final class HabitatSceneView: NSView {
             backdropSize = bs
             let f = HabitatArt.Frame(world: CGRect(origin: .zero, size: bs))
             let top = HabitatArt.sceneryTop(b, f)
-            // The sky is soft all over: half the pixels do. The scenery is
-            // far off, and moves half as far as the world: three-quarters
-            // do. (It is a big picture, and the window server keeps a copy
-            // of every picture a layer shows.)
-            let skyImg = HabitatArt.image(bs, scale: max(1, s / 2)) { HabitatArt.paintSky(b, in: f, $0) }
-            let sceneryImg = HabitatArt.image(CGSize(width: bs.width, height: top), scale: max(1, s * 0.75)) {
-                HabitatArt.paintScenery(b, in: f, $0)
-            }
+            let pal = HabitatArt.palette(b)
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             backdrop.bounds = CGRect(origin: .zero, size: bs)
             sky.frame = CGRect(origin: .zero, size: bs)
             scenery.frame = CGRect(x: 0, y: 0, width: bs.width, height: top)
-            sky.contents = skyImg
-            scenery.contents = sceneryImg
+            // (Its colour while it is painted: see `HabitatPainter`.)
+            sky.backgroundColor = pal.skyMid
             CATransaction.commit()
+            // The sky is soft all over: half the pixels do. The scenery is
+            // far off, and moves half as far as the world: three-quarters
+            // do. (It is a big picture, and the window server keeps a copy
+            // of every picture a layer shows.)
+            let still = { [weak self] in self?.backdropKey == bkey }
+            HabitatPainter.fill(sky, still: still) {
+                Perf.measure("repaint: sky") { HabitatArt.image(bs, scale: max(1, s / 2)) { HabitatArt.paintSky(b, in: f, $0) } }
+            }
+            HabitatPainter.fill(scenery, still: still) {
+                Perf.measure("repaint: scenery") {
+                    HabitatArt.image(CGSize(width: bs.width, height: top), scale: max(1, s * 0.75)) { HabitatArt.paintScenery(b, in: f, $0) }
+                }
+            }
         }
         let gkey = "\(b.rawValue)-\(Int(ws.width))-\(s)"
         if gkey != groundKey {
             groundKey = gkey
             let fw = HabitatArt.Frame(world: CGRect(origin: .zero, size: ws))
             let gh = fw.groundY + HabitatArt.groundOverhang(fw)
-            let img = HabitatArt.image(CGSize(width: ws.width, height: gh), scale: s) { HabitatArt.paintGround(b, in: fw, $0) }
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             ground.frame = CGRect(x: 0, y: 0, width: ws.width, height: gh)
-            ground.contents = img
+            // (Its colour while it is painted, up to the ground line.)
+            groundStandIn.frame = CGRect(x: 0, y: 0, width: ws.width, height: fw.groundY)
+            groundStandIn.backgroundColor = HabitatArt.palette(b).surface
+            groundStandIn.isHidden = false
+            if groundStandIn.superlayer == nil { ground.addSublayer(groundStandIn) }
+            HabitatPainter.fill(ground, still: { [weak self] in self?.groundKey == gkey }, then: { [weak self] img in
+                self?.groundStandIn.isHidden = true
+                self?.weatherFX.groundPainted(img)
+            }) {
+                Perf.measure("repaint: ground") { HabitatArt.image(CGSize(width: ws.width, height: gh), scale: s) { HabitatArt.paintGround(b, in: fw, $0) } }
+            }
             for l in [backItems, creatures, frontItems] { l.frame = CGRect(origin: .zero, size: ws) }
             layOutTankEnds(ws)
             CATransaction.commit()
@@ -693,16 +888,18 @@ final class HabitatSceneView: NSView {
         if glkey != glassKey {
             glassKey = glkey
             let r = CGRect(origin: .zero, size: bounds.size)
-            glass.contents = HabitatArt.image(r.size, scale: max(1, s / 2)) { HabitatArt.paintGlass(in: r, $0, dark: dark) }
+            HabitatPainter.fill(glass, still: { [weak self] in self?.glassKey == glkey }) {
+                Perf.measure("repaint: glass") { HabitatArt.image(r.size, scale: max(1, s / 2)) { HabitatArt.paintGlass(in: r, $0, dark: dark) } }
+            }
         }
         // (Painting the big pictures leaves a lot of freed memory about.)
         defer { malloc_zone_pressure_relief(nil, 0) }
         let akey = "\(b.rawValue)-\(Int(bs.width))x\(Int(bs.height))-\(Int(ws.width))x\(Int(ws.height))"
         if akey != atmosphereKey {
             atmosphereKey = akey
-            buildAtmosphere()
-            weatherFX.build(backdrop: bs, world: ws, view: bounds.size, biome: b, groundImage: ground.contents)
-            weatherFX.layoutItems(habitat)
+            Perf.measure("repaint: atmosphere") { buildAtmosphere() }
+            Perf.measure("repaint: weather built") { weatherFX.build(backdrop: bs, world: ws, view: bounds.size, biome: b, groundImage: ground.contents) }
+            Perf.measure("repaint: weather on things") { weatherFX.layoutItems(habitat) }
         } else {
             weatherFX.layoutView(bounds.size)
         }
@@ -740,9 +937,14 @@ final class HabitatSceneView: NSView {
 
     // MARK: The habitat
 
-    /// Shows `h`. A new scenery fades in over the old.
-    func setHabitat(_ h: Habitat, fade: Bool = false) {
-        guard h != habitat else { return }
+    /// Whether it has been given its habitat yet (see `repaint`).
+    private var given = false
+
+    /// Shows `h`. A new scenery fades in over the old. `mapNow`: its
+    /// surfaces laid out at once (see `rebuildMap`).
+    func setHabitat(_ h: Habitat, fade: Bool = false, mapNow: Bool = false) {
+        guard h != habitat || !given else { return }
+        given = true
         if fade {
             let t = CATransition()
             t.type = .fade
@@ -752,12 +954,12 @@ final class HabitatSceneView: NSView {
         let resized = h.size != habitat.size
         habitat = h
         camera.setWorld(h.size)
-        if resized { applyCamera(force: true) }
+        if resized { Perf.measure("scene: camera") { applyCamera(force: true) } }
         if let s = selected, !h.items.contains(where: { $0.id == s }) { select(nil) }
-        syncItemLayers()
-        repaint()
-        paintItems()
-        rebuildMap()
+        Perf.measure("scene: item layers") { syncItemLayers() }
+        Perf.measure("scene: repaint") { repaint() }
+        Perf.measure("scene: items painted") { paintItems() }
+        Perf.measure("scene: map rebuilt") { rebuildMap(now: mapNow) }
         refreshSelection()
         overview?.reload()
     }
@@ -924,14 +1126,13 @@ final class HabitatSceneView: NSView {
 
     // MARK: The spider, and what is loose in here
 
-    private var drawn: SpiderPose?
-    private var drawnAt: CFTimeInterval = 0
     private(set) var didRedraw = false
 
     /// Places the spider (nil: it is not in here to be seen — out, or in
     /// your hand), its line, and anything loose, for this frame — all in
     /// the world. Whatever is out of sight goes on being simulated, but is
-    /// not drawn.
+    /// not drawn. (The spider itself goes up with its picture, drawn off the
+    /// main thread, and its line with it: see `SpriteShower`.)
     func showCreatures(_ pose: SpiderPose?, sprite: CGFloat, prey: [Prey]) {
         didRedraw = false
         CATransaction.begin()
@@ -939,31 +1140,33 @@ final class HabitatSceneView: NSView {
         defer { CATransaction.commit() }
         let seen = visibleWorld.insetBy(dx: -sprite, dy: -sprite)
         if let pose, seen.contains(pose.pos.point) {
-            if spiderLayer.isHidden { spiderLayer.isHidden = false; drawn = nil }
-            if spiderLayer.bounds.width != sprite {
+            if spiderLayer.isHidden, !showWithPicture {
+                showWithPicture = true
+                shower.invalidate()
+            }
+            if spiderLayer.bounds.width != sprite || spiderLayer.contentsScale != scale {
                 spiderLayer.bounds = CGRect(x: 0, y: 0, width: sprite, height: sprite)
                 spiderLayer.contentsScale = scale
-                drawn = nil
+                shower.invalidate()
             }
-            spiderLayer.position = pose.pos.point
-            spiderLayer.pose = pose
-            let now = CACurrentMediaTime()
-            let hold: CFTimeInterval = pose.outfit.isAnimated || !pose.specks.isEmpty ? 1.0 / 30.0 : 0.5
-            if drawn == nil || now - drawnAt >= hold || drawn!.outfit != pose.outfit || SpiderView.shapeDelta(drawn!, pose) >= 0.04 {
-                drawn = pose
-                drawnAt = now
-                didRedraw = true
-                spiderLayer.setNeedsDisplay()
-            }
+            shower.show(pose)
+            didRedraw = shower.didRedraw
             if weatherFX.wantsFootprints { noteFootprints(pose) }
-        } else if !spiderLayer.isHidden {
-            spiderLayer.isHidden = true
+        } else {
+            showWithPicture = false
+            if !spiderLayer.isHidden { spiderLayer.isHidden = true }
+            // Its line, even with it out of sight (the line may not be).
+            layLine(pose)
         }
         let inHere = pose != nil && spider?.map === map
         let footing = inHere ? spider?.standingOn : nil
         holdStill(footing.flatMap { map.owner(of: $0) }, near: inHere ? pose?.pos : nil)
         if showsGeometry { showFooting(footing, at: pose?.pos) }
-        // Its line, even with it out of sight (the line may not be).
+        showLoose(prey, near: seen)
+    }
+
+    /// Its line, as `pose` has it (none: nil).
+    private func layLine(_ pose: SpiderPose?) {
         if let pose, pose.web != nil, let path = SpiderRenderer.silkPath(pose) {
             silk.path = path
             silk.opacity = Float(pose.web?.alpha ?? 1)
@@ -972,6 +1175,10 @@ final class HabitatSceneView: NSView {
             silk.isHidden = true
             silk.path = nil
         }
+    }
+
+    /// Whatever is loose in here, for this frame.
+    private func showLoose(_ prey: [Prey], near seen: CGRect) {
         // The creatures.
         var live = Set<ObjectIdentifier>()
         for p in prey {
@@ -2212,7 +2419,7 @@ final class HabitatSceneView: NSView {
 
     /// Tools only: the layers, for checking what is shown.
     var debugItemLayers: [Int: CALayer] { itemLayers }
-    var debugSpiderShown: Bool { !spiderLayer.isHidden }
+    var debugSpiderShown: Bool { !spiderLayer.isHidden || showWithPicture }
     var debugBackdropOrigin: CGPoint { backdrop.position }
     var debugFindShown: Bool { findShown }
 }
@@ -2222,10 +2429,15 @@ final class HabitatSceneView: NSView {
 /// One piece of furniture: its picture, and whatever moves on it — a sway,
 /// a glow, ripples.
 final class ItemLayer: CALayer {
-    var item = HabitatItem(id: 0, kind: .rock, x: 0, y: 0, w: 1, h: 1)
+    var item = HabitatItem(id: 0, kind: .rock, x: 0, y: 0, w: 1, h: 1) { didSet { lookChanged = true } }
     /// Fixed to a backing wall (screwed), not just to the glass (suction cups).
-    var backed = false
-    var paintedKey = ""
+    var backed = false { didSet { lookChanged = true } }
+    var paintedKey = "" { didSet { if paintedKey.isEmpty { lookChanged = true } } }
+    /// Something its picture is painted from may have changed since it was
+    /// last asked for (see `HabitatSceneView.cull`), and the scenery and
+    /// pixel scale it was last asked for in.
+    var lookChanged = true
+    var paintedFor = ""
     private var extras: [CALayer] = []
     private var animatedKey = ""
     /// How far it leans with the wind, as a shear (+: its top to the
@@ -2335,28 +2547,32 @@ final class ItemLayer: CALayer {
             leafHinge.sublayerTransform = p
             if leafHinge.superlayer == nil { addSublayer(leafHinge) }
             for l in [leafEdge, leafFace] where l.superlayer == nil { leafHinge.addSublayer(l) }
-            let kind = item.kind, seed = item.seed, u = item.unit
+            let kind = item.kind, seed = item.seed, u = item.unit, flipped = item.flipped
             let tint = HabitatArt.palette(biome)
-            func picture(_ sz: CGSize, _ paint: @escaping (CGContext, CGRect) -> Void) -> CGImage? {
-                HabitatArt.image(sz, scale: scale) { ctx in
-                    let rr = CGRect(origin: .zero, size: sz)
-                    if item.flipped { ctx.translateBy(x: sz.width, y: 0); ctx.scaleBy(x: -1, y: 1) }
-                    paint(ctx, rr)
-                    if tint.tintAmount > 0.01 {
-                        ctx.setBlendMode(.sourceAtop)
-                        ctx.setFillColor(HabitatArt.alpha(tint.tint, tint.tintAmount))
-                        ctx.fill(rr)
+            // (Painted off the main thread: see `HabitatPainter`.)
+            let still = { [weak self] in self?.leafKey == key }
+            func picture(_ l: CALayer, _ sz: CGSize, _ paint: @escaping (CGContext, CGRect) -> Void) {
+                HabitatPainter.fill(l, still: still) {
+                    HabitatArt.image(sz, scale: scale) { ctx in
+                        let rr = CGRect(origin: .zero, size: sz)
+                        if flipped { ctx.translateBy(x: sz.width, y: 0); ctx.scaleBy(x: -1, y: 1) }
+                        paint(ctx, rr)
+                        if tint.tintAmount > 0.01 {
+                            ctx.setBlendMode(.sourceAtop)
+                            ctx.setFillColor(HabitatArt.alpha(tint.tint, tint.tintAmount))
+                            ctx.fill(rr)
+                        }
                     }
                 }
             }
-            leafFace.contents = picture(g.face.size) { ctx, rr in HabitatArt.paintLeafFace(kind, rr, seed, u, ctx) }
+            picture(leafFace, g.face.size) { ctx, rr in HabitatArt.paintLeafFace(kind, rr, seed, u, ctx) }
             leafFace.contentsScale = scale
             leafFace.bounds = CGRect(origin: .zero, size: g.face.size)
             leafFace.anchorPoint = CGPoint(x: item.flipped ? 1 : 0, y: 0.5)
             leafFace.position = CGPoint(x: mx(g.hinge), y: g.face.midY)
             // (Its edge, with a little room for the knobs either side.)
             let edge = g.edge.insetBy(dx: -3 * u, dy: 0)
-            leafEdge.contents = picture(edge.size) { ctx, rr in HabitatArt.paintLeafEdge(kind, rr.insetBy(dx: 3 * u, dy: 0), seed, u, ctx) }
+            picture(leafEdge, edge.size) { ctx, rr in HabitatArt.paintLeafEdge(kind, rr.insetBy(dx: 3 * u, dy: 0), seed, u, ctx) }
             leafEdge.contentsScale = scale
             leafEdge.frame = CGRect(x: item.flipped ? W - edge.maxX : edge.minX, y: edge.minY, width: edge.width, height: edge.height)
         }
@@ -2456,17 +2672,23 @@ final class ItemLayer: CALayer {
     func unpaint() {
         guard !paintedKey.isEmpty else { return }
         paintedKey = ""
+        HabitatPainter.cancel(self)
         contents = nil
     }
 
-    /// Paints its picture if its look has changed, and sets it moving.
+    /// Paints its picture if its look has changed (off the main thread: see
+    /// `HabitatPainter`), and sets it moving.
     func paint(biome: Biome, scale: CGFloat, size: CGSize) {
+        lookChanged = false
         let key = "\(item.kind.rawValue)-\(item.seed)-\(Int(size.width))x\(Int(size.height))-\(item.flipped)-\(biome.rawValue)-\(scale)-\(item.onGround)-\(backed)"
         guard key != paintedKey, size.width > 1 else { return }
         paintedKey = key
         let pad = HabitatArt.itemPad(size)
         // (A door's leaf is a layer of its own, to swing.)
-        contents = HabitatArt.itemImage(item, size: size, biome: biome, scale: scale, backed: backed, leaf: item.kind.leafOpen == nil)
+        let it = item, isBacked = backed, leafless = item.kind.leafOpen == nil
+        HabitatPainter.fill(self, still: { [weak self] in self?.paintedKey == key }) {
+            HabitatArt.itemImage(it, size: size, biome: biome, scale: scale, backed: isBacked, leaf: leafless)
+        }
         contentsScale = scale
         updateLeaf(biome: biome, scale: scale, size: size)
         // (Opened or shut, a door is the same door: nothing to start again.)

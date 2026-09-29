@@ -37,7 +37,17 @@ final class Visitor {
         view.spider = spider
         window.contentView = view
         resize()
+        // (Its window follows it as each pose goes up with its picture.)
+        view.onShow = { [weak self] pose in
+            guard let self else { return }
+            if self.follow(pose) { self.moved = true }
+        }
     }
+
+    /// Its window moved since the last frame (see `show`).
+    private var moved = false
+    /// The desktop it is on (where the Dock is).
+    private weak var map: SurfaceMap?
 
     /// Any look at all, but never a living coat; and none of the parts of
     /// a personality that make a spider yours — no name, nothing to say,
@@ -67,9 +77,21 @@ final class Visitor {
         view.worldOrigin = window.frame.origin
     }
 
-    /// Moves the window along once the spider has wandered far enough in
-    /// it, and draws it. True if anything moved or was redrawn.
+    /// Draws it: its window moved along once it has wandered far enough in
+    /// it, as the pose goes up (see `follow`). True if anything moved or was
+    /// redrawn.
     func show(_ pose: SpiderPose, map: SurfaceMap) -> Bool {
+        self.map = map
+        view.apply(pose)
+        let was = moved
+        moved = false
+        return was || view.didRedraw
+    }
+
+    /// Its window, with the pose going up on the screen: along to it once it
+    /// has wandered far enough in it, and up over the menu bar and the Dock
+    /// while any of it is in their strip. True if the window moved.
+    private func follow(_ pose: SpiderPose) -> Bool {
         var moved = false
         let frame = window.frame
         let recentreAt = (side - spriteSide) / 2 - 4
@@ -78,18 +100,16 @@ final class Visitor {
             view.worldOrigin = window.frame.origin
             moved = true
         }
-        // Up over the menu bar and the Dock while any of it is in their strip.
         let r = spriteSide / 2
         let sprite = CGRect(x: pose.pos.x - r, y: pose.pos.y - r, width: r * 2, height: r * 2)
         let inStrip = NSScreen.screens.contains { s in
             let bar = s.frame.maxY - s.visibleFrame.maxY
             guard bar > 12 else { return false }
             return sprite.intersects(CGRect(x: s.frame.minX, y: s.frame.maxY - bar, width: s.frame.width, height: bar))
-        } || map.dockRects.contains { sprite.intersects($0) }
+        } || (map?.dockRects.contains { sprite.intersects($0) } ?? false)
         let want: NSWindow.Level = inStrip ? .statusBar : .floating
         if window.level != want { window.level = want }
-        view.apply(pose)
-        return moved || view.didRedraw
+        return moved
     }
 }
 

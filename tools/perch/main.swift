@@ -480,6 +480,8 @@ case "places":
     placesCheck()
 case "ecology":
     ecologyCheck()
+case "nav":
+    navCheck()
 case "chains":
     chains(HabitatItemKind(rawValue: args.count > 2 ? args[2] : "driftwood") ?? .driftwood)
 #endif

@@ -156,10 +156,12 @@ enum HabitatAtmosphere {
 
     private static func rnd(_ s: Int, _ i: Int) -> CGFloat { HabitatArt.rnd(s, i) }
 
-    private static func sprite(_ img: CGImage?, _ frame: CGRect) -> CALayer {
+    /// A layer showing `img`, which is painted off the main thread (see
+    /// `HabitatPainter`) and fades in when it is ready.
+    private static func sprite(_ img: @escaping @autoclosure () -> CGImage?, _ frame: CGRect) -> CALayer {
         let l = CALayer()
-        l.contents = img
         l.frame = frame
+        HabitatPainter.fill(l, fade: 0.4, img)
         return l
     }
 
@@ -206,10 +208,9 @@ enum HabitatAtmosphere {
         let count = f.count(n) + Int((CGFloat(f.count(n)) * extra / f.air).rounded())
         for k in 0..<count {
             let w = (130 + rnd(seed, k) * 130) * f.u
-            guard let img = HabitatArt.cloud(seed: seed * 10 + k % 30, width: w, dark: dark) else { continue }
             let h = w * 0.42
             let y = f.y(bottom) + (f.y(top) + extra - f.y(bottom)) * rnd(seed + 1, k)
-            let l = sprite(img, CGRect(x: -w, y: y - h / 2, width: w, height: h))
+            let l = sprite(HabitatArt.cloud(seed: seed * 10 + k % 30, width: w, dark: dark), CGRect(x: -w, y: y - h / 2, width: w, height: h))
             l.opacity = alpha * Float(0.75 + rnd(seed + 2, k) * 0.25)
             parent.addSublayer(l)
             let drift = basic("position.x", -w / 2, f.rect.width + w / 2, ease: false)
@@ -228,7 +229,7 @@ enum HabitatAtmosphere {
     private static func beam(_ f: HabitatArt.Frame, into parent: CALayer) {
         // One broad shaft from a hole in the roof.
         let w = f.panelWidth * 0.4, h = f.rect.height
-        guard let img = HabitatArt.image(CGSize(width: w, height: h), scale: 0.5, { ctx in
+        let l = sprite(HabitatArt.image(CGSize(width: w, height: h), scale: 0.5, { ctx in
             let p = CGMutablePath()
             p.move(to: CGPoint(x: w * 0.35, y: h))
             p.addLine(to: CGPoint(x: w * 0.6, y: h))
@@ -237,8 +238,7 @@ enum HabitatAtmosphere {
             p.closeSubpath()
             HabitatArt.fill(ctx, p, [HabitatArt.c(0.85, 0.92, 1, 0.3), HabitatArt.c(0.85, 0.92, 1, 0.08), HabitatArt.c(0.85, 0.92, 1, 0)], [0, 0.6, 1],
                             from: CGPoint(x: 0, y: h), to: CGPoint(x: 0, y: h * 0.05))
-        }) else { return }
-        let l = sprite(img, CGRect(x: f.mid(0.33), y: 0, width: w, height: h))
+        }), CGRect(x: f.mid(0.33), y: 0, width: w, height: h))
         l.compositingFilter = "screenBlendMode"
         parent.addSublayer(l)
         l.add(loop(basic("opacity", 0.55, 1), 6, reverse: true), forKey: "shimmer")

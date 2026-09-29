@@ -33,7 +33,8 @@ final class WindowTracker {
     /// Windows to climb on, and the displays some app has taken whole (a
     /// full-screen window is left out of the list: its edges are the
     /// screen's edges, and it is not furniture to play on).
-    var onUpdate: (([TrackedWindow], _ fullScreens: [CGRect]) -> Void)?
+    /// (And where the Dock is: see `SurfaceMap.dockStrips`.)
+    var onUpdate: (([TrackedWindow], _ fullScreens: [CGRect], _ docks: [CGRect]) -> Void)?
 
     /// A notification banner came up, on the display given. Each banner is
     /// a window of its own from Notification Center, over everything else
@@ -86,11 +87,14 @@ final class WindowTracker {
     private func poll()  {
         let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
         let screens = NSScreen.screens.map { $0.frame }
+        let visible = NSScreen.screens.map { ($0.frame, $0.visibleFrame) }
         let pid = selfPID
         let own = ownFurniture
         queue.async { [weak self] in
             guard let self else { return }
-            let (result, fullScreens, banners) = self.snapshot(primaryTop: primaryTop, screens: screens, selfPID: pid, own: own)
+            let (found, fullScreens, banners) = self.snapshot(primaryTop: primaryTop, screens: screens, selfPID: pid, own: own)
+            let result = self.withCornerRadii(found, primaryTop: primaryTop)
+            let docks = SurfaceMap.dockStrips(screens: visible)
             DispatchQueue.main.async {
                 if let before = self.banners {
                     for (id, screen) in banners where !before.contains(id) { self.onBanner?(screen) }
@@ -105,10 +109,55 @@ final class WindowTracker {
                 if frames.count != self.lastFrames.count { changed = true }
                 self.lastFrames = frames
                 if changed { self.busyUntil = CACurrentMediaTime() + 0.8 }
-                self.onUpdate?(result, fullScreens)
+                self.onUpdate?(result, fullScreens, docks)
             }
         }
     }
+
+    // MARK: Window corners
+    //
+    // (On the tracker's own queue, as the rest of the looking is: a look at
+    // a window's corner is a picture of it, which takes a good few
+    // milliseconds — too long for the main thread, where the spider lives.)
+
+    /// How round each window's corners are, measured once per window.
+    private var cornerRadii: [CGWindowID: CGFloat] = [:]
+    /// Whether it may look at the screen, and when that was last asked
+    /// (asking is itself a trip to another process).
+    private var canSee = false
+    private var canSeeAsked: CFTimeInterval = -100
+
+    /// Fills in each window's corner radius — the spider's feet go on the
+    /// curve of a window's corner, not out on the square corner where
+    /// there is no window. Allowed to see the screen, it measures each
+    /// window once (a couple of new ones a poll, so a crowded desktop is
+    /// not all done at once); otherwise every window gets the default.
+    private func withCornerRadii(_ windows: [TrackedWindow], primaryTop: CGFloat) -> [TrackedWindow] {
+        let now = CACurrentMediaTime()
+        if now - canSeeAsked > 5 {
+            canSeeAsked = now
+            canSee = CGPreflightScreenCaptureAccess()
+        }
+        var budget = 2
+        let live = Set(windows.map(\.id))
+        cornerRadii = cornerRadii.filter { live.contains($0.key) }
+        return windows.map { w in
+            var w = w
+            if let r = cornerRadii[w.id] {
+                w.cornerRadius = r
+            } else if canSee, budget > 0, let measure = measureCorner {
+                budget -= 1
+                let r = measure(w, primaryTop) ?? SurfaceMap.windowCornerRadius
+                cornerRadii[w.id] = r
+                w.cornerRadius = r
+            }
+            return w
+        }
+    }
+
+    /// How the app looks at a window's corner (see
+    /// `AppDelegate.measureCornerRadius`): called on the tracker's queue.
+    var measureCorner: ((TrackedWindow, _ primaryTop: CGFloat) -> CGFloat?)?
 
     /// Whether a process is an ordinary app with a Dock icon. Background
     /// agents — window managers, screenshot tools, menu-bar utilities — often

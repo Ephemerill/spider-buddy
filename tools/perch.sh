@@ -12,21 +12,23 @@
 #   ./tools/perch.sh curious                       things as things: natures, places, the notice-to-familiar loop, decorating
 #   ./tools/perch.sh places                        using the tank: water, shelter (built first), hiding, lookouts, favourites, a life
 #   ./tools/perch.sh ecology                       the tank alive: sky cover, what draws what, prey at home, drops, rain to shelter and out, sun, wind, hunting
+#   ./tools/perch.sh nav                           getting about: after still prey, off to places — time, turning back, stuck, leaps, giving up
 set -euo pipefail
 cd "$(dirname "$0")/.."
 if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Developer ]; then
   export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 fi
 mkdir -p build
-FILES="Math Surfaces WindowTracker Spider Beat Memory SpiderRenderer AppIcon SpiderDesign Skin Prey Toys Traces Habitat HabitatObjects HabitatGeometry HabitatStructures HabitatPieces HabitatNature HabitatSemantics HabitatKnowledge HabitatPlaces HabitatEcology HabitatArt HabitatItems HabitatPieceArt HabitatHomeArt HabitatNatureArt Studio"
+FILES="Math Surfaces WindowTracker Spider Beat Memory SpiderRenderer AppIcon SpiderDesign Skin Prey Toys Traces Habitat HabitatObjects HabitatGeometry HabitatStructures HabitatPieces HabitatNature HabitatSemantics HabitatKnowledge HabitatPlaces HabitatEcology HabitatNav HabitatArt HabitatItems HabitatPieceArt HabitatHomeArt HabitatNatureArt Studio"
 
 # build <sources dir> <binary>: seeded, as the leg check is (tools/legs).
 build() {
-  local tmp shaped=""
+  local tmp shaped="" ways=""
   tmp="$(mktemp -d)"
   for f in $FILES; do [ -f "$1/$f.swift" ] || continue; sed -e 's/Bool\.random()/seededBool()/g' "$1/$f.swift" > "$tmp/$f.swift"; done
   [ -f "$1/HabitatGeometry.swift" ] && shaped="-DSHAPED"
-  xcrun swiftc -O -swift-version 5 $shaped -framework AppKit -o "$2" "$tmp"/*.swift tools/legs/Seeded.swift tools/perch/structures.swift tools/perch/nature.swift tools/perch/curious.swift tools/perch/places.swift tools/perch/ecology.swift tools/perch/main.swift
+  [ -f "$1/HabitatNav.swift" ] && ways="-DWAYS"
+  xcrun swiftc -O -swift-version 5 $shaped $ways -framework AppKit -o "$2" "$tmp"/*.swift tools/legs/Seeded.swift tools/perch/structures.swift tools/perch/nature.swift tools/perch/curious.swift tools/perch/places.swift tools/perch/ecology.swift tools/perch/nav.swift tools/perch/main.swift
   rm -rf "$tmp"
 }
 
