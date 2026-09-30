@@ -484,6 +484,19 @@ hops over onto the ground inside. (Up on a window or a wall, it drops down
 first; off to one side, it walks over; in its hammock, it gets up; thrown
 over the tank, it just drops in.)
 
+The lid along the top has the tank's buttons, in the order anyone uses
+them: on the left, getting about — **Let Out** and the **Map**; the tank's
+name in the middle (click it to rename it); on the right, what to do with
+it — **Feed** and **Weather**, then **Decorate** — and **?**, which shows
+you round. On a narrow window the buttons keep just their pictures.
+
+The first time the tank opens, a short tour shows you round it: the window
+dims and a spotlight goes from the glass to each button in turn, with a few
+words by each (Return or → for the next, Esc to skip). Decorating has a
+tour of its own the first time. The **?** button shows the tour for what is
+on screen again, as does **Habitat ▸ Show Me Round the Habitat** in the menu
+bar.
+
 The tank is much bigger than its window — about two and three-quarter
 screens long and a screen and a third high, worked out from your display
 the first time — and the window is a pane of glass onto part of it.
@@ -502,7 +515,7 @@ While it is out of sight a **Find …** button at the edge of the glass
 points the way to it, and takes you back there. Left looking somewhere else
 for a minute and a half, the view drifts back to it by itself.
 
-**Overview** (in the toolbar) shows the whole tank at once, small — a map,
+The **Map** (in the toolbar) shows the whole tank at once, small — a map,
 not a view into it: where the window is looking (drag the frame to look
 round), where the spider is and anything loose. Click anywhere and the
 glass goes there, life size again.
@@ -540,29 +553,36 @@ tumbleweed goes by, crystals glow and water drips in the cave, snow falls
 under the northern lights, stars twinkle and fireflies blink by moonlight.
 Plants sway, crystals and mushrooms glow, water dishes ripple.
 
-**Decorate** opens a panel beside the tank (the tank itself does not move).
-The glass stays put while decorating (it doesn't follow the spider), and a
-thing dragged to the edge of it takes the view along; the Overview,
-decorating, lets you pick anything up and put it anywhere in the tank:
+**Decorate** opens a panel beside the tank (the tank itself does not move;
+the button becomes **Done**). The glass stays put while decorating (it
+doesn't follow the spider), and a thing dragged to the edge of it takes the
+view along; the Map, decorating, lets you pick anything up and put it
+anywhere in the tank. The panel has three tabs, in the order they are used:
+- **Add**: perches it can climb (log, branch, driftwood, cork bark, hollow
+  log, rock, boulder, bamboo, cactus, leafy plant, hanging vine, water
+  dish), plants and details, shelters and the house kit, with a search and
+  a menu of kinds. Click one and it drops into the most open spot of what
+  the window is showing.
 - **Scenery**: Forest, Jungle, Desert, Meadow, Cave, Beach, Snowfall and
   Moonlit, each a picture tile. The furniture takes on the light of the
   place — bluer by moonlight, dimmer in the cave.
-- **Add**: perches it can climb (log, branch, driftwood, cork bark, hollow
-  log, rock, boulder, bamboo, cactus, leafy plant, hanging vine, water
-  dish) and plants and details (fern, tall grass, flowers, succulent,
-  mushrooms, moss, leaf litter, pebbles, twigs, crystals). Click one and it
-  drops into the most open spot of what the window is showing.
-- **Layouts**: eight ready-made tanks and a bare one, **Surprise Me** and
-  **Clear All**. Each ready-made tank is laid out end to end: its old
-  arrangement in the middle, and either side of it parts with a character
-  of their own — a thicket, a clearing, a pool, rocks, a hollow log and
-  bark to shelter in, a trunk with branches going up into the air of the
-  tank and vines down from the lid. **Surprise Me** lays a new one out the
-  same way, part by part.
-- **Weather**: how the tank's weather runs (see below) — whether it comes
-  and goes, is kept to one kind, or follows the weather outside; which
-  kinds come to this scenery; how often it changes and how much of the
-  time there is weather at all.
+- **Habitats**: **My Habitats** — the tank saved under a name, to come
+  back to. **Save This Habitat** keeps a copy of it as it is; click a saved
+  one to put it back in the tank (⌘Z undoes that). The one in the tank is
+  marked, and once you change it the button becomes **Save Changes** (with
+  **Save as New** beside it). Each one's **⋯** renames it, updates it to the
+  tank as it is now, shares a copy as a `.spiderhabitat` file, shows it in
+  the Finder or deletes it; the tray button brings a shared one in. They
+  live one file each in `~/Library/Application Support/<the app's id>/Habitats`.
+  A habitat saved in a world of another size (another display, someone
+  else's Mac) stands in the middle of this one. Under them, **Start
+  Afresh**: **Surprise Me**, **Empty the Tank**, and eight ready-made
+  tanks and a bare one. Each ready-made tank is laid out end to end: its
+  old arrangement in the middle, and either side of it parts with a
+  character of their own — a thicket, a clearing, a pool, rocks, a hollow
+  log and bark to shelter in, a trunk with branches going up into the air
+  of the tank and vines down from the lid. **Surprise Me** lays a new one
+  out the same way, part by part.
 - In the tank: click a piece to select it, drag to move it (rocks, pots and
   the like stay on the ground; branches, logs and small things can be
   propped up off it; vines hang from the lid), drag a corner handle to
@@ -571,6 +591,10 @@ decorating, lets you pick anything up and put it anywhere in the tank:
   (perches are always behind — it climbs them). Keys: ⌫ remove, ⌘D
   duplicate, F flip, arrows nudge (⇧ for more), ⌘Z / ⇧⌘Z undo and redo,
   Esc deselect, then leave.
+
+While the tank is open the menu bar has a **Habitat** menu too: **Save This
+Habitat…** / **Save Changes** (⌘S), **Save as New…** (⇧⌘S), **Bring In a
+Habitat…** (⌘O), and My Habitats to put in the tank.
 
 The habitat is saved as you go, with its size; the window remembers its
 size and where it was looking. A habitat from before the tank was bigger
@@ -598,14 +622,14 @@ By default it **comes and goes**: a spell of something, then clear skies,
 then something else, from the kinds that suit the scenery — sandstorms and
 blazing sun in the desert, downpours in the jungle, snow and the northern
 lights in the snowfall. Which kinds come can be changed for each scenery
-in **Decorate ▸ Weather** (click a tile to add it or take it out — snow in
+with the **Weather** button in the tank's toolbar (click a tile to add it or take it out — snow in
 the desert, say — and **Back to … Own** undoes it), with how often it
 changes and how much of the time there is weather. Or keep it to one kind
 for good (**Always**), or have it follow the weather where you are
-(**Outside**, which needs Notice the Weather). The **Weather** button in
-the tank's toolbar (and the Weather menu while the tank is open) says what
-it is doing and has all of it too, plus **Right Now** — make it rain, snow,
-hail… this minute — **Something Else** and **Clear the Sky**. The weather
+(**Like Outside**, which needs Notice the Weather). The same panel says
+what it is doing now, and has **Bring Weather** — make it rain, snow,
+hail… this minute, or **Something Else** — and **Clear the Sky**. The
+Weather menu in the menu bar, while the tank is open, has all of it too. The weather
 keeps time while the tank is shut: open it an hour later and it has moved
 on.
 
@@ -699,7 +723,7 @@ Under **Your Mac** in the menu bar panel:
 - **Notice the Weather**: when it rains where you are, rain is on its mind
   (checked every twenty minutes from Open-Meteo, going by roughly where
   your internet connection is), and the habitat can have the same weather
-  (Decorate ▸ Weather ▸ Outside). **Rain on the Screen** adds faint streaks
+  (the tank's Weather ▸ Like Outside). **Rain on the Screen** adds faint streaks
   across the desktop while it rains.
 - **Notice Pop-ups**: a notification sliding in makes it jump — right up
   in the air if it is standing on top of something, a start where it
@@ -917,11 +941,14 @@ DisplayServices.
 | `HabitatItems.swift` | painting the furniture, and the picker's thumbnails |
 | `HabitatAtmosphere.swift` | what moves in the tank's air, per biome, as Core Animation layers and emitters |
 | `Weather.swift` | the tank's weather: its kinds, each scenery's list, the settings, and the clock that brings it in and clears it |
-| `HabitatWeather.swift` | the weather drawn in the tank — cloud, rain, snow, lightning, puddles, snow lying about — and the Weather tab's tiles |
+| `HabitatWeather.swift` | the weather drawn in the tank — cloud, rain, snow, lightning, puddles, snow lying about — and the weather panel's tiles |
 | `HabitatCamera.swift` | the coordinate spaces round the tank (screen, window, glass, world), and the camera: following, panning, gliding, kept for next time |
 | `HabitatScene.swift` | the inside of the tank: its layers (backdrop, world, glass), the conversions between spaces, the spider and creatures drawn in it, the mouse, decorating |
 | `HabitatOverview.swift` | the whole tank at once, small: going anywhere in it, and moving the furniture about it |
 | `HabitatWindow.swift` | the tank's window: frame, toolbar buttons, the decorating panel, undo |
+| `HabitatControls.swift` | the weather panel that drops from its button, the saved-habitat cards, and bits the panels share |
+| `HabitatLibrary.swift` | My Habitats: saved habitats as files, saving, putting back, sharing and bringing in |
+| `HabitatTour.swift` | the spotlight tours of the tank and of decorating |
 | `Prey.swift` | the creatures: their behaviour, drawing, and the click-through window they (and the toys) live in |
 | `Toys.swift` | the toys: kinds as data, one physics body for all of them, the toy box, and their drawing |
 | `Traces.swift` | what it leaves about: silk pinned to real edges, little webs, meal leftovers, their physics and their window |

@@ -321,6 +321,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             runWeatherShots(dir: dir)
         }
         if ProcessInfo.processInfo.environment["SPIDER_HABITAT_INPUT"] == "1" { runHabitatInputTest() }
+        // SPIDER_HABITAT_TOUR=dir: both tours, a picture of each step, the
+        // weather panel and My Habitats — saving and putting them back
+        // checked on the way ([ok]/[FAIL]), in a library of its own — then quits.
+        if let dir = ProcessInfo.processInfo.environment["SPIDER_HABITAT_TOUR"] { runHabitatTourTest(dir: dir) }
         // SPIDER_HABITAT_BUILD=1 (+SPIDER_HABITAT_DIR for pictures): structures
         // built in the tank by synthesized drags — snapping, carrying,
         // resizing, placing freely, supports, saving — then the spider on them.
@@ -2366,6 +2370,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }, completionHandler: { [weak self] in
             hc.scene.syncToScreen()
             self?.refreshMenu()
+            // The first time: a look round.
+            hc.maybeStartTour()
         })
         calmFrames = 0
         calm = false
@@ -2535,6 +2541,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         closeWhenSeen = nil
+        hc.tour?.finish()
         rememberTankPlace()
         tankClosing = true
         if inHabitat {
@@ -2612,16 +2619,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let windowMenu = NSMenu(title: "Window")
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        // The habitat's weather, filled in afresh each time it opens.
+        // The habitat's weather, filled in afresh each time it opens; and
+        // saving it, and My Habitats.
         let weatherMenu = NSMenu(title: "Weather")
         weatherMenu.delegate = weatherMenuFiller
-        for sub in [appMenu, weatherMenu, windowMenu] {
+        let habitatMenu = NSMenu(title: "Habitat")
+        habitatMenu.delegate = habitatMenuFiller
+        // (Filled now too, so ⌘S works before the menu is first opened.)
+        habitatMenuFiller.menuNeedsUpdate(habitatMenu)
+        // (For typing names: paste and the rest.)
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        for sub in [appMenu, editMenu, habitatMenu, weatherMenu, windowMenu] {
             let item = NSMenuItem()
             item.submenu = sub
             menu.addItem(item)
         }
         NSApp.windowsMenu = windowMenu
         return menu
+    }
+
+    private lazy var habitatMenuFiller = MenuFiller { [weak self] menu in
+        guard let self, let hc = self.habitat, self.tankOpen else {
+            menu.removeAllItems()
+            let none = NSMenuItem(title: "Open the habitat to save it", action: nil, keyEquivalent: "")
+            none.isEnabled = false
+            menu.addItem(none)
+            return
+        }
+        hc.fillHabitatsMenu(menu)
     }
 
     private lazy var weatherMenuFiller = MenuFiller { [weak self] menu in
@@ -2660,7 +2689,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spider.knowledge = nil
         let keys = [Habitat.key, HabitatController.tankWidthKey, HabitatController.glassKey, HabitatController.nameKey, "inHabitat",
                     WeatherSettings.key, WeatherClock.saveKey, HabitatCamera.saveKey, AppDelegate.tankSpiderKey, HabitatKnowledge.key,
-                    SpiderMemory.key]
+                    SpiderMemory.key, HabitatTour.seenKey, HabitatTour.decoratingSeenKey, HabitatController.currentSaveKey]
         let saved = keys.map { UserDefaults.standard.object(forKey: $0) }
         return {
             for (k, v) in zip(keys, saved) { UserDefaults.standard.set(v, forKey: k) }
@@ -4133,6 +4162,151 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// looking at the middle, along at one end, and up at the top —
     /// the overview, and the decorating panel's tabs. (SPIDER_HABITAT_SHOT_ONLY
     /// = a layout's name, to take just that one.)
+    private func runHabitatTourTest(dir: String) {
+        let restore = habitatTestSnapshot()
+        // (Never the user's own saved habitats.)
+        if ProcessInfo.processInfo.environment["SPIDER_HABITAT_LIBRARY"] == nil {
+            HabitatLibrary.folder = URL(fileURLWithPath: dir).appendingPathComponent("library", isDirectory: true)
+        }
+        try? FileManager.default.removeItem(at: HabitatLibrary.folder)
+        for k in [HabitatTour.seenKey, HabitatTour.decoratingSeenKey, HabitatController.currentSaveKey] { UserDefaults.standard.removeObject(forKey: k) }
+        var fails = 0
+        func check(_ label: String, _ ok: Bool, _ detail: String = "") {
+            if !ok { fails += 1 }
+            print("habitat tour: [\(ok ? "ok" : "FAIL")] \(label)\(detail.isEmpty ? "" : " — \(detail)")")
+            fflush(stdout)
+        }
+        func after(_ s: Double, _ f: @escaping () -> Void) { DispatchQueue.main.asyncAfter(deadline: .now() + s, execute: f) }
+        /// A picture of the tank with whatever is over it (the tour, a popover).
+        func shot(_ name: String, _ windows: [NSWindow]) {
+            // (Front to back: whatever is over the tank first.)
+            var ptrs = windows.reversed().filter { $0.isVisible }.map { UnsafeRawPointer(bitPattern: UInt($0.windowNumber)) }
+            guard let arr = CFArrayCreate(nil, &ptrs, ptrs.count, nil),
+                  let img = CGImage(windowListFromArrayScreenBounds: .null, windowArray: arr, imageOption: [.boundsIgnoreFraming, .bestResolution]) else { return }
+            try? NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(dir)/\(name).png"))
+        }
+        openHabitat(restoring: true)
+        after(2.2) { [self] in
+            guard let hc = habitat else { return }
+            hc.scene.debugKeepAnimating = true
+            hc.scene.setAnimating(true)
+            hc.scene.setHabitat(Habitat.preset(.forestFloor, world: hc.scene.habitat.size))
+            hc.startTour(.tank)
+            guard let tour = hc.tour else { check("the tank's tour starts", false); finishHabitatTest(restore); return }
+            func tankStep(_ i: Int) {
+                guard i < tour.stepCount else {
+                    tour.finish()
+                    after(0.5) {
+                        check("the tank's tour ends, and is remembered", hc.tour == nil && HabitatTour.seen(.tank))
+                        weatherShots()
+                    }
+                    return
+                }
+                tour.debugShow(i)
+                after(0.5) { shot("tour_tank_\(i)", [hc.window, tour.overlayWindow]); tankStep(i + 1) }
+            }
+            func weatherShots() {
+                hc.showWeatherPanel()
+                after(0.8) {
+                    shot("weather_panel", [hc.window] + (hc.weatherPopoverWindow.map { [$0] } ?? []))
+                    hc.showWeatherPanel()
+                    after(0.4) { decorate() }
+                }
+            }
+            func decorate() {
+                hc.toggleDecorate()
+                after(1.2) {
+                    guard let dt = hc.tour, dt.kind == .decorating else { check("decorating's tour starts the first time", false); saving(); return }
+                    check("decorating's tour starts the first time", true)
+                    func step(_ i: Int) {
+                        guard i < dt.stepCount else {
+                            dt.finish()
+                            after(0.5) {
+                                check("decorating's tour ends, and is remembered", hc.tour == nil && HabitatTour.seen(.decorating))
+                                saving()
+                            }
+                            return
+                        }
+                        dt.debugShow(i)
+                        after(0.5) { shot("tour_decorate_\(i)", [hc.window, dt.overlayWindow]); step(i + 1) }
+                    }
+                    step(0)
+                }
+            }
+            func saving() {
+                let world = hc.scene.habitat.size
+                let forest = hc.scene.habitat
+                check("nothing saved to begin with", HabitatLibrary.all().isEmpty)
+                let a = SavedHabitat(name: "Test Forest", habitat: forest)
+                check("saved", HabitatLibrary.store(a) && HabitatLibrary.all().count == 1)
+                hc.currentSaveID = a.id
+                check("in the tank, unchanged", hc.currentSaved?.changed == false)
+                hc.loadPreset(.desertScrub)
+                check("a ready-made layout isn't the saved one", hc.currentSaved == nil)
+                var b = SavedHabitat(name: "Test Desert", habitat: hc.scene.habitat)
+                b.saved = Date(timeIntervalSinceNow: -86400 * 3)
+                HabitatLibrary.store(b)
+                hc.loadSaved(id: a.id)
+                check("put back in the tank, just as it was", hc.scene.habitat == forest && hc.currentSaved?.changed == false)
+                hc.scene.select(hc.scene.habitat.items.first?.id)
+                hc.scene.updateSelected { $0.x += 50 }
+                check("moving something changes it", hc.currentSaved?.changed == true)
+                hc.undo()
+                check("undone, it is the saved one again", hc.currentSaved?.changed == false)
+                hc.scene.updateSelected { $0.x += 50 }
+                hc.saveHabitatAction()
+                check("Save keeps the changes in it", hc.currentSaved?.changed == false && HabitatLibrary.saved(id: a.id)?.habitat == hc.scene.habitat)
+                hc.undo()
+                // One saved in a smaller world stands in the middle of this one.
+                var small = forest
+                small.world = CGSize(width: world.width - 400, height: world.height)
+                small.items = small.items.map { var it = $0; it.x = max(it.x - 200, it.w); return it }
+                let c = SavedHabitat(name: "Smaller", habitat: small)
+                HabitatLibrary.store(c)
+                let fitted = c.habitat(for: world)
+                check("a habitat from a smaller world fits this one", fitted.size == world
+                      && fitted.items.allSatisfy { $0.x >= 0 && $0.x <= world.width && $0.y >= 0 && $0.y <= world.height }
+                      && abs((fitted.items.first?.x ?? 0) - ((small.items.first?.x ?? 0) + 200)) < 1)
+                // Shared as a file and brought back in.
+                let file = URL(fileURLWithPath: dir).appendingPathComponent("shared.\(HabitatLibrary.fileExtension)")
+                do {
+                    try HabitatLibrary.export(b, to: file)
+                    let back = try HabitatLibrary.importFile(file)
+                    check("shared and brought back in", back.id != b.id && back.habitat == b.habitat && back.name == "Test Desert 2", back.name)
+                    HabitatLibrary.delete(id: back.id)
+                } catch {
+                    check("shared and brought back in", false, "\(error)")
+                }
+                HabitatLibrary.delete(id: c.id)
+                check("deleted", HabitatLibrary.all().count == 2)
+                hc.loadSaved(id: a.id)
+                hc.decorPanelIfBuilt?.showTab(.habitats)
+                after(1.2) {
+                    shot("habitats_tab", [hc.window])
+                    hc.scene.select(hc.scene.habitat.items.first { $0.kind == .log }?.id)
+                    hc.decorPanelIfBuilt?.showTab(.add)
+                    after(0.8) {
+                        shot("add_tab_selected", [hc.window])
+                        hc.toggleDecorate()
+                        after(0.6) {
+                            let w = hc.window.frame
+                            let sz = hc.windowWillResize(hc.window, to: CGSize(width: 700, height: w.height))
+                            hc.window.setFrame(CGRect(origin: w.origin, size: sz), display: true)
+                            after(0.6) {
+                                shot("narrow", [hc.window])
+                                hc.window.setFrame(CGRect(origin: w.origin, size: hc.windowWillResize(hc.window, to: w.size)), display: true)
+                                print("habitat tour: \(fails == 0 ? "all ok" : "\(fails) failed")")
+                                try? FileManager.default.removeItem(at: HabitatLibrary.folder)
+                                self.finishHabitatTest(restore)
+                            }
+                        }
+                    }
+                }
+            }
+            tankStep(0)
+        }
+    }
+
     private func runHabitatShots(dir: String) {
         let restore = habitatTestSnapshot()
         openHabitat(restoring: true)
@@ -4188,12 +4362,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                 hc.scene.showOverview(false)
                             }
                         }
-                        for tab in 1...3 {
+                        for tab in 1...2 {
                             after(1.8 + Double(tab) * 0.8) {
                                 hc.debugShowTab(tab)
                                 after(0.5) {
                                     shot("habitat_decorating_tab\(tab)")
-                                    if tab == 3 { addPageShots() }
+                                    if tab == 2 { addPageShots() }
                                 }
                             }
                         }

@@ -10,11 +10,27 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     let scene = HabitatSceneView(frame: CGRect(x: 0, y: 0, width: 860, height: 516))
     private let root = HabitatRootView()
     let titleView = HabitatTitleView()
-    private let decorateButton = HabitatButton(title: "Decorate", symbol: "paintbrush.pointed")
-    private let feedButton = HabitatButton(title: "Feed", symbol: "fork.knife", menu: true)
-    private let letOutButton = HabitatButton(title: "Let Out", symbol: "door.left.hand.open")
-    private let overviewButton = HabitatButton(title: "Overview", symbol: "map")
-    private let weatherButton = HabitatButton(title: "Weather", symbol: "cloud.sun", menu: true)
+    // The lid's buttons, in the order anyone uses them: getting about the
+    // tank (and out of it) on the left of the name; what to do with it on
+    // the right — look after it, then make it your own — and help.
+    let letOutButton = HabitatButton(title: "Let Out", symbol: "door.left.hand.open")
+    let mapButton = HabitatButton(title: "Map", symbol: "map")
+    let feedButton = HabitatButton(title: "Feed", symbol: "fork.knife", menu: true)
+    let weatherButton = HabitatButton(title: "Weather", symbol: "cloud.sun", menu: true)
+    let decorateButton = HabitatButton(title: "Decorate", symbol: "paintbrush.pointed")
+    let helpButton = HabitatButton(title: "Help", symbol: "questionmark")
+    /// The weather's own panel, dropping down from its button (made the
+    /// first time it is wanted).
+    private var weatherPopover: NSPopover?
+    private var weatherPanel: WeatherPanel?
+    /// The tour, while it is on.
+    var tour: HabitatTour?
+    /// Which of My Habitats the tank was last put in from, or saved as.
+    static let currentSaveKey = "habitatCurrentSave"
+    var currentSaveID: String? {
+        get { UserDefaults.standard.string(forKey: HabitatController.currentSaveKey) }
+        set { UserDefaults.standard.set(newValue, forKey: HabitatController.currentSaveKey) }
+    }
 
     /// The tank's weather: what it is doing, and what comes next (see
     /// Weather.swift).
@@ -121,20 +137,24 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
         }
         decorateButton.target = self
         decorateButton.action = #selector(toggleDecorate)
-        decorateButton.toolTip = "Change the scenery and move the furniture about"
+        decorateButton.toolTip = "Change the scenery, add things, and save your habitats"
         feedButton.target = self
         feedButton.action = #selector(showFeedMenu)
         feedButton.toolTip = "Let something loose in the tank for it to hunt"
         letOutButton.target = self
         letOutButton.action = #selector(letOut)
-        letOutButton.toolTip = "Close the habitat — it drops back onto your desktop"
-        overviewButton.target = self
-        overviewButton.action = #selector(toggleOverview)
-        overviewButton.toolTip = "See the whole habitat at once — and go anywhere in it"
+        letOutButton.toolTip = "Close the habitat — your spider goes back onto your desktop"
+        mapButton.target = self
+        mapButton.action = #selector(toggleOverview)
+        mapButton.toolTip = "See the whole tank at once — click anywhere on it to go there"
         weatherButton.target = self
-        weatherButton.action = #selector(showWeatherMenu)
-        weatherButton.toolTip = "Rain, snow, wind, sun and more — change what the weather does in the tank"
-        weather.onChange = { [weak self] in self?.decorPanel?.refreshWeather() }
+        weatherButton.action = #selector(showWeatherPanel)
+        weatherButton.toolTip = "Rain, snow, wind, sun and more — change the weather in the tank"
+        helpButton.target = self
+        helpButton.action = #selector(showTour)
+        helpButton.toolTip = "Show me round"
+        helpButton.iconOnly = true
+        weather.onChange = { [weak self] in self?.refreshWeatherPanel() }
 
         scene.onEdit = { [weak self] before, after in self?.edited(from: before, to: after) }
         scene.onSelect = { [weak self] _ in self?.decorPanel?.refresh() }
@@ -145,11 +165,12 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
             case .done: if self?.decorating == true { self?.toggleDecorate() }
             }
         }
-        scene.onOverviewChange = { [weak self] on in self?.overviewButton.isOn = on }
+        scene.onOverviewChange = { [weak self] on in self?.mapButton.isOn = on }
         scene.spiderName = spiderName
         glass = fitted(glass)
         window.setContentSize(size(forGlass: glass))
         window.minSize = size(forGlass: HabitatController.minGlass)
+        fitButtons()
         root.needsLayout = true
     }
 
@@ -175,6 +196,8 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     /// The decorating panel, if it has been made.
     private var decorPanel: DecorPanel?
+    var decorPanelIfBuilt: DecorPanel? { decorPanel?.built == true ? decorPanel : nil }
+    func decorPanelRefresh() { decorPanel?.refresh() }
 
     /// The decorating panel: made, and built, the first time it is wanted.
     private var panel: DecorPanel {
@@ -276,6 +299,8 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     }
 
     func windowDidResize(_ notification: Notification) {
+        fitButtons()
+        tour?.windowResized()
         root.needsLayout = true
         root.layoutSubtreeIfNeeded()
         UserDefaults.standard.set([Double(glass.width), Double(glass.height)], forKey: HabitatController.glassKey)
@@ -301,7 +326,7 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     // MARK: Toolbar
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.flexibleSpace, .habitatTitle, .flexibleSpace, .habitatWeather, .habitatFeed, .habitatOverview, .habitatDecorate, .habitatLetOut]
+        [.habitatGetAbout, .flexibleSpace, .habitatTitle, .flexibleSpace, .habitatCare, .habitatDecorate, .habitatHelp]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -310,16 +335,27 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         let item = NSToolbarItem(itemIdentifier: id)
+        func group(_ views: [NSView]) -> NSView {
+            let g = NSStackView(views: views)
+            g.spacing = 6
+            return g
+        }
         switch id {
         case .habitatTitle: item.view = titleView
-        case .habitatWeather: item.view = weatherButton; item.label = "Weather"
-        case .habitatFeed: item.view = feedButton; item.label = "Feed"
-        case .habitatOverview: item.view = overviewButton; item.label = "Overview"
+        case .habitatGetAbout: item.view = group([letOutButton, mapButton]); item.label = "Let Out and Map"
+        case .habitatCare: item.view = group([feedButton, weatherButton]); item.label = "Feed and Weather"
         case .habitatDecorate: item.view = decorateButton; item.label = "Decorate"
-        case .habitatLetOut: item.view = letOutButton; item.label = "Let Out"
+        case .habitatHelp: item.view = helpButton; item.label = "Help"
         default: return nil
         }
         return item
+    }
+
+    /// Words on the buttons while there is room for them, just their
+    /// pictures when the window is narrow (their tips still say).
+    private func fitButtons() {
+        let compact = window.frame.width < 960
+        for b in [letOutButton, mapButton, feedButton, weatherButton, decorateButton] where b.compact != compact { b.compact = compact }
     }
 
     // MARK: Actions
@@ -350,8 +386,55 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
             guard let self else { return }
             self.panel.isHidden = !self.decorating
             self.scene.syncToScreen()
-            if self.decorating { self.window.makeFirstResponder(self.scene) }
+            if self.decorating {
+                self.window.makeFirstResponder(self.scene)
+                // The first time: how decorating works.
+                if !HabitatTour.seen(.decorating), !HabitatTour.suppressed { self.startTour(.decorating) }
+            }
         })
+    }
+
+    // MARK: The tour
+
+    /// The tour for what is showing: the tank's, or decorating's.
+    @objc func showTour() {
+        startTour(decorating ? .decorating : .tank)
+    }
+
+    /// The tank's tour, if it hasn't been seen: once the tank is open and
+    /// the spider has had a moment to come in.
+    func maybeStartTour() {
+        guard !HabitatTour.seen(.tank), !HabitatTour.suppressed else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
+            guard let self, self.window.isVisible, !self.window.isMiniaturized, self.tour == nil,
+                  !HabitatTour.seen(.tank) else { return }
+            self.startTour(.tank)
+        }
+    }
+
+    /// Something in view picked, for the tour to show what can be done
+    /// to it: the thing nearest the middle of the glass.
+    func pickSomethingToShow() {
+        let vis = scene.visibleWorld
+        let mid = CGPoint(x: vis.midX, y: vis.midY)
+        let pick = scene.habitat.items
+            .filter { vis.contains(CGPoint(x: $0.rect.midX, y: $0.rect.midY)) && !$0.kind.isBacking }
+            .min { hypot($0.rect.midX - mid.x, $0.rect.midY - mid.y) < hypot($1.rect.midX - mid.x, $1.rect.midY - mid.y) }
+        if let pick, scene.selected != pick.id { scene.select(pick.id) }
+    }
+
+    func startTour(_ k: HabitatTour.Kind) {
+        guard tour == nil, window.isVisible else { return }
+        weatherPopover?.performClose(nil)
+        if scene.overviewOpen { scene.showOverview(false) }
+        scene.select(nil)
+        let t = HabitatTour(kind: k, controller: self)
+        t.onFinish = { [weak self] in
+            self?.tour = nil
+            if let self { self.window.makeFirstResponder(self.scene) }
+        }
+        tour = t
+        t.start()
     }
 
     @objc private func showFeedMenu() {
@@ -397,9 +480,9 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     /// Tools only: the decorating panel at a tab.
     func debugShowTab(_ i: Int) { panel.debugShowTab(i) }
     /// Tools only: the Add tab showing one part of it.
-    func debugShowShelf(_ s: HabitatObjectDefinition.Shelf?) { debugShowTab(1); panel.showShelf(s) }
-    func debugSearch(_ q: String) { debugShowTab(1); panel.debugSearch(q) }
-    func debugSuits(_ on: Bool) { debugShowTab(1); panel.debugSuits(on) }
+    func debugShowShelf(_ s: HabitatObjectDefinition.Shelf?) { debugShowTab(0); panel.showShelf(s) }
+    func debugSearch(_ q: String) { debugShowTab(0); panel.debugSearch(q) }
+    func debugSuits(_ on: Bool) { debugShowTab(0); panel.debugSuits(on) }
 
     // MARK: Editing
 
@@ -445,28 +528,30 @@ final class HabitatController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     }
 
     func loadPreset(_ p: Habitat.Preset) {
+        currentSaveID = nil
         scene.replace(with: Habitat.preset(p, world: scene.habitat.size), fade: true)
     }
 
     func shuffle() {
         // Half the time in the scenery it has, half the time somewhere new.
+        currentSaveID = nil
         scene.replace(with: Habitat.surprise(world: scene.habitat.size, biome: Bool.random() ? scene.habitat.biome : nil), fade: true)
     }
 
     func clearAll() {
         var h = scene.habitat
         h.items = []
+        currentSaveID = nil
         scene.replace(with: h, fade: true)
     }
 }
 
 extension NSToolbarItem.Identifier {
     static let habitatTitle = NSToolbarItem.Identifier("habitat.title")
-    static let habitatFeed = NSToolbarItem.Identifier("habitat.feed")
+    static let habitatGetAbout = NSToolbarItem.Identifier("habitat.getAbout")
+    static let habitatCare = NSToolbarItem.Identifier("habitat.care")
     static let habitatDecorate = NSToolbarItem.Identifier("habitat.decorate")
-    static let habitatLetOut = NSToolbarItem.Identifier("habitat.letOut")
-    static let habitatWeather = NSToolbarItem.Identifier("habitat.weather")
-    static let habitatOverview = NSToolbarItem.Identifier("habitat.overview")
+    static let habitatHelp = NSToolbarItem.Identifier("habitat.help")
 }
 
 // MARK: - The weather controls
@@ -495,7 +580,7 @@ extension HabitatController {
         shownKind = k
         weatherButton.set(title: "Weather", symbol: k.symbol)
         weatherButton.toolTip = "\(weather.summary()) — click to change the weather"
-        decorPanel?.refreshWeather()
+        refreshWeatherPanel()
         guard !first else { return }
         let line = k.arriving
         if titleView.status == nil || titleView.status == weatherNotice {
@@ -509,11 +594,39 @@ extension HabitatController {
         }
     }
 
-    @objc func showWeatherMenu() {
-        let menu = NSMenu()
-        fillWeatherMenu(menu)
-        let below = weatherButton.isFlipped ? weatherButton.bounds.height + 4 : -4
-        menu.popUp(positioning: nil, at: CGPoint(x: 0, y: below), in: weatherButton)
+    /// The weather's panel, dropping down from its button (or put away,
+    /// if it is out).
+    @objc func showWeatherPanel() {
+        if let p = weatherPopover, p.isShown { p.performClose(nil); return }
+        let panel = weatherPanel ?? WeatherPanel(controller: self)
+        weatherPanel = panel
+        panel.refresh()
+        let p = weatherPopover ?? {
+            let p = NSPopover()
+            let vc = NSViewController()
+            vc.view = panel
+            p.contentViewController = vc
+            p.behavior = .transient
+            p.animates = true
+            p.appearance = NSAppearance(named: .darkAqua)
+            weatherPopover = p
+            return p
+        }()
+        p.contentSize = panel.fittingSize
+        let anchor: NSView = weatherButton.window != nil ? weatherButton : scene
+        let rect = anchor === scene ? CGRect(x: scene.bounds.maxX - 40, y: scene.bounds.maxY - 4, width: 1, height: 1) : anchor.bounds
+        p.show(relativeTo: rect, of: anchor, preferredEdge: .maxY)
+    }
+
+    var weatherPopoverWindow: NSWindow? { weatherPopover?.isShown == true ? weatherPanel?.window : nil }
+
+    /// The weather's panel back in step (and the right size for what it
+    /// shows now).
+    func refreshWeatherPanel() {
+        guard let panel = weatherPanel, let p = weatherPopover, p.isShown else { return }
+        panel.refresh()
+        let size = panel.fittingSize
+        if p.contentSize != size { p.contentSize = size }
     }
 
     /// The weather's menu: what it is doing; comes and goes, like outside,
@@ -559,7 +672,7 @@ extension HabitatController {
         let now = NSMenuItem(title: "Right Now", action: nil, keyEquivalent: "")
         let nowMenu = NSMenu()
         for (i, k) in WeatherKind.allCases.enumerated() where k != .clear {
-            let it = NSMenuItem(title: k.summon, action: #selector(weatherBrought(_:)), keyEquivalent: "")
+            let it = NSMenuItem(title: k.summon, action: #selector(weatherBroughtItem(_:)), keyEquivalent: "")
             it.target = self
             it.tag = i
             it.image = NSImage(systemSymbolName: k.symbol, accessibilityDescription: nil)
@@ -572,7 +685,7 @@ extension HabitatController {
         }
         _ = item("Clear the Sky", #selector(weatherClear))
         menu.addItem(.separator())
-        _ = item("Weather Settings…", #selector(showWeatherSettings), tip: "Pick what weather comes to this scenery, and how often")
+        _ = item("Weather Settings…", #selector(showWeatherPanel), tip: "Pick what weather comes to this scenery, and how often")
     }
 
     @objc private func weatherModeChosen(_ sender: NSMenuItem) {
@@ -582,7 +695,7 @@ extension HabitatController {
     func setWeatherMode(_ m: WeatherSettings.Mode) {
         if m == .outside, !outsideAvailable() { enableOutside?() }
         weather.settings.mode = m
-        decorPanel?.refreshWeather()
+        refreshWeatherPanel()
     }
 
     @objc private func weatherKept(_ sender: NSMenuItem) {
@@ -593,29 +706,23 @@ extension HabitatController {
     func keepWeather(_ k: WeatherKind) {
         weather.settings.always = k
         weather.settings.mode = .always
-        decorPanel?.refreshWeather()
+        refreshWeatherPanel()
     }
 
-    @objc private func weatherBrought(_ sender: NSMenuItem) {
+    @objc func weatherBroughtItem(_ sender: NSMenuItem) {
         guard WeatherKind.allCases.indices.contains(sender.tag) else { return }
         weather.bring(WeatherKind.allCases[sender.tag])
-        decorPanel?.refreshWeather()
+        refreshWeatherPanel()
     }
 
     @objc func weatherChangeNow() {
         weather.changeNow()
-        decorPanel?.refreshWeather()
+        refreshWeatherPanel()
     }
 
     @objc func weatherClear() {
         weather.bring(.clear)
-        decorPanel?.refreshWeather()
-    }
-
-    /// The decorating panel, open at its Weather tab.
-    @objc func showWeatherSettings() {
-        if !decorating { toggleDecorate() }
-        panel.debugShowTab(3)
+        refreshWeatherPanel()
     }
 }
 
@@ -777,6 +884,11 @@ final class HabitatRootView: NSView {
 final class HabitatButton: NSButton {
     var isOn = false { didSet { needsDisplay = true; updateTint() } }
     var destructive = false { didSet { updateTint() } }
+    /// Just its picture (when the window is narrow).
+    var compact = false { didSet { updateTint() } }
+    /// Only ever its picture: a round button.
+    var iconOnly = false { didSet { updateTint() } }
+    private var showsWords: Bool { !compact && !iconOnly }
     private var hovering = false { didSet { needsDisplay = true } }
     private var pressed = false { didSet { needsDisplay = true } }
     private let hasMenu: Bool
@@ -807,18 +919,22 @@ final class HabitatButton: NSButton {
     }
 
     override var intrinsicContentSize: NSSize {
+        if !showsWords && !hasMenu { return NSSize(width: 32, height: 30) }
         let s = super.intrinsicContentSize
-        return NSSize(width: s.width + 24, height: 30)
+        return NSSize(width: s.width + (showsWords ? 24 : 18), height: 30)
     }
 
     private func updateTint() {
         let col: NSColor = isOn ? .white : (destructive ? .systemRed : NSColor(white: 1, alpha: 0.9))
         contentTintColor = col
         // A menu button carries a small chevron after its word.
-        attributedTitle = NSAttributedString(string: " " + label + (hasMenu ? "  ▾" : ""), attributes: [
+        let words = showsWords ? " " + label + (hasMenu ? "  ▾" : "") : (hasMenu ? " ▾" : "")
+        imagePosition = words.isEmpty ? .imageOnly : .imageLeading
+        attributedTitle = NSAttributedString(string: words, attributes: [
             .font: font ?? .systemFont(ofSize: 12.5),
             .foregroundColor: col,
         ])
+        invalidateIntrinsicContentSize()
     }
 
     override var isEnabled: Bool { didSet { alphaValue = isEnabled ? 1 : 0.4 } }
@@ -1021,28 +1137,15 @@ final class HabitatNameField: NSTextField {
 
 // MARK: - The decorating panel
 
-/// Down the side while decorating: the scenery, things to add, ready-made
-/// layouts, and — when something in the tank is picked — what can be done
-/// to it.
+/// Down the side while decorating, in the order it is used: things to add,
+/// the scenery behind the glass, and whole habitats — your own saved ones
+/// and ready-made ones. Under them, when something in the tank is picked,
+/// what can be done to it.
 final class DecorPanel: NSView {
     weak var controller: HabitatController?
-    private let tabs = NSSegmentedControl(labels: ["Scenery", "Add", "Layouts", "Weather"], trackingMode: .selectOne, target: nil, action: nil)
-    // The Weather tab.
-    private let weatherMode = NSSegmentedControl(labels: ["Comes & Goes", "Always", "Outside"], trackingMode: .selectOne, target: nil, action: nil)
-    private let weatherNow = NSTextField(labelWithString: "")
-    private let weatherNowIcon = NSImageView()
-    private var weatherNowRow = NSView()
-    private var weatherTiles: [(kind: WeatherKind, tile: TileButton)] = []
-    private var weatherGrid = NSView()
-    private var tilesBiome: Biome?
-    private var weatherListLabel = NSTextField(labelWithString: "")
-    private var weatherListNote = NSTextField(wrappingLabelWithString: "")
-    private let weatherReset = HabitatButton(title: "Back to Its Own", symbol: "arrow.counterclockwise")
-    private let paceSlider = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
-    private let amountSlider = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
-    private var paceRow = NSView(), amountRow = NSView()
-    private var outsideNote = NSTextField(wrappingLabelWithString: "")
-    private let outsideButton = HabitatButton(title: "Look Up the Weather Outside", symbol: "location")
+    static let tabNames = ["Add", "Scenery", "Habitats"]
+    enum Tab: Int { case add, scenery, habitats }
+    private let tabs = NSSegmentedControl(labels: DecorPanel.tabNames, trackingMode: .selectOne, target: nil, action: nil)
     private let scroll = NSScrollView()
     private var pages: [NSView] = []
     private var biomeTiles: [TileButton] = []
@@ -1080,8 +1183,19 @@ final class DecorPanel: NSView {
     private let nothingNote = NSTextField(labelWithString: "")
     /// The scenery the Add tab was last filtered for.
     private var filteredBiome: Biome?
+    // The Habitats tab: My Habitats, then the ready-made ones.
+    private let saveButton = HabitatButton(title: "Save This Habitat", symbol: "square.and.arrow.down")
+    private let saveNewButton = HabitatButton(title: "Save as New", symbol: "plus.square.on.square")
+    private let importButton = HabitatButton(title: "Import", symbol: "tray.and.arrow.down")
+    private let savedHost = NSStackView()
+    private var savedEmpty = NSTextField(wrappingLabelWithString: "")
+    private var savedCards: [SavedHabitatCard] = []
+    private var savedWidth: CGFloat = 0
+    private var libraryWatch: NSObjectProtocol?
 
     override var isFlipped: Bool { true }
+
+    deinit { if let w = libraryWatch { NotificationCenter.default.removeObserver(w) } }
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor(white: 0.13, alpha: 1).setFill()
@@ -1097,19 +1211,8 @@ final class DecorPanel: NSView {
     /// the spider with it.
     private(set) var built = false
 
-    /// The tiles' pictures, painted off the main thread and put on each tile
-    /// as it comes — the panel is there at once, and nothing waits on them.
-    private static let painter = DispatchQueue(label: "habitat.thumbnails", qos: .userInitiated)
-    /// `still`: whether the picture is still wanted when it is ready (the
-    /// weather tiles are painted afresh for each scenery).
-    private func paintLater(_ tile: TileButton, still: @escaping () -> Bool = { true }, _ paint: @escaping () -> NSImage) {
-        DecorPanel.painter.async {
-            let img = paint()
-            DispatchQueue.main.async { [weak tile] in
-                guard still() else { return }
-                tile?.setImage(img)
-            }
-        }
+    private func paintLater(_ tile: TileButton, _ paint: @escaping () -> NSImage) {
+        PanelKit.paintLater({ [weak tile] in tile?.setImage($0) }, paint)
     }
 
     func build() {
@@ -1123,6 +1226,9 @@ final class DecorPanel: NSView {
         tabs.target = self
         tabs.action = #selector(tabChanged)
         tabs.translatesAutoresizingMaskIntoConstraints = false
+        tabs.setToolTip("Plants, rocks, logs, shelters and more to put in the tank", forSegment: 0)
+        tabs.setToolTip("The backdrop behind the glass", forSegment: 1)
+        tabs.setToolTip("Save this habitat, go back to one you saved, or start from a ready-made one", forSegment: 2)
 
         let heading = NSTextField(labelWithString: "Decorate")
         heading.font = .systemFont(ofSize: 15, weight: .bold)
@@ -1136,7 +1242,7 @@ final class DecorPanel: NSView {
         let head = NSStackView(views: [heading, spacer, undoButton, redoButton])
         head.spacing = 6
 
-        pages = [scenePage(width: inner), addPage(width: inner), layoutPage(width: inner), weatherPage(width: inner)]
+        pages = [addPage(width: inner), scenePage(width: inner), habitatsPage(width: inner)]
         let doc = FlippedStack()
         doc.orientation = .vertical
         doc.alignment = .leading
@@ -1173,46 +1279,17 @@ final class DecorPanel: NSView {
         ])
         scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
         scroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        libraryWatch = NotificationCenter.default.addObserver(forName: HabitatLibrary.changed, object: nil, queue: .main) { [weak self] _ in
+            self?.reloadSaved()
+        }
         showPage(0)
         refresh()
     }
 
-    private func sectionLabel(_ s: String) -> NSTextField {
-        let l = NSTextField(labelWithString: s.uppercased())
-        l.font = .systemFont(ofSize: 10.5, weight: .semibold)
-        l.textColor = NSColor(white: 1, alpha: 0.5)
-        return l
-    }
-
-    private func note(_ s: String, width: CGFloat) -> NSTextField {
-        let n = NSTextField(wrappingLabelWithString: s)
-        n.font = .systemFont(ofSize: 11.5)
-        n.textColor = NSColor(white: 1, alpha: 0.6)
-        n.translatesAutoresizingMaskIntoConstraints = false
-        n.widthAnchor.constraint(equalToConstant: width).isActive = true
-        return n
-    }
-
-    /// Tiles in rows of `columns`.
+    private func sectionLabel(_ s: String) -> NSTextField { PanelKit.sectionLabel(s) }
+    private func note(_ s: String, width: CGFloat) -> NSTextField { PanelKit.note(s, width: width) }
     private func grid(_ tiles: [NSView], columns: Int, width: CGFloat, spacing: CGFloat = 8) -> NSView {
-        let rows = NSStackView()
-        rows.orientation = .vertical
-        rows.alignment = .leading
-        rows.spacing = spacing
-        let w = (width - spacing * CGFloat(columns - 1)) / CGFloat(columns)
-        var i = 0
-        while i < tiles.count {
-            let row = NSStackView()
-            row.spacing = spacing
-            for t in tiles[i..<min(i + columns, tiles.count)] {
-                t.translatesAutoresizingMaskIntoConstraints = false
-                t.widthAnchor.constraint(equalToConstant: w).isActive = true
-                row.addArrangedSubview(t)
-            }
-            rows.addArrangedSubview(row)
-            i += columns
-        }
-        return rows
+        PanelKit.grid(tiles, columns: columns, width: width, spacing: spacing)
     }
 
     private func page(_ views: [NSView]) -> NSStackView {
@@ -1233,7 +1310,7 @@ final class DecorPanel: NSView {
             paintLater(t) { HabitatArt.biomeThumbnail(b, size: thumb) }
             return t
         }
-        return page([note("The backdrop behind the glass. Everything in it moves — clouds, leaves, snow, fireflies.", width: width),
+        return page([note("The backdrop behind the glass. Everything in it moves — clouds, leaves, snow, fireflies. What’s in the tank stays where it is.", width: width),
                      grid(biomeTiles, columns: 2, width: width)])
     }
 
@@ -1278,7 +1355,7 @@ final class DecorPanel: NSView {
         nothingNote.font = .systemFont(ofSize: 12)
         nothingNote.textColor = NSColor(white: 1, alpha: 0.5)
         nothingNote.isHidden = true
-        var views: [NSView] = [note("Click something to add it, then drag it into place. Pieces click together where they meet (hold ⌥ to place freely).", width: width),
+        var views: [NSView] = [note("Click something to drop it into the tank, then drag it where you want it.", width: width),
                                searchField, filters, nothingNote]
         addSections = Shelf.allCases.map { shelf in
             let header = sectionLabel(shelf.heading)
@@ -1381,211 +1458,100 @@ final class DecorPanel: NSView {
         nothingNote.isHidden = shown
     }
 
-    private func layoutPage(width: CGFloat) -> NSView {
-        // Each the whole tank, end to end, so a row each.
+    // MARK: Habitats
+
+    private func habitatsPage(width: CGFloat) -> NSView {
+        savedWidth = width
+        saveButton.target = controller
+        saveButton.action = #selector(HabitatController.saveHabitatAction)
+        saveButton.toolTip = "Keep a copy of the tank as it is now, to come back to (⌘S)"
+        saveNewButton.target = controller
+        saveNewButton.action = #selector(HabitatController.saveHabitatAsNewAction)
+        saveNewButton.toolTip = "Keep it as another habitat, leaving the one it came from as it was"
+        importButton.target = controller
+        importButton.action = #selector(HabitatController.importHabitatAction)
+        importButton.iconOnly = true
+        importButton.toolTip = "Bring in a habitat someone shared with you (a .\(HabitatLibrary.fileExtension) file)"
+        let saveRow = NSStackView(views: [saveButton, saveNewButton, importButton])
+        saveRow.spacing = 8
+        saveRow.distribution = .fill
+        // (Save takes what room there is.)
+        saveButton.setContentHuggingPriority(NSLayoutConstraint.Priority(1), for: .horizontal)
+        saveNewButton.setContentHuggingPriority(.required, for: .horizontal)
+        importButton.setContentHuggingPriority(.required, for: .horizontal)
+        saveRow.translatesAutoresizingMaskIntoConstraints = false
+        saveRow.widthAnchor.constraint(equalToConstant: width).isActive = true
+        savedHost.orientation = .vertical
+        savedHost.alignment = .leading
+        savedHost.spacing = 8
+        savedEmpty = note("Nothing saved yet. The tank always stays as you leave it — save it here too, and you can try something new and come back to this whenever you like.", width: width)
+
+        // Ready-made: each the whole tank, end to end, so a row each.
         let world = controller?.scene.habitat.size ?? HabitatLayout.defaultWorld
-        let thumb = CGSize(width: width - 12, height: ((width - 12) * min(world.height / world.width, 0.45)).rounded())
+        let thumb = CGSize(width: width - 12, height: ((width - 12) * min(world.height / world.width, 0.36)).rounded())
         let tiles = Habitat.Preset.allCases.map { p -> NSView in
             let t = TileButton(image: NSImage(size: thumb), title: p.label, subtitle: nil, imageSize: thumb)
             t.onClick = { [weak self] in self?.controller?.loadPreset(p) }
+            t.toolTip = "Start again from \(p.label) (you can undo it)"
             paintLater(t) { HabitatArt.habitatThumbnail(Habitat.preset(p, world: world), size: thumb) }
             return t
         }
         let shuffle = HabitatButton(title: "Surprise Me", symbol: "dice")
         shuffle.target = self
         shuffle.action = #selector(shuffleTapped)
-        let clear = HabitatButton(title: "Clear All", symbol: "trash")
+        shuffle.toolTip = "A new tank, laid out at random"
+        let clear = HabitatButton(title: "Empty the Tank", symbol: "trash")
         clear.destructive = true
         clear.target = self
         clear.action = #selector(clearTapped)
-        let row = NSStackView(views: [shuffle, clear])
-        row.distribution = .fillEqually
-        row.spacing = 8
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.widthAnchor.constraint(equalToConstant: width).isActive = true
-        return page([note("Start from a ready-made tank, laid out end to end. You can undo it if you liked yours better.", width: width),
-                     grid(tiles, columns: 1, width: width), row])
+        clear.toolTip = "Take everything out (you can undo it)"
+        let p = page([sectionLabel("My Habitats"), saveRow, savedEmpty, savedHost,
+                      sectionLabel("Start Afresh"), PanelKit.row([shuffle, clear], width: width),
+                      note("Or start from a ready-made tank — save yours first if you want to keep it.", width: width),
+                      grid(tiles, columns: 1, width: width)])
+        p.setCustomSpacing(20, after: savedHost)
+        p.setCustomSpacing(20, after: savedEmpty)
+        reloadSaved()
+        return p
     }
 
-    private func weatherPage(width: CGFloat) -> NSView {
-        weatherMode.segmentDistribution = .fillEqually
-        weatherMode.target = self
-        weatherMode.action = #selector(weatherModeChanged)
-        weatherMode.translatesAutoresizingMaskIntoConstraints = false
-        weatherMode.widthAnchor.constraint(equalToConstant: width).isActive = true
-        weatherMode.setToolTip("Weather rolls in now and then, and clears again", forSegment: 0)
-        weatherMode.setToolTip("Keep one kind of weather for good", forSegment: 1)
-        weatherMode.setToolTip("The weather where you are", forSegment: 2)
-
-        weatherNow.font = .systemFont(ofSize: 12.5, weight: .semibold)
-        weatherNow.textColor = NSColor(white: 1, alpha: 0.92)
-        weatherNow.lineBreakMode = .byTruncatingTail
-        weatherNowIcon.contentTintColor = NSColor(white: 1, alpha: 0.85)
-        weatherNowIcon.translatesAutoresizingMaskIntoConstraints = false
-        weatherNowIcon.widthAnchor.constraint(equalToConstant: 18).isActive = true
-        let nowLine = NSStackView(views: [weatherNowIcon, weatherNow])
-        nowLine.spacing = 6
-
-        let change = HabitatButton(title: "Something Else", symbol: "shuffle")
-        change.target = controller
-        change.action = #selector(HabitatController.weatherChangeNow)
-        change.toolTip = "What's in clears, and something else comes"
-        let clear = HabitatButton(title: "Clear the Sky", symbol: "sun.min")
-        clear.target = controller
-        clear.action = #selector(HabitatController.weatherClear)
-        let buttons = NSStackView(views: [change, clear])
-        buttons.distribution = .fillEqually
-        buttons.spacing = 8
-        buttons.translatesAutoresizingMaskIntoConstraints = false
-        buttons.widthAnchor.constraint(equalToConstant: width).isActive = true
-        weatherNowRow = buttons
-
-        weatherListLabel = sectionLabel("")
-        weatherListNote = note("", width: width)
-        // Clear skies go last: they only show while keeping one kind.
-        let kinds = WeatherKind.allCases.filter { $0 != .clear } + [.clear]
-        let tileW = (width - 16) / 3
-        let thumb = CGSize(width: tileW - 12, height: ((tileW - 12) * HabitatLayout.aspect).rounded())
-        weatherTiles = kinds.map { k in
-            let t = TileButton(image: NSImage(size: thumb), title: k.label, subtitle: nil, imageSize: thumb, titleSize: 10)
-            t.onClick = { [weak self] in self?.weatherTileClicked(k) }
-            t.toolTip = k.blurb
-            return (k, t)
+    /// My Habitats laid out afresh, from the library.
+    private func reloadSaved() {
+        for v in savedHost.arrangedSubviews { savedHost.removeArrangedSubview(v); v.removeFromSuperview() }
+        savedCards = HabitatLibrary.all().map { s in
+            let card = SavedHabitatCard(s, width: savedWidth)
+            card.translatesAutoresizingMaskIntoConstraints = false
+            card.widthAnchor.constraint(equalToConstant: savedWidth).isActive = true
+            card.onLoad = { [weak self] in self?.controller?.loadSaved(id: s.id) }
+            card.onMenu = { [weak self] from in self?.controller?.showSavedMenu(id: s.id, from: from) }
+            savedHost.addArrangedSubview(card)
+            return card
         }
-        weatherGrid = grid(weatherTiles.map { $0.tile }, columns: 3, width: width)
-
-        weatherReset.target = self
-        weatherReset.action = #selector(weatherResetTapped)
-        weatherReset.toolTip = "Only the weather that comes to this scenery by itself"
-
-        func sliderRow(_ title: String, low: String, high: String, _ s: NSSlider, action: Selector) -> NSView {
-            let label = NSTextField(labelWithString: title)
-            label.font = .systemFont(ofSize: 12)
-            label.textColor = NSColor(white: 1, alpha: 0.78)
-            s.controlSize = .small
-            s.isContinuous = true
-            s.target = self
-            s.action = action
-            s.translatesAutoresizingMaskIntoConstraints = false
-            s.widthAnchor.constraint(equalToConstant: width).isActive = true
-            func caption(_ t: String) -> NSTextField {
-                let c = NSTextField(labelWithString: t)
-                c.font = .systemFont(ofSize: 10)
-                c.textColor = NSColor(white: 1, alpha: 0.45)
-                return c
-            }
-            let gap = NSView()
-            gap.setContentHuggingPriority(.defaultLow, for: .horizontal)
-            let ends = NSStackView(views: [caption(low), gap, caption(high)])
-            ends.translatesAutoresizingMaskIntoConstraints = false
-            ends.widthAnchor.constraint(equalToConstant: width).isActive = true
-            let col = NSStackView(views: [label, s, ends])
-            col.orientation = .vertical
-            col.alignment = .leading
-            col.spacing = 3
-            return col
-        }
-        paceRow = sliderRow("How Often It Changes", low: "Slowly", high: "Often", paceSlider, action: #selector(paceChanged))
-        amountRow = sliderRow("How Much Weather", low: "Now and then", high: "Most of the time", amountSlider, action: #selector(amountChanged))
-
-        outsideNote = note("", width: width)
-        outsideButton.target = self
-        outsideButton.action = #selector(outsideTapped)
-
-        return page([note("The tank has weather of its own, and your spider feels it: rain soaks it, snow settles on it, the wind blows it about — and it runs for cover when it pours.", width: width),
-                     weatherMode, nowLine, weatherNowRow, weatherListLabel, weatherListNote, weatherGrid, weatherReset,
-                     paceRow, amountRow, outsideNote, outsideButton])
+        savedEmpty.isHidden = !savedCards.isEmpty
+        savedHost.isHidden = savedCards.isEmpty
+        refreshSaved()
     }
 
-    /// The Weather tab, back in step with the tank's weather.
-    func refreshWeather() {
-        guard let c = controller, !weatherTiles.isEmpty else { return }
-        let s = c.weather.settings
-        let b = c.scene.habitat.biome
-        weatherMode.selectedSegment = s.mode == .changing ? 0 : (s.mode == .always ? 1 : 2)
-        weatherNow.stringValue = c.weather.summary()
-        weatherNowIcon.image = NSImage(systemSymbolName: c.weather.current.symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 13, weight: .semibold))
-        // The tiles show this scenery, with each kind of weather on it.
-        if tilesBiome != b, pages.count > 3, !pages[3].isHidden {
-            tilesBiome = b
-            for (k, t) in weatherTiles {
-                let size = t.imageSize
-                paintLater(t, still: { [weak self] in self?.tilesBiome == b }) { WeatherArt.thumbnail(k, biome: b, size: size) }
-            }
-        }
-        let list = s.rotation(b)
-        for (k, t) in weatherTiles {
-            switch s.mode {
-            case .changing:
-                t.isHidden = k == .clear
-                t.selected = list.contains(k)
-                t.alphaValue = list.contains(k) ? 1 : 0.45
-                t.toolTip = list.contains(k) ? "\(k.blurb) — comes to the \(b.label). Click to take it out." : "\(k.blurb). Click to have it come to the \(b.label) too."
-            case .always:
-                t.isHidden = false
-                t.selected = s.always == k
-                t.alphaValue = 1
-                t.toolTip = "\(k.blurb). Click to keep it that way."
-            case .outside:
-                t.isHidden = true
-            }
-        }
-        let changing = s.mode == .changing
-        weatherGrid.isHidden = s.mode == .outside
-        weatherListLabel.isHidden = s.mode == .outside
-        weatherListNote.isHidden = s.mode == .outside
-        weatherListLabel.stringValue = (changing ? "Weather in the \(b.label)" : "Keep It…").uppercased()
-        weatherListNote.stringValue = changing
-            ? "Lit up: comes to the \(b.label) now and then. Click to add or take one out — snow in the desert, if you like. Clear skies come in between."
-            : "Click one to keep it that way."
-        weatherReset.isHidden = !changing
-        weatherReset.isEnabled = s.isCustom(b)
-        weatherReset.set(title: "Back to the \(b.label)’s Own", symbol: "arrow.counterclockwise")
-        weatherNowRow.isHidden = !changing
-        paceRow.isHidden = !changing
-        amountRow.isHidden = !changing
-        if abs(paceSlider.doubleValue - Double(s.pace)) > 0.001 { paceSlider.doubleValue = Double(s.pace) }
-        if abs(amountSlider.doubleValue - Double(s.amount)) > 0.001 { amountSlider.doubleValue = Double(s.amount) }
-        let available = c.outsideAvailable()
-        outsideNote.isHidden = s.mode != .outside
-        outsideButton.isHidden = s.mode != .outside || available
-        outsideNote.stringValue = available
-            ? "The tank has the weather where you are — rain when it rains, snow when it snows. It’s looked up every twenty minutes, from Open-Meteo, going by roughly where your internet connection is. " + (c.outsideSummary() ?? "Looking it up…")
-            : "To follow the weather where you are, the app looks it up every twenty minutes (from Open-Meteo, going by roughly where your internet connection is). That’s off at the moment."
-    }
-
-    @objc private func weatherModeChanged() {
-        let m: WeatherSettings.Mode = weatherMode.selectedSegment == 1 ? .always : (weatherMode.selectedSegment == 2 ? .outside : .changing)
-        if m == .outside {
-            // (Only once it is allowed to look.)
-            if controller?.outsideAvailable() == true { controller?.setWeatherMode(.outside) }
-            else { controller?.weather.settings.mode = .outside; refreshWeather() }
+    /// Which of My Habitats is in the tank, and whether it has been changed
+    /// since: the Save button says what it will do.
+    private func refreshSaved() {
+        guard let c = controller else { return }
+        let current = c.currentSaved
+        for card in savedCards { card.current = card.saved.id == current?.saved.id }
+        if let cur = current, cur.changed {
+            saveButton.set(title: "Save Changes", symbol: "square.and.arrow.down")
+            saveButton.toolTip = "Keep the changes in “\(cur.saved.name)” (⌘S)"
+            saveNewButton.isHidden = false
         } else {
-            controller?.setWeatherMode(m)
+            saveButton.set(title: current == nil ? "Save This Habitat" : "Saved", symbol: current == nil ? "square.and.arrow.down" : "checkmark")
+            saveButton.toolTip = current == nil ? "Keep a copy of the tank as it is now, to come back to (⌘S)" : "“\(current!.saved.name)” is saved just as it is"
+            saveNewButton.isHidden = current == nil
         }
+        saveButton.isEnabled = current?.changed ?? true
     }
 
-    private func weatherTileClicked(_ k: WeatherKind) {
-        guard let c = controller else { return }
-        switch c.weather.settings.mode {
-        case .changing:
-            c.weather.settings.toggle(k, in: c.scene.habitat.biome)
-        case .always, .outside:
-            c.keepWeather(k)
-        }
-        refreshWeather()
-    }
-
-    @objc private func weatherResetTapped() {
-        guard let c = controller else { return }
-        c.weather.settings.reset(c.scene.habitat.biome)
-        refreshWeather()
-    }
-
-    @objc private func paceChanged() { controller?.weather.settings.pace = CGFloat(paceSlider.doubleValue) }
-    @objc private func amountChanged() { controller?.weather.settings.amount = CGFloat(amountSlider.doubleValue) }
-    @objc private func outsideTapped() { controller?.setWeatherMode(.outside) }
+    /// Tools only: the Habitats tab.
+    func debugShowHabitats() { debugShowTab(Tab.habitats.rawValue) }
 
     private func buildInspector(width: CGFloat) {
         inspector.orientation = .vertical
@@ -1662,7 +1628,8 @@ final class DecorPanel: NSView {
         r1.widthAnchor.constraint(equalToConstant: width - 24).isActive = true
         hint.font = .systemFont(ofSize: 11.5)
         hint.textColor = NSColor(white: 1, alpha: 0.55)
-        hint.stringValue = "Click anything in the tank to move it; drag a corner to resize it. Pieces click together where they meet (hold ⌥ to place freely), and what is fastened to a thing moves with it. Double-click a door or a window to open or shut it. Drag the bare glass to look round the tank, or use the Overview to move things a long way. ⌘Z undoes."
+        hint.stringValue = "Click something in the tank to move it, resize it or take it out."
+        hint.toolTip = "Drag a corner to resize. Pieces click together where they meet (hold ⌥ to place freely). Double-click a door to open it. Drag the bare glass to look round the tank. ⌘Z undoes."
         hint.translatesAutoresizingMaskIntoConstraints = false
         hint.widthAnchor.constraint(equalToConstant: width - 24).isActive = true
         for v in [top, supportLine, supportButton, openButton, sizeRow, r1, hint] as [NSView] { inspector.addArrangedSubview(v) }
@@ -1670,15 +1637,26 @@ final class DecorPanel: NSView {
 
     @objc private func tabChanged() { showPage(tabs.selectedSegment) }
 
-    /// Tools only: shows a tab.
+    /// Shows a tab (tools, and the tour).
     func debugShowTab(_ i: Int) {
         tabs.selectedSegment = i
         showPage(i)
     }
 
+    func showTab(_ t: Tab) { debugShowTab(t.rawValue) }
+
+    /// Where a tab is, in the panel (for the tour to point at).
+    func tabRect(_ t: Tab) -> CGRect {
+        let w = tabs.bounds.width / CGFloat(DecorPanel.tabNames.count)
+        return convert(CGRect(x: w * CGFloat(t.rawValue), y: 0, width: w, height: tabs.bounds.height), from: tabs)
+    }
+    var inspectorView: NSView { inspector }
+    var undoView: NSView { undoButton }
+    var savedArea: NSView { saveButton.superview ?? saveButton }
+
     private func showPage(_ i: Int) {
         for (k, p) in pages.enumerated() { p.isHidden = k != i }
-        if i == 3 { refreshWeather() }
+        if i == Tab.habitats.rawValue { refreshSaved() }
         scroll.documentView?.scroll(.zero)
         scroll.reflectScrolledClipView(scroll.contentView)
     }
@@ -1686,10 +1664,10 @@ final class DecorPanel: NSView {
     /// Back in step with the tank.
     func refresh() {
         guard built, let c = controller else { return }
-        refreshWeather()
         let h = c.scene.habitat
         for (b, t) in zip(Biome.allCases, biomeTiles) { t.selected = b == h.biome }
         if filteredBiome != h.biome, !addSections.isEmpty { refilter() }
+        if pages.count > 2, !pages[Tab.habitats.rawValue].isHidden { refreshSaved() }
         undoButton.isEnabled = c.canUndo
         redoButton.isEnabled = c.canRedo
         let item = c.scene.selected.flatMap { id in h.items.first { $0.id == id } }
