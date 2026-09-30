@@ -798,6 +798,109 @@ only after a very long while might it nod off. When the video ends it
 carries on as before. (A window is counted as full screen when it covers
 the display, or all but the strip a notch takes.)
 
+A window maximized to fill its screen — zoomed, or dragged to the top of
+the screen and tiled to fill it, margins or not — counts just the same,
+so long as it is the front window there: its edges are the screen's, and
+there is nothing else on that screen to see. The menu bar is still showing
+over it, so the ceiling the spider walks is the menu bar's lower lip, and
+with a Dock that stays shown the floor is the Dock's top. A spider on the
+window as it grows to fill the screen goes with it and ends up on the
+screen's rim — never pushed off the bottom, or left on the window's
+underside. With another window brought in front of it the screen is an
+ordinary one again, but the maximized window still has no edges of its own
+to walk: only the screen's, and the windows in front.
+
+## Web pages
+
+A browser that fills its screen — zoomed to fill it, or gone full screen —
+leaves no desktop and no other windows to climb, so the spider climbs the
+page instead: along the tops of cards, bars, boxes and dividers, under
+them, and up their sides. It only does this when a browser window covers
+its screen (within a few points of it); a smaller browser window is just a
+window. Safari, Chrome, Brave, Arc, Edge, Firefox, Vivaldi, Opera, Orion,
+Zen, DuckDuckGo and the like all count.
+
+It goes by how the page *looks*, never what it says. About every second and
+a half it takes a picture of the browser window (off the main thread) and
+checks a fingerprint of it for changes; only when something has changed is
+the picture read (`PageLedges.swift`), for two things together:
+
+- **a line** — a straight run where the colour changes sharply and as one
+  step (the edge of a card, a bar, a box; a soft shadow along it is fine), or
+  a thin line drawn across (a divider), and whatever it is the edge of even
+  along it: the bottoms of a word's letters are not a line, and nor are the
+  edges of things in a photograph, which come and go along their length;
+- **room** — on one side of it, smooth open space (a flat colour, a gentle
+  gradient, a blurred photo behind frosted glass — never the strokes of text
+  or an icon) as deep as the spider is tall, for a good stretch along it.
+  Room that ends at another line all along — the inside of a text field, the
+  gap between two cards — is a slot, and needs more headroom.
+
+A line with room above is a ledge to stand on, with room below one to hang
+from, and an upright one with room beside it a wall. Where they meet at a
+corner (a rounded one, or inside a square one) they join up, so it walks
+over a card and round its corner down the side as it does round a window.
+The browser's own bars are left alone: the page starts under the lowest line
+right across the window near the top — whose underside is a ceiling to hang
+from.
+
+Each ledge keeps its name while it is found again (a pixel off, a little
+longer), so re-reading a page leaves a spider standing still. Clicking
+through to another page (or opening a panel, switching a tab) is noticed —
+a click in it, the window's title changing, or just the picture changing —
+and read at once; a ledge that has gone from under it, it catches itself on
+a line shot up to the ceiling. When the whole page moves by the same amount
+(a bar above it closing, the keys scrolling it), ledges that moved with it
+keep their names and carry it along.
+
+Scrolling is followed as it happens. While a page scrolls, every ledge on
+it is put aside but the one the spider is on, and that one is followed: a
+small patch round its feet, looked at thirty times a second and matched
+against the last, with the scroll's own distances filling in between (how
+far the page moves for a point of scrolling is learnt as it goes — nothing,
+over a part that stays put, like Gmail's header). It rides the ledge up or
+down; if it goes out of sight it falls. Once the page is still it is read
+afresh.
+
+Full screen, a browser showing a page is no cinema: the spider climbs it
+(with the browser's bars showing, they are a window of their own over the
+page's, which then reaches across and down to the bottom but not the top —
+that counts too, on a screen with no desktop showing). Showing a film (most
+of the picture changing, look after look) it is, and the spider sits down to
+watch as with any other.
+
+### The browser extension
+
+The pictures say where the ledges are; the Spider Buddy extension
+(`Extension/`, bundled into the app) says where they have got to since and
+when to look again, for Chrome, Brave, Edge, Arc, Vivaldi and the rest of the
+Chromium family. While the app is climbing a tab, the extension's script in
+it reports how far each part of the page has scrolled (the page itself, and
+any list or panel that scrolls on its own, each with what carries it), the
+parts that stay put (fixed and sticky), and that the page has changed — never
+anything on it. Each ledge the picture found is tied to the part of the page
+it is on, and moves exactly as far as that part scrolls, every frame; none is
+put aside, nothing is followed by pictures, and a ledge that scrolls out of
+its part's sight is gone. A change is looked at within a fifth of a second
+rather than at the next look. Without the extension (or in Safari and
+Firefox) it all works as above.
+
+The extension talks to the app over a WebSocket on `127.0.0.1` (ports 47219–
+47221, `PageBridge.swift`) that takes browser extensions only; the app says
+which windows it is climbing, and only the tab showing in each reports.
+**Your Mac ▸ Web Pages** offers *Add to Brave…* (or whichever browser) while
+it is not connected: until the extension is in the Chrome Web Store
+(`AppDelegate.extensionStore`), that copies it to Application Support, shows
+it in the Finder, puts the browser's extensions page on the clipboard, and
+says the three steps (Developer mode, Load unpacked, pick the folder).
+
+It needs to be allowed to see the screen. The first time a browser fills the
+screen it asks, once; after that **Your Mac ▸ Climb Web Pages** says how.
+That switch turns it off altogether. Costs: a look that finds nothing new is
+a few milliseconds of a background core every second and a half; a reading
+10–30 ms (Gmail's photo themes are the slowest), only after a change; the
+main thread lays the ledges out in well under a millisecond.
+
 ## Thoughts and words
 
 The **Thoughts** tab in the Studio picks what it may say in a thought
@@ -916,6 +1019,7 @@ The design is saved as JSON in the app's defaults.
 | Shoot Webs | whether it rappels, swings, drops on a dragline and catches a fall on a line |
 | Build Hammocks | whether it spins a hammock in a corner on its own (also gates Behavior ▸ Build a Hammock) |
 | Click to Pick Up | turn off to make it fully click-through |
+| Climb Web Pages | (Your Mac) with a browser filling the screen, it climbs about the page; see Web pages |
 | Pause | freeze it |
 | Launch at Login | |
 | Check for Updates | looks for a newer version now and offers it with its release notes (see Install). The App page also has Check Automatically (daily) and Install Automatically (on quit); an update the daily check finds waits as an **Update to …** button at the top of the panel rather than popping up |
@@ -924,18 +1028,27 @@ The design is saved as JSON in the app's defaults.
 
 ## Permissions
 
-None. Window geometry comes from `CGWindowListCopyWindowInfo`, which needs no
-entitlement — window *titles* and screen contents would, and are never read. Notification
-banners are noticed the same way, by their windows alone; the volume comes
-from Core Audio, and the brightness of a built-in display from
-DisplayServices.
+Window geometry comes from `CGWindowListCopyWindowInfo`, which needs no
+entitlement. Notification banners are noticed the same way, by their windows
+alone; the volume comes from Core Audio, and the brightness of a built-in
+display from DisplayServices.
+
+Screen Recording is used, if you allow it, in three places: camouflage
+matching what is behind it, measuring how round each window's corners are,
+and climbing web pages (see Web pages) — for which it also reads a browser
+window's title, boiled down to a number, only to notice that the page has
+changed. Pictures of pages are looked at for lines and open space and not
+kept; nothing is ever sent anywhere.
 
 ## Code map
 
 | File | |
 |---|---|
 | `Math.swift` | vectors, springs, easing, smooth noise |
-| `Surfaces.swift` | turns screens/windows/Dock/menu bar into walkable loops |
+| `Surfaces.swift` | turns screens/windows/Dock/menu bar into walkable loops (and a page's joined-up edges, `pathLoop`) |
+| `PageLedges.swift` | reads a picture of a web page for ledges: lines with room beside them, joined up at corners — plain pixels in, geometry out |
+| `WebPages.swift` | which browser windows fill their screens, when to look at them, naming what is found, following a scroll (by pictures, or exactly with the extension), and the ledges as surfaces |
+| `PageBridge.swift` | the browser extension's line to the app: a WebSocket on 127.0.0.1, what scrolls on the page and by how much, and word of changes |
 | `Habitat.swift` | the tank's model: its world's size, biomes, furniture, layouts laid out in parts, regions, and the surfaces the spider walks on in there |
 | `HabitatArt.swift` | painting the tank: palettes, sky, scenery, substrate, glass, and the pictures the moving parts are made of |
 | `HabitatItems.swift` | painting the furniture, and the picker's thumbnails |
@@ -952,7 +1065,7 @@ DisplayServices.
 | `Prey.swift` | the creatures: their behaviour, drawing, and the click-through window they (and the toys) live in |
 | `Toys.swift` | the toys: kinds as data, one physics body for all of them, the toy box, and their drawing |
 | `Traces.swift` | what it leaves about: silk pinned to real edges, little webs, meal leftovers, their physics and their window |
-| `WindowTracker.swift` | polls window rectangles — 30 Hz while any window is moving, 10 Hz when the desktop is still — and spots notification banners coming up |
+| `WindowTracker.swift` | polls window rectangles — 30 Hz while any window is moving, 10 Hz when the desktop is still — and spots notification banners coming up; which apps are browsers |
 | `SystemSense.swift` | the Mac it lives on: Low Power Mode, the charger, the weather, the volume and the brightness |
 | `Visitors.swift` | spiders from elsewhere dropping by to play |
 | `Panel.swift` | the menu bar panel: its pages, switches, sliders and buttons |
@@ -1030,6 +1143,8 @@ straight away, for trying a feed out.
 | `SPIDER_HABITAT_CAMERA=1 ./spiders.app/Contents/MacOS/DesktopSpider` | the big tank and its camera: following end to end and up the glass, panned away and found again, resized, furniture added and dragged far along the tank, layouts and Surprise Me, prey, a throw, carried out and back, closed with the spider out of sight and opened again, weather while it moves, the overview — `[ok]`/`[FAIL]` for each, then the habitat keys put back |
 | `SPIDER_HABITAT_SHOT=dir ./spiders.app/Contents/MacOS/DesktopSpider` | pictures of every layout from the middle, one end and up high, its overview, and the decorating panel (`SPIDER_HABITAT_SHOT_ONLY=forestFloor` for one) |
 | `SPIDER_TOY_TEST=secs ./spiders.app/Contents/MacOS/DesktopSpider` | picks each toy in turn (memory off), throws it now and then as if by you, prints what the spider and the toy are up to every two seconds, and quits |
+| `./tools/pages.sh see page.png out.png [scale]` | what it would climb on a picture of a web page (a window capture at 1×): the ledges drawn over it — green to stand on, blue to hang from, orange/magenta walls, red corners — and listed. `./tools/pages.sh time page.png` times a reading |
+| `SPIDER_PAGE_TEST=secs ./spiders.app/Contents/MacOS/DesktopSpider` | climbs pages whatever the setting (memory off, nothing saved), puts the spider on the longest page ledge (`SPIDER_PAGE_PUT=0` not to), prints where it is every half second and what the pages cost, and quits. `SPIDER_PAGE_OFF=1` to compare with pages off, `SPIDER_PAGE_SHOT=dir` for every reading drawn over its picture; `SPIDER_PAGE_LOG=1` (any run) logs each look. Run it from a terminal that may see the screen |
 
 ## Performance
 

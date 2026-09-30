@@ -1593,6 +1593,100 @@ do {
            "moved \(Int(s9.worldPos.distance(to: seat))) px, \(s9.debugState)")
 }
 
+// A window dragged to the top of the screen and tiled to fill it (or
+// maximized) is as good as full screen: the screen's rim under the menu
+// bar is all there is, and cinema manners. On the window's bottom or its
+// top as it grows, it is never pushed off the screen, and never left on
+// the window's underside down at the floor (or its top, under the menu bar).
+do {
+    var visible = screen
+    visible.size.height -= 25
+    expect("maximized: filling the screen under the menu bar counts", WindowTracker.fills(visible, visible: visible)
+           && WindowTracker.fills(visible.insetBy(dx: 8, dy: 8), visible: visible) && WindowTracker.fills(screen, visible: visible))
+    expect("maximized: a big window short of it does not",
+           !WindowTracker.fills(CGRect(x: visible.minX + 60, y: visible.minY, width: visible.width - 60, height: visible.height), visible: visible)
+           && !WindowTracker.fills(CGRect(x: visible.minX, y: visible.minY + 80, width: visible.width, height: visible.height - 80), visible: visible))
+    for (name, facing) in [("bottom", EdgeFacing.down), ("top", EdgeFacing.up)] {
+        let zm = SurfaceMap()
+        zm.standoff = map.standoff
+        let start = CGRect(x: screen.minX + 300, y: screen.minY + 220, width: 760, height: 380)
+        zm.debugRebuild(screen: screen, menuBarHeight: 25, windows: [TrackedWindow(id: 61, frame: start, depth: 0, owner: "Tiled")])
+        let s = Spider(map: zm)
+        s.config.followCursor = false
+        _ = settleUntilAttached(s)
+        guard let win = zm.loop("win:61"), let edge = win.segs.firstIndex(where: { $0.facing == facing }) else {
+            expect("maximized: a \(name) edge to start on", false); continue
+        }
+        _ = park(s, loopID: "win:61", segIdx: edge, t: win.segs[edge].len * 0.4)
+        s.debugActivity("rest", for: 20)
+        // (The frame it is taken on, it is still going with the window as
+        // it grows; a moment later it is on the floor or the ceiling.)
+        var off = 0, under = 0, biggest: CGFloat = 0, carried: CGFloat = 0, handover: CGFloat = 0
+        var taken = false, since = 0
+        var prev = s.worldPos
+        func step(_ n: Int) {
+            for _ in 0..<n {
+                s.setCursor(V2(-4000, -4000)); s.update(dt: dt)
+                let moved = s.worldPos.distance(to: prev)
+                if !screen.insetBy(dx: 2, dy: 2).contains(s.worldPos.point) { off += 1 }
+                if !taken {
+                    carried = max(carried, moved)
+                } else {
+                    since += 1
+                    if since == 1 { handover = moved } else { biggest = max(biggest, moved) }
+                    if since > 30, let on = s.standingOn, on.loopID != "screen:0" { under += 1 }
+                }
+                prev = s.worldPos
+            }
+        }
+        // Tiled: it grows to fill the screen in a quarter of a second, as
+        // the window tracker sees it at 30 Hz.
+        for i in 1...8 {
+            let k = CGFloat(i) / 8
+            let f = CGRect(x: start.minX + (visible.minX - start.minX) * k, y: start.minY + (visible.minY - start.minY) * k,
+                           width: start.width + (visible.width - start.width) * k, height: start.height + (visible.height - start.height) * k)
+            if WindowTracker.fills(f, visible: visible) {
+                zm.debugRebuild(screen: screen, menuBarHeight: 25, windows: [], cinema: true, zoomed: true)
+                if !taken { s.surfacesRestructured(); s.fullScreenApp = true }
+                taken = true
+            } else {
+                zm.debugRebuild(screen: screen, menuBarHeight: 25, windows: [TrackedWindow(id: 61, frame: f, depth: 0, owner: "Tiled")])
+            }
+            step(2)
+        }
+        let at = s.debugState
+        step(Int(30 / dt))
+        let p = s.worldPos
+        expect("maximized from its \(name): taken as full screen", taken)
+        expect("maximized from its \(name): never pushed off the screen", off == 0, "\(off) frames off, \(at) then \(s.debugState) at \(Int(p.x)),\(Int(p.y))")
+        expect("maximized from its \(name): only the screen's rim to walk", under == 0, "\(under) frames on something else")
+        expect("maximized from its \(name): no jump when it is taken", handover <= carried && biggest < 12,
+               String(format: "%.1f px as it is taken (%.1f with the window), then at most %.1f", handover, carried, biggest))
+        expect("maximized from its \(name): on the rim, under the menu bar", s.debugState.hasPrefix("attached") && s.standingOn?.loopID == "screen:0"
+               && p.y < visible.maxY - 4, "\(s.debugState) on \(s.standingOn?.loopID ?? "nothing") at \(Int(p.x)),\(Int(p.y))")
+    }
+    // Another window brought in front of it: the screen is not taken, but
+    // the maximized window still has no edges of its own to walk — only the
+    // screen's, and the window in front.
+    let cm = SurfaceMap()
+    cm.standoff = map.standoff
+    var big = TrackedWindow(id: 62, frame: visible, depth: 1, owner: "Maximized")
+    big.maximized = true
+    let front = TrackedWindow(id: 63, frame: CGRect(x: screen.minX + 400, y: screen.minY + 300, width: 600, height: 360), depth: 0, owner: "Front")
+    cm.debugRebuild(screen: screen, menuBarHeight: 25, windows: [big, front])
+    let s = Spider(map: cm)
+    s.config.followCursor = false
+    s.config.liveliness = 3
+    _ = settleUntilAttached(s)
+    var onBig = 0, seen = Set<String>()
+    for _ in 0..<Int(90 / dt) {
+        s.setCursor(V2(-4000, -4000)); s.update(dt: dt)
+        if let id = s.standingOn?.loopID { seen.insert(id); if id == "win:62" { onBig += 1 } }
+    }
+    expect("maximized behind another window: none of its edges to walk", cm.loop("win:62") == nil && onBig == 0,
+           "on it \(onBig) frames; stood on \(seen.sorted().joined(separator: " "))")
+}
+
 // ---------------------------------------------------------------------------
 // Personalities: every preset and a few random designs each live 150s. They
 // must all stay on the desktop, and the mix of what they do should differ.

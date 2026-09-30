@@ -46,7 +46,7 @@ struct SilkPin {
                 let (t, d0) = projectOnSegment(p, e.a, e.b)
                 guard d0 < within else { continue }
                 let point = e.point(at: t)
-                if loop.kind == .windowEdge, !map.isVisible(point + e.normal * 2, depth: loop.depth) { continue }
+                if loop.kind.onWindow, !map.isVisible(point + e.normal * 2, depth: loop.depth) { continue }
                 let d = d0 - (loop.id == prefer ? 4 : 0)
                 if best == nil || d < best!.d {
                     best = (d, SilkPin(loopID: loop.id, edge: i, u: t / e.len, facing: e.facing, last: point))
@@ -91,7 +91,7 @@ struct SilkPin {
         // Gone somewhere it cannot be followed: another Space, another display.
         guard point.distance(to: last) < 400 else { return nil }
         last = point
-        let window = loop.kind == .windowEdge
+        let window = loop.kind.onWindow
         return Found(point: point, normal: normal, tangent: e.dir, edgeLength: e.len,
                      depth: window ? loop.depth : Int.min,
                      covered: window && !map.isVisible(point + normal * 2, depth: loop.depth))
@@ -961,7 +961,7 @@ final class TraceKeeper {
                 let f = (from.y - y) / max(from.y - l.pos.y, 0.0001)
                 let x = from.x + (l.pos.x - from.x) * f
                 guard x >= min(e.a.x, e.b.x) - 1, x <= max(e.a.x, e.b.x) + 1 else { continue }
-                if loop.kind == .windowEdge, !map.isVisible(V2(x, e.a.y + 2), depth: loop.depth) { continue }
+                if loop.kind.onWindow, !map.isVisible(V2(x, e.a.y + 2), depth: loop.depth) { continue }
                 if best == nil || y > best!.y { best = (y, loop, i, projectOnSegment(V2(x, e.a.y), e.a, e.b).t) }
             }
         }

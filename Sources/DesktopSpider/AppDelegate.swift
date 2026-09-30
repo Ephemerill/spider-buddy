@@ -15,6 +15,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var preyView: PreyView!
     private var preyShown = false
     private var cinemaScreens: [CGRect] = []
+    /// Of those, the ones a maximized window has taken (the menu bar still
+    /// over it): see `WindowTracker.zoomedScreens`.
+    private var zoomedScreens: [CGRect] = []
     private var cinemaClearPolls = 0
     private var boxDrawWindow: BoxDrawWindow?
     private var laserWindow: OverlayWindow!
@@ -86,6 +89,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var nextTankWildAt: CFTimeInterval = 0
     private var allSpiders: [Spider] { [spider] + visitors.map(\.spider) }
     private let tracker = WindowTracker()
+    /// Browsers filling their screens, and the ledges on their pages (see
+    /// WebPages.swift).
+    private let pageWatch = PageWatcher()
+    /// Climbs web pages that fill the screen (the setting).
+    private var climbsPages = true
+    /// Scrolls and clicks anywhere, heard while it climbs pages: a page
+    /// scrolling under it, or a click that may be off to another page.
+    private var pageMonitors: [Any] = []
+    /// Screens taken by a full-screen app showing something to watch — not
+    /// a browser page it can climb.
+    private var filmScreens: [CGRect] {
+        let pages = pageWatch.pageScreens
+        return cinemaScreens.filter { !pages.contains($0) }
+    }
     private var statusItem: NSStatusItem!
     private let updater = Updater()
     private var studio: StudioController?
@@ -201,7 +218,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // (Each window's corners measured on the tracker's own queue.)
         tracker.measureCorner = { w, top in AppDelegate.measureCornerRadius(of: w, primaryTop: top) }
-        tracker.onUpdate = { [weak self] windows, fullScreens, docks in
+        pageWatch.scale = spider.config.scale
+        pageWatch.standoff = map.standoff
+        pageWatch.spiderAt = { [weak self] in
+            guard let self, let on = self.spider.standingOn else { return (nil, self?.spider.worldPos ?? .zero) }
+            return (on.loopID, self.spider.worldPos - self.spider.standingNormal * self.map.standoff)
+        }
+        pageWatch.onChange = { [weak self] settled in self?.pagesChanged(settled: settled) }
+        setClimbsPages(climbsPages, save: false)
+        tracker.onUpdate = { [weak self] windows, fullScreens, docks, taken in
             guard let self else { return }
             let t0 = Perf.timing ? CACurrentMediaTime() : 0
             defer {
@@ -210,23 +235,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Entering full screen counts at once; leaving it only after a
             // few quiet polls, so a player's controls flickering over the
             // video cannot keep unsettling the spider.
-            let cinemaWas = self.cinemaScreens
+            // (A window maximized, or tiled to fill the screen, is as good
+            // as full screen: see `WindowTracker.onUpdate`.)
+            let cinemaWas = self.cinemaScreens, zoomedWas = self.zoomedScreens
             if !fullScreens.isEmpty {
                 self.cinemaScreens = fullScreens
+                self.zoomedScreens = self.tracker.zoomedScreens
                 self.cinemaClearPolls = 0
             } else if self.cinemaScreens.isEmpty == false {
                 self.cinemaClearPolls += 1
-                if self.cinemaClearPolls >= 4 { self.cinemaScreens = [] }
+                if self.cinemaClearPolls >= 4 { self.cinemaScreens = []; self.zoomedScreens = [] }
             }
-            self.map.rebuild(windows: windows, cinema: self.cinemaScreens, docks: docks)
+            // Browsers filling their screens: pages to climb.
+            self.pageWatch.update(windows: windows, taken: taken,
+                                  screens: NSScreen.screens.map { ($0.frame, $0.visibleFrame) }, bare: self.tracker.bareScreens)
+            self.map.rebuild(windows: windows, cinema: self.cinemaScreens, zoomed: self.zoomedScreens, docks: docks,
+                             pages: self.pageWatch.loops(), pageScreens: self.pageWatch.pageScreens)
             // The rim of a taken screen is a different set of edges: the
             // spider re-reads its footing from where it stands rather than
             // carrying its place over by index and jumping.
-            if self.cinemaScreens != cinemaWas {
+            if self.cinemaScreens != cinemaWas || self.zoomedScreens != zoomedWas {
                 for s in self.allSpiders { s.surfacesRestructured() }
-                if self.cinemaLog { fputs("cinema: \(self.cinemaScreens.isEmpty ? "over" : "\(self.cinemaScreens)") — \(self.spider.debugState)\n", stderr) }
+                if self.cinemaLog {
+                    fputs("cinema: \(self.cinemaScreens.isEmpty ? "over" : "\(self.cinemaScreens)")\(self.zoomedScreens.isEmpty ? "" : " zoomed \(self.zoomedScreens)") — \(self.spider.debugState)\n", stderr)
+                }
             }
-            for s in self.allSpiders { s.fullScreenApp = !self.cinemaScreens.isEmpty }
+            for s in self.allSpiders { s.fullScreenApp = !self.filmScreens.isEmpty }
         }
         tracker.start()
         startSensing()
@@ -462,6 +496,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.traceTime = (0, 0, 0)
                 fflush(stdout)
                 if now - start > secs { timer.invalidate(); NSApp.terminate(nil) }
+            }
+        }
+        // SPIDER_PAGE_TEST=secs climbs pages whatever the setting (in memory
+        // only; memory off), says what it sees, puts the spider on a page's
+        // longest ledge as soon as there is one (SPIDER_PAGE_PUT=0 not to),
+        // reports where it is every half second, and quits — saying how
+        // much CPU time it took. SPIDER_PAGE_OFF=1 runs it with pages off,
+        // to compare.
+        if let secs = ProcessInfo.processInfo.environment["SPIDER_PAGE_TEST"].flatMap(Double.init) {
+            memory = nil
+            spider.memory = nil
+            pageWatch.log = true
+            let off = ProcessInfo.processInfo.environment["SPIDER_PAGE_OFF"] == "1"
+            if climbsPages == off { setClimbsPages(!off, save: false) }
+            let start = CACurrentMediaTime()
+            var placed = ProcessInfo.processInfo.environment["SPIDER_PAGE_PUT"] == "0"
+            // SPIDER_PAGE_REPUT=secs: put it on a ledge again then (for a scroll test).
+            var reput = ProcessInfo.processInfo.environment["SPIDER_PAGE_REPUT"].flatMap(Double.init)
+            Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
+                guard let self else { return }
+                let now = CACurrentMediaTime()
+                if let r = reput, now - start >= r { placed = false; reput = nil }
+                let ledges = self.map.loops.filter { $0.kind == .webLedge }
+                if !placed {
+                    var best: (id: String, index: Int, len: CGFloat)?
+                    for l in ledges {
+                        for (i, seg) in l.segs.enumerated() where seg.facing == .up && seg.isOpen(at: seg.len / 2) {
+                            if best == nil || seg.len > best!.len { best = (l.id, i, seg.len) }
+                        }
+                    }
+                    if let best {
+                        placed = true
+                        self.spider.debugAttach(loopID: best.id, segIdx: best.index, t: best.len / 2, dir: 1)
+                        print("page test: put on \(best.id) stretch \(best.index) (\(Int(best.len)) long)")
+                    }
+                }
+                let on = self.spider.standingOn.map { "\($0.loopID)#\($0.segIdx)" } ?? "-"
+                print(String(format: "page test %4.1fs: %d page ledges | on %@ at %d,%d | %@ | film %@ | extension %@", now - start, ledges.count, on,
+                             Int(self.spider.worldPos.x), Int(self.spider.worldPos.y), self.spider.debugState,
+                             self.filmScreens.isEmpty ? "no" : "yes", self.pageWatch.extensionConnected ? "on" : "off"))
+                fflush(stdout)
+                if now - start > secs {
+                    var u = rusage()
+                    getrusage(RUSAGE_SELF, &u)
+                    let cpu = Double(u.ru_utime.tv_sec + u.ru_stime.tv_sec) + Double(u.ru_utime.tv_usec + u.ru_stime.tv_usec) / 1e6
+                    print(String(format: "page test: %.2f s of CPU in %.0f s (%.1f%%)%@", cpu, now - start, cpu / (now - start) * 100,
+                                 off ? " — pages off" : ""))
+                    let w = self.pageWatch.spent
+                    print(String(format: "page test: pages took %.3f s looking (%d looks, %d read) and %.3f s laying out ledges — %.2f%% of a core",
+                                 w.looking, w.looks, w.readings, w.laying, (w.looking + w.laying) / (now - start) * 100))
+                    timer.invalidate()
+                    NSApp.terminate(nil)
+                }
             }
         }
         // SPIDER_TOY_TEST=secs picks each toy in turn (memory off, the Bell
@@ -727,7 +814,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rainView.frame = CGRect(origin: .zero, size: frame.size)
         // (Where the Dock is now comes with the next look at the windows,
         // asked for straight away: see `SurfaceMap.dockStrips`.)
-        map.rebuild(windows: [], cinema: cinemaScreens, docks: map.dockRects)
+        map.rebuild(windows: [], cinema: cinemaScreens, zoomed: zoomedScreens, docks: map.dockRects)
         tracker.pollNow()
         for s in allSpiders { s.surfacesRestructured() }
         spider.refitHammock()
@@ -761,13 +848,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if tickCount % 3600 == 0, let m = memory, m.dirty { Perf.measure("saved: memory") { m.save() } }
         if tickCount % 3600 == 1800, knowledge.dirty, !testingHabitat { Perf.measure("saved: habitat knowledge") { knowledge.save(keeping: habitat?.loadedHabitat) } }
         if tickCount % 30 == 0 {
+            askToSeePages()
             updateRain(now: CACurrentMediaTime())
             updateEars()
             // Never left asleep for good by an unlock that went unheard.
             if spider.dormant, !away, !wakingUp, !AppDelegate.screenIsLocked { spider.wakeAndGreet() }
         }
+        pageWatch.paused = hidden || inHabitat || awaitingEntrance
+        pageWatch.lowPower = lowPower
         guard !hidden else { return }
         let now = CACurrentMediaTime()
+        pageWatch.tick(now: now)
 
         // Whether clicks reach us is decided every tick, throttled or not: a
         // stale decision here is a spider you cannot pick up.
@@ -1043,7 +1134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if visitorsOn, now >= nextVisitAt {
             nextVisitAt = now + visitGap
             if visitors.count < Visitor.most, !inHabitat, !tankOpen, !awaitingEntrance, !spider.makingEntrance,
-               !spider.config.paused, cinemaScreens.isEmpty {
+               !spider.config.paused, filmScreens.isEmpty {
                 arriveVisitor()
             }
         }
@@ -1073,7 +1164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         v.spider.toys = toyBox
         visitors.append(v)
         syncVisitors()
-        v.spider.fullScreenApp = !cinemaScreens.isEmpty
+        v.spider.fullScreenApp = !filmScreens.isEmpty
         let f = NSScreen.main?.visibleFrame ?? worldFrame()
         v.spider.enterOnThread(from: V2(randRange(f.minX + 100, max(f.minX + 101, f.maxX - 100)), f.maxY))
         if !hidden { v.window.orderFrontRegardless() }
@@ -1541,6 +1632,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshMenu()
     }
 
+    // MARK: Web pages
+
+    /// Climbing pages on or off: the watcher, the browsers' titles (a new
+    /// page's sign), and an ear for scrolls and clicks — all only while on.
+    private func setClimbsPages(_ on: Bool, save: Bool = true) {
+        climbsPages = on
+        pageWatch.enabled = on
+        tracker.readsBrowserTitles = on
+        for m in pageMonitors { NSEvent.removeMonitor(m) }
+        pageMonitors = []
+        if on {
+            // (Only the pointer's whereabouts and how far a scroll goes:
+            // what is clicked or scrolled is not ours to know.)
+            if let m = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel, handler: { [weak self] e in
+                self?.pageWatch.scrolled(at: V2(NSEvent.mouseLocation), by: e.scrollingDeltaY, precise: e.hasPreciseScrollingDeltas)
+            }) { pageMonitors.append(m) }
+            if let m = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp, handler: { [weak self] _ in
+                self?.pageWatch.clicked(at: V2(NSEvent.mouseLocation))
+            }) { pageMonitors.append(m) }
+        }
+        if save {
+            saveSettings()
+            tracker.pollNow()
+            refreshMenu()
+        }
+    }
+
+    /// The first time a browser fills the screen with pages to climb and it
+    /// cannot see them, it asks (once: after that, the menu says how).
+    /// Where the extension goes on disk for a browser to load it from: a
+    /// place of its own, which moving or updating the app leaves alone.
+    private static var extensionFolder: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return base.appendingPathComponent(AppInfo.name).appendingPathComponent("Browser Extension")
+    }
+
+    /// The browser a page is being climbed in that the extension could be
+    /// added to (while it is not on the line already).
+    private var extensionWanted: (name: String, address: String)? {
+        guard climbsPages, !pageWatch.extensionConnected else { return nil }
+        return pageWatch.browsers.lazy.compactMap(PageWatcher.extensionsPage(for:)).first
+    }
+
+    /// Adding the extension: out of the store if it is there (see
+    /// `extensionStore`); until then, loaded by hand — the extension put
+    /// where the browser can find it, shown in the Finder, the way there
+    /// on the clipboard, and three steps to follow.
+    private func addExtension() {
+        panel?.close()
+        if let store = AppDelegate.extensionStore { NSWorkspace.shared.open(store); return }
+        guard let bundled = Bundle.main.resourceURL?.appendingPathComponent("Extension"),
+              FileManager.default.fileExists(atPath: bundled.path) else { return }
+        let dest = AppDelegate.extensionFolder
+        try? FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(at: dest)
+        try? FileManager.default.copyItem(at: bundled, to: dest)
+        let browser = extensionWanted ?? ("your browser", "chrome://extensions")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(browser.address, forType: .string)
+        NSWorkspace.shared.activateFileViewerSelecting([dest])
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Add the \(AppInfo.name) extension to \(browser.name)"
+        alert.informativeText = """
+            With it, \(spider.name.isEmpty ? "your spider" : spider.name) rides the page exactly as you scroll, and notices at once when the page changes.
+
+            1. In \(browser.name), go to \(browser.address) — it's on your clipboard, so paste it into the address bar.
+            2. Turn on Developer mode (top right).
+            3. Click Load unpacked, and choose the "Browser Extension" folder just shown in the Finder.
+
+            It only ever tells the app where things are on the page you're looking at and how far you've scrolled — nothing on the page is read, and nothing goes anywhere but this Mac.
+            """
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    /// The extension's page in the Chrome Web Store, once it is published
+    /// there: then adding it is one click.
+    static let extensionStore: URL? = nil
+
+    private func askToSeePages() {
+        guard climbsPages, pageWatch.wantsLeave, !UserDefaults.standard.bool(forKey: "askedToSeePages") else { return }
+        UserDefaults.standard.set(true, forKey: "askedToSeePages")
+        CGRequestScreenCaptureAccess()
+    }
+
+    /// The ledges on the pages have changed: into the map with them. Found
+    /// afresh (`settled`), anything standing on one re-reads its footing.
+    private func pagesChanged(settled: Bool) {
+        map.setPages(pageWatch.loops(), screens: pageWatch.pageScreens)
+        for s in allSpiders { s.fullScreenApp = !filmScreens.isEmpty }
+        if settled { for s in allSpiders where !s.inHabitat { s.pageLedgesChanged(moved: pageWatch.moved) } }
+    }
+
     // MARK: Wildlife
 
     /// Now and then, if it is let, something finds its own way in — though
@@ -1551,7 +1736,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
         let loose = spider.prey.filter { $0.state == .loose }.count
         guard !inHabitat, !tankOpen, !awaitingEntrance, !spider.config.paused, !spider.dormant, !away,
-              cinemaScreens.isEmpty, idle < 300, loose < 2 else {
+              filmScreens.isEmpty, idle < 300, loose < 2 else {
             nextWildAt = now + Double(randRange(120, 300))
             return
         }
@@ -2003,6 +2188,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let said = [power, rain, music].compactMap { $0 }.joined(separator: " ")
                     return said.isEmpty ? "Nothing to report." : said
                 },
+            ]),
+            PanelSection(title: "Web Pages", rows: [
+                .toggle("Climb Web Pages",
+                        help: "When your browser fills the screen — zoomed to fill it, or full screen — it climbs about on the page itself: along the tops of cards, bars and boxes, under them and up their sides, wherever there's room for it. It rides along when you scroll, and finds its feet again when you click through to another page. It goes by how the page looks; nothing on it is read, kept or sent.",
+                        get: { [unowned self] in climbsPages }, set: { [unowned self] on in if on != climbsPages { setClimbsPages(on) } }),
+                .status { [unowned self] in
+                    guard climbsPages else { return "With a browser filling the screen, \(name) keeps to the edges of the screen." }
+                    guard CGPreflightScreenCaptureAccess() else {
+                        return "To see the page, \(AppInfo.name) needs to be allowed under System Settings ▸ Privacy & Security ▸ Screen & System Audio Recording — then quit and reopen it."
+                    }
+                    return pageWatch.summary ?? "Fill the screen with a browser window and \(name) will climb about the page."
+                },
+                .status { [unowned self] in
+                    guard climbsPages, CGPreflightScreenCaptureAccess() else { return "" }
+                    if pageWatch.extensionConnected { return "The \(AppInfo.name) extension is helping: it follows your scrolling exactly." }
+                    guard let b = extensionWanted else { return "" }
+                    return "Add the \(AppInfo.name) extension to \(b.name) and it rides along exactly as you scroll."
+                },
+                .buttons([
+                    PanelButton(title: { [unowned self] in "Add to \(extensionWanted?.name ?? "the Browser")…" }, symbol: { "puzzlepiece.extension" },
+                                shown: { [unowned self] in CGPreflightScreenCaptureAccess() && extensionWanted != nil }) { [unowned self] in
+                        addExtension()
+                    },
+                ]),
+                .buttons([
+                    PanelButton("Let It See the Screen…", symbol: "eye",
+                                shown: { [unowned self] in climbsPages && !CGPreflightScreenCaptureAccess() }) { [unowned self] in
+                        CGRequestScreenCaptureAccess()
+                        refreshMenu()
+                    },
+                ]),
             ]),
         ])
         let app = PanelPage(title: "App", symbol: "gearshape", sections: [
@@ -4745,6 +4961,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyWindowSize() {
         map.standoff = AppDelegate.standoff(for: spider.config.scale)
         habitat?.scene.setStandoff(map.standoff)
+        pageWatch.scale = spider.config.scale
+        pageWatch.standoff = map.standoff
         spriteSide = SpiderRenderer.spriteSide(for: spider.config.scale) + (thoughtRoom ? (240 * spider.config.scale).rounded() : 0)
         side = spriteSide + AppDelegate.windowSlack
         view.resize(sprite: spriteSide, window: side)
@@ -5308,6 +5526,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         d.set(tankWildOn, forKey: "tankWildlife")
         d.set(toySounds, forKey: "toySounds")
         d.set(leavesTraces, forKey: "traces")
+        d.set(climbsPages, forKey: "climbPages")
     }
 
     private func loadSettings() {
@@ -5318,8 +5537,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "visitors": false, "visitFrequency": 0.5, "visitStay": 0.5,
             "feelPower": true, "feelWeather": true, "showRain": true, "feelCommotion": true, "danceToMusic": true,
             "learns": true, "wildlife": false, "wildFrequency": 0.35, "toySounds": true, "traces": false, "traceLimit": 0.45,
-            "tankWildlife": true,
+            "tankWildlife": true, "climbPages": true,
         ])
+        climbsPages = d.bool(forKey: "climbPages")
         tankWildOn = d.bool(forKey: "tankWildlife")
         toySounds = d.bool(forKey: "toySounds")
         leavesTraces = d.bool(forKey: "traces")

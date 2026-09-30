@@ -8,6 +8,26 @@
 		<data>
 		q++0IqG38RDcoy0XuDtunuKRF3Y=
 		</data>
+		<key>Resources/Extension/icon128.png</key>
+		<data>
+		L28w8RW33x3miGuFdhfp+pWvkOE=
+		</data>
+		<key>Resources/Extension/icon48.png</key>
+		<data>
+		lswh5qN+kq4K1JcgwbBq2DoIITs=
+		</data>
+		<key>Resources/Extension/manifest.json</key>
+		<data>
+		G02rJUFArCEJYtPm4X0lUAmDsGI=
+		</data>
+		<key>Resources/Extension/page.js</key>
+		<data>
+		XKbCg93RTYFQp/Ct0wEFfu2xVa4=
+		</data>
+		<key>Resources/Extension/worker.js</key>
+		<data>
+		wIrIGBNYHC3/G+ib2xMOpZdLcSc=
+		</data>
 	</dict>
 	<key>files2</key>
 	<dict>
@@ -25,6 +45,41 @@
 			<key>hash2</key>
 			<data>
 			F6lTmsboxXgSiYxA0OHsHaYA21vh+dF3nOG6h0c5LFw=
+			</data>
+		</dict>
+		<key>Resources/Extension/icon128.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			5FeMk2URH0Gxn+XA9KpKv9EbPgUuTq2gt9/rmEfk05k=
+			</data>
+		</dict>
+		<key>Resources/Extension/icon48.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			qEDjaozoaXvbMR0a4RAcugiJMpcIOPU47uMjX2zSuB8=
+			</data>
+		</dict>
+		<key>Resources/Extension/manifest.json</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			XIGgArKUTiMZhwFEt6oWSm2guf8lhsCDITtk5xI4/q0=
+			</data>
+		</dict>
+		<key>Resources/Extension/page.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			cLoPuoPrRzm2+vta0A9nRLQgMRAi0srJEe5kNQyGjIY=
+			</data>
+		</dict>
+		<key>Resources/Extension/worker.js</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			au+tFZm36daO4E2iwZ22h7n635rm/g2vbNzuFIGvCJ0=
 			</data>
 		</dict>
 	</dict>

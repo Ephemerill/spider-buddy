@@ -502,9 +502,12 @@ final class PanelController: NSObject, NSPopoverDelegate {
             n.textColor = .secondaryLabelColor
             n.translatesAutoresizingMaskIntoConstraints = false
             n.widthAnchor.constraint(equalToConstant: w).isActive = true
+            // (Nothing to say, no line.)
+            n.isHidden = n.stringValue.isEmpty
             syncers.append { [weak n] in
                 let s = text()
                 if n?.stringValue != s { n?.stringValue = s }
+                if n?.isHidden != s.isEmpty { n?.isHidden = s.isEmpty }
             }
             return n
         }

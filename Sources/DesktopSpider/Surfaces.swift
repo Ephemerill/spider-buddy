@@ -16,6 +16,9 @@ enum SurfaceKind {
     case windowEdge
     case dock
     case menuBar
+    /// The edge of something drawn on a web page that fills its screen (a
+    /// card, a bar, a divider): see PageLedges.swift and WebPages.swift.
+    case webLedge
 
     /// How much the spider likes to hang out here when picking a jump target.
     var appeal: CGFloat {
@@ -24,8 +27,14 @@ enum SurfaceKind {
         case .windowEdge:   return 1.7
         case .dock:         return 1.35
         case .menuBar:      return 1.25
+        case .webLedge:     return 1.6
         }
     }
+
+    /// On a window, so a window in front can cover it: a window's own edge,
+    /// or the edge of something on the page it shows. (The screen's rim,
+    /// the menu bar and the Dock are in front of every window.)
+    var onWindow: Bool { self == .windowEdge || self == .webLedge }
 }
 
 /// Which way the segment's edge faces. Used for orienting webs and for deciding
@@ -343,11 +352,46 @@ final class SurfaceMap {
 
     /// Displays some app has taken whole. On those only the rim of the
     /// screen exists to walk on — no menu bar, Dock or windows, none of
-    /// which are visible under a full-screen video.
+    /// which are visible under a full-screen video. (A maximized window
+    /// takes its screen too, but leaves the menu bar showing: see `stage`.)
     private(set) var cinemaScreens: [CGRect] = []
+    /// Of those, the ones a browser has taken to show a page (not a film):
+    /// the page is climbed, so it is no cinema to sit and watch.
+    private(set) var pageScreens: [CGRect] = []
 
     func isCinema(_ p: V2) -> Bool {
-        cinemaScreens.contains { $0.contains(p.point) }
+        cinemaScreens.contains { $0.contains(p.point) } && !pageScreens.contains { $0.contains(p.point) }
+    }
+
+    /// The ledges on the pages of browsers that fill their screens (see
+    /// WebPages.swift), laid out already: they are put in with the rest
+    /// whenever the map is rebuilt, and can be changed on their own.
+    private(set) var pageLoops: [SurfaceLoop] = []
+
+    /// New ledges for the pages — found afresh, or carried along as a page
+    /// scrolls — without a fresh look at the desktop.
+    func setPages(_ loops: [SurfaceLoop], screens: [CGRect]? = nil) {
+        if let screens { pageScreens = screens }
+        pageLoops = loops
+        var covered = loops
+        applyBlocks(to: &covered)
+        unclipped = unclipped.filter { $0.kind != .webLedge } + covered
+        reclip()
+    }
+
+    /// The part of a taken screen whose rim is walked: all of it under a
+    /// full-screen window; under a maximized one (`zoomed`), all but the
+    /// menu bar and a Dock that is not hidden, which are still there over
+    /// it — the ceiling is then the menu bar's lower lip, and the floor the
+    /// Dock's top, as on the desktop. (A Dock hidden until it is wanted
+    /// leaves a sliver of the screen under it, which is not kept back.)
+    static func stage(screen f: CGRect, visible vf: CGRect, zoomed: Bool) -> CGRect {
+        guard zoomed else { return f }
+        let keptBack: CGFloat = 20
+        let minX = vf.minX - f.minX > keptBack ? vf.minX : f.minX
+        let maxX = f.maxX - vf.maxX > keptBack ? vf.maxX : f.maxX
+        let minY = vf.minY - f.minY > keptBack ? vf.minY : f.minY
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: vf.maxY - minY)
     }
 
     /// The rim of a taken screen: all four sides as one closed loop, with
@@ -369,11 +413,19 @@ final class SurfaceMap {
 
     /// `docks`: where the Dock is, as the window tracker found it (off the
     /// main thread: see `dockStrips`); nil to look now.
-    func rebuild(windows: [TrackedWindow], cinema: [CGRect] = [], docks found: [CGRect]? = nil) {
+    /// `pages`, `pageScreens`: the ledges on pages to climb, and the screens
+    /// a browser has taken whole to show one (see `setPages`); nil keeps
+    /// those there were.
+    /// `zoomed`: those of the `cinema` screens taken by a maximized window
+    /// (see `stage`).
+    func rebuild(windows: [TrackedWindow], cinema: [CGRect] = [], zoomed: [CGRect] = [], docks found: [CGRect]? = nil,
+                 pages: [SurfaceLoop]? = nil, pageScreens shown: [CGRect]? = nil) {
         let off = standoff
         var newLoops: [SurfaceLoop] = []
         var frames: [CGRect] = []
         cinemaScreens = cinema
+        if let pages { pageLoops = pages }
+        pageScreens = (shown ?? pageScreens).filter { cinema.contains($0) }
 
         // --- Screens ---------------------------------------------------------
         let docks = (found ?? SurfaceMap.dockStrips(screens: NSScreen.screens.map { ($0.frame, $0.visibleFrame) }))
@@ -392,7 +444,8 @@ final class SurfaceMap {
             let f = screen.frame
             frames.append(f)
             if cinema.contains(f) {
-                newLoops += SurfaceMap.cinemaLoops(id: "screen:\(i)", frame: f, standoff: off)
+                let stage = SurfaceMap.stage(screen: f, visible: screen.visibleFrame, zoomed: zoomed.contains(f))
+                newLoops += SurfaceMap.cinemaLoops(id: "screen:\(i)", frame: stage, standoff: off)
                 continue
             }
             let r = f.insetBy(dx: off, dy: off)
@@ -466,6 +519,11 @@ final class SurfaceMap {
             let r = w.frame
             occ.append((r, w.depth))
             guard r.width > 130, r.height > 90 else { continue }
+            // Maximized, with another window in front of it (else it would
+            // have taken the screen): its edges are the screen's — the
+            // floor, the walls, the menu bar's lip — so it has none of its
+            // own to walk, though it hides all that is behind it.
+            if w.maximized { continue }
             // The whole perimeter, as one loop: it walks along the top like a
             // shelf, round the corner and down the side, and hangs under the
             // bottom. The path stands off the border by the height of the body
@@ -489,6 +547,7 @@ final class SurfaceMap {
         }
         occluders = occ.map { (rect: $0.0, depth: $0.1) }
 
+        newLoops += pageLoops
         applyBlocks(to: &newLoops)
         unclipped = newLoops
         allJunctions = []
@@ -503,7 +562,7 @@ final class SurfaceMap {
     /// of the display, across whatever happens to overlap it.
     private func applyBlocks(to newLoops: inout [SurfaceLoop]) {
         let grow = standoff * 1.4
-        for li in newLoops.indices where newLoops[li].kind == .windowEdge {
+        for li in newLoops.indices where newLoops[li].kind.onWindow {
             let depth = newLoops[li].depth
             var segs = newLoops[li].segs
             for o in occluders where o.depth < depth {
@@ -532,6 +591,41 @@ final class SurfaceMap {
         return [Seg(tl, tr, .up), Seg(tr, br, .right), Seg(br, bl, .down), Seg(bl, tl, .left)]
     }
 
+    /// A surface along a path of straight edges meeting at right angles —
+    /// the joined-up edges of things on a web page. `points` are its
+    /// corners (one more than `facings` if it is open, as many if it is
+    /// closed), and each stretch faces the way its room is: its path, the
+    /// body line, stands off the edge that way by `standoff`, going round
+    /// the outside of a corner and cutting across the inside of one.
+    static func pathLoop(id: String, kind: SurfaceKind, points: [V2], facings: [EdgeFacing], closed: Bool,
+                         depth: Int, standoff off: CGFloat) -> SurfaceLoop? {
+        let n = facings.count
+        guard n > 0, points.count == (closed ? n : n + 1) else { return nil }
+        func pt(_ i: Int) -> V2 { points[closed ? i % n : i] }
+        // Each corner moved off by both of its stretches' normals (at a
+        // right angle that is out round the outside, in across the inside).
+        var body: [V2] = []
+        for i in 0..<(closed ? n : n + 1) {
+            let before = closed ? facings[(i + n - 1) % n] : (i > 0 ? facings[i - 1] : nil)
+            let after = closed ? facings[i % n] : (i < n ? facings[i] : nil)
+            var shift = V2.zero
+            if let b = before { shift += b.normal * off }
+            if let a = after, a != before { shift += a.normal * off }
+            body.append(pt(i) + shift)
+        }
+        var segs: [Seg] = [], edge: [Seg] = []
+        for i in 0..<n {
+            let a = body[i], b = body[closed ? (i + 1) % n : i + 1]
+            guard a.distance(to: b) > 0.5 else { return nil }
+            segs.append(Seg(a, b, facings[i]))
+            edge.append(Seg(pt(i), pt(i + 1), facings[i]))
+        }
+        let box = points.reduce(CGRect.null) { $0.union(CGRect(origin: $1.point, size: .zero)) }
+        var loop = SurfaceLoop(id: id, kind: kind, segs: segs, closed: closed, depth: depth, rect: box)
+        loop.edge = edge
+        return loop
+    }
+
     /// The nearest point on the actual edge of a loop — where a foot should
     /// rest. Around a corner this wraps onto the next side, which is what
     /// keeps the feet on the window while the body swings round it.
@@ -556,6 +650,8 @@ final class SurfaceMap {
     func rebuild(habitat air: CGRect, loops given: [SurfaceLoop], junctions: [SurfaceJunction] = []) {
         occluders = []
         dockRects = []
+        pageLoops = []
+        pageScreens = []
         screenFrames = [air]
         worldBounds = air
         cinemaScreens = []
@@ -577,12 +673,19 @@ final class SurfaceMap {
 
     /// Builds a map for an arbitrary rectangle instead of the real displays,
     /// so tooling can lay the spider out on a mock desktop.
-    func debugRebuild(screen: CGRect, menuBarHeight: CGFloat, windows: [TrackedWindow], cinema: Bool = false, dock: CGRect? = nil) {
+    /// `zoomed`: the screen is taken (`cinema`) by a maximized window, not
+    /// a full-screen one.
+    func debugRebuild(screen: CGRect, menuBarHeight: CGFloat, windows: [TrackedWindow], cinema: Bool = false,
+                      zoomed: Bool = false, dock: CGRect? = nil) {
         dockRects = dock.map { [$0] } ?? []
         let off = standoff
         cinemaScreens = cinema ? [screen] : []
         if cinema {
-            let cl = SurfaceMap.cinemaLoops(id: "screen:0", frame: screen, standoff: off)
+            var visible = screen
+            visible.size.height -= menuBarHeight
+            if let dock, dock.minY <= screen.minY + 1 { visible.origin.y = dock.maxY; visible.size.height -= dock.maxY - screen.minY }
+            let stage = SurfaceMap.stage(screen: screen, visible: visible, zoomed: zoomed)
+            let cl = SurfaceMap.cinemaLoops(id: "screen:0", frame: stage, standoff: off)
             occluders = []
             screenFrames = [screen]
             worldBounds = screen
@@ -607,7 +710,7 @@ final class SurfaceMap {
             loop.edge = [Seg(V2(screen.minX, y + off), V2(screen.maxX, y + off), .down)]
             newLoops.append(loop)
         }
-        for w in windows {
+        for w in windows where !w.maximized {
             var loop = SurfaceLoop(id: "win:\(w.id)", kind: .windowEdge,
                                    segs: SurfaceMap.rectEdge(w.frame.insetBy(dx: -off, dy: -off), inside: false),
                                    closed: true, depth: w.depth, rect: w.frame)
@@ -835,7 +938,7 @@ final class SurfaceMap {
     /// never lands or perches half under one.
     func canHold(_ l: SurfaceLoop, _ s: Seg, at t: CGFloat) -> Bool {
         guard s.isOpen(at: t) else { return false }
-        return l.kind != .windowEdge || isClear(s.point(at: t), depth: l.depth, margin: standoff * 2)
+        return !l.kind.onWindow || isClear(s.point(at: t), depth: l.depth, margin: standoff * 2)
     }
 
     /// The underside of the menu bar on a screen, if it has one.
@@ -925,7 +1028,7 @@ final class SurfaceMap {
                 guard dy > 12, dy < bestDy else { continue }
                 let (t, _) = projectOnSegment(V2(x, y), s.a, s.b)
                 guard s.isOpen(at: t) else { continue }
-                if l.kind == .windowEdge, !isVisible(V2(x, y + standoff), depth: l.depth) { continue }
+                if l.kind.onWindow, !isVisible(V2(x, y + standoff), depth: l.depth) { continue }
                 bestDy = dy
                 // Silk attaches to the edge itself, not to the body line.
                 best = V2(x, y + standoff)
@@ -960,7 +1063,7 @@ final class SurfaceMap {
                 guard y < p.y + standoff, best.map({ y > $0 }) ?? true else { continue }
                 let (t, _) = projectOnSegment(V2(clamp(p.x, minX, maxX), y), s.a, s.b)
                 guard s.isOpen(at: t) else { continue }
-                if l.kind == .windowEdge, !isVisible(V2(clamp(p.x, minX, maxX), y), depth: l.depth) { continue }
+                if l.kind.onWindow, !isVisible(V2(clamp(p.x, minX, maxX), y), depth: l.depth) { continue }
                 best = y
             }
         }

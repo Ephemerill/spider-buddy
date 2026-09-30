@@ -57,6 +57,8 @@ cp "build/$BIN" "$APP/Contents/MacOS/$BIN"
 ditto "$SPARKLE/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
 # Its icon, drawn by tools/art.sh (the menu bar spider on a tile).
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# The browser extension (Extension/), for Your Mac ▸ Climb Web Pages to hand out.
+ditto Extension "$APP/Contents/Resources/Extension"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

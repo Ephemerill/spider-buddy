@@ -483,7 +483,7 @@ final class Spider {
     /// the Dock or the menu bar.
     var standingOnWindow: Bool {
         guard mode == .attached, let loop = map.loop(anchor.loopID) else { return false }
-        return loop.kind == .windowEdge
+        return loop.kind.onWindow
     }
     /// Who it is: the Studio's personality, shifted a little by what it has
     /// been through (see Memory.swift). Everything it decides reads this.
@@ -1934,7 +1934,7 @@ final class Spider {
         case .nesting: return map.isVisible(pos, depth: Int.max)
         case .attached:
             guard let loop = map.loop(anchor.loopID) else { return false }
-            guard loop.kind == .windowEdge else { return true }
+            guard loop.kind.onWindow else { return true }
             return (map.seg(anchor).map { $0.isOpen(at: anchor.t) } ?? false) && map.isVisible(pos, depth: loop.depth)
         default: return false
         }
@@ -4176,7 +4176,7 @@ final class Spider {
     private func hidingEdges() -> [(t: CGFloat, into: CGFloat)] {
         // Only a window's edge can be behind another window; on the screen's
         // rim it is always in front, so there is nothing there to hide behind.
-        guard mode == .attached, let loop = map.loop(anchor.loopID), loop.kind == .windowEdge,
+        guard mode == .attached, let loop = map.loop(anchor.loopID), loop.kind.onWindow,
               anchor.segIdx < loop.segs.count else { return [] }
         let seg = loop.segs[anchor.segIdx]
         var out: [(CGFloat, CGFloat)] = []
@@ -8286,6 +8286,50 @@ final class Spider {
         cinemaSeat = nil
     }
 
+    /// Whether a surface is a ledge on a web page, by its name ("page:…",
+    /// as WebPages.swift names them) — gone from the map or not.
+    static func isPageLedge(_ loopID: String) -> Bool { loopID.hasPrefix("page:") }
+
+    /// A web page it may be on was read afresh (see WebPages.swift): the
+    /// ledge under it found again — a pixel off, a little longer or
+    /// shorter, joined round a corner it was not before — or not at all.
+    /// It keeps its place on the ground: its anchor is read off the ledge
+    /// from where it stands, not carried over by index, and only if there
+    /// is nothing there any more does it let go. A ledge found somewhere
+    /// else because the whole page moved (`moved`, by name) carries it
+    /// along. (A ledge carried along by a scroll, or a window moved, is
+    /// not this: it rides those as it goes.)
+    func pageLedgesChanged(moved: [String: V2] = [:]) {
+        guard mode == .attached, !isHeld, let loop = map.loop(anchor.loopID), loop.kind == .webLedge else { return }
+        let stood = anchorPos + (moved[loop.id] ?? .zero)
+        if let p = map.worldPoint(anchor), p.distance(to: stood) < 1 { return }
+        let near = 10 * config.scale + 4
+        var best: (anchor: Anchor, d: CGFloat, seg: Seg)?
+        for (i, s) in loop.segs.enumerated() {
+            let (t, d) = projectOnSegment(stood, s.a, s.b)
+            if d <= near, s.isOpen(at: t), best == nil || d < best!.d { best = (Anchor(loopID: loop.id, segIdx: i, t: t), d, s) }
+        }
+        if best == nil, let spot = map.nearestSpot(to: stood, within: near) {
+            best = (spot.anchor, 0, spot.seg)
+        }
+        guard let b = best else {
+            detachAndFall(lineUp: true)
+            return
+        }
+        let wasAlong = surfaceNormal.rotated(by: -.pi / 2)
+        if b.seg.dir.dot(wasAlong) < 0 {
+            walkDir = -walkDir
+            facing = -facing
+            pendingDir = -pendingDir
+        }
+        anchor = b.anchor
+        lastLoopRect = nil
+        stuckFor = 0
+        anchorValid = true
+        // Carried: quickly, as a dragged window carries it.
+        anchorGlide = moved[loop.id] == nil ? 8 : 30
+    }
+
     // MARK: Rescue
 
     /// Puts it in the air at `p`, whatever it was doing, with everything it
@@ -10428,7 +10472,7 @@ final class Spider {
         // preferred when the two are much of a muchness.
         if bestCost > 1.5 {
             for other in map.loops where other.id != loop.id && !other.edge.isEmpty {
-                if other.kind == .windowEdge, other.rect.insetBy(dx: -reach - 40, dy: -reach - 40).contains(want.point) == false { continue }
+                if other.kind.onWindow, other.rect.insetBy(dx: -reach - 40, dy: -reach - 40).contains(want.point) == false { continue }
                 let o = footOnEdge(want, other, wrap: false)
                 guard o.visible else { continue }
                 let cost = want.distance(to: o.point) + 3 * config.scale
@@ -10474,7 +10518,7 @@ final class Spider {
         var normal = e.normal
         // A window's corner is rounded: near one, the foot goes on the curve.
         if let c = loop.onRoundedCorner(point) { point = c.point; normal = c.normal }
-        let visible = loop.kind != .windowEdge || map.isVisible(point + normal * 3, depth: loop.depth)
+        let visible = !loop.kind.onWindow || map.isVisible(point + normal * 3, depth: loop.depth)
         return (point, visible)
     }
 
@@ -10519,7 +10563,7 @@ final class Spider {
         if let c = loop.onRoundedCorner(point) { point = c.point; normal = c.normal }
         // The screen's rim, the menu bar and the Dock are in front of every
         // window; a window's edge can be behind another window.
-        let visible = loop.kind != .windowEdge || map.isVisible(point + normal * 3, depth: loop.depth)
+        let visible = !loop.kind.onWindow || map.isVisible(point + normal * 3, depth: loop.depth)
         return (point, visible)
     }
 
@@ -10642,7 +10686,7 @@ final class Spider {
         var best: V2?
         var bestCost = CGFloat.greatestFiniteMagnitude
         for loop in [own] + map.loops.filter({ $0.id != own.id }) {
-            if loop.id != own.id, loop.kind == .windowEdge, !loop.rect.insetBy(dx: -r, dy: -r).contains(hipW.point) { continue }
+            if loop.id != own.id, loop.kind.onWindow, !loop.rect.insetBy(dx: -r, dy: -r).contains(hipW.point) { continue }
             // A step across to another surface costs a little: its own
             // edge is preferred when the two are much of a muchness.
             let penalty: CGFloat = loop.id == own.id ? 0 : 3 * s
@@ -10664,7 +10708,7 @@ final class Spider {
                     var normal = e.normal
                     if let c = loop.onRoundedCorner(q) { q = c.point; normal = c.normal }
                     guard q.distance(to: hipW) <= r * 1.02 else { continue }
-                    if loop.kind == .windowEdge, !map.isVisible(q + normal * 3, depth: loop.depth) { continue }
+                    if loop.kind.onWindow, !map.isVisible(q + normal * 3, depth: loop.depth) { continue }
                     let cost = q.distance(to: wantW) + penalty
                     if cost < bestCost { best = q; bestCost = cost }
                 }
@@ -10716,7 +10760,9 @@ final class Spider {
         keepFooting()
         guard var here = map.resolve(anchor, cornerRadius: Spider.cornerRadius * config.scale),
               let loop = map.loop(anchor.loopID) else {
-            detachAndFall()
+            // A page's ledge gone from under it (clicked through to another
+            // page, say): it shoots a line up to catch itself on.
+            detachAndFall(lineUp: Spider.isPageLedge(anchor.loopID))
             return
         }
         // Standing on something being carried about: its surfaces are where
@@ -10731,7 +10777,7 @@ final class Spider {
         // somewhere we cannot follow (another Space, another display), and a
         // walk that goes nowhere means the surface under it is not what we
         // think it is. Either way, let go rather than pace in mid-air.
-        if loop.kind == .windowEdge {
+        if loop.kind.onWindow {
             if let prev = lastLoopRect, abs(prev.midX - loop.rect.midX) + abs(prev.midY - loop.rect.midY) > 400 {
                 lastLoopRect = nil
                 detachAndFall()
@@ -10837,7 +10883,7 @@ final class Spider {
         // pushed off the screen: get out of the way.
         // Only a window's edge can be covered; the screen's rim, the menu
         // bar and the Dock are always its to walk, whatever overlaps them.
-        let onWindow = loop.kind == .windowEdge && activity != .peekaboo && !calmUnderCover
+        let onWindow = loop.kind.onWindow && activity != .peekaboo && !calmUnderCover
         let covered = onWindow && (map.seg(anchor).map { !$0.isOpen(at: anchor.t) } ?? true)
         let bodyCovered = onWindow && !map.isVisible(pos, depth: loop.depth)
         // Carried off the screen by a window: no alarm. It carries on for a
@@ -13032,7 +13078,7 @@ final class Spider {
         let flat = seg.facing == .up || seg.facing == .down
         let point = flat ? pos - seg.normal * map.standoff : pos
         // Nor can it fasten to a stretch a window has come over.
-        guard loop.kind != .windowEdge || map.isVisible(point, depth: loop.depth) else { return nil }
+        guard !loop.kind.onWindow || map.isVisible(point, depth: loop.depth) else { return nil }
         return (point, loop.depth)
     }
 
@@ -17544,7 +17590,7 @@ final class Spider {
         // hiding behind the edge of a window in front of the one it stands
         // on is the whole game — then the parts of it inside that window
         // are behind it.
-        if mode == .attached, activity == .peekaboo, let loop = map.loop(anchor.loopID), loop.kind == .windowEdge {
+        if mode == .attached, activity == .peekaboo, let loop = map.loop(anchor.loopID), loop.kind.onWindow {
             let r = 62 * config.scale
             let sprite = CGRect(x: pos.x - r, y: pos.y - r, width: r * 2, height: r * 2)
             p.hiddenBy = map.occluders.filter { $0.depth < loop.depth && $0.rect.intersects(sprite) }.map { $0.rect }
