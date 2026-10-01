@@ -2738,7 +2738,15 @@ final class Spider {
             // mirror images with the pointer hovering right above it — and
             // not in the middle of a gesture, which finishes on the side it
             // began.
-            if speed > 1 || [.walk, .scurry, .sneak].contains(activity) { c = facing * max(facing * c, 0.45) }
+            if speed > 1 || [.walk, .scurry, .sneak].contains(activity) {
+                c = facing * max(facing * c, 0.45)
+                // Nor do the head and abdomen turn back past the front view
+                // the way it came: it would be walking backwards with its
+                // eyes on you. It looks round at you as it goes; for a
+                // proper look behind it stops (and the walk is dropped for
+                // it, below).
+                headYawTarget = facing * max(facing * headYawTarget, 0.3)
+            }
             interestBearing = approach(interestBearing, c, 2.4, dt)
             let gesturing = Spider.gestures.contains(activity) || activity == .stare
             if interestBearing * interestSide < -Spider.sideSwitch, !gesturing {
@@ -4223,7 +4231,7 @@ final class Spider {
             let d = spot.point.distance(to: pos)
             if best == nil || d < best!.d { best = (d, spot.point) }
         }
-        if let b = best { startJump(to: b.point) } else { turnTo(chance(0.5) ? 1 : -1, then: .walk, for: randRange(1.5, 3)) }
+        if let b = best { startJump(to: b.point) } else { turnTo(wanderWay(), then: .walk, for: randRange(1.5, 3)) }
     }
 
     private func progressPeekaboo(dt: CGFloat) {
@@ -10241,6 +10249,7 @@ final class Spider {
                 facing = pendingDir
                 walkDir = pendingDir
                 turned = true
+                faced()
             }
         } else if mode == .dangling {
             // On a line it is seen side on the whole time: head straight
@@ -10273,8 +10282,17 @@ final class Spider {
             let g = activity == .glance ? 0.62 : (mode == .attached ? glance : 0)
             var target = facing * (1 - g)
             // Interested, it turns toward the pointer instead — the whole
-            // way round if need be, on the same spring.
-            if mode == .attached { target = lerp(target, interestYawTarget, interest) }
+            // way round if need be, on the same spring. Not on the move,
+            // though: going somewhere it comes three-quarters round at most
+            // (see `updateInterest`), and never swings on round past the
+            // front view to set off back the way it came the moment it has
+            // turned to go — or walk on with its body turned backwards.
+            // For a proper look it stops first.
+            if mode == .attached {
+                let onTheMove = speed > 1 || [.walk, .sneak, .scurry].contains(activity)
+                let toward = onTheMove ? facing * max(facing * interestYawTarget, 0.4) : interestYawTarget
+                target = lerp(target, toward, interest)
+            }
             yawSpring(to: target, dt: dt)
         }
         if mode != .attached || activity == .turn { yawVel = 0 }
@@ -10283,11 +10301,13 @@ final class Spider {
             // turn: it now faces the other way along the ledge, and stays
             // that way when the pointer leaves.
             if mode == .attached, activity != .turn {
+                let was = facing
                 facing = yaw >= 0 ? 1 : -1
                 // On the move, going the other way starts from a stop — its
                 // feet come down where they are — not a reversal in a frame.
                 if walkDir != facing { speed = 0 }
                 walkDir = facing
+                if facing != was { faced() }
             }
             for i in legs.indices {
                 legs[i].foot.x = -legs[i].foot.x
@@ -10721,6 +10741,7 @@ final class Spider {
         let d = cursor - prevCursor
         prevCursor = cursor
         if dt > 0 { cursorVel = approach(cursorVel, d / dt, 18, dt) }
+        cursorStillFor = cursorVel.length < 40 ? cursorStillFor + dt : 0
 
         // Petting: quick back-and-forth right on top of the spider.
         // Only a reversal made on top of it counts, at stroking pace: a
@@ -10874,7 +10895,13 @@ final class Spider {
             if !stalking.contains(activity) { queued = nil; finishActivity() }
             else if [.walk, .sneak].contains(activity), activityTime > 0.9 { activityDur = min(activityDur, activityTime) }
         }
-        if activityTime > activityDur { finishActivity() }
+        if activityTime > activityDur {
+            let was = activity
+            finishActivity()
+            // Done, with nothing to go straight on with: a beat before the
+            // next whim (the decision clock runs `liveliness` times fast).
+            if was != .idle, activity == .idle, atLeisure { decisionIn = max(decisionIn, whimBeat() * config.liveliness) }
+        }
         // Put to bed while you are away: whatever roused it, back to sleep.
         if dormant, activity != .sleep { fallAsleep() }
         if activity == .idle && decisionIn <= 0 { think() }
@@ -11623,6 +11650,17 @@ final class Spider {
                 boutStride *= 0.85
             }
             if gaitStyle == .bouncy { boutBob *= 1.6 }
+            // Out and about, it keeps to one manner of going for the outing.
+            if mood == .roam, atLeisure {
+                if let m = manner {
+                    bout = m.pace * randRange(0.94, 1.06)
+                    boutBob = m.bob
+                    boutStride = m.stride
+                    gaitStyle = m.style
+                } else {
+                    manner = Manner(sneaks: a == .sneak, pace: bout, bob: boutBob, stride: boutStride, style: gaitStyle)
+                }
+            }
         }
     }
 
@@ -11901,6 +11939,108 @@ final class Spider {
         }
     }
 
+    // MARK: Left to itself
+    //
+    // With nothing calling on it, what it does next is its own whim — but
+    // an animal's whims hang together. For a while it is out and about:
+    // off along the way it faces, stopping to look about and going on the
+    // same way, over the end of the ledge or round the corner. Then for a
+    // while it potters where it is: a groom, a look round, a fidget, a sit.
+    // And once it has come round to face one way it keeps to it, rather
+    // than turning back the moment it has turned.
+
+    /// How it is spending this stretch of its time, and until when.
+    private enum Mood { case roam, potter }
+    private var mood: Mood = .roam
+    private var moodUntil: CGFloat = 20
+    /// When it last came round to face the other way along its edge (or
+    /// landed on one), and how long after that it keeps to the way it
+    /// faces unless something calls it round.
+    private var facedAt: CGFloat = -99
+    private var keepHeadingFor: CGFloat = 0
+    /// How long the pointer has been at rest, near enough.
+    private var cursorStillFor: CGFloat = 0
+    /// How it goes about the outing it is on: whether it is creeping, and
+    /// its pace and step, which stay much the same bout to bout rather
+    /// than changing with every few steps. Picked as the outing's first
+    /// bout of walking sets off.
+    private struct Manner { var sneaks: Bool; var pace: CGFloat; var bob: CGFloat; var stride: CGFloat; var style: GaitStyle }
+    private var manner: Manner?
+
+    /// Facing a new way along its edge: it keeps to it for a while.
+    private func faced() {
+        facedAt = t
+        keepHeadingFor = randRange(6, 14) * lerp(1.2, 0.85, personality.energy)
+    }
+
+    /// Free to turn back the way it came on a whim.
+    private var mayTurnBack: Bool { t - facedAt > keepHeadingFor }
+
+    /// The stretch it is in is over: out and about or pottering, for a
+    /// while. After an outing it mostly settles; after pottering it is
+    /// mostly off again. The livelier it is, the longer it is out and the
+    /// sooner it is off; the lazier, the longer it sits.
+    private func nextMood() {
+        let P = personality
+        let roamAgain = lerp(0.15, 0.4, P.energy) * lerp(1, 0.5, P.laziness)
+        let setOut = lerp(0.6, 0.92, P.energy) * lerp(1, 0.65, P.laziness)
+        mood = chance(mood == .roam ? roamAgain : setOut) ? .roam : .potter
+        manner = nil
+        moodUntil = t + (mood == .roam
+            ? randRange(12, 32) * lerp(0.75, 1.35, P.energy)
+            : randRange(8, 22) * lerp(1.3, 0.75, P.energy) * lerp(0.9, 1.6, P.laziness) * lerp(1, 1.5, drowsy))
+    }
+
+    /// Nothing it is seeing to — no hunt, game, job, errand, trip or film:
+    /// only its own whims.
+    private var atLeisure: Bool {
+        mode == .attached && laser == nil && friendChase == nil && friendFlee == nil && cursorHunt == .none
+            && departing == nil && caught == nil && huntTarget == nil && toyPlay == nil && build == nil
+            && homing == nil && errand == nil && inquiry == nil && walkGoal == nil && !inCinema
+            && coverGoal == nil && riding == nil && webJob == nil && pendingDemo == nil && mealCarry == nil
+            && t >= bedBoundUntil && !(confined && !inBox) && interest < 0.5
+    }
+
+    /// The pause between one whim and the next, in real seconds: a beat out
+    /// and about, longer pottering. An animal finishes one thing, stands a
+    /// moment, then does the next; it does not run them all together.
+    private func whimBeat() -> CGFloat {
+        (mood == .roam ? randRange(0.15, 0.6) : randRange(0.5, 2.0)) * lerp(1.3, 0.7, personality.energy)
+    }
+
+    /// How far it could go the way it is heading before it runs out of edge
+    /// — a window in front, or the end of a ledge — looking on round a
+    /// corner or two; at most `cap`.
+    private func roomAhead(cap: CGFloat) -> CGFloat {
+        guard let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return 0 }
+        let n = loop.segs.count
+        var idx = anchor.segIdx, at = anchor.t, room: CGFloat = 0
+        for _ in 0..<3 {
+            let seg = loop.segs[idx]
+            let lim = seg.limit(from: at, dir: walkDir)
+            room += abs(lim - at)
+            guard room < cap, (walkDir > 0 ? lim >= seg.len - 0.01 : lim <= 0.01) else { break }
+            let next = walkDir > 0 ? idx + 1 : idx - 1
+            guard loop.closed || (next >= 0 && next < n) else { break }
+            idx = (next + n) % n
+            at = walkDir > 0 ? 0 : loop.segs[idx].len
+            guard loop.segs[idx].isOpen(at: at + walkDir * 0.5) else { break }
+        }
+        return min(room, cap)
+    }
+
+    /// Which way to wander off: on the way it faces, mostly. It goes back
+    /// the way it came when there is hardly any room ahead — and otherwise
+    /// only now and then, once it has kept to this way a good while.
+    private func wanderWay() -> CGFloat {
+        let sc = config.scale
+        let room = roomAhead(cap: 300 * sc)
+        if room < 45 * sc { return -walkDir }
+        if room < 130 * sc, chance(0.5) { return -walkDir }
+        if mayTurnBack, chance(lerp(0.12, 0.25, personality.curiosity)) { return -walkDir }
+        return walkDir
+    }
+
     // MARK: - Decisions
 
     private func think() {
@@ -12125,21 +12265,32 @@ final class Spider {
             return
         }
 
-        if config.followCursor, dCursor < 340, cursorFree(cursor), chance(min(1, lerp(0.1, 0.65, P.curiosity) * hw(\.approach))) {
+        let eyeOnPointer = config.followCursor && dCursor < 340 && cursorFree(cursor) && chance(min(1, lerp(0.1, 0.65, P.curiosity) * hw(\.approach)))
+        if eyeOnPointer {
             // Investigate the pointer — from where it stands, if it is
-            // already close enough to have its attention.
-            if dCursor > 70, interest < 0.5 {
+            // already close enough to have its attention. It goes over to
+            // a pointer that has come to rest, not after every flick of it
+            // across the screen; and not round behind it when it has only
+            // just turned this way, unless the pointer has sat there a
+            // while — or it would be turning this way and that all day.
+            let along = distanceAlong(to: cursor)
+            if dCursor > 70, interest < 0.5, cursorStillFor > 0.4, abs(along) > 30 * config.scale,
+               along * walkDir > 0 || mayTurnBack || cursorStillFor > 1.5 {
                 walkToward(cursor)
-            } else {
-                beginActivity(.look, dur: randRange(0.8, 2.0))
+                return
             }
-            return
+            // Otherwise a look at it — though out and about, it mostly
+            // keeps an eye on it as it goes.
+            if mood == .potter || interest >= 0.5 || chance(0.4) {
+                beginActivity(.look, dur: randRange(0.8, 2.0))
+                return
+            }
         }
 
         // Someone is about and there is a window edge to hide behind nearby:
         // peek-a-boo, now and then (or as soon as it can if it was asked to).
         let asked = t < wantsPeekabooUntil
-        if asked || (config.followCursor && dCursor < 520 && t - lastUserActivity < 20
+        if asked || (config.followCursor && !eyeOnPointer && dCursor < 520 && t - lastUserActivity < 20
                      && chance(min(1, lerp(0.03, 0.14, P.playfulness) * hw(\.peekaboo)))) {
             if startPeekaboo(reach: asked ? 600 : 260) { wantsPeekabooUntil = -1; return }
             if asked { goHideSomewhere() ; return }
@@ -12178,12 +12329,27 @@ final class Spider {
             draw(options)
             return
         }
-        options.append((30 * busy * hw(\.wander), {
-            let dir: CGFloat = chance(0.7) ? self.walkDir : -self.walkDir
-            let sneaky = lerp(0.3, 0.05, P.bravery)
+        // Out and about, or pottering where it is (see "Left to itself"):
+        // the same things to choose from, weighted for the mood it is in.
+        // (Hanging under something is no place to settle, whatever its
+        // mood: it moves on.)
+        if t >= moodUntil { nextMood() }
+        let roaming = mood == .roam || surfaceNormal.y < -0.5
+        let goW: CGFloat = roaming ? 2.4 : 0.15     // off along its edge
+        let sitW: CGFloat = roaming ? 0.5 : 1.3     // things done where it stands
+        let showW: CGFloat = roaming ? 0.85 : 1.7   // play, and showing off
+        let awayW: CGFloat = roaming ? 1.3 : 0.3    // off this surface altogether
+        // Settled, it takes its time over things.
+        let linger: CGFloat = roaming ? 1 : randRange(1.4, 2.2)
+        options.append((30 * busy * hw(\.wander) * goW, {
+            let dir = self.wanderWay()
+            // (Out and about, a sneaking mood lasts the outing: see `manner`.)
+            let sneaks = roaming ? self.manner?.sneaks ?? chance(lerp(0.3, 0.05, P.bravery)) : chance(lerp(0.3, 0.05, P.bravery))
             let hurried = lerp(0.04, 0.22, P.energy) * lerp(1, 0.2, self.drowsy)
-            let style: Activity = chance(sneaky) ? .sneak : (chance(hurried) ? .scurry : .walk)
-            let dur = style == .scurry ? randRange(0.5, 1.2) : randRange(1.4, 5.0)
+            let style: Activity = sneaks ? .sneak : (chance(hurried) ? .scurry : .walk)
+            var dur = style == .scurry ? randRange(0.5, 1.2) : randRange(1.4, 5.0)
+            // Pottering, it only shifts along a little.
+            if !roaming { dur = min(dur, randRange(0.7, 1.6)) }
             self.turnTo(dir, then: style, for: dur)
             // It went somewhere for a reason: having got there, it has a
             // look about, checks on you, or has a peer over the edge.
@@ -12196,50 +12362,51 @@ final class Spider {
                 if let f = follow { self.walkThen = f } else { self.walkThen = nil }
             }
         }))
-        options.append((10 * hw(\.look), { self.beginActivity(.look, dur: randRange(0.7, 2.2)) }))
-        options.append((6 * lazy * hw(\.rest), {
+        options.append((10 * hw(\.look) * sitW, { self.beginActivity(.look, dur: randRange(0.7, 2.2) * linger) }))
+        options.append((6 * lazy * hw(\.rest) * sitW, {
             // In its tank, a rest is mostly in its spot for resting.
             if self.placesOn, self.t >= self.errandRestUntil - 4, chance(0.65), self.goFor(.rest) { return }
-            self.beginActivity(.rest, dur: randRange(3, 8))
+            self.beginActivity(.rest, dur: randRange(3, 8) * linger)
         }))
-        options.append((6 * hw(\.groom), { self.beginActivity(.groom, dur: randRange(1.4, 2.8)) }))
-        options.append((6 * (0.5 + busy * 0.5) * hw(\.fidget), { self.beginActivity(.fidget, dur: randRange(0.7, 1.2)) }))
-        options.append((4 * hw(\.scratch), { self.beginActivity(.scratch, dur: randRange(1.0, 1.6)) }))
-        options.append((2 * love * hw(\.wave) * gestureWeight(.wave), {
+        options.append((6 * hw(\.groom) * sitW, { self.beginActivity(.groom, dur: randRange(1.4, 2.8) * linger) }))
+        options.append((6 * (0.5 + busy * 0.5) * hw(\.fidget) * sitW, { self.beginActivity(.fidget, dur: randRange(0.7, 1.2)) }))
+        options.append((4 * hw(\.scratch) * sitW, { self.beginActivity(.scratch, dur: randRange(1.0, 1.6) * linger) }))
+        options.append((2 * love * hw(\.wave) * gestureWeight(.wave) * showW, {
             self.beginActivity(.wave, dur: 1.5)
             self.happy.velocity = 4
         }))
-        options.append((2 * play * hw(\.wiggle) * gestureWeight(.wiggle), { self.beginActivity(.wiggle, dur: 0.8) }))
-        options.append((3 * love * hw(\.glance), { self.beginActivity(.glance, dur: randRange(0.8, 1.6)) }))
+        options.append((2 * play * hw(\.wiggle) * gestureWeight(.wiggle) * showW, { self.beginActivity(.wiggle, dur: 0.8) }))
+        options.append((3 * love * hw(\.glance) * sitW, { self.beginActivity(.glance, dur: randRange(0.8, 1.6)) }))
         if config.followCursor, dCursor < 520, t - lastUserActivity < 30 {
-            options.append((3 * love * hw(\.greet) * gestureWeight(.greet), {
+            options.append((3 * love * hw(\.greet) * gestureWeight(.greet) * showW, {
                 self.beginActivity(.greet, dur: randRange(1.8, 2.6))
                 if chance(0.5) { self.setEmote(.hearts, 1.0) }
             }))
         }
         // Sitting still, turned to face you, just watching.
         if config.followCursor, dCursor < 560, t - lastUserActivity < 40 {
-            options.append((3 * love * lerp(0.6, 1.4, P.curiosity) * hw(\.stare), {
-                self.beginActivity(.stare, dur: randRange(3, 7))
+            options.append((3 * love * lerp(0.6, 1.4, P.curiosity) * hw(\.stare) * sitW, {
+                self.beginActivity(.stare, dur: randRange(3, 7) * min(linger, 1.5))
             }))
         }
         // A thought, now and then.
-        options.append((4 * lerp(0.5, 1.5, P.curiosity) * (raining ? 1.8 : 1) * hw(\.muse), { self.museIfSoMoved(); if self.emote == .none { self.beginActivity(.look, dur: randRange(0.6, 1.2)) } }))
+        options.append((4 * lerp(0.5, 1.5, P.curiosity) * (raining ? 1.8 : 1) * hw(\.muse) * sitW, { self.museIfSoMoved(); if self.emote == .none { self.beginActivity(.look, dur: randRange(0.6, 1.2)) } }))
 
         // Drumming on whatever it is standing on, the way a jumping spider
         // signals: a few bursts of quick taps with its front legs.
-        options.append((2.5 * play * lerp(0.6, 1.4, P.energy) * hw(\.drum), {
+        options.append((2.5 * play * lerp(0.6, 1.4, P.energy) * hw(\.drum) * showW, {
             self.beginActivity(.drum, dur: randRange(2.9, 5.8))
             self.setEmote(.note, 1.4)
         }))
-        options.append((3 * lerp(0.4, 1.8, P.curiosity) * hw(\.peer), { self.beginActivity(.peer, dur: randRange(1.2, 2.0)) }))
-        options.append((2.5 * lerp(0.5, 1.5, (P.affection + P.bravery) / 2) * hw(\.armsUp) * gestureWeight(.armsUp), {
+        options.append((3 * lerp(0.4, 1.8, P.curiosity) * hw(\.peer) * sitW, { self.beginActivity(.peer, dur: randRange(1.2, 2.0) * min(linger, 1.5)) }))
+        options.append((2.5 * lerp(0.5, 1.5, (P.affection + P.bravery) / 2) * hw(\.armsUp) * gestureWeight(.armsUp) * showW, {
             self.beginActivity(.armsUp, dur: randRange(0.9, 1.5))
             if chance(0.5) { self.setEmote(.sparkle, 0.9) }
         }))
-        // Only ever on top of something (see `canRoll`).
-        if let dir = rollWay() {
-            options.append((2 * play * hw(\.roll), {
+        // Only ever on top of something (see `canRoll`) — and not back the
+        // way it has only just turned from.
+        if let dir = rollWay(), dir == walkDir || mayTurnBack {
+            options.append((2 * play * hw(\.roll) * showW, {
                 if dir == self.walkDir {
                     self.beginActivity(.roll, dur: randRange(1.5, 1.9))
                     self.queue(.shake, 0.45)
@@ -12248,41 +12415,45 @@ final class Spider {
                 }
             }))
         }
-        options.append((1.5 * play * hw(\.dance) * gestureWeight(.dance), {
+        options.append((1.5 * play * hw(\.dance) * gestureWeight(.dance) * showW, {
             self.beginActivity(.dance, dur: randRange(1.2, 2.0))
             self.setEmote(.note, 1.4)
         }))
         // The tank rearranged round it: out exploring, to see what is new.
         if exploring, inHabitat, tank != nil {
-            options.append((24 * busy * lerp(0.7, 1.4, P.curiosity), { self.explore() }))
+            options.append((24 * busy * lerp(0.7, 1.4, P.curiosity) * (roaming ? 1.3 : 0.6), { self.explore() }))
         }
-        options.append((1.5 * busy * hw(\.pushup), { self.beginActivity(.pushup, dur: randRange(1.2, 1.8)) }))
-        options.append((1.5 * (0.5 + lazy * 0.5) * hw(\.stretch), { self.beginActivity(.legStretch, dur: 1.6) }))
-        options.append((1 * play * hw(\.spin), { self.beginActivity(.spin, dur: 0.1) }))
-        options.append((2 * hw(\.look), { self.turnTo(-self.walkDir, then: .look, for: randRange(0.6, 1.4)) }))
+        options.append((1.5 * busy * hw(\.pushup) * showW, { self.beginActivity(.pushup, dur: randRange(1.2, 1.8)) }))
+        options.append((1.5 * (0.5 + lazy * 0.5) * hw(\.stretch) * sitW, { self.beginActivity(.legStretch, dur: 1.6) }))
+        options.append((1 * play * hw(\.spin) * showW, { self.beginActivity(.spin, dur: 0.1) }))
+        // A look back the way it came — once it has kept to this way a while.
+        if mayTurnBack {
+            options.append((2 * hw(\.look) * sitW, { self.turnTo(-self.walkDir, then: .look, for: randRange(0.6, 1.4)) }))
+        }
         if surfaceNormal.y < -0.5 {
             // Hanging under something is no place to linger: let go and
-            // drop onto whatever is below.
-            options.append((14, { if !self.dropOffUnderside() { self.turnTo(-self.walkDir, then: .walk, for: randRange(1.2, 3.0)) } }))
+            // drop onto whatever is below — or, with nothing there to drop
+            // onto, on along under it.
+            options.append((14 * goW, { if !self.dropOffUnderside() { self.turnTo(self.wanderWay(), then: .walk, for: randRange(1.2, 3.0)) } }))
         }
-        options.append((8 * hw(\.leap) * chill, {
-            if let spot = self.bestJumpSpot(from: self.pos, exclude: self.anchor.loopID) {
+        options.append((8 * hw(\.leap) * chill * awayW, {
+            // Mostly somewhere ahead of it: round behind it only once it has
+            // kept to this way a while.
+            if let spot = self.bestJumpSpot(from: self.pos, exclude: self.anchor.loopID, behind: self.mayTurnBack ? 0.7 : 0.1) {
                 self.startJump(to: spot.point)
             } else {
-                self.turnTo(chance(0.5) ? 1 : -1, then: .walk, for: randRange(1.2, 3.0))
+                self.turnTo(self.wanderWay(), then: .walk, for: roaming ? randRange(1.2, 3.0) : randRange(0.7, 1.6))
             }
         }))
-        options.append((8 * hw(\.rappel) * chill, {
-            if self.config.webs, self.canRappel() {
-                self.dropOnWeb()
-            } else {
-                self.beginActivity(.walk, dur: randRange(1.2, 3.0))
-            }
-        }))
+        // Paying out a line from the underside of something, down to
+        // whatever is below.
+        if config.webs, canRappel() {
+            options.append((8 * hw(\.rappel) * chill * awayW, { self.dropOnWeb() }))
+        }
         // Swinging off on a line, if there is something up ahead to hang it
         // from — not in a box, where there is no room for it.
         if !confined {
-            options.append((7 * hw(\.swing) * lerp(0.6, 1.4, P.playfulness), {
+            options.append((7 * hw(\.swing) * lerp(0.6, 1.4, P.playfulness) * awayW, {
                 if self.config.webs, self.startSwing() { return }
                 self.beginActivity(.look, dur: randRange(0.6, 1.2))
             }))
@@ -12341,6 +12512,12 @@ final class Spider {
         guard pos.y - map.screenFrame(containing: pos).minY > 150 else { return false }
         if userAsked { return true }
         return loop.segs[anchor.segIdx].facing == .down
+    }
+
+    /// How far along its edge `p` is from it, + the way the edge runs.
+    private func distanceAlong(to p: V2) -> CGFloat {
+        guard let loop = map.loop(anchor.loopID), anchor.segIdx < loop.segs.count else { return 0 }
+        return (p - pos).dot(loop.segs[anchor.segIdx].dir)
     }
 
     private func walkToward(_ p: V2) {
@@ -12583,12 +12760,14 @@ final class Spider {
         return along.clampedLength(220) + normal * 90
     }
 
-    private func bestJumpSpot(from p: V2, exclude: String) -> (anchor: Anchor, point: V2)? {
+    /// `behind` weighs the spots it would have to turn round to face.
+    private func bestJumpSpot(from p: V2, exclude: String, behind: CGFloat = 1) -> (anchor: Anchor, point: V2)? {
         let spots = map.sampleSpots(spacing: 40)
         guard !spots.isEmpty else { return nil }
         var scored: [(CGFloat, Anchor, V2)] = []
         let playful = config.followCursor && cursor.distance(to: p) < 700
         let normal = surfaceNormal
+        let ahead = behind == 1 ? nil : map.loop(anchor.loopID).flatMap { l in anchor.segIdx < l.segs.count ? l.segs[anchor.segIdx].dir * walkDir : nil }
         for s in spots {
             let d = s.point.distance(to: p)
             // A short hop straight down onto something below counts too —
@@ -12600,6 +12779,7 @@ final class Spider {
             if let box = confine, !box.contains(s.point.point) { score *= 0.03 }
             if s.loop.id == exclude { score *= 0.18 }
             if s.loop.id == anchor.loopID { score *= 0.3 }
+            if let a = ahead, (s.point - p).dot(a) < 0 { score *= behind }
             if playful {
                 let dc = s.point.distance(to: cursor)
                 score *= remap(dc, 0, 500, 1.9, 0.9)
@@ -12950,6 +13130,7 @@ final class Spider {
         // snapping to it; the planted feet hold the ledge under the swing.
         headingTarget = seg.angle
         facing = walkDir
+        faced()
         travelLocal = V2(1, 0)
         legMode = .planted
         // Splat onto the ledge, then spring back up.
@@ -17076,6 +17257,17 @@ final class Spider {
 
     /// Tools only: which controller has the legs, and the body's walking speed.
     var debugGait: (controller: String, speed: CGFloat) { ("\(legController)", speed) }
+
+    /// Tools only: which way along its edge it is going and which way it
+    /// faces (±1 each), and the sprite's yaw.
+    var debugDirs: (walk: CGFloat, facing: CGFloat, yaw: CGFloat) { (walkDir, facing, yaw) }
+
+    /// Tools only: the mood it is in and for how much longer, whether it
+    /// may turn back yet, and the decision clock.
+    var debugWhim: String {
+        String(format: "%@ %.1fs%@ next %.2f%@", "\(mood)", Double(moodUntil - t), mayTurnBack ? "" : " keeping-way",
+               Double(decisionIn), atLeisure ? "" : " busy")
+    }
 
     /// Tools only: the clock and the aim of whatever it is doing.
     var debugActivity: String {
