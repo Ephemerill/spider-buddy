@@ -143,6 +143,18 @@ struct SpiderPose {
     var chew: CGFloat = 0
     /// The head tipped up on its neck (+) or down (-), in radians.
     var headTilt: CGFloat = 0
+    /// The head cocked over to one side on its neck — the quizzical tilt
+    /// of a jumping spider looking at you — in radians as seen on the
+    /// screen, + to the left (anticlockwise), whichever way it faces. All
+    /// of it shows face on; side on, a roll of the head does not show.
+    var headCock: CGFloat = 0
+    /// One eye of each pair shut, 0…1: a wink.
+    var wink: CGFloat = 0
+    /// Its palps — the two little paddles in front of its face — flicked
+    /// up (side on) or out (face on), 0…1 each, the near one and the far
+    /// one: a jumping spider's tell that it has its eye on something.
+    var palpNear: CGFloat = 0
+    var palpFar: CGFloat = 0
     /// How much further round than the legs the head and abdomen are
     /// turned, as a yaw: they are drawn at `facing + headTurn`, the legs at
     /// `facing`. Following the pointer, the upper body leads and the legs
@@ -447,6 +459,8 @@ private enum Activity {
     case bask       // stretched out low in the sun, eyes half shut
     case feel       // front legs out to something in front of it, feeling it (see `feelAt`)
     case drink      // head down to water, front legs at its edge, sipping (see `sipAt`)
+    case doubleTake // a look at you, away again — and a snap back round to stare (see "Body language")
+    case sigh       // a big breath in, and out: a slump on its legs
 }
 
 /// How it carries itself on a given walk.
@@ -669,6 +683,9 @@ final class Spider {
     private var glance: CGFloat = 0
     private var glanceIn: CGFloat = 4
     private var glanceUntil: CGFloat = 0
+    /// How far round a glance (the activity) turns it this time: never
+    /// quite the same twice.
+    private var glanceDepth: CGFloat = 0.62
     private var rollSpin: CGFloat = 0
 
 
@@ -1500,6 +1517,22 @@ final class Spider {
                 self.beginActivity(.look, dur: 0.6)
                 self.queue(.turn, 0.9)
                 self.pendingDir = -self.walkDir
+                // ...with a shake of the head first, now and then: no.
+                if !Spider.debugNoBodyLanguage, chance(0.5) {
+                    self.activityDur = 1.1
+                    self.shakeHead()
+                }
+            }),
+            // A curt nod: noted. The cooler it is with you, the likelier.
+            (Spider.debugNoBodyLanguage ? 0 : 1.2 * lerp(1.4, 0.3, self.personality.affection), {
+                self.beginActivity(.look, dur: 1.2)
+                self.nod(times: chance(0.5) ? 1 : 2)
+            }),
+            // A slow blink: a fond one's answer.
+            (Spider.debugNoBodyLanguage ? 0 : 1.0 * lerp(0.2, 1.4, self.personality.affection), {
+                self.beginActivity(.stare, dur: randRange(1.8, 2.4))
+                self.slowBlink(in: 0.5)
+                self.happy.velocity = 4
             }),
         ]
         let total = options.reduce(0) { $0 + $1.0 }
@@ -1630,6 +1663,19 @@ final class Spider {
         case \.curious: hold(.curious, 1.8); setEmote(.question, 1.2)
         case \.stare: hold(.stare, 3.5)
         case \.glance: hold(.glance, 1.2)
+        case \.walkTurned:
+            // Off along its edge turned round toward you, eyes on you — the
+            // way it has room to go.
+            turnTo(wanderWay(), then: .walk, for: 3.2)
+            var c = Carriage()
+            c.kind = .turned
+            c.turn = randRange(0.38, 0.55)
+            c.eyes = 1
+            if chance(0.5) { c.cock = (chance(0.5) ? 1 : -1) * randRange(0.12, 0.2) }
+            carriage = c
+            carriageFor = .walk
+            carriageUntil = t + 4.5
+            decisionIn = 4.6
         case \.greet: hold(.greet, 2.2); happy.velocity = 5; setEmote(.hearts, 1.2)
         case \.wave: hold(.wave, 1.5); happy.velocity = 4
         case \.peekaboo:
@@ -1962,6 +2008,13 @@ final class Spider {
 
     private func greetYou() {
         greetOnWaking = false
+        // A cool one: oh, it's you — a look, and a nod.
+        if !Spider.debugNoBodyLanguage, personality.affection < 0.3, chance(0.7) {
+            beginActivity(.stare, dur: 1.6)
+            nod(times: 1)
+            decisionIn = randRange(1.5, 3)
+            return
+        }
         happy.velocity = 8
         setEmote(.hearts, 1.6)
         beginActivity(.greet, dur: 2.6)
@@ -2189,6 +2242,13 @@ final class Spider {
     /// Something worth remembering happened, here.
     private func remember(_ e: Experience, _ amount: CGFloat = 1) {
         memory?.record(e, amount, at: placeHere())
+        // (And for a while after, it goes about it in that frame of mind:
+        // see `moodGlow`.)
+        switch e {
+        case .fed, .huntWon, .played, .petted: lastGlow = t
+        case .thrown, .startled, .chased: lastShaken = t
+        default: break
+        }
     }
 
     /// Where it is, as its memory thinks of places; nil in mid-air.
@@ -2242,6 +2302,7 @@ final class Spider {
 
         trackCursorMotion(dt: dt)
         updateInterest(dt: dt)
+        updateBodyLanguage(dt: dt)
         updateEmote(dt: dt)
         updateBlink(dt: dt)
         liveMemory(dt: dt)
@@ -2277,8 +2338,12 @@ final class Spider {
         headingVel += (err * 190 * soft - headingVel * 21 * soft.squareRoot()) * dt
         heading += headingVel * dt
 
-        headTilt.step(to: mode == .attached && activity == .watch ? 0.72 : (mode == .attached ? interestNose.value * 0.85 : 0), dt: dt)
-        abdomenTilt.step(to: mode == .attached ? interestNose.value * 0.7 : 0, dt: dt)
+        // (Its own carriage and the rest of its body language give way to
+        // the pointer, which has its head and tail when it is taken with it.)
+        let own = 1 - interest
+        headTilt.step(to: mode == .attached && activity == .watch ? 0.72
+                      : (mode == .attached ? interestNose.value * 0.85 + (worn.nod + beatNod) * own + nodNow : 0), dt: dt)
+        abdomenTilt.step(to: mode == .attached ? interestNose.value * 0.7 + (worn.tail + beatTail) * own : 0, dt: dt)
         updateWeb(dt: dt)
         updatePrey(dt: dt)
         updateToys(dt: dt)
@@ -9003,6 +9068,8 @@ final class Spider {
             memory?.warm(to: c.kind.memoryName, by: -0.4)
             think(.text("Yuck!"), for: 2.4)
             queue(.shake, 0.6)
+            // No, no, no — once it has shaken itself off.
+            if !Spider.debugNoBodyLanguage { shakeHead(in: 0.6) }
             return
         }
         c.state = .eaten
@@ -9021,6 +9088,8 @@ final class Spider {
         happy.velocity = 9
         setEmote(.hearts, 1.6)
         queue(.wiggle, randRange(0.8, 1.3))
+        // That hit the spot: a nod to itself, now and then.
+        if !Spider.debugNoBodyLanguage, chance(0.35) { nod(times: 2) }
     }
 
     // MARK: Toys
@@ -10278,8 +10347,10 @@ final class Spider {
             // A glance turns it part-way toward you without changing which
             // way it faces along the ledge. (Only on a ledge: a glance it
             // was in the middle of when it was picked up does not follow
-            // it into the air.)
-            let g = activity == .glance ? 0.62 : (mode == .attached ? glance : 0)
+            // it into the air.) So does walking turned round to you, and
+            // the looks round at you it gives where it stands (see "Body
+            // language").
+            let g = activity == .glance ? glanceDepth : (mode == .attached ? max(glance, worn.turn, beatTurn) : 0)
             var target = facing * (1 - g)
             // Interested, it turns toward the pointer instead — the whole
             // way round if need be, on the same spring. Not on the move,
@@ -10293,7 +10364,13 @@ final class Spider {
                 let toward = onTheMove ? facing * max(facing * interestYawTarget, 0.4) : interestYawTarget
                 target = lerp(target, toward, interest)
             }
-            yawSpring(to: target, dt: dt)
+            // (A double take's snap round is quicker than any turn.)
+            if yawSnap {
+                yawVel += ((target - yaw) * 520 - yawVel * 40) * dt
+                yaw = clamp(yaw + yawVel * dt, -1, 1)
+            } else {
+                yawSpring(to: target, dt: dt)
+            }
         }
         if mode != .attached || activity == .turn { yawVel = 0 }
         if (yaw >= 0) != (before >= 0) {
@@ -10397,7 +10474,11 @@ final class Spider {
         // shift round underneath: it is not carried along with them.
         if free { headTurn -= legsTurned * interest }
         let most = Spider.maxHeadTurn
-        let want = free ? clamp((headYawTarget - yaw) * interest, -most, most) : 0
+        // (Its own looks round at you — walking with its head and abdomen
+        // turned to watch you, looking about, a shake of the head — give
+        // way to the pointer's.)
+        let own = (worn.look + beatLook) * (1 - interest) + shakeNow.turn
+        let want = free ? clamp((headYawTarget - yaw) * interest - mirrorSign * own, -most, most) : 0
         headTurnVel += ((want - headTurn) * 240 - headTurnVel * 28) * dt
         headTurn += headTurnVel * dt
         var lo = max(-most, -1 - yaw), hi = min(most, 1 - yaw)
@@ -10650,8 +10731,15 @@ final class Spider {
     /// left well off the spot this way of standing wants it on, rather
     /// than every foot sliding round with the body.
     private var watchingPlanted: Bool {
-        mode == .attached && interest > 0.05 && speed <= 1 && !absorbingLanding
-            && Spider.watchStances.contains(activity)
+        mode == .attached && speed <= 1 && !absorbingLanding
+            && (interest > 0.05 && Spider.watchStances.contains(activity) || turningToYou)
+    }
+    /// Coming round to look at you where it stands — stopped on its way,
+    /// a double take, a shake of the head — its feet stay where they are
+    /// and step round after it, the same way.
+    private var turningToYou: Bool {
+        (activity == .walk && checkIn != nil) || activity == .doubleTake || shakeNow.on > 0
+            || (Spider.onFoot.contains(activity) && (max(worn.turn, beatTurn) > 0.05 || worn.look > 0.05))
     }
     private static let watchStances: Set<Activity> = [.idle, .look, .rest, .stare, .glance, .peer]
     /// How far off its spot, in sprite units, a planted foot is left before
@@ -10673,6 +10761,9 @@ final class Spider {
     private func keepPlanted(_ leg: inout Leg, _ i: Int, to target: V2, dt: CGFloat) -> Bool {
         if leg.settle >= 0 { return settleFoot(&leg, i, to: target, dt: dt) }
         guard leg.foot.y <= max(target.y, leg.hip.y) + 5 else { return false }
+        // (Nor is a foot still on its way down — a walk stopped mid-stride
+        // — held up in the air: down it comes first.)
+        if !Spider.debugNoBodyLanguage, leg.foot.distance(to: groundFoot(leg.foot)) > 1.5 { return false }
         let off = leg.foot.distance(to: target)
         // (One at a time, unless it is badly out of place.)
         let busy = legs.indices.contains { $0 != i && legs[$0].settle >= 0 }
@@ -10830,7 +10921,7 @@ final class Spider {
         updateGroove(dt: dt)
         // On a hunt nothing else is allowed to run long: a walk toward the
         // prey is re-aimed every second or so, and idle habits are dropped.
-        if laser != nil, !inCinema, [.walk, .sneak, .rest, .sleep, .watch, .stare, .groom, .look, .glance, .drum, .eat, .groove].contains(activity) {
+        if laser != nil, !inCinema, [.walk, .sneak, .rest, .sleep, .watch, .stare, .groom, .look, .glance, .drum, .eat, .groove, .sigh, .doubleTake].contains(activity) {
             if activityTime > 0.4 { queued = nil; finishActivity() }
         }
         // Likewise its catch, spotted close by: whatever it was idling over
@@ -10838,7 +10929,7 @@ final class Spider {
         // (A walk too, unless it is the hunt's own.)
         if caught == nil, laser == nil, departing == nil, !inCinema, pendingDemo == nil, t > huntPauseUntil, activityTime > 0.25,
            [.rest, .watch, .stare, .groom, .look, .glance, .drum, .dance, .peer, .fidget, .scratch, .pushup,
-            .legStretch, .wiggle, .armsUp, .curious, .wave, .greet, .stretch, .groove].contains(activity)
+            .legStretch, .wiggle, .armsUp, .curious, .wave, .greet, .stretch, .groove, .sigh, .doubleTake].contains(activity)
             || (huntTarget == nil && [.walk, .sneak, .scurry].contains(activity)),
            prey.contains(where: { $0.state == .loose && $0.noticed && !$0.spurned && $0.pos.distance(to: pos) < 300 * config.scale }) {
             queued = nil
@@ -10870,7 +10961,7 @@ final class Spider {
             queued = nil
             finishActivity()
         }
-        if friendChase != nil || friendFlee != nil, !inCinema, [.walk, .sneak, .rest, .sleep, .watch, .stare, .groom, .look, .glance, .drum, .fidget, .scratch, .peer, .groove].contains(activity) {
+        if friendChase != nil || friendFlee != nil, !inCinema, [.walk, .sneak, .rest, .sleep, .watch, .stare, .groom, .look, .glance, .drum, .fidget, .scratch, .peer, .groove, .sigh, .doubleTake].contains(activity) {
             if activityTime > 0.6 { queued = nil; finishActivity() }
         }
         if caught == nil, huntTarget != nil, prey.contains(where: { $0.id == huntTarget && $0.state == .loose }) {
@@ -10884,7 +10975,7 @@ final class Spider {
         // re-aimed as the toy goes.
         if let play = toyPlay, !inCinema {
             let elsewhere: Set<Activity> = [.rest, .sleep, .watch, .groom, .drum, .dance, .roll, .spin, .pushup,
-                                             .legStretch, .scratch, .wave, .greet, .glance, .fidget, .stare, .groove]
+                                             .legStretch, .scratch, .wave, .greet, .glance, .fidget, .stare, .groove, .sigh, .doubleTake]
             if elsewhere.contains(activity), activityTime > 0.3 { queued = nil; finishActivity() }
             else if play.stage == .play, towLine == nil, [.walk, .sneak, .scurry].contains(activity),
                     activityTime > (toy(play.id)?.inPlay == true ? 0.45 : 0.8) { activityDur = min(activityDur, activityTime) }
@@ -11032,7 +11123,7 @@ final class Spider {
         // the direction of travel once a cycle. The planted feet stay put, so
         // the legs flex against it. Breathing when still.
         // One gentle rise per step (two steps a cycle), not a buzz.
-        let bobAmp = speedFrac * 1.0 * boutBob * config.scale * (activity == .roll ? 0 : 1)
+        let bobAmp = speedFrac * 1.0 * boutBob * worn.bob * config.scale * (activity == .roll ? 0 : 1)
         var bob = sin(gaitPhase * 4 * .pi) * bobAmp * 0.5 + sin(gaitPhase * 2 * .pi) * bobAmp * 0.3
         var sway = cos(gaitPhase * 2 * .pi) * bobAmp * 0.3
         if naturalWalk {
@@ -11069,11 +11160,13 @@ final class Spider {
         }
 
         // Every so often it looks over at you — a three-quarter turn of the
-        // body, briefly, even mid-walk.
+        // body, briefly. (Walking, how much it goes turned round to you is
+        // its carriage's: see "Body language".)
         glanceIn -= dt
         if glanceIn <= 0 {
             glanceIn = randRange(3, 9) / lerp(0.4, 1.8, personality.affection)
-            if glance == 0, [.walk, .idle, .look, .rest].contains(activity) {
+            let when: Set<Activity> = Spider.debugNoBodyLanguage ? [.walk, .idle, .look, .rest] : [.idle, .look, .rest]
+            if glance == 0, when.contains(activity) {
                 glance = randRange(0.3, 0.55)
                 glanceUntil = t + randRange(0.7, 1.6)
             }
@@ -11170,7 +11263,8 @@ final class Spider {
             if activityTime > walkPauseAt, activityTime < walkPauseAt + walkPauseFor {
                 p.speed = 0
                 p.pitch = 0.05
-                p.lift = 0.5
+                // (Up on its toes to look round at you.)
+                p.lift = checkIn != nil ? 1.4 : 0.5
             } else if activityTime >= walkPauseAt + walkPauseFor, activityDur - activityTime > 1.2 {
                 walkPauseAt = activityTime + randRange(0.9, 2.2)
                 walkPauseFor = randRange(0.25, 0.7)
@@ -11442,6 +11536,29 @@ final class Spider {
             p.lift = -3.5 * down * deep
             p.crouch = 0.2 * down
             p.legsFree = true
+        case .doubleTake:
+            // Stopped dead — then up on its toes with the start of it as it
+            // snaps round, and settling to stare.
+            let s = activityTime
+            let jolt = s > 0.15 ? sin(clamp((s - 0.15) / 0.3, 0, 1) * .pi) : 0
+            p.lift = 3 * jolt + (s > 0.45 ? 1 : 0)
+            p.pitch = 0.08 * jolt
+        case .sigh:
+            // A big breath in — up a little, nose up — and out: down on its
+            // legs, eyes half shut (head and tail droop with it: see "Body
+            // language"); then slowly back up.
+            let (up, down) = sighBreath(u)
+            p.lift = 2.6 * up - 4.2 * down
+            p.crouch = 0.3 * down
+            p.pitch = 0.1 * up - 0.1 * down
+            p.lid = 0.6 * down
+        }
+        // How it carries itself on the move (see "Body language"): eased
+        // out again over whatever it does when it stops.
+        if Spider.onFoot.contains(activity) || activity == .idle || activity == .look {
+            p.pitch += worn.pitch * SpiderRenderer.profileAmount(yaw: yaw)
+            p.lift += worn.lift
+            if Spider.onFoot.contains(activity) { p.speed *= worn.pace }
         }
         // Standing, it is never quite still: a slow shift of weight.
         if p.speed == 0 && activity != .sleep && activity != .roll {
@@ -11582,7 +11699,9 @@ final class Spider {
             beginActivity(next, dur: dur)
             return
         }
-        walkThen = nil
+        // (Turning round to set off: what the walk is for goes on with it.)
+        let turningToGo = activity == .turn && queued.map { Spider.onFoot.contains($0.0) } == true && !Spider.debugNoBodyLanguage
+        if !turningToGo { walkThen = nil }
         if let (next, dur) = queued {
             queued = nil
             beginActivity(next, dur: dur)
@@ -11623,6 +11742,7 @@ final class Spider {
         }
 
         if a == .wave || a == .groom || a == .wiggle { happy.value = max(happy.value, 0.35) }
+        if a == .glance, !Spider.debugNoBodyLanguage { glanceDepth = randRange(0.45, 0.8) }
         if a == .sleep { setEmote(.zzz, dur) }
         if a == .wiggle && emote == .none { setEmote(.note, min(dur, 1.0)) }
         if a == .walk {
@@ -12041,6 +12161,585 @@ final class Spider {
         return walkDir
     }
 
+    // MARK: Body language
+    //
+    // How it carries itself, and the little things it does with its head,
+    // its eyes and its body that say what it is thinking.
+    //
+    // A walk is not one fixed picture. For a stretch it goes along turned
+    // part of the way round to you — a little, half way, or all but face
+    // on — with its eyes on you; or side on, with only its head and
+    // abdomen come round to watch you; or nose up and strutting, nose down
+    // and poking along, tail cocked and bouncing, sashaying, dragging its
+    // feet: a while one way, a while another, as its temperament takes it
+    // (its carriage). Stopping on its way it may turn to look round at you;
+    // walking past, it may do a double take. It cocks its head at you,
+    // winks, gives you a slow blink, nods, shakes its head, and sighs.
+
+    /// A way of carrying itself on the move.
+    private enum CarriageKind: String { case plain, turned, lookingOn, sassy, shifty, proud, nosy, perky, slouch }
+
+    /// How it carries itself on the move: all nothing for the plain walk.
+    private struct Carriage {
+        var kind: CarriageKind = .plain
+        /// How far round toward you it goes, legs and all: the share of the
+        /// way from side on (0) to face on (1).
+        var turn: CGFloat = 0
+        /// How much further round toward you than that its head and abdomen
+        /// are, as a yaw.
+        var look: CGFloat = 0
+        /// Its lean, nose up (+) or down; its head on its neck, up (+) or
+        /// down; its abdomen, tail down (+) or up — all in radians.
+        var pitch: CGFloat = 0
+        var nod: CGFloat = 0
+        var tail: CGFloat = 0
+        /// Up on its legs (+) or down on them, in sprite units.
+        var lift: CGFloat = 0
+        /// Its head cocked over, as `SpiderPose.headCock`.
+        var cock: CGFloat = 0
+        /// The abdomen swinging from side to side with its steps.
+        var sway: CGFloat = 0
+        /// How much it bobs, and how quick it goes, as multipliers.
+        var bob: CGFloat = 1
+        var pace: CGFloat = 1
+        /// Its eyes on you as it goes (1), rather than on the way ahead (0);
+        /// or, poking along nose down, on the ledge just in front of it (-1).
+        var eyes: CGFloat = 0
+
+        /// Turned round to you in any way.
+        var towardYou: Bool { turn > 0.001 || look > 0.001 || eyes > 0.001 }
+
+        /// Eased toward `o`, at `rate` a second.
+        mutating func ease(to o: Carriage, rate: CGFloat, dt: CGFloat) {
+            let k = 1 - exp(-rate * dt)
+            turn += (o.turn - turn) * k
+            look += (o.look - look) * k
+            pitch += (o.pitch - pitch) * k
+            nod += (o.nod - nod) * k
+            tail += (o.tail - tail) * k
+            lift += (o.lift - lift) * k
+            cock += (o.cock - cock) * k
+            sway += (o.sway - sway) * k
+            bob += (o.bob - bob) * k
+            pace += (o.pace - pace) * k
+            eyes += (o.eyes - eyes) * k
+            kind = o.kind
+        }
+    }
+    /// The carriage it means to keep to for now, what it was picked for (a
+    /// walk, a sneak, a scurry), and until when.
+    private var carriage = Carriage()
+    private var carriageFor: Activity = .idle
+    private var carriageUntil: CGFloat = -1
+    /// The carriage as it has it on right now: eased in as a walk gets
+    /// going, out again as it ends, and from one into the next.
+    private var worn = Carriage()
+
+    /// Tools only: everything in this section left out, to compare.
+    static var debugNoBodyLanguage = ProcessInfo.processInfo.environment["SPIDER_NO_BODY_LANGUAGE"] != nil
+
+    /// How freely it carries itself just now: any way it likes, going about
+    /// its own business; side on, in its own manner, about something of its
+    /// own (an errand in its tank, home to bed) — no turning to you on the
+    /// way; and plain, hunting, chasing, fleeing, carrying a meal, on its
+    /// way somewhere it means to get to.
+    private enum CarriageScope { case none, sideOn, full }
+    private var carriageScope: CarriageScope {
+        guard mode == .attached, !Spider.debugNoBodyLanguage else { return .none }
+        if atLeisure { return .full }
+        // (Getting into place to show a habit off in the Studio, it gets on
+        // with it.)
+        let urgent = laser != nil || huntTarget != nil || cursorHunt != .none || friendChase != nil || friendFlee != nil
+            || departing != nil || coverGoal != nil || toyPlay != nil || caught != nil || riding != nil || t < escapeUntil
+            || (confined && !inBox) || inCinema || build != nil || webJob != nil || pendingDemo != nil
+        return urgent ? .none : .sideOn
+    }
+
+    /// How much of its walking it does turned round toward you, from the
+    /// Studio's dial — and the fonder of you, a touch more. Never at the
+    /// bottom of the dial, always at the top.
+    private var turnedShare: CGFloat {
+        let v = habits.walkTurned
+        guard v > 0.005 else { return 0 }
+        guard v < 0.995 else { return 1 }
+        let mid = 0.27 * lerp(0.75, 1.25, personality.affection)
+        return v <= 0.5 ? mid * v * 2 : mid + (1 - mid) * pow((v - 0.5) * 2, 1.4)
+    }
+
+    /// Walking, sneaking or scurrying: what a carriage is for.
+    private static let onFoot: Set<Activity> = [.walk, .sneak, .scurry]
+
+    /// When something last pleased it (a meal, a catch, a game, a stroke)
+    /// and when something last shook it (a fling, a fright, being chased
+    /// about) — and how much each is still with it, 1 just now, fading to
+    /// nothing over a minute or two. Pleased, it struts and bounces along
+    /// and its tail goes; shaken, it goes low and careful for a while.
+    private var lastGlow: CGFloat = -999
+    private var lastShaken: CGFloat = -999
+    private var moodGlow: CGFloat {
+        let fresh = 1 - clamp((t - lastGlow) / 120, 0, 1)
+        return max(fresh, clamp((fed - 0.5) * 1.4, 0, 0.7), clamp(happy.value * 0.8, 0, 0.6))
+    }
+    private var moodShaken: CGFloat { 1 - clamp((t - lastShaken) / 60, 0, 1) }
+
+    /// A fresh carriage for the walking it is doing (see `Carriage`).
+    private func pickCarriage() {
+        let P = personality
+        let sneaking = activity == .sneak, hurrying = activity == .scurry
+        carriageFor = activity
+        let glow = moodGlow, shaken = moodShaken
+        defer {
+            carriageUntil = t + (carriage.kind == .plain ? randRange(2, 4.5) : randRange(3, 7))
+            // Pleased with itself, its tail goes as it walks, and it bobs.
+            if glow > 0.4, !sneaking, shaken < 0.3 {
+                carriage.sway = max(carriage.sway, 0.45 * glow)
+                carriage.bob *= 1 + 0.2 * glow
+            }
+            // Turned to you with someone about, a wink as it goes, now and then.
+            if carriage.towardYou, t - lastUserActivity < 60, chance(lerp(0.03, 0.14, P.playfulness) * lerp(0.6, 1.4, P.affection)) {
+                pendingWink = t + randRange(0.7, 1.8)
+            }
+        }
+        // (Shaken, it keeps its mind on where it is going.)
+        if carriageScope == .full, chance(turnedShare * (1 - 0.6 * shaken)) {
+            carriage = turnedCarriage(sneaking: sneaking, hurrying: hurrying)
+            return
+        }
+        // Its frame of mind leans it one way or another: pleased, it struts
+        // and bounces; shaken, it goes low and careful, nose down; sleepy
+        // or soaked, it drags its feet.
+        let damp = max(drowsy, wet * 0.8)
+        let kinds: [(CarriageKind, CGFloat)] = [
+            (.plain, 2.6 * (1 - 0.4 * glow)),
+            (.proud, sneaking ? 0 : lerp(0.15, 1.2, (P.bravery + P.energy) / 2) * (1 + 2 * glow) * (1 - 0.8 * shaken)),
+            (.nosy, lerp(0.3, 1.3, P.curiosity) * (hurrying ? 0.5 : 1) * (1 + 2.5 * shaken)),
+            (.perky, sneaking ? 0 : lerp(0.15, 1.3, P.playfulness) * (1 + 2 * glow) * (1 - 0.8 * shaken)),
+            (.slouch, hurrying ? 0 : (lerp(0.05, 1.1, P.laziness) + drowsy * 1.5) * (1 + 3 * damp) * (1 - 0.7 * glow)),
+        ]
+        var pick = randRange(0, kinds.reduce(0) { $0 + $1.1 })
+        var kind = CarriageKind.plain
+        for (k, w) in kinds {
+            pick -= w
+            if pick <= 0 { kind = k; break }
+        }
+        carriage = sideOnCarriage(kind)
+    }
+
+    /// Walking turned round toward you, eyes on you: how far round, and in
+    /// what manner.
+    private func turnedCarriage(sneaking: Bool, hurrying: Bool) -> Carriage {
+        let P = personality
+        var c = Carriage()
+        c.eyes = 1
+        if sneaking {
+            // Creeping along low, with a sideways look at you.
+            c.kind = .shifty
+            c.turn = randRange(0.18, 0.4)
+            c.look = randRange(0.08, 0.18)
+            c.lift = -1.2
+            c.nod = -0.05
+            return c
+        }
+        let sassy = lerp(0.2, 1.4, P.playfulness)
+        let roll = randRange(0, 3 + 1.3 + sassy)
+        if roll < 3 {
+            c.kind = .turned
+            // A little way round, half way, or all but face on.
+            let depth = CGFloat.random(in: 0...1)
+            c.turn = depth < 0.35 ? randRange(0.2, 0.36) : (depth < 0.75 ? randRange(0.36, 0.55) : randRange(0.55, 0.72))
+            // Its head a touch further round than its legs, now and then.
+            if chance(0.3) { c.look = randRange(0.04, 0.12) }
+            // Chin up as it goes by, the bold ones: showing off to you.
+            if chance(lerp(0.1, 0.4, P.bravery)) {
+                c.pitch = 0.05
+                c.nod = 0.1
+                c.lift = 1.5
+                c.bob = 1.2
+            }
+        } else if roll < 3 + 1.3 {
+            // Side on, but its head and abdomen come round to watch you go by.
+            c.kind = .lookingOn
+            c.turn = randRange(0, 0.1)
+            c.look = randRange(0.3, 0.48)
+            c.nod = randRange(0, 0.08)
+        } else {
+            // Sashaying: part way round to you, abdomen swinging, tail up.
+            c.kind = .sassy
+            c.turn = randRange(0.22, 0.42)
+            c.sway = randRange(0.7, 1.0)
+            c.bob = 1.25
+            c.tail = -0.08
+            c.pace = 0.92
+        }
+        if hurrying { c.turn *= 0.6; c.look *= 0.6; c.sway *= 0.5 }
+        // Its head cocked at you as often as not — the curious ones more.
+        if chance(lerp(0.2, 0.55, P.curiosity)) { c.cock = (chance(0.5) ? 1 : -1) * randRange(0.1, 0.22) }
+        return c
+    }
+
+    /// Walking side on, in one manner or another.
+    private func sideOnCarriage(_ kind: CarriageKind) -> Carriage {
+        var c = Carriage()
+        c.kind = kind
+        switch kind {
+        case .proud:
+            // Nose up, chest out, up on its legs, a spring in its step.
+            c.pitch = randRange(0.07, 0.12)
+            c.nod = 0.1
+            c.tail = 0.06
+            c.lift = randRange(1.5, 2.5)
+            c.bob = 1.35
+            c.pace = 0.88
+        case .nosy:
+            // Nose down to the ledge, tail up, eyes on the ground ahead.
+            c.pitch = -randRange(0.06, 0.11)
+            c.nod = -randRange(0.14, 0.24)
+            c.tail = -0.12
+            c.lift = -1.5
+            c.bob = 0.75
+            c.pace = 0.9
+            c.eyes = -1
+        case .perky:
+            // Tail cocked up high, head up, bouncing along.
+            c.tail = -randRange(0.24, 0.34)
+            c.nod = 0.08
+            c.lift = 1
+            c.bob = 1.5
+            c.pace = 1.05
+        case .slouch:
+            // Low and droopy: head down, tail dragging, in no hurry.
+            c.lift = -2
+            c.nod = -0.12
+            c.tail = 0.14
+            c.pitch = -0.03
+            c.bob = 0.6
+            c.pace = 0.78
+        default:
+            break
+        }
+        return c
+    }
+
+    /// Stopped on its way to look round at you: since when, until when, its
+    /// head cocked how far.
+    private var checkIn: (from: CGFloat, until: CGFloat, cock: CGFloat)?
+    /// The stop on its way it last thought about looking round from.
+    private var pauseSeen: CGFloat = -1
+    /// How likely a stop on its way is to be a look round at you.
+    private var checkInOdds: CGFloat {
+        min(0.6, 0.12 * lerp(0.5, 1.5, personality.affection) * Habits.weight(habits.glance) * learned.lean(\.glance))
+    }
+
+    /// A double take: walking past it had a look at you — then away, and on
+    /// a step or two; it is about to stop and snap round to stare. When it
+    /// last did, and the look on the way past (in the walk's own time).
+    private var lastDoubleTake: CGFloat = -60
+    private var takeGlance: ClosedRange<CGFloat>?
+    /// When the snap round came, so it is only done once; how it cocks its
+    /// head at you after it; and whether it has made up its mind about you.
+    private var tookAt: CGFloat = -99
+    private var takeCock: CGFloat = 0.24
+    private var tookIn = false
+    /// Its eyes are wandering about of their own accord (see `updateLook`).
+    private var idleEyes = false
+
+    /// A wink, a slow blink: when it began, and one due to begin.
+    private var winkFrom: CGFloat = -99
+    private var slowBlinkFrom: CGFloat = -99
+    private var pendingWink: CGFloat?
+    private var pendingSlowBlink: CGFloat?
+    /// A nod or a shake of the head, laid over whatever it is doing: when
+    /// it began and how long it goes on.
+    private var nodFrom: CGFloat = -99
+    private var nodFor: CGFloat = 0.9
+    private var nodTimes: CGFloat = 2
+    private var shakeFrom: CGFloat = -99
+    private var shakeFor: CGFloat = 0.9
+
+    /// Its palps (see `SpiderPose.palpNear`): when each was last flicked,
+    /// when the next flick is due, and which palp's turn it is.
+    private var palpFrom: [CGFloat] = [-9, -9]
+    private var palpNext: CGFloat = 1
+    private var palpTurn = 0
+    /// How far up a palp is through its flick: up quick, down slower.
+    private func palpNow(_ k: Int) -> CGFloat {
+        let u = (t - palpFrom[k]) / 0.24
+        guard u >= 0, u < 1 else { return 0 }
+        return u < 0.3 ? smoothstep(u / 0.3) : 1 - smoothstep((u - 0.3) / 0.7)
+    }
+
+    /// Its head cocked, on a spring with a little bounce in it.
+    private var cock = Spring(0, stiffness: 70, damping: 10)
+    /// Cocked at you where it stands: the cock, the next change of it, and
+    /// the activity it was for.
+    private var standCock: CGFloat = 0
+    private var cockIn: CGFloat = 0
+    private var cockFor: CGFloat = -1
+    /// How far round to you the things it does where it stands turn it,
+    /// legs and all (a share of the way to face on), and how much further
+    /// its head and abdomen; its head tipped up or down on its neck, and its
+    /// abdomen — the looks, the stops, the sigh, the double take. Worked
+    /// out each frame by `updateBodyLanguage`.
+    private var beatTurn: CGFloat = 0
+    private var beatLook: CGFloat = 0
+    private var beatNod: CGFloat = 0
+    private var beatTail: CGFloat = 0
+    /// Its eyes on you where it stands (not darting about), this frame.
+    private var eyesOnYou = false
+    /// The yaw comes round quickly: the snap of a double take.
+    private var yawSnap = false
+
+    private func nod(times: Int = 2) {
+        nodFrom = t
+        nodTimes = CGFloat(times)
+        nodFor = 0.42 * CGFloat(times)
+    }
+    private func shakeHead(in secs: CGFloat = 0) {
+        shakeFrom = t + secs
+        shakeFor = randRange(0.8, 1.0)
+    }
+    private func wink(in secs: CGFloat = 0) { pendingWink = t + secs }
+    private func slowBlink(in secs: CGFloat = 0) { pendingSlowBlink = t + secs }
+
+    /// How far a nod has the head down (−), this frame.
+    private var nodNow: CGFloat {
+        let u = (t - nodFrom) / max(nodFor, 0.01)
+        guard u >= 0, u < 1 else { return 0 }
+        return -0.3 * (0.5 - 0.5 * cos(u * 2 * .pi * nodTimes))
+    }
+    /// How far a shake has the head round (as a yaw), and how much it is
+    /// shaking at all.
+    private var shakeNow: (turn: CGFloat, on: CGFloat) {
+        let u = (t - shakeFrom) / max(shakeFor, 0.01)
+        guard u >= 0, u < 1 else { return (0, 0) }
+        let env = sin(u * .pi)
+        return (0.22 * sin(u * 2 * .pi * 2.5) * env, min(1, env * 3))
+    }
+    /// How far shut a slow blink has its eyes: down, a moment, up again.
+    private var slowBlinkNow: CGFloat {
+        let u = (t - slowBlinkFrom) / 1.3
+        guard u >= 0, u < 1 else { return 0 }
+        return u < 0.3 ? smoothstep(u / 0.3) : (u < 0.55 ? 1 : 1 - smoothstep((u - 0.55) / 0.45))
+    }
+    /// How far shut a wink has one eye of each pair.
+    private var winkNow: CGFloat {
+        let u = (t - winkFrom) / 0.5
+        guard u >= 0, u < 1 else { return 0 }
+        return u < 0.25 ? smoothstep(u / 0.25) : (u < 0.55 ? 1 : 1 - smoothstep((u - 0.55) / 0.45))
+    }
+
+    /// Every frame, before anything moves: the carriage it is walking with
+    /// and the things it does with its head, eyes and body where it stands.
+    private func updateBodyLanguage(dt: CGFloat) {
+        guard !Spider.debugNoBodyLanguage else { return }
+        let onFoot = mode == .attached && Spider.onFoot.contains(activity)
+        // The carriage: kept to for a stretch, then another — and a fresh
+        // one for a sneak or a scurry. Off its feet, or with something
+        // pressing, plain.
+        var want = Carriage()
+        if onFoot {
+            let scope = carriageScope
+            if scope != .none {
+                if t > carriageUntil || carriageFor != activity { pickCarriage() }
+                want = scope == .full || !carriage.towardYou ? carriage : Carriage()
+            }
+        }
+        // (Into a carriage gently; out of one a little quicker, so a look or
+        // a groom after a walk is not done half in its walking manner.)
+        worn.ease(to: want, rate: onFoot ? 2.2 : 3.5, dt: dt)
+
+        beatTurn = 0
+        beatLook = 0
+        beatNod = 0
+        beatTail = 0
+        eyesOnYou = false
+        yawSnap = false
+        var beatCock: CGFloat = 0
+        let attached = mode == .attached
+
+        // Stopped on its way: now and then a look round at you, head
+        // cocked, before it goes on.
+        if attached, activity == .walk, activityTime > walkPauseAt, activityTime < walkPauseAt + walkPauseFor {
+            let id = activityStarted + walkPauseAt
+            if pauseSeen != id {
+                pauseSeen = id
+                if carriageScope == .full, takeGlance == nil, chance(checkInOdds) {
+                    let hold = randRange(1.1, 1.8)
+                    walkPauseFor = max(walkPauseFor, hold)
+                    activityDur = max(activityDur, walkPauseAt + walkPauseFor + 0.8)
+                    let cocked = chance(lerp(0.4, 0.8, personality.curiosity))
+                    checkIn = (t, t + hold, cocked ? (chance(0.5) ? 1 : -1) * randRange(0.15, 0.3) : 0)
+                    let P = personality
+                    if chance(lerp(0.04, 0.3, P.playfulness) * lerp(0.6, 1.4, P.affection)) {
+                        wink(in: randRange(0.45, 0.7))
+                    } else if chance(lerp(0.05, 0.4, P.affection)) {
+                        slowBlink(in: randRange(0.35, 0.6))
+                    }
+                    happy.velocity += 2 * P.affection
+                }
+            }
+        }
+        if let c = checkIn {
+            if attached, activity == .walk, t < c.until {
+                // Round it comes, nearly face on, and back again at the end.
+                let u = (t - c.from) / max(c.until - c.from, 0.01)
+                let round = smoothstep(clamp(u / 0.25, 0, 1)) * (1 - smoothstep(clamp((u - 0.82) / 0.18, 0, 1)))
+                beatTurn = 0.88 * round
+                beatCock = c.cock * smoothstep(clamp((u - 0.2) / 0.3, 0, 1))
+                eyesOnYou = round > 0.3
+            } else {
+                checkIn = nil
+            }
+        }
+
+        // The double take: the look on its way past...
+        if attached, activity == .walk, let g = takeGlance, walkThen?.0 == .doubleTake {
+            let inIt = smoothstep(clamp((activityTime - g.lowerBound) / 0.15, 0, 1))
+                * (1 - smoothstep(clamp((activityTime - g.upperBound) / 0.15, 0, 1)))
+            beatTurn = max(beatTurn, 0.45 * inIt)
+            eyesOnYou = inIt > 0.5
+        } else if activity != .walk && activity != .turn {
+            takeGlance = nil
+        }
+        // ...and, stopped, the snap round to stare.
+        if attached, activity == .doubleTake {
+            let s = activityTime
+            if s >= 0.15 {
+                if tookAt != activityStarted {
+                    tookAt = activityStarted
+                    takeCock = (chance(0.5) ? 1 : -1) * randRange(0.18, 0.28)
+                    tookIn = false
+                    startled.velocity = max(startled.velocity, 10)
+                    stretch.velocity += 2.5
+                    setEmote(.exclaim, 0.8)
+                }
+                beatTurn = 0.92
+                yawSnap = s < 0.55
+                eyesOnYou = true
+                if s > 0.7 { beatCock = takeCock }
+                // Having had a good look: pleased to see you, or puzzled.
+                if s > 1.15, !tookIn {
+                    tookIn = true
+                    let P = personality
+                    if chance(lerp(0.15, 0.7, P.affection)) {
+                        happy.velocity += 5
+                        if chance(0.5) { setEmote(.hearts, 1.1) } else { slowBlink() }
+                    } else if chance(lerp(0.2, 0.8, P.curiosity)) {
+                        setEmote(.question, 1.1)
+                    }
+                }
+            }
+        }
+
+        // A shake of the head (see `updateHeadTurn`): it comes part way
+        // round to you to do it, so its head has room to go both ways.
+        let shake = shakeNow
+        if shake.on > 0, attached { beatTurn = max(beatTurn, 0.5 * shake.on) }
+
+        // A sigh: the head and the abdomen droop with the breath out.
+        if attached, activity == .sigh {
+            let (up, down) = sighBreath(clamp(activityTime / max(activityDur, 0.1), 0, 1))
+            beatNod = 0.14 * up - 0.3 * down
+            beatTail = -0.06 * up + 0.3 * down
+        }
+
+        // Looking about: the head goes with the eyes — up to the sky, down
+        // at the ledge — and comes round to look at you when they do.
+        var lookingAtYou = eyesOnYou
+        if attached, activity == .look, idleEyes {
+            let l = toLocalDir(lookSpring.value)
+            beatNod += clamp(l.y, -1, 1) * 0.4
+            let atYou = 1 - smoothstep(clamp(lookSpring.value.length / 0.3, 0, 1))
+            beatLook += 0.3 * atYou
+            lookingAtYou = lookingAtYou || atYou > 0.5
+        }
+
+        // Its head cocked at you where it stands, looking at you: now one
+        // way, now the other, now straight.
+        let cockable: Set<Activity> = [.stare, .curious, .glance, .greet, .look]
+        if attached, cockable.contains(activity) {
+            cockIn -= dt
+            if cockFor != activityStarted || cockIn <= 0 {
+                let fresh = cockFor != activityStarted
+                cockFor = activityStarted
+                cockIn = randRange(1.0, 2.6)
+                let odds: CGFloat = activity == .stare || activity == .curious ? 0.7 : (activity == .look ? 0.3 : 0.45)
+                // (A look about only cocks it looking at you.)
+                if activity == .look, !lookingAtYou { standCock = 0 } else {
+                    standCock = chance(odds * lerp(0.6, 1.3, personality.curiosity)) ? (chance(0.5) ? 1 : -1) * randRange(0.12, 0.3) : 0
+                }
+                // Staring at you, the fond ones give you a slow blink.
+                // (Not over the top of one it already has coming.)
+                if fresh, activity == .stare, pendingSlowBlink == nil, chance(lerp(0.1, 0.6, personality.affection)) { slowBlink(in: randRange(0.9, 2.2)) }
+                if fresh, activity == .greet, pendingWink == nil, chance(lerp(0.05, 0.3, personality.playfulness)) { wink(in: randRange(0.8, 1.2)) }
+            }
+            beatCock += standCock
+        } else {
+            standCock = 0
+        }
+
+        // Its palps: flicked now and then — often with its eye on something
+        // (you, the pointer, its prey), now one, now the other, now both;
+        // seldom otherwise, and never asleep.
+        palpNext -= dt
+        if palpNext <= 0 {
+            let intent = interest > 0.3 || eyesOnYou || huntTarget != nil || cursorHunt != .none
+                || [.stare, .curious, .greet, .glance, .doubleTake, .crouch, .feel].contains(activity)
+            let asleep = activity == .sleep || dormant || (mode == .nesting && nestPhase == .sleeping)
+            if !asleep, mode == .attached || mode == .dangling {
+                if chance(0.25) {
+                    palpFrom = [t, t + 0.03]
+                } else {
+                    palpFrom[palpTurn] = t
+                    palpTurn = 1 - palpTurn
+                }
+            }
+            palpNext = intent ? randRange(0.35, 1.3) * lerp(1.3, 0.75, personality.curiosity) : randRange(2.5, 7)
+        }
+
+        // Due a wink or a slow blink: now, unless it is asleep or off its feet.
+        if let w = pendingWink, t >= w {
+            pendingWink = nil
+            if attached, activity != .sleep, t - winkFrom > 1.5 { winkFrom = t; happy.velocity += 1.5 }
+        }
+        if let b = pendingSlowBlink, t >= b {
+            pendingSlowBlink = nil
+            if attached, activity != .sleep, t - slowBlinkFrom > 2.5 { slowBlinkFrom = t; happy.velocity += 1.5 }
+        }
+
+        // (Its head cocked shows face on, and only when it is not busy with
+        // the pointer, which has its head already.)
+        let cockWant = attached ? (worn.cock + beatCock) * (1 - interest * 0.5) : 0
+        cock.step(to: cockWant, dt: dt)
+    }
+
+    /// A sigh, `u` of the way through it: how far into the slow breath in
+    /// it is, and how far into the quick breath out and the droop after it.
+    private func sighBreath(_ u: CGFloat) -> (up: CGFloat, down: CGFloat) {
+        let inhaled = smoothstep(clamp(u / 0.35, 0, 1))
+        let out = smoothstep(clamp((u - 0.35) / 0.15, 0, 1))
+        let back = smoothstep(clamp((u - 0.75) / 0.25, 0, 1))
+        return (inhaled * (1 - out), out * (1 - back))
+    }
+
+    /// Off along its edge for a step or two, a look at you on the way past
+    /// — and on, as if nothing — then it stops dead and snaps round to stare.
+    private func startDoubleTake() {
+        lastDoubleTake = t
+        let walk = randRange(1.5, 2.1)
+        turnTo(wanderWay(), then: .walk, for: walk)
+        // Plain as you like, going past: nothing to see here.
+        carriage = Carriage()
+        carriageFor = .walk
+        carriageUntil = t + walk + 2
+        takeGlance = (walk * 0.3)...(walk * 0.3 + 0.35)
+        walkThen = (.doubleTake, randRange(2.0, 2.6))
+    }
+
+    /// How long after a double take before another: a gag is no good twice
+    /// running.
+    private var doubleTakeGap: CGFloat { lerp(260, 110, personality.curiosity) }
+
     // MARK: - Decisions
 
     private func think() {
@@ -12391,6 +13090,17 @@ final class Spider {
         }
         // A thought, now and then.
         options.append((4 * lerp(0.5, 1.5, P.curiosity) * (raining ? 1.8 : 1) * hw(\.muse) * sitW, { self.museIfSoMoved(); if self.emote == .none { self.beginActivity(.look, dur: randRange(0.6, 1.2)) } }))
+        // Out and about: past you with a look — and a second look (see
+        // `startDoubleTake`). Rarely, or it would not be funny.
+        if roaming, carriageScope == .full, surfaceNormal.y > -0.5, t - lastDoubleTake > doubleTakeGap {
+            options.append((1.4 * lerp(0.5, 1.5, P.curiosity) * lerp(0.6, 1.4, P.playfulness) * hw(\.glance), { self.startDoubleTake() }))
+        }
+        // Settled where it is: a sigh.
+        if !Spider.debugNoBodyLanguage {
+            options.append((1.2 * lerp(0.4, 1.8, P.laziness) * lerp(1, 1.6, drowsy) * hw(\.rest) * sitW, {
+                self.beginActivity(.sigh, dur: randRange(1.8, 2.4))
+            }))
+        }
 
         // Drumming on whatever it is standing on, the way a jumping spider
         // signals: a few bursts of quick taps with its front legs.
@@ -15388,6 +16098,7 @@ final class Spider {
     /// darting about the way an idle animal's eyes do.
     private func updateLook(dt: CGFloat) {
         var target = V2.zero
+        var idle = false
         let dCursor = cursor.distance(to: pos)
         let watching = (config.followCursor && dCursor < 460 && t - lastUserActivity < 12)
             || isHeld || pettingScore > 0.4 || activity == .curious || activity == .greet || activity == .stare
@@ -15424,8 +16135,19 @@ final class Spider {
             // Up at the sky: a rainbow, the northern lights, the snow coming
             // down on it.
             target = V2(idleLook.x * 0.35, 0.9)
+        } else if eyesOnYou {
+            // Turned round to look at you: straight at you.
+            target = .zero
         } else if speed > 2 {
-            target = V2.angle(heading) * facing * 0.6
+            let ahead = V2.angle(heading) * facing * 0.6
+            // Walking turned round to you, its eyes are on you as it goes;
+            // poking along nose down, on the ledge just in front of it.
+            if worn.eyes > 0 {
+                target = ahead * (1 - worn.eyes)
+            } else {
+                let down = (V2.angle(heading) * facing * 0.5 - surfaceNormal * 0.7).normalized * 0.75
+                target = V2.lerp(ahead, down, -worn.eyes)
+            }
         } else if activity == .peek {
             target = (V2.angle(heading) * facing + V2(0, -1)).normalized * 0.8
         } else {
@@ -15435,7 +16157,9 @@ final class Spider {
                 idleLook = chance(0.3) ? .zero : V2.angle(randRange(-.pi, .pi)) * randRange(0.3, 0.8)
             }
             target = idleLook
+            idle = true
         }
+        idleEyes = idle
         lookSpring.step(to: target.clampedLength(1), dt: dt)
     }
 
@@ -16125,7 +16849,10 @@ final class Spider {
         // face on to you, or swinging through the front view as it doubles
         // back — or the body would glide along on frozen legs.
         let onTheMove = mode == .attached && speed > 1 && activity != .hop
-        guard legMode == .planted, onTheMove || (facing == m && profile > (legController == .posed ? 0.55 : 0.45)) else {
+        // (Nor, stopped for a moment on its way, however far round to you
+        // it has come: it is still walking, and stands as it walks.)
+        let midWalk = mode == .attached && Spider.onFoot.contains(activity) && !Spider.debugNoBodyLanguage
+        guard legMode == .planted, onTheMove || midWalk || (facing == m && profile > (legController == .posed ? 0.55 : 0.45)) else {
             legController = .posed
             if mode == .attached, activity == .groove {
                 updateGrooveLegs(dt: dt, dTheta: dTheta, overFeet: overFeet)
@@ -16325,7 +17052,14 @@ final class Spider {
         if leg.settle < 0 {
             leg.foot = leg.foot.rotated(by: -dTheta) - overFeet
             let reach = leg.foot - leg.hip
-            let maxReach = (leg.rest - leg.hip).length * 1.4
+            var maxReach = (leg.rest - leg.hip).length * 1.4
+            // (Turned toward you the feet stand wider — stopped for a moment
+            // on its way round to you, say — as `updateLegControllers` has
+            // them walking.)
+            if !Spider.debugNoBodyLanguage {
+                let layout = SpiderRenderer.rig(i, profile: profile, look: look).foot
+                maxReach = max(maxReach, (layout - leg.hip).length * 1.4)
+            }
             if reach.length > maxReach { leg.foot = groundFoot(leg.hip + reach.normalized * maxReach, leg: i) }
         }
         if watchingPlanted, keepPlanted(&leg, i, to: target, dt: dt) { return }
@@ -16554,9 +17288,12 @@ final class Spider {
                         leg.settleTo = spot
                         _ = settleFoot(&leg, i, to: spot, dt: dt)
                     }
-                } else if absorbingLanding || watchingPlanted {
+                } else if absorbingLanding || watchingPlanted && !Spider.onFoot.contains(activity) {
                     standStill(&leg, i, profile: profile, dTheta: dTheta, overFeet: overFeet, dt: dt)
                 } else {
+                    // (Stopped for a moment on its way — turned round to you,
+                    // or not — it stands as it walks: a foot steps to its
+                    // spot, never slides there.)
                     natTidy(&leg, i, profile: profile, dTheta: dTheta, overFeet: overFeet, hip: rg.hip, most: most, dt: dt)
                 }
             }
@@ -17269,6 +18006,58 @@ final class Spider {
                Double(decisionIn), atLeisure ? "" : " busy")
     }
 
+    /// Tools only: the carriage it walks with, as it has it on right now —
+    /// and its yaw, head turn and head cock.
+    var debugCarriage: String {
+        String(format: "%@ turn %.2f look %.2f pitch %.2f nod %.2f tail %.2f lift %.1f cock %.2f | yaw %.2f head %.2f cocked %.2f%@%@",
+               worn.kind.rawValue, Double(worn.turn), Double(worn.look), Double(worn.pitch), Double(worn.nod), Double(worn.tail),
+               Double(worn.lift), Double(worn.cock), Double(yaw), Double(headTurn), Double(cock.value),
+               checkIn != nil ? " [checking in]" : "", eyesOnYou ? " [eyes on you]" : "")
+            + String(format: " beat turn %.2f look %.2f nod %.2f%@ eyes %.2f,%.2f", Double(beatTurn), Double(beatLook), Double(beatNod),
+                     idleEyes ? " idle-eyes" : "", Double(lookSpring.value.x), Double(lookSpring.value.y))
+    }
+    /// Tools only: how far round toward you it is walking (0 side on), and
+    /// whether it is on its feet going somewhere.
+    var debugTurnedNow: (turn: CGFloat, onFoot: Bool) {
+        (1 - abs(yaw), mode == .attached && Spider.onFoot.contains(activity) && speed > 1)
+    }
+
+    /// Tools only: walk on for `seconds` carrying itself this way (`turn`
+    /// overriding how far round, for the turned ones).
+    func debugCarry(_ kind: String, turn: CGFloat? = nil, for seconds: CGFloat) {
+        guard let k = CarriageKind(rawValue: kind) else { return }
+        debugWalk(for: seconds)
+        var c: Carriage
+        switch k {
+        case .turned, .lookingOn, .sassy, .shifty:
+            c = turnedCarriage(sneaking: k == .shifty, hurrying: false)
+            var tries = 0
+            while c.kind != k, tries < 200 { c = turnedCarriage(sneaking: k == .shifty, hurrying: false); tries += 1 }
+        default:
+            c = sideOnCarriage(k)
+        }
+        if let turn { c.turn = turn }
+        carriage = c
+        carriageFor = .walk
+        carriageUntil = t + seconds + 1
+    }
+
+    /// Tools only: one of its little moments, now.
+    func debugBeat(_ name: String) {
+        switch name {
+        case "doubleTake": beginActivity(.doubleTake, dur: 2.3); decisionIn = 4
+        case "doubleTakeWalk": startDoubleTake(); decisionIn = 6
+        case "sigh": beginActivity(.sigh, dur: 2.1); decisionIn = 3.5
+        case "nod": nod(times: 2)
+        case "shake": shakeHead()
+        case "wink": wink()
+        case "slowBlink": slowBlink()
+        case "palps": palpFrom = [t + 0.1, t + 0.5]; palpNext = 5
+        case "cock": standCock = 0.25; beginActivity(.stare, dur: 3); cockFor = activityStarted; cockIn = 9; decisionIn = 4
+        default: break
+        }
+    }
+
     /// Tools only: the clock and the aim of whatever it is doing.
     var debugActivity: String {
         String(format: "%@ %.2f/%.2f jump=%@ poised=%d stalls=%d", "\(activity)", Double(activityTime), Double(activityDur),
@@ -17362,6 +18151,7 @@ final class Spider {
             "pushup": .pushup, "legStretch": .legStretch, "spin": .spin, "eat": .eat, "watch": .watch,
             "peekaboo": .peekaboo, "greet": .greet, "drum": .drum, "stare": .stare, "hop": .hop,
             "fasten": .fasten, "groove": .groove, "brace": .brace, "bask": .bask,
+            "doubleTake": .doubleTake, "sigh": .sigh,
         ]
         if name == "turn" {
             turnTo(-walkDir, then: .look, for: 1)
@@ -17768,7 +18558,11 @@ final class Spider {
         p.silkAttach = pos + attach.rotated(by: heading) * config.scale
         p.time = t
         p.look = lookSpring.value
-        p.blink = clamp(max(blinkValue, sleepiness.value, lid.value), 0, 1)
+        p.blink = clamp(max(blinkValue, sleepiness.value, lid.value, slowBlinkNow), 0, 1)
+        p.wink = winkNow
+        p.headCock = cock.value
+        p.palpNear = palpNow(0)
+        p.palpFar = palpNow(1)
         p.happy = clamp(happy.value + pettingScore * 0.5 + fed * 0.3, 0, 1)
         if activity == .eat, mode == .attached { p.chew = 0.5 + 0.5 * sin(t * 11) }
         if activity == .drink, mode == .attached { p.chew = 0.25 + 0.25 * max(0, sin(t * 8)) }
@@ -17799,7 +18593,7 @@ final class Spider {
         p.startled = clamp(startled.value, 0, 1)
         p.sleep = clamp(sleepiness.value, 0, 1)
         p.abdomenSway = swayWobble.value(t * 1.4) * 0.14
-            + sin(gaitPhase * .pi * 2) * 0.09 * min(speed / 60, 1)
+            + sin(gaitPhase * .pi * 2) * (0.09 + worn.sway) * min(speed / 60, 1)
             + sin(wagPhase) * wag.value * 0.55
             + gf.sway
         p.emote = emote

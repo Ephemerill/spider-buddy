@@ -919,6 +919,9 @@ struct Habits: Codable, Equatable {
     var curious: CGFloat = 0.5
     var stare: CGFloat = 0.5
     var glance: CGFloat = 0.5
+    /// Not a weight but a share: how much of its walking it does turned
+    /// part-way round toward you, eyes on you (see `Spider.turnedShare`).
+    var walkTurned: CGFloat = 0.5
     var greet: CGFloat = 0.5
     var wave: CGFloat = 0.5
     var peekaboo: CGFloat = 0.5
@@ -953,9 +956,41 @@ struct Habits: Codable, Equatable {
         ("With you", [
             ("Coming to see the pointer", \.approach), ("Craning at the pointer", \.curious),
             ("Staring at you", \.stare), ("Glancing your way", \.glance),
+            ("Walking turned toward you", \.walkTurned),
             ("Greeting you", \.greet), ("Waving", \.wave), ("Peek-a-boo", \.peekaboo),
         ]),
     ]
+
+    /// Every dial by the name it is saved under.
+    static let saved: [(String, WritableKeyPath<Habits, CGFloat>)] = [
+        ("wander", \.wander), ("leap", \.leap), ("rappel", \.rappel), ("swing", \.swing),
+        ("hammock", \.hammock), ("nap", \.nap), ("sleep", \.sleep),
+        ("drum", \.drum), ("dance", \.dance), ("roll", \.roll), ("spin", \.spin),
+        ("pushup", \.pushup), ("stretch", \.stretch), ("wiggle", \.wiggle), ("armsUp", \.armsUp),
+        ("look", \.look), ("rest", \.rest), ("groom", \.groom), ("fidget", \.fidget),
+        ("scratch", \.scratch), ("peer", \.peer), ("muse", \.muse),
+        ("approach", \.approach), ("curious", \.curious), ("stare", \.stare), ("glance", \.glance),
+        ("walkTurned", \.walkTurned), ("greet", \.greet), ("wave", \.wave), ("peekaboo", \.peekaboo),
+    ]
+}
+
+extension Habits {
+    /// A design saved before a dial existed still loads, with that dial at
+    /// its middle. (Written out in an extension, so the memberwise and
+    /// plain initialisers are still there.)
+    private struct Key: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { return nil }
+    }
+    init(from decoder: Decoder) throws {
+        self.init()
+        let c = try decoder.container(keyedBy: Key.self)
+        for (name, dial) in Habits.saved {
+            if let v = try? c.decodeIfPresent(CGFloat.self, forKey: Key(stringValue: name)) { self[keyPath: dial] = v }
+        }
+    }
 }
 
 // MARK: - The whole design

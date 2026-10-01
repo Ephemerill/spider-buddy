@@ -201,6 +201,9 @@ final class SpiderView: NSView {
         // tag fading — each a fraction of a point a frame, and each has to
         // be drawn every frame or it comes in steps.
         d += abs(a.headTilt - b.headTilt) * 45
+        d += abs(a.headCock - b.headCock) * 45
+        d += abs(a.wink - b.wink) * 9
+        d += (abs(a.palpNear - b.palpNear) + abs(a.palpFar - b.palpFar)) * 6
         d += abs(a.headTurn - b.headTurn) * 40
         d += abs(a.abdomenTilt - b.abdomenTilt) * 45
         d += abs(a.bodyPitch - b.bodyPitch) * 45

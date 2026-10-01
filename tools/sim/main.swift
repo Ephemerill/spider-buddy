@@ -1935,6 +1935,7 @@ do {
         \Habits.rest: "attached:rest", \Habits.groom: "attached:groom", \Habits.fidget: "attached:fidget",
         \Habits.scratch: "attached:scratch", \Habits.peer: "attached:peer", \Habits.approach: "attached:walk",
         \Habits.curious: "attached:curious", \Habits.stare: "attached:stare", \Habits.glance: "attached:glance",
+        \Habits.walkTurned: "attached:walk",
         \Habits.greet: "attached:greet", \Habits.wave: "attached:wave", \Habits.peekaboo: "attached:armsUp",
     ]
     let starts: [(String, Int, CGFloat)] = [("screen:0", 0, 126), ("screen:0", 1, 120), ("screen:0", 2, 120), ("screen:0", 3, 120),

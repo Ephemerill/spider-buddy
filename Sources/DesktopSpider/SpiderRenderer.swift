@@ -1093,8 +1093,17 @@ enum SpiderRenderer {
             (V2.lerp(V2(-3.5, -9), V2(head.c.x + 7.5, -4.5), f),
              V2.lerp(V2(-4.5, -14.5), V2(head.c.x + 14.5, -8.0 - pose.happy * 1.2), f), lerp(0.9, 0.8, f)),
         ]
-        for (base0, tip0, w) in palps {
-            let base = base0 + V2(0, lift), tip = tip0 + V2(0, lift)
+        for (k, (base0, tip0, w)) in palps.enumerated() {
+            let base = base0 + V2(0, lift)
+            var tip = tip0 + V2(0, lift)
+            // A flick: side on, the tip swung up about the base; face on,
+            // where the head hides the top of it, the palp bobs down and
+            // out below the chin, each to its own side.
+            let flick = clamp(k == 0 ? pose.palpNear : pose.palpFar, 0, 1)
+            if flick > 0.001 {
+                tip = base + (tip - base).rotated(by: 0.75 * flick * f)
+                tip += V2((k == 0 ? 1.5 : -1.5), -3) * (flick * (1 - f))
+            }
             ctx.setLineCap(.round)
             ctx.setStrokeColor(pal.outline)
             ctx.setLineWidth(5.6 * w)
@@ -1165,11 +1174,23 @@ enum SpiderRenderer {
     /// picture would cock the head over, and flip it as it passed the front
     /// view), the head rises on its neck instead.
     static func headTurn(_ pose: SpiderPose, hc: V2, hr: CGFloat, profile f: CGFloat, in ctx: CGContext) {
-        guard abs(pose.headTilt) > 0.0005 else { return }
+        let cock = drawnCock(pose, profile: f)
+        guard abs(pose.headTilt) > 0.0005 || abs(cock) > 0.0005 else { return }
         let n = neck(hc: hc, hr: hr, profile: f)
         ctx.translateBy(x: n.x, y: n.y + headRise * sin(pose.headTilt) * (1 - f))
-        ctx.rotate(by: pose.headTilt * f)
+        ctx.rotate(by: pose.headTilt * f + cock)
         ctx.translateBy(x: -n.x, y: -n.y)
+    }
+
+    /// The head's cock as a turn in the head's own frame — which is
+    /// mirrored with the legs, and again if the upper body is round past
+    /// the front view from them — so that on the screen it stays tipped
+    /// the same way as it turns through the front view, rather than
+    /// flipping over with the mirror. Only the face-on share of it shows.
+    static func drawnCock(_ pose: SpiderPose, profile f: CGFloat) -> CGFloat {
+        guard abs(pose.headCock) > 0.0005 else { return 0 }
+        let mirror: CGFloat = (pose.facing >= 0 ? 1 : -1) * (upperTurn(pose).flip ? -1 : 1)
+        return pose.headCock * mirror * (1 - f)
     }
 
     /// Face on, the face goes up the head as it looks up (and down it as it
@@ -1933,7 +1954,7 @@ enum SpiderRenderer {
         g.x *= pose.facing >= 0 ? 1 : -1
         g = g.rotated(by: -pose.bodyPitch)
         if upperTurn(pose).flip { g.x = -g.x }
-        return g.rotated(by: -pose.headTilt * f).clampedLength(1)
+        return g.rotated(by: -pose.headTilt * f - drawnCock(pose, profile: f)).clampedLength(1)
     }
 
     /// Tools only: the screen direction the glints are drawn toward — the
@@ -1943,7 +1964,7 @@ enum SpiderRenderer {
     static func drawnGaze(_ pose: SpiderPose) -> V2 {
         let turned = upperTurn(pose)
         let mirror: CGFloat = pose.facing >= 0 ? 1 : -1
-        var g = faceGaze(pose, profile: turned.f).rotated(by: pose.headTilt * turned.f)
+        var g = faceGaze(pose, profile: turned.f).rotated(by: pose.headTilt * turned.f + drawnCock(pose, profile: turned.f))
         if turned.flip { g.x = -g.x }
         g = g.rotated(by: pose.bodyPitch)
         g.x *= mirror
@@ -2099,13 +2120,14 @@ enum SpiderRenderer {
                 }
             }
 
-            // Lid comes down from above.
-            if blink > 0.01 {
+            // Lid comes down from above. (A wink shuts one of each pair.)
+            let shut = i % 2 == 1 ? max(blink, clamp(pose.wink, 0, 1)) : blink
+            if shut > 0.01 {
                 ctx.saveGState()
                 ctx.addEllipse(in: rect.insetBy(dx: -0.7, dy: -0.7))
                 ctx.clip()
                 let top = e.c.y + ry + 1.2
-                let coverH = (ry * 2 + 2.4) * blink
+                let coverH = (ry * 2 + 2.4) * shut
                 ctx.setFillColor(pal.paint?.colour(at: e.c).cg ?? pal.headFill)
                 ctx.fill(CGRect(x: e.c.x - r - 1.5, y: top - coverH,
                                 width: r * 2 + 3, height: coverH))
