@@ -253,6 +253,7 @@ func air(_ presets: [Habitat.Preset]) {
             let tank = surfaces(hab, standoff: 22 * scale)
             let s = Spider(map: desk)
             s.config.followCursor = false
+            s.config.approachCursor = false
             s.config.scale = scale
             for _ in 0..<600 { s.setCursor(V2(-4000, -4000)); s.update(dt: dt); if s.debugState.hasPrefix("attached") { break } }
             s.enter(map: tank, at: V2(world.width / 2, HabitatLayout.ground + 200), habitat: true)
@@ -408,6 +409,7 @@ case "rain":
     let x = CGFloat(Double(args.count > 2 ? args[2] : "120") ?? 120)
     let s = Spider(map: desk)
     s.config.followCursor = false
+    s.config.approachCursor = false
     for _ in 0..<600 { s.setCursor(V2(-4000, -4000)); s.update(dt: dt); if s.debugState.hasPrefix("attached") { break } }
     s.enter(map: tank, at: V2(x, HabitatLayout.ground + 30), habitat: true)
     if let rim = tank.loop("screen:0"),

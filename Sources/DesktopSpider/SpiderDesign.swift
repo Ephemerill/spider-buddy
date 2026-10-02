@@ -836,6 +836,26 @@ enum GaitPreference: String, Codable, CaseIterable {
     }
 }
 
+/// How its legs move when it walks: a choice of animation, not of spider.
+enum LegMotion: String, Codable, CaseIterable {
+    /// The walk it has always had.
+    case classic
+    /// Every leg kept at its true length, steps rippling from the back legs
+    /// to the front, a leg at a time when it goes slowly.
+    case natural
+    /// The classic walk with every leg kept at its true length — round
+    /// corners too — and its feet put down where the body is going.
+    case refined
+
+    var label: String {
+        switch self {
+        case .classic: return "Classic"
+        case .natural: return "Natural"
+        case .refined: return "Refined"
+        }
+    }
+}
+
 struct Gait: Codable, Equatable {
     var pace: CGFloat = 0.5        // walking speed
     var stride: CGFloat = 0.5      // step length
@@ -846,20 +866,26 @@ struct Gait: Codable, Equatable {
     /// hits; up the dial it bounces off, tumbling, from gentler hits and
     /// with more spring.
     var bounciness: CGFloat = 0.5
+    /// How its legs move (see `LegMotion`).
+    var motion: LegMotion = .classic
     /// The natural walk: every leg keeps its true length, steps ripple from
     /// back to front, and the pattern changes with its pace. Off, it walks
     /// the classic way.
-    var natural = false
+    var natural: Bool {
+        get { motion == .natural }
+        set { motion = newValue ? .natural : .classic }
+    }
 
     init(pace: CGFloat = 0.5, stride: CGFloat = 0.5, bounce: CGFloat = 0.5, stance: CGFloat = 0.5,
          style: GaitPreference = .mixed, bounciness: CGFloat = 0.5, natural: Bool = false) {
         self.pace = pace; self.stride = stride; self.bounce = bounce; self.stance = stance
-        self.style = style; self.bounciness = bounciness; self.natural = natural
+        self.style = style; self.bounciness = bounciness; self.motion = natural ? .natural : .classic
     }
 
     // Written out so a design saved before a dial existed still loads,
-    // taking that dial at its middle.
-    private enum CodingKeys: String, CodingKey { case pace, stride, bounce, stance, style, bounciness, natural }
+    // taking that dial at its middle. (The leg motion is saved under both
+    // keys: a build from before the refined walk reads `natural`.)
+    private enum CodingKeys: String, CodingKey { case pace, stride, bounce, stance, style, bounciness, natural, motion }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         pace = (try? c.decodeIfPresent(CGFloat.self, forKey: .pace)) ?? 0.5
@@ -868,7 +894,19 @@ struct Gait: Codable, Equatable {
         stance = (try? c.decodeIfPresent(CGFloat.self, forKey: .stance)) ?? 0.5
         style = (try? c.decodeIfPresent(GaitPreference.self, forKey: .style)) ?? .mixed
         bounciness = (try? c.decodeIfPresent(CGFloat.self, forKey: .bounciness)) ?? 0.5
-        natural = (try? c.decodeIfPresent(Bool.self, forKey: .natural)) ?? false
+        let natural = (try? c.decodeIfPresent(Bool.self, forKey: .natural)) ?? false
+        motion = (try? c.decodeIfPresent(LegMotion.self, forKey: .motion)) ?? (natural ? .natural : .classic)
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(pace, forKey: .pace)
+        try c.encode(stride, forKey: .stride)
+        try c.encode(bounce, forKey: .bounce)
+        try c.encode(stance, forKey: .stance)
+        try c.encode(style, forKey: .style)
+        try c.encode(bounciness, forKey: .bounciness)
+        try c.encode(natural, forKey: .natural)
+        try c.encode(motion, forKey: .motion)
     }
 
     var speedMul: CGFloat { lerp(0.55, 1.7, pace) }
@@ -900,6 +938,10 @@ struct Habits: Codable, Equatable {
     // Antics
     var drum: CGFloat = 0.5
     var dance: CGFloat = 0.5
+    /// Dancing to music playing on the Mac: it always has a dance when
+    /// the music starts; this is how often it gets up for another while
+    /// the music goes on (see `Spider.grooveCooldown`).
+    var danceMusic: CGFloat = 0.5
     var roll: CGFloat = 0.5
     var spin: CGFloat = 0.5
     var pushup: CGFloat = 0.5
@@ -944,7 +986,7 @@ struct Habits: Codable, Equatable {
             ("Nodding off", \.sleep),
         ]),
         ("Antics", [
-            ("Drumming", \.drum), ("Dancing", \.dance), ("Rolling over", \.roll),
+            ("Drumming", \.drum), ("Dancing", \.dance), ("Dancing to music", \.danceMusic), ("Rolling over", \.roll),
             ("Spinning round", \.spin), ("Push-ups", \.pushup), ("Stretching", \.stretch),
             ("Wiggling", \.wiggle), ("Arms up", \.armsUp),
         ]),
@@ -965,7 +1007,7 @@ struct Habits: Codable, Equatable {
     static let saved: [(String, WritableKeyPath<Habits, CGFloat>)] = [
         ("wander", \.wander), ("leap", \.leap), ("rappel", \.rappel), ("swing", \.swing),
         ("hammock", \.hammock), ("nap", \.nap), ("sleep", \.sleep),
-        ("drum", \.drum), ("dance", \.dance), ("roll", \.roll), ("spin", \.spin),
+        ("drum", \.drum), ("dance", \.dance), ("danceMusic", \.danceMusic), ("roll", \.roll), ("spin", \.spin),
         ("pushup", \.pushup), ("stretch", \.stretch), ("wiggle", \.wiggle), ("armsUp", \.armsUp),
         ("look", \.look), ("rest", \.rest), ("groom", \.groom), ("fidget", \.fidget),
         ("scratch", \.scratch), ("peer", \.peer), ("muse", \.muse),

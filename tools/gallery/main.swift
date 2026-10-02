@@ -83,6 +83,7 @@ for (c, d) in randoms.enumerated() {
     map.debugRebuild(screen: CGRect(x: 0, y: 0, width: 400, height: 300), menuBarHeight: 0, windows: [])
     let sp = Spider(map: map)
     sp.config.followCursor = false
+    sp.config.approachCursor = false
     sp.apply(design: d)
     sp.debugAttach(loopID: "screen:0", segIdx: 0, t: 100, dir: 1)
     sp.debugWalk(for: 10)

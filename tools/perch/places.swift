@@ -40,6 +40,7 @@ private func settle(_ h: Habitat, personality: Personality, at x: CGFloat) -> (S
     let tank = surfaces(h, standoff: standoff)
     let s = Spider(map: desk)
     s.config.followCursor = false
+    s.config.approachCursor = false
     s.config.scale = scale
     var d = s.design
     d.personality = personality

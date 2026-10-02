@@ -109,6 +109,7 @@ func freshSpider(followCursor: Bool, loop: String = "win:9", seg: Int = 0, at t:
     let s = Spider(map: sm)
     s.config.scale = 1.0
     s.config.followCursor = followCursor
+    s.config.approachCursor = followCursor
     s.config.pounceOnCursor = false
     s.debugAttach(loopID: loop, segIdx: seg, t: t, dir: 1)
     return s
@@ -589,6 +590,7 @@ func filmTwo(_ out: String) {
         let s = Spider(map: twoMap)
         s.config.scale = 1.4
         s.config.followCursor = false
+        s.config.approachCursor = false
         s.debugAttach(loopID: shot.0, segIdx: shot.1, t: shot.2, dir: shot.3)
         if shot.4 > 0 { s.debugWalk(for: 30) }
         for f in 0..<max(shot.4, 40) {
@@ -700,6 +702,7 @@ func runCornerAir() {
                 let s = Spider(map: sm)
                 s.config.scale = 1.0
                 s.config.followCursor = false
+                s.config.approachCursor = false
                 s.config.walkSpeed = 62 * pace
                 // Start well back from the corner it is heading for.
                 let start = dir > 0 ? max(seg.len - 110, 10) : min(110, seg.len - 10)
@@ -781,6 +784,7 @@ func runDock(_ out: String) {
     let s = Spider(map: dm)
     s.config.scale = 1
     s.config.followCursor = false
+    s.config.approachCursor = false
     s.debugAttach(loopID: "screen:0", segIdx: 0, t: 120, dir: 1)
     s.debugWalk(for: 60)
     let W = 1200, H = 260

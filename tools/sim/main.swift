@@ -226,6 +226,7 @@ do {
         let s = Spider(map: map)
         s.config.webs = true
         s.config.followCursor = false
+        s.config.approachCursor = false
         _ = settleUntilAttached(s)
         if let l2 = map.loop("win:2"), let under = l2.segs.firstIndex(where: { $0.facing == .down }) {
             let seg = l2.segs[under]
@@ -263,6 +264,7 @@ do {
     for trial in 0..<2 {
         let s = Spider(map: map)
         s.config.followCursor = false
+        s.config.approachCursor = false
         _ = settleUntilAttached(s)
         // On the floor (a drop is no use there, so it goes up) and then on a
         // window's shelf (where either will do).
@@ -313,6 +315,7 @@ do {
 for kind in PreyKind.allCases {
     let s = Spider(map: map)
     s.config.followCursor = false
+    s.config.approachCursor = false
     _ = settleUntilAttached(s)
     let p = s.release(kind)
     var caughtAt = -1.0
@@ -482,6 +485,7 @@ do {
 do {
     let s = Spider(map: map)
     s.config.followCursor = false
+    s.config.approachCursor = false
     _ = settleUntilAttached(s)
     var kinds: [PreyKind: Int] = [:]
     var badSpawn = 0
@@ -519,6 +523,7 @@ do {
 do {
     let s = Spider(map: map)
     s.config.followCursor = false
+    s.config.approachCursor = false
     _ = settleUntilAttached(s)
     let p = s.release(.cricket)
     for _ in 0..<6 { s.update(dt: dt) }
@@ -538,6 +543,7 @@ do {
 do {
     let s = Spider(map: map)
     s.config.followCursor = false
+    s.config.approachCursor = false
     _ = settleUntilAttached(s)
     let p = s.release(.cricket)
     for _ in 0..<6 { s.update(dt: dt) }
@@ -566,6 +572,7 @@ do {
     for trial in 0..<3 {
         let s = Spider(map: low)
         s.config.followCursor = false
+        s.config.approachCursor = false
         s.debugAttach(loopID: "win:5", segIdx: 2, t: 120 + CGFloat(trial) * 100, dir: 1)   // the underside
         var n = 0
         var lastPos = s.worldPos
@@ -589,6 +596,7 @@ do {
 do {
     let s = Spider(map: map)
     s.config.followCursor = false
+    s.config.approachCursor = false
     _ = settleUntilAttached(s)
     // Get it onto a line and hunting, then rescue it from all of that.
     let p = s.release(.worm)
@@ -606,6 +614,7 @@ do {
 do {
     let s = Spider(map: map)
     s.config.followCursor = false
+    s.config.approachCursor = false
     _ = settleUntilAttached(s)
     s.debugActivity("build", for: 0)
     expect("starting a build stakes out the corner", s.hasAnyHammock, "")
@@ -623,6 +632,7 @@ do {
     // A half-made one under the pointer goes with a wipe.
     let s2 = Spider(map: map)
     s2.config.followCursor = false
+    s2.config.approachCursor = false
     _ = settleUntilAttached(s2)
     s2.debugActivity("build", for: 0)
     var n = 0
@@ -645,6 +655,7 @@ do {
     let box = w.frame.insetBy(dx: -140, dy: -120)
     let s = Spider(map: map)
     s.config.followCursor = false
+    s.config.approachCursor = false
     _ = settleUntilAttached(s)
     s.confine = box
     var n = 0
@@ -694,6 +705,7 @@ do {
     expect("an empty box has nothing to stand on", !map.sampleSpots(spacing: 30).contains { empty.contains($0.point.point) }, "")
     let s2 = Spider(map: map)
     s2.config.followCursor = false
+    s2.config.approachCursor = false
     _ = settleUntilAttached(s2)
     s2.confine = empty
     n = 0
@@ -726,6 +738,7 @@ do {
     expect("a window over the screen edge does not block it", blocked == 0, "\(blocked) blocked stretches")
     let s = Spider(map: rim)
     s.config.followCursor = false
+    s.config.approachCursor = false
     if let f = floor { s.debugAttach(loopID: f.id, segIdx: floorSeg(f), t: 300, dir: 1) }
     s.debugWalk(for: 30)
     var n = 0
@@ -839,6 +852,7 @@ do {
 do {
     let s = Spider(map: map)
     s.config.followCursor = false
+    s.config.approachCursor = false
     var lazy = s.personality; lazy.laziness = 1; lazy.energy = 0.2
     s.apply(design: SpiderDesign(name: "S", look: SpiderLook(), personality: lazy, gait: s.gait))
     // On the right wall of the Browser window: its top is round the corner.
@@ -872,6 +886,7 @@ do {
     tank.rebuild(habitat: built)
     let s = Spider(map: map)
     s.config.followCursor = false
+    s.config.approachCursor = false
     _ = settleUntilAttached(s)
     s.enter(map: tank, at: V2(scene.midX, 300), habitat: true)
     var n = 0
@@ -917,6 +932,7 @@ do {
     func inTank(_ x: CGFloat) -> Spider {
         let s = Spider(map: map)
         s.config.followCursor = false
+        s.config.approachCursor = false
         _ = settleUntilAttached(s)
         s.enter(map: tank, at: V2(x, scene.minY + HabitatLayout.ground + 30), habitat: true)
         if let rim = tank.loop("screen:0"),
@@ -1043,6 +1059,7 @@ do {
     for (name, anchorX) in [("at the edge", screen.minX + 20), ("well inside", screen.midX)] {
         let s = Spider(map: map)
         s.config.followCursor = false
+        s.config.approachCursor = false
         _ = settleUntilAttached(s)
         s.debugHang(at: V2(anchorX, screen.maxY - 60), length: 260, swing: true, kick: 0.4)
         var n = 0
@@ -1114,6 +1131,7 @@ do {
         let s = Spider(map: fm)
         s.config.webs = true
         s.config.followCursor = false
+        s.config.approachCursor = false
         _ = settleUntilAttached(s)
         // Hanging under the window, then its footing goes: nothing under
         // it but the floor, a long way down.
@@ -1178,6 +1196,7 @@ do {
         let s = Spider(map: dm)
         s.config.webs = true
         s.config.followCursor = false
+        s.config.approachCursor = false
         _ = settleUntilAttached(s)
         let hand = V2(screen.midX + CGFloat(trial - 3) * 120, screen.maxY - 120)
         s.beginGrab(at: s.worldPos)
@@ -1216,6 +1235,7 @@ do {
         let s = Spider(map: fm)
         s.config.webs = true
         s.config.followCursor = false
+        s.config.approachCursor = false
         _ = settleUntilAttached(s)
         guard park(s, loopID: "win:22", segIdx: 0, t: 100 + CGFloat(trial) * 80) else { continue }
         fm.debugRebuild(screen: screen, menuBarHeight: 25, windows: [], cinema: false)
@@ -1244,6 +1264,7 @@ do {
     let s = Spider(map: cm)
     s.config.webs = true
     s.config.followCursor = false
+    s.config.approachCursor = false
     _ = settleUntilAttached(s)
     _ = park(s, loopID: "win:41", segIdx: 0, t: 550)
     let p = s.worldPos
@@ -1285,6 +1306,7 @@ do {
     rm.debugRebuild(screen: screen, menuBarHeight: 25, windows: [TrackedWindow(id: 51, frame: frame, depth: 0, owner: "Resized")], cinema: false)
     let s = Spider(map: rm)
     s.config.followCursor = false
+    s.config.approachCursor = false
     _ = settleUntilAttached(s)
     _ = park(s, loopID: "win:51", segIdx: 0, t: 450)
     func still(_ secs: CGFloat) {
@@ -1325,6 +1347,7 @@ do {
     let s = Spider(map: em)
     s.config.webs = true
     s.config.followCursor = false
+    s.config.approachCursor = false
     _ = settleUntilAttached(s)
     _ = park(s, loopID: "win:31", segIdx: 0, t: 450)
     let p = s.worldPos
@@ -1363,6 +1386,7 @@ do {
         let s = Spider(map: em)
         s.config.webs = true
         s.config.followCursor = false
+        s.config.approachCursor = false
         _ = settleUntilAttached(s)
         let side = trial % 2 == 0 ? 1 : 3
         _ = park(s, loopID: "win:41", segIdx: side, t: 300)
@@ -1403,6 +1427,7 @@ expect("petting makes it happy", s5.pose().happy > 0.4,
 do {
     let s6 = Spider(map: map)
     s6.config.followCursor = false
+    s6.config.approachCursor = false
     var h = Habits(); h.swing = 0.9; s6.apply(design: SpiderDesign(name: "S", habits: h))
     _ = settleUntilAttached(s6)
     // Stand on the bottom of the screen, under the windows, facing right.
@@ -1429,6 +1454,7 @@ do {
 do {
     let s7 = Spider(map: map)
     s7.config.followCursor = false
+    s7.config.approachCursor = false
     _ = settleUntilAttached(s7)
     s7.buildHammock()
     var built = false, seenBuilding = false
@@ -1613,6 +1639,7 @@ do {
         zm.debugRebuild(screen: screen, menuBarHeight: 25, windows: [TrackedWindow(id: 61, frame: start, depth: 0, owner: "Tiled")])
         let s = Spider(map: zm)
         s.config.followCursor = false
+        s.config.approachCursor = false
         _ = settleUntilAttached(s)
         guard let win = zm.loop("win:61"), let edge = win.segs.firstIndex(where: { $0.facing == facing }) else {
             expect("maximized: a \(name) edge to start on", false); continue
@@ -1676,6 +1703,7 @@ do {
     cm.debugRebuild(screen: screen, menuBarHeight: 25, windows: [big, front])
     let s = Spider(map: cm)
     s.config.followCursor = false
+    s.config.approachCursor = false
     s.config.liveliness = 3
     _ = settleUntilAttached(s)
     var onBig = 0, seen = Set<String>()
@@ -1732,6 +1760,7 @@ do {
     let s = Spider(map: map)
     s.config.webs = true
     s.config.followCursor = false
+    s.config.approachCursor = false
     _ = settleUntilAttached(s)
     var started = false
     if let l2 = map.loop("win:2"), let under = l2.segs.firstIndex(where: { $0.facing == .down }) {
@@ -1788,6 +1817,7 @@ do {
     for (label, h) in [("never", never), ("always", always)] {
         let s = Spider(map: map)
         s.config.followCursor = false
+        s.config.approachCursor = false
         s.apply(design: SpiderDesign(name: "H", habits: h))
         _ = settleUntilAttached(s)
         var n = 0
@@ -1827,6 +1857,7 @@ do {
             for _ in 0..<3 {
                 let s = Spider(map: rm)
                 s.config.followCursor = false
+                s.config.approachCursor = false
                 s.config.webs = false
                 s.apply(design: SpiderDesign(name: "R", habits: rolly))
                 _ = settleUntilAttached(s)
@@ -1846,6 +1877,7 @@ do {
         for _ in 0..<4 {
             let s = Spider(map: rm)
             s.config.followCursor = false
+            s.config.approachCursor = false
             s.config.webs = false
             _ = settleUntilAttached(s)
             guard park(s, loopID: "win:41", segIdx: under, t: 200) else { continue }
@@ -1884,6 +1916,7 @@ do {
             for dx in [CGFloat(0), 45, -70, 110] {
                 let s = Spider(map: um)
                 s.config.followCursor = false
+                s.config.approachCursor = false
                 s.config.webs = false
                 _ = settleUntilAttached(s)
                 let t0 = seg.len / 2
@@ -1929,7 +1962,7 @@ do {
     // (The hammock ones the desktop spider shows; a thought is only a bubble.)
     let expected: [PartialKeyPath<Habits>: String] = [
         \Habits.wander: "attached:walk", \Habits.leap: "jump", \Habits.rappel: "dangling", \Habits.swing: "swinging",
-        \Habits.sleep: "attached:sleep", \Habits.drum: "attached:drum", \Habits.dance: "attached:dance", \Habits.roll: "attached:roll",
+        \Habits.sleep: "attached:sleep", \Habits.drum: "attached:drum", \Habits.dance: "attached:dance", \Habits.danceMusic: "attached:groove", \Habits.roll: "attached:roll",
         \Habits.spin: "attached:spin", \Habits.pushup: "attached:pushup", \Habits.stretch: "attached:legStretch",
         \Habits.wiggle: "attached:wiggle", \Habits.armsUp: "attached:armsUp", \Habits.look: "attached:look",
         \Habits.rest: "attached:rest", \Habits.groom: "attached:groom", \Habits.fidget: "attached:fidget",
@@ -1984,6 +2017,7 @@ do {
     func fresh() -> Spider {
         let s = Spider(map: cm)
         s.config.followCursor = false
+        s.config.approachCursor = false
         s.config.webs = false
         _ = settleUntilAttached(s)
         return s
@@ -2270,6 +2304,7 @@ do {
     func clicks(_ p: Personality, _ memory: SpiderMemory?, _ n: Int) -> (warm: Double, start: Double) {
         let s = Spider(map: map)
         s.config.followCursor = false
+        s.config.approachCursor = false
         var d = SpiderDesign(); d.personality = p
         s.apply(design: d)
         _ = settleUntilAttached(s)
@@ -2368,6 +2403,7 @@ do {
     func play(_ kind: ToyKind, _ p: Personality, secs: CGFloat = 150) -> (firstBat: Double, bored: Double, off: Int, retreats: Int) {
         let s = Spider(map: map)
         s.config.followCursor = false
+        s.config.approachCursor = false
         var d = SpiderDesign(); d.personality = p
         s.apply(design: d)
         _ = settleUntilAttached(s)
@@ -2407,6 +2443,7 @@ do {
     func reaction(_ p: Personality) -> Double {
         let s = Spider(map: map)
         s.config.followCursor = false
+        s.config.approachCursor = false
         var d = SpiderDesign(); d.personality = p
         s.apply(design: d)
         _ = settleUntilAttached(s)
@@ -2438,6 +2475,7 @@ do {
     func friendly() -> Spider {
         let s = Spider(map: map)
         s.config.followCursor = false
+        s.config.approachCursor = false
         var d = SpiderDesign(); d.personality = Personality.presets.first { $0.name == "Friendly" }!.p
         s.apply(design: d)
         _ = settleUntilAttached(s)
@@ -2687,7 +2725,7 @@ do {
     // Webs: in the corner of the floor and the wall, and under a ledge.
     do {
         let k = TraceKeeper(map: map); k.scale = 0.95
-        let s = Spider(map: map); s.config.followCursor = false; s.traces = k
+        let s = Spider(map: map); s.config.followCursor = false; s.config.approachCursor = false; s.traces = k
         _ = park(s, loopID: floorLoop.id, segIdx: fi, t: 140)
         let asked = s.debugSpinWeb()
         var n = 0
@@ -2701,7 +2739,7 @@ do {
         }
         // Under the editor's bottom edge.
         let k2 = TraceKeeper(map: map); k2.scale = 0.95
-        let s2 = Spider(map: map); s2.config.followCursor = false; s2.traces = k2
+        let s2 = Spider(map: map); s2.config.followCursor = false; s2.config.approachCursor = false; s2.traces = k2
         _ = park(s2, loopID: "win:1", segIdx: 2, t: 300)
         let under = s2.debugSpinWeb()
         n = 0
@@ -2713,7 +2751,7 @@ do {
     // A fly in its web: it feels it, and comes for it.
     do {
         let k = TraceKeeper(map: map); k.scale = 0.95
-        let s = Spider(map: map); s.config.followCursor = false; s.traces = k
+        let s = Spider(map: map); s.config.followCursor = false; s.config.approachCursor = false; s.traces = k
         k.onTremble = { p, strength in s.feelTremble(at: p, strength: strength) }
         _ = park(s, loopID: floorLoop.id, segIdx: fi, t: 140)
         _ = s.debugSpinWeb()
@@ -2742,7 +2780,7 @@ do {
     // what is left of it left there.
     do {
         let k = TraceKeeper(map: map); k.scale = 0.95
-        let s = Spider(map: map); s.config.followCursor = false; s.traces = k
+        let s = Spider(map: map); s.config.followCursor = false; s.config.approachCursor = false; s.traces = k
         _ = park(s, loopID: floorLoop.id, segIdx: fi, t: 200)
         let cricket = s.release(.cricket)
         s.debugCatch(cricket)
@@ -2764,7 +2802,7 @@ do {
     // line it came down on, left where it stepped off.
     do {
         let k = TraceKeeper(map: map); k.scale = 0.95
-        let s = Spider(map: map); s.config.followCursor = false; s.traces = k
+        let s = Spider(map: map); s.config.followCursor = false; s.config.approachCursor = false; s.traces = k
         let w0 = windows[0].frame, w1 = windows[1].frame
         _ = park(s, loopID: "win:1", segIdx: 0, t: w0.width - 340)
         s.debugJump(to: V2(w1.minX + 260, w1.maxY + map.standoff))
@@ -2779,7 +2817,7 @@ do {
         var hang: Strand?
         for _ in 0..<6 where hang == nil {
             let k2 = TraceKeeper(map: map); k2.scale = 0.95
-            let s2 = Spider(map: map); s2.config.followCursor = false; s2.traces = k2
+            let s2 = Spider(map: map); s2.config.followCursor = false; s2.config.approachCursor = false; s2.traces = k2
             _ = park(s2, loopID: "win:1", segIdx: 2, t: 300)
             s2.debugRappel()
             var m = 0
@@ -2799,7 +2837,7 @@ do {
         let k = TraceKeeper(map: map); k.scale = 0.95
         let box = ToyBox(map: map); box.scale = 0.95
         k.toyBox = box
-        let s = Spider(map: map); s.config.followCursor = false; s.traces = k; s.toys = box
+        let s = Spider(map: map); s.config.followCursor = false; s.config.approachCursor = false; s.traces = k; s.toys = box
         let seg = floorLoop.segs[fi]
         _ = park(s, loopID: floorLoop.id, segIdx: fi, t: 300)
         let ball = Toy(kind: .bell, id: 70, at: seg.point(at: 330) + V2(0, 10), scale: 0.95)
@@ -2903,6 +2941,7 @@ do {
     func gig(seg: Int = top, at: CGFloat = 200, bpm: Double = 118, on: @escaping (CGFloat) -> Bool = { _ in true }) -> Gig? {
         let s = Spider(map: mm)
         s.config.followCursor = false
+        s.config.approachCursor = false
         s.config.webs = false
         _ = settleUntilAttached(s)
         guard park(s, loopID: "win:41", segIdx: seg, t: at) else { return nil }
@@ -2980,6 +3019,45 @@ do {
         if g.run(40, until: dancing) != nil { danced += 1 }
     }
     expect("snatches of rhythm: never a dance", danced == 0, "\(danced)/3 danced")
+
+    // Music on for a long while, the way people work with it playing: a
+    // dance as it starts, then on with its own life — another dance now
+    // and then, not one after another. Dialled to more, more of them;
+    // dialled to never, none at all.
+    func longGig(_ dial: CGFloat, secs: CGFloat, trials: Int) -> (shares: [Double], dances: [Int], first: [CGFloat]) {
+        var shares: [Double] = [], dances: [Int] = [], first: [CGFloat] = []
+        for trial in 0..<trials {
+            guard let g = gig(at: 200 + CGFloat(trial) * 150) else { continue }
+            g.s.habits.danceMusic = dial
+            var on = 0, n = 0, count = 0, was = false
+            _ = g.run(secs) { s in
+                let d = dancing(s)
+                n += 1
+                if d { on += 1 }
+                if d, !was { count += 1; if count == 1 { first.append(CGFloat(n) * dt) } }
+                was = d
+                return false
+            }
+            shares.append(Double(on) / Double(max(n, 1)))
+            dances.append(count)
+        }
+        return (shares, dances, first)
+    }
+    let mid = longGig(0.5, secs: 300, trials: 3)
+    let note = { (r: (shares: [Double], dances: [Int], first: [CGFloat])) in
+        "dances \(r.dances), share " + r.shares.map { String(format: "%.0f%%", $0 * 100) }.joined(separator: " ")
+            + ", first after " + r.first.map { String(format: "%.1fs", $0) }.joined(separator: " ")
+    }
+    print("    music on 5 min, dial ½: \(note(mid))")
+    expect("music on a long while: a dance as it starts, then mostly its own life",
+           mid.dances.count == 3 && mid.first.count == 3 && mid.first.allSatisfy { $0 < 10 } && mid.shares.allSatisfy { $0 < 0.4 },
+           note(mid))
+    let high = longGig(0.9, secs: 300, trials: 3)
+    print("    music on 5 min, dial 0.9: \(note(high))")
+    expect("music on a long while, dialled up: more dancing", high.dances.reduce(0, +) > mid.dances.reduce(0, +),
+           "\(high.dances) vs \(mid.dances)")
+    let never = longGig(0, secs: 60, trials: 2)
+    expect("dancing to music dialled to never: no dance", never.dances.allSatisfy { $0 == 0 }, note(never))
 
     // Asleep when the music starts: it wakes up for it.
     var woke = 0, sleepers = 0

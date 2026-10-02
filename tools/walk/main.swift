@@ -9,6 +9,7 @@ let env = ProcessInfo.processInfo.environment
 let dt: CGFloat = 1.0 / 60.0
 func e(_ k: String, _ d: String) -> String { env[k] ?? d }
 let natural = e("NAT", "0") == "1"
+let refined = e("REF", "0") == "1"
 
 final class Rig {
     let map: SurfaceMap
@@ -23,9 +24,11 @@ final class Rig {
         s = Spider(map: map)
         s.config.scale = scale
         s.config.followCursor = false
+        s.config.approachCursor = false
         s.config.pounceOnCursor = false
         var g = Gait(pace: pace, stride: stride, bounce: 0.5, stance: stance, style: style, bounciness: 0.5)
         g.natural = natural
+        if refined { g.motion = .refined }
         var d = s.design
         d.gait = g
         s.apply(design: d)

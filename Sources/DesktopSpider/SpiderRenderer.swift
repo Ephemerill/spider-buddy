@@ -1036,7 +1036,8 @@ enum SpiderRenderer {
         ctx.translateBy(x: ac.x + arx * 0.6 * f, y: ac.y)
         ctx.rotate(by: (pose.abdomenSway * 0.18 + pose.ball * 0.5 + pose.abdomenTilt) * f)
         ctx.translateBy(x: -(ac.x + arx * 0.6 * f), y: -ac.y)
-        var abPath = fuzzyEllipse(ac, arx, ary, bumps: 15, amp: amp, phase: 0.4)
+        let abShape = fuzzyEllipse(ac, arx, ary, bumps: 15, amp: amp, phase: 0.4)
+        var abPath = abShape
         var unflip = CGAffineTransform(translationX: 2 * ac.x, y: 0).scaledBy(x: -1, y: 1)
         if flipped, let p = abPath.copy(using: &unflip) { abPath = p }
         if look.fuzz == 2 {
@@ -1045,7 +1046,13 @@ enum SpiderRenderer {
             drawHairs(ac, arx, ary, count: 22, colour: pal.outline, in: ctx)
             ctx.restoreGState()
         }
-        pal.fillBody(abPath, head: false, in: ctx)
+        // Its coat isn't mirrored either, as the head's isn't (below): a
+        // gradient or a living coat stays where it was as the upper body
+        // turns past the front view, rather than jumping across.
+        ctx.saveGState()
+        if flipped { ctx.concatenate(unflip) }
+        pal.fillBody(abShape, head: false, in: ctx)
+        ctx.restoreGState()
         sheen(ctx, at: V2(ac.x - 2 * f, ac.y + 5), rx: arx * 0.7, ry: ary * 0.68, alpha: 0.30 * pal.sheen, colour: pal.bodyLight)
         drawPattern(look, ac: ac, arx: arx, ary: ary, profile: f, path: abPath, pal: pal, in: ctx)
         if look.accessory == .sweater { drawSweater(ac: ac, arx: arx, ary: ary, profile: f, path: abPath, pal: pal, in: ctx) }
@@ -1108,7 +1115,11 @@ enum SpiderRenderer {
             ctx.setStrokeColor(pal.outline)
             ctx.setLineWidth(5.6 * w)
             ctx.beginPath(); ctx.move(to: base.point); ctx.addLine(to: tip.point); ctx.strokePath()
-            ctx.setStrokeColor(pal.paint != nil || pal.legTones != nil ? pal.legColour(at: (base + tip) * 0.5, segment: 0).cg : pal.legFill)
+            // (Painted legs take their colour from where the palp would be
+            // un-mirrored, as the coat does.)
+            let mid = (base + tip) * 0.5
+            ctx.setStrokeColor(pal.paint != nil || pal.legTones != nil
+                               ? pal.legColour(at: flipped ? V2(-mid.x, mid.y) : mid, segment: 0).cg : pal.legFill)
             ctx.setLineWidth(3.6 * w)
             ctx.beginPath(); ctx.move(to: base.point); ctx.addLine(to: tip.point); ctx.strokePath()
         }
@@ -2139,6 +2150,21 @@ enum SpiderRenderer {
                 ctx.strokePath()
                 ctx.restoreGState()
             }
+            // Shut tight — asleep, or the bottom of a blink — the eye is
+            // still there, closed: the lid's lashes in a soft downward curve
+            // across it, not just head where the eye was.
+            let closed = smoothstep(clamp((shut - 0.6) / 0.35, 0, 1))
+            if closed > 0.01 {
+                let y = e.c.y - ry * 0.2
+                let w = r * 0.92
+                ctx.setStrokeColor(pal.eyeDark.copy(alpha: closed)!)
+                ctx.setLineWidth(e.big ? 1.9 : 1.3)
+                ctx.setLineCap(.round)
+                ctx.beginPath()
+                ctx.move(to: CGPoint(x: e.c.x - w, y: y + ry * 0.12))
+                ctx.addQuadCurve(to: CGPoint(x: e.c.x + w, y: y + ry * 0.12), control: CGPoint(x: e.c.x, y: y - ry * 0.5))
+                ctx.strokePath()
+            }
         }
 
         drawBrows(look, eyes: eyeSpots, profile: f, pal: pal, in: ctx)
@@ -2572,7 +2598,10 @@ enum SpiderRenderer {
             let p = CGMutablePath()
             p.move(to: CGPoint(x: -w * 0.65, y: 0))
             p.addLine(to: CGPoint(x: w * 0.65, y: 0))
-            p.addLine(to: CGPoint(x: 0.5, y: w * 1.75))
+            // (Its tip leans a touch to the back side on, and is square on
+            // the front view, so it does not hop across there.)
+            let tip = 0.5 * f
+            p.addLine(to: CGPoint(x: tip, y: w * 1.75))
             p.closeSubpath()
             outlined(p, fill: accent)
             ctx.saveGState()
@@ -2584,8 +2613,8 @@ enum SpiderRenderer {
             }
             ctx.restoreGState()
             ctx.setFillColor(pal.accentRGB.lighter(0.5).cg)
-            ctx.fillEllipse(in: CGRect(x: 0.5 - 2.6, y: w * 1.75 - 2.2, width: 5.2, height: 5.2))
-            ctx.strokeEllipse(in: CGRect(x: 0.5 - 2.6, y: w * 1.75 - 2.2, width: 5.2, height: 5.2))
+            ctx.fillEllipse(in: CGRect(x: tip - 2.6, y: w * 1.75 - 2.2, width: 5.2, height: 5.2))
+            ctx.strokeEllipse(in: CGRect(x: tip - 2.6, y: w * 1.75 - 2.2, width: 5.2, height: 5.2))
         case .crown:
             let p = CGMutablePath()
             p.move(to: CGPoint(x: -w * 0.8, y: 0))

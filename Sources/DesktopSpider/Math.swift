@@ -184,7 +184,14 @@ struct Wobble {
     }
 }
 
-func randRange(_ lo: CGFloat, _ hi: CGFloat) -> CGFloat { CGFloat.random(in: lo...hi) }
+/// (Bounds the wrong way round, or not numbers at all, would trap in
+/// `random(in:)` and take the app down with them: the range is turned
+/// round, and a bound that is not a number is kept to.)
+func randRange(_ lo: CGFloat, _ hi: CGFloat) -> CGFloat {
+    if lo <= hi, lo.isFinite, hi.isFinite { return CGFloat.random(in: lo...hi) }
+    if hi < lo, lo.isFinite, hi.isFinite { return CGFloat.random(in: hi...lo) }
+    return lo.isFinite ? lo : hi.isFinite ? hi : 0
+}
 func chance(_ p: CGFloat) -> Bool { CGFloat.random(in: 0...1) < p }
 
 // MARK: - Geometry

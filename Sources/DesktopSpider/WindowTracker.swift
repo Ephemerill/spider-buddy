@@ -109,9 +109,18 @@ final class WindowTracker {
     }
 
     /// A fresh look at the desktop right now.
-    func pollNow() { poll() }
+    func pollNow() { poll(asked: true) }
 
-    private func poll()  {
+    /// A look is under way on the queue. The clock's next tick skips while it
+    /// is, rather than queueing up behind it (on a slow Mac a look can outlast
+    /// the tick, and a backlog makes every answer late); a fresh look asked
+    /// for meanwhile is taken as soon as it is back.
+    private var looking = false
+    private var lookAgain = false
+
+    private func poll(asked: Bool = false)  {
+        if looking { if asked { lookAgain = true }; return }
+        looking = true
         let primaryTop = NSScreen.screens.first?.frame.maxY ?? 0
         let visible = NSScreen.screens.map { ($0.frame, $0.visibleFrame) }
         let pid = selfPID
@@ -124,6 +133,8 @@ final class WindowTracker {
             let result = self.withCornerRadii(found, primaryTop: primaryTop)
             let docks = SurfaceMap.dockStrips(screens: visible)
             DispatchQueue.main.async {
+                self.looking = false
+                defer { if self.lookAgain { self.lookAgain = false; self.poll(asked: true) } }
                 if let before = self.banners {
                     for (id, screen) in banners where !before.contains(id) { self.onBanner?(screen) }
                 }

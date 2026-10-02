@@ -93,7 +93,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// WebPages.swift).
     private let pageWatch = PageWatcher()
     /// Climbs web pages that fill the screen (the setting).
-    private var climbsPages = true
+    private var climbsPages = false
+    /// Climbing web pages isn't finished: until it is, it stays off and out
+    /// of the menu (SPIDER_PAGE_TEST still turns it on, in memory).
+    static let pagesReady = false
     /// Scrolls and clicks anywhere, heard while it climbs pages: a page
     /// scrolling under it, or a click that may be off to another page.
     private var pageMonitors: [Any] = []
@@ -818,6 +821,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tracker.pollNow()
         for s in allSpiders { s.surfacesRestructured() }
         spider.refitHammock()
+        restartClockIfItsScreenWentAway()
     }
 
     // MARK: Frame clock
@@ -832,14 +836,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Ask for 60 Hz outright. Gating a 120 Hz link by elapsed time
             // instead gives alternating 16 ms and 25 ms steps, which reads as
             // stutter in anything that moves smoothly.
-            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
+            // (At 30 straight away if Low Power Mode was already on: see
+            // `applyPowerMood`, which only changes it when that changes.)
+            let hz: Float = lowPowerClock ? 30 : 60
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: hz, maximum: hz, preferred: hz)
             link.add(to: .main, forMode: .common)
             displayLink = link
+            clockScreen = AppDelegate.displayID(of: screen)
         } else {
             let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in self?.tick() }
             RunLoop.main.add(t, forMode: .common)
             fallbackTimer = t
         }
+    }
+
+    /// The display the clock's link is on. Unplugged, its link stops for
+    /// good, and the clock is started again on one still there.
+    private var clockScreen: CGDirectDisplayID?
+
+    private static func displayID(of screen: NSScreen) -> CGDirectDisplayID? {
+        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+    }
+
+    private func restartClockIfItsScreenWentAway() {
+        guard #available(macOS 14.0, *), let link = displayLink as? CADisplayLink, let id = clockScreen,
+              !NSScreen.screens.contains(where: { AppDelegate.displayID(of: $0) == id }) else { return }
+        link.invalidate()
+        displayLink = nil
+        clockScreen = nil
+        startClock()
     }
 
     private var tickCount = 0
@@ -1221,6 +1246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let rescale = s.config.scale != spider.config.scale
             s.config.scale = spider.config.scale
             s.config.followCursor = spider.config.followCursor
+            s.config.approachCursor = spider.config.approachCursor
             s.config.pounceOnCursor = spider.config.pounceOnCursor
             s.config.webs = spider.config.webs
             s.config.hammocks = false
@@ -2058,8 +2084,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ])
         let behavior = PanelPage(title: "Behavior", symbol: "slider.horizontal.3", sections: [
             PanelSection(title: "The Pointer", rows: [
-                .toggle("Follow the Cursor", help: "It notices the pointer, comes over to see it, and watches it.",
+                .toggle("Watch the Cursor", help: "It notices the pointer and keeps its eyes on it: its head and body turn to follow it about, and it stops to look.",
                         get: { [unowned self] in spider.config.followCursor }, set: { [unowned self] _ in toggleFollow() }),
+                .toggle("Come to the Cursor", help: "It goes over to see a pointer resting nearby — along its ledge, or down a line from the top of a window to one below. If it can't get any nearer, it soon loses interest.",
+                        get: { [unowned self] in spider.config.approachCursor }, set: { [unowned self] _ in toggleApproach() }),
                 .toggle("Pounce on the Cursor", help: "Wiggle the pointer near it for long enough and it stalks it, pounces and hangs on.",
                         get: { [unowned self] in spider.config.pounceOnCursor }, set: { [unowned self] _ in togglePounce() },
                         enabled: { [unowned self] in spider.config.followCursor }),
@@ -2189,6 +2217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return said.isEmpty ? "Nothing to report." : said
                 },
             ]),
+        ] + (!AppDelegate.pagesReady ? [] : [
             PanelSection(title: "Web Pages", rows: [
                 .toggle("Climb Web Pages",
                         help: "When your browser fills the screen — zoomed to fill it, or full screen — it climbs about on the page itself: along the tops of cards, bars and boxes, under them and up their sides, wherever there's room for it. It rides along when you scroll, and finds its feet again when you click through to another page. It goes by how the page looks; nothing on it is read, kept or sent.",
@@ -2220,7 +2249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     },
                 ]),
             ]),
-        ])
+        ]))
         let app = PanelPage(title: "App", symbol: "gearshape", sections: [
             PanelSection(title: nil, rows: [
                 .toggle("Launch at Login", help: "Opens by itself when you log in.",
@@ -2261,6 +2290,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         startWelcome()
                     },
                     PanelButton("Report a Bug", symbol: "ladybug") { [unowned self] in reportBug() },
+                ]),
+            ]),
+            PanelSection(title: "Support", rows: [
+                .note("Spider Buddy is completely free and I want to keep it that way. If you enjoy having it around, consider supporting the continued development :)"),
+                .buttons([
+                    PanelButton("Buy Me a Coffee", symbol: "cup.and.saucer") {
+                        NSWorkspace.shared.open(URL(string: "https://buymeacoffee.com/ephemeril")!)
+                    },
                 ]),
             ]),
         ])
@@ -5219,6 +5256,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spider.config.pounceOnCursor.toggle(); saveSettings(); refreshMenu()
     }
 
+    @objc private func toggleApproach() {
+        spider.config.approachCursor.toggle(); saveSettings(); refreshMenu()
+    }
+
     @objc private func toggleWebs() {
         spider.config.webs.toggle(); saveSettings(); refreshMenu()
     }
@@ -5509,6 +5550,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         d.set(visitorsOn, forKey: "visitors")
         d.set(Double(spider.config.scale), forKey: "scale")
         d.set(spider.config.followCursor, forKey: "followCursor")
+        d.set(spider.config.approachCursor, forKey: "approachCursor")
         d.set(spider.config.pounceOnCursor, forKey: "pounceOnCursor")
         d.set(spider.config.webs, forKey: "webs")
         d.set(spider.config.hammocks, forKey: "hammocks")
@@ -5526,20 +5568,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         d.set(tankWildOn, forKey: "tankWildlife")
         d.set(toySounds, forKey: "toySounds")
         d.set(leavesTraces, forKey: "traces")
-        d.set(climbsPages, forKey: "climbPages")
+        if AppDelegate.pagesReady { d.set(climbsPages, forKey: "climbPages") }
     }
 
     private func loadSettings() {
         let d = UserDefaults.standard
         d.register(defaults: [
-            "scale": 0.95, "liveliness": 1.0, "followCursor": true, "pounceOnCursor": true,
+            "scale": 0.95, "liveliness": 1.0, "followCursor": true, "approachCursor": true, "pounceOnCursor": true,
             "webs": true, "hammocks": true, "paused": false, "interactive": true, "hidden": false,
             "visitors": false, "visitFrequency": 0.5, "visitStay": 0.5,
             "feelPower": true, "feelWeather": true, "showRain": true, "feelCommotion": true, "danceToMusic": true,
             "learns": true, "wildlife": false, "wildFrequency": 0.35, "toySounds": true, "traces": false, "traceLimit": 0.45,
-            "tankWildlife": true, "climbPages": true,
+            "tankWildlife": true, "climbPages": false,
         ])
-        climbsPages = d.bool(forKey: "climbPages")
+        // (Not ready yet: off, and forget any old "on" so it starts off.)
+        if !AppDelegate.pagesReady { d.removeObject(forKey: "climbPages") }
+        climbsPages = AppDelegate.pagesReady && d.bool(forKey: "climbPages")
         tankWildOn = d.bool(forKey: "tankWildlife")
         toySounds = d.bool(forKey: "toySounds")
         leavesTraces = d.bool(forKey: "traces")
@@ -5560,6 +5604,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         nextWildAt = CACurrentMediaTime() + wildGap / 2
         spider.config.scale = CGFloat(d.double(forKey: "scale"))
         spider.config.followCursor = d.bool(forKey: "followCursor")
+        spider.config.approachCursor = d.bool(forKey: "approachCursor")
         spider.config.pounceOnCursor = d.bool(forKey: "pounceOnCursor")
         spider.config.webs = d.bool(forKey: "webs")
         spider.config.hammocks = d.bool(forKey: "hammocks")

@@ -310,6 +310,7 @@ func buildCheck(_ outPrefix: String?) {
             let tank = surfaces(b.h, standoff: 22 * scale)
             let s = Spider(map: desk)
             s.config.followCursor = false
+            s.config.approachCursor = false
             s.config.scale = scale
             for _ in 0..<600 { s.setCursor(V2(-4000, -4000)); s.update(dt: dt); if s.debugState.hasPrefix("attached") { break } }
             var at: V2
@@ -459,6 +460,7 @@ func houseCheck(_ outer: inout Builder, _ outPrefix: String?) {
         let tank = surfaces(b.h, standoff: 22 * scale)
         let s = Spider(map: desk)
         s.config.followCursor = false
+        s.config.approachCursor = false
         s.config.scale = scale
         for _ in 0..<600 { s.setCursor(V2(-4000, -4000)); s.update(dt: dt); if s.debugState.hasPrefix("attached") { break } }
         s.enter(map: tank, at: starts[run], habitat: true)
@@ -498,6 +500,7 @@ func houseCheck(_ outer: inout Builder, _ outPrefix: String?) {
         tank.rebuild(habitat: h.surfaces(standoff: 22 * scale))
         let s = Spider(map: desk)
         s.config.followCursor = false
+        s.config.approachCursor = false
         s.config.scale = scale
         for _ in 0..<600 { s.setCursor(V2(-4000, -4000)); s.update(dt: dt); if s.debugState.hasPrefix("attached") { break } }
         s.enter(map: tank, at: run == 0 ? V2(960, G + 30) : V2(1150, G + 30), habitat: true)

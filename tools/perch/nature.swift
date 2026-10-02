@@ -294,6 +294,7 @@ func natureCheck() {
                 let tank = surfaces(h, standoff: 22 * scale)
                 let s = Spider(map: desk)
                 s.config.followCursor = false
+                s.config.approachCursor = false
                 s.config.scale = scale
                 for _ in 0..<600 { s.setCursor(V2(-4000, -4000)); s.update(dt: dt); if s.debugState.hasPrefix("attached") { break } }
                 s.enter(map: tank, at: V2(run == 0 ? it.rect.minX - 60 : it.rect.maxX + 60, G + 30), habitat: true)

@@ -1186,8 +1186,8 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         legRow.spacing = 8
         legRow.addArrangedSubview(header("Leg motion"))
         legMotionPopup = NSPopUpButton()
-        legMotionPopup.addItems(withTitles: ["Classic", "Natural"])
-        legMotionPopup.toolTip = "Natural: every leg keeps its true length, steps ripple from the back legs to the front, and it walks a leg at a time when it goes slowly. Classic: the walk it has always had."
+        legMotionPopup.addItems(withTitles: LegMotion.allCases.map(\.label))
+        legMotionPopup.toolTip = "Classic: the walk it has always had. Natural: every leg keeps its true length, steps ripple from the back legs to the front, and it walks a leg at a time when it goes slowly. Refined: the classic walk with every leg kept at its true length, round corners too, its feet put down where its body is going, and its body riding its legs."
         legMotionPopup.target = self
         legMotionPopup.action = #selector(legMotionPicked(_:))
         legRow.addArrangedSubview(legMotionPopup)
@@ -1249,7 +1249,7 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         let presetIdx = Personality.presets.firstIndex { $0.p == design.personality }
         presetPopup.selectItem(at: presetIdx.map { $0 + 1 } ?? 0)
         stylePopup.selectItem(at: GaitPreference.allCases.firstIndex(of: design.gait.style) ?? 0)
-        legMotionPopup.selectItem(at: design.gait.natural ? 1 : 0)
+        legMotionPopup.selectItem(at: LegMotion.allCases.firstIndex(of: design.gait.motion) ?? 0)
         sizeSlider.doubleValue = Double(scale)
         for sync in syncers { sync() }
         for (pack, box) in packBoxes { box.state = design.packs.contains(pack) ? .on : .off }
@@ -1300,7 +1300,7 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
     }
 
     @objc private func legMotionPicked(_ p: NSPopUpButton) {
-        design.gait.natural = p.indexOfSelectedItem == 1
+        design.gait.motion = LegMotion.allCases[max(0, min(p.indexOfSelectedItem, LegMotion.allCases.count - 1))]
         changed()
     }
 
@@ -1316,9 +1316,9 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
 
     @objc private func randomize() {
         // (How its legs move is a choice of animation, not of spider: kept.)
-        let natural = design.gait.natural
+        let motion = design.gait.motion
         design = SpiderDesign.random()
-        design.gait.natural = natural
+        design.gait.motion = motion
         changed()
         preview.spider.celebrate()
     }

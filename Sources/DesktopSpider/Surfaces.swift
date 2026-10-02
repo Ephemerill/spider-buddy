@@ -887,32 +887,62 @@ final class SurfaceMap {
         let hasNext = loop.closed || a.segIdx + 1 < n
         let hasPrev = loop.closed || a.segIdx > 0
 
-        func blend(_ A: V2, _ C: V2, _ B: V2, _ u: CGFloat) -> SurfacePoint {
-            let w = clamp(u, 0, 1)
-            let pos = A * ((1 - w) * (1 - w)) + C * (2 * w * (1 - w)) + B * (w * w)
-            let tangent = ((C - A) * (2 * (1 - w)) + (B - C) * (2 * w)).normalized
-            return SurfacePoint(pos: pos, tangent: tangent, normal: tangent.rotated(by: .pi / 2))
-        }
-
         if hasNext {
             let next = loop.segs[(a.segIdx + 1) % n]
-            let r = min(cornerRadius, seg.len * 0.45, next.len * 0.45)
+            let r = cornerReach(loop, seg, next, radius: cornerRadius)
             if r > 1, a.t > seg.len - r {
-                let A = seg.point(at: seg.len - r)
-                let B = next.point(at: r)
-                return blend(A, seg.b, B, (a.t - (seg.len - r)) / (2 * r))
+                return roundCorner(loop, seg, next, at: seg.b, r: r, (a.t - (seg.len - r)) / (2 * r))
             }
         }
         if hasPrev {
             let prev = loop.segs[(a.segIdx - 1 + n) % n]
-            let r = min(cornerRadius, seg.len * 0.45, prev.len * 0.45)
+            let r = cornerReach(loop, prev, seg, radius: cornerRadius)
             if r > 1, a.t < r {
-                let A = prev.point(at: prev.len - r)
-                let B = seg.point(at: r)
-                return blend(A, seg.a, B, 0.5 + a.t / (2 * r))
+                return roundCorner(loop, prev, seg, at: seg.a, r: r, 0.5 + a.t / (2 * r))
             }
         }
         return SurfacePoint(pos: seg.point(at: a.t), tangent: seg.dir, normal: seg.normal)
+    }
+
+    /// Round the outside of a window's corner, the radius of the body's
+    /// own way round it: the curve of the corner itself, stood off as far as
+    /// the body stands off a straight edge — so it goes round as close to
+    /// the window as it walks along it. Nil for any other corner.
+    private func windowCornerArc(_ loop: SurfaceLoop, _ s1: Seg, _ s2: Seg) -> CGFloat? {
+        guard loop.cornerRadius > 0.5, s1.dir.cross(s2.dir) < -0.01 else { return nil }
+        return loop.cornerRadius + standoff
+    }
+
+    /// How far back along each of two edges from where they meet the body
+    /// turns from one onto the other.
+    private func cornerReach(_ loop: SurfaceLoop, _ s1: Seg, _ s2: Seg, radius: CGFloat) -> CGFloat {
+        let most = min(s1.len * 0.45, s2.len * 0.45)
+        if let rho = windowCornerArc(loop, s1, s2) {
+            let half = abs(atan2(s1.dir.cross(s2.dir), s1.dir.dot(s2.dir))) / 2
+            return min(rho * tan(min(half, 1.4)), most)
+        }
+        return min(radius, most)
+    }
+
+    /// The body's way round the corner where `s1` runs into `s2`, `u` of the
+    /// way round (0 where it leaves `s1`, 1 where it is on `s2`), the turn
+    /// beginning `r` back from the corner `C` along each. Round a window's
+    /// corner, an arc about the corner's own curve (see `windowCornerArc`);
+    /// round any other, the two edges blended in a smooth swing.
+    private func roundCorner(_ loop: SurfaceLoop, _ s1: Seg, _ s2: Seg, at C: V2, r: CGFloat, _ u: CGFloat) -> SurfacePoint {
+        let w = clamp(u, 0, 1)
+        let A = s1.point(at: s1.len - r), B = s2.point(at: r)
+        if windowCornerArc(loop, s1, s2) != nil {
+            let turn = atan2(s1.dir.cross(s2.dir), s1.dir.dot(s2.dir))
+            let rho = r / tan(abs(turn) / 2)
+            let centre = A + s1.dir.rotated(by: .pi / 2) * (turn < 0 ? -rho : rho)
+            let tangent = s1.dir.rotated(by: turn * w)
+            return SurfacePoint(pos: centre + (A - centre).rotated(by: turn * w), tangent: tangent,
+                                normal: tangent.rotated(by: .pi / 2))
+        }
+        let pos = A * ((1 - w) * (1 - w)) + C * (2 * w * (1 - w)) + B * (w * w)
+        let tangent = ((C - A) * (2 * (1 - w)) + (B - C) * (2 * w)).normalized
+        return SurfacePoint(pos: pos, tangent: tangent, normal: tangent.rotated(by: .pi / 2))
     }
 
     /// Is this point visible, i.e. not covered by anything in front of `depth`?

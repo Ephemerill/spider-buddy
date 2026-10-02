@@ -120,6 +120,7 @@ if let idx = CommandLine.arguments.firstIndex(of: "--seq"), idx + 1 < CommandLin
     let sp = Spider(map: sm)
     sp.config.scale = 1.0
     sp.config.followCursor = false
+    sp.config.approachCursor = false
     sp.debugAttach(loopID: "win:9", segIdx: 0, t: 150, dir: 1)
     for _ in 0..<30 { sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt) }
     let cols = 12
@@ -208,6 +209,7 @@ if let idx = CommandLine.arguments.firstIndex(of: "--dance") {
         let sp = Spider(map: sm)
         sp.config.scale = scale
         sp.config.followCursor = false
+        sp.config.approachCursor = false
         sp.debugAttach(loopID: "win:9", segIdx: 0, t: 200, dir: 1)
         Spider.debugGrooveMove = move
         var t = 0.0
@@ -306,6 +308,7 @@ if CommandLine.arguments.contains("--dance-session") {
         let sp = Spider(map: sm)
         sp.config.scale = scale
         sp.config.followCursor = false
+        sp.config.approachCursor = false
         sp.debugAttach(loopID: "win:9", segIdx: 0, t: 150 + CGFloat(run) * 40, dir: run % 2 == 0 ? 1 : -1)
         Spider.debugGrooveMove = nil
         var t = Double(run) * 0.37
@@ -372,6 +375,7 @@ if let idx = CommandLine.arguments.firstIndex(of: "--strip"), idx + 1 < CommandL
     let sp = Spider(map: sm)
     sp.config.scale = 1.0
     sp.config.followCursor = false
+    sp.config.approachCursor = false
 
     if what == "corner" {
         // Start near the end of the top edge, walking right, and film in place.
@@ -473,6 +477,7 @@ if CommandLine.arguments.contains("--hang") {
     sp.debugCalm = true
     sp.config.scale = 1.0
     sp.config.followCursor = false
+    sp.config.approachCursor = false
     sp.debugAttach(loopID: "menu:0", segIdx: 0, t: 250, dir: 1)
     for _ in 0..<20 { sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt) }
     sp.scroll(-4)   // rappel
@@ -520,6 +525,7 @@ if CommandLine.arguments.contains("--hang") {
     hm.standoff = 44
     hm.debugRebuild(screen: deskRect, menuBarHeight: 30, windows: [])
     sp2.config.followCursor = false
+    sp2.config.approachCursor = false
     sp2.debugAttach(loopID: "menu:0", segIdx: 0, t: 250, dir: 1)
     for _ in 0..<20 { sp2.setCursor(V2(-9e4, -9e4)); sp2.update(dt: dt) }
     sp2.scroll(-4); sp2.scroll(-4); sp2.scroll(-4)
@@ -661,6 +667,7 @@ if let hi = CommandLine.arguments.firstIndex(of: "--hunt") {
     let sp = Spider(map: hm)
     sp.config.scale = 1.0
     sp.config.followCursor = false
+    sp.config.approachCursor = false
     sp.debugAttach(loopID: "screen:0", segIdx: 0, t: 120, dir: 1)
     for _ in 0..<20 { sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt) }
     let prey = sp.release(kind)
@@ -822,6 +829,7 @@ if CommandLine.arguments.contains("--thoughts") {
         let sp = Spider(map: hm)
         sp.config.scale = 1.4
         sp.config.followCursor = false
+        sp.config.approachCursor = false
         sp.debugAttach(loopID: "screen:0", segIdx: 0, t: 300, dir: 1)
         for _ in 0..<20 { sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt) }
         if let th { sp.think(th, for: 4) } else { sp.debugActivity("hop", for: 0.42); sp.debugEmote("exclaim") }
@@ -870,6 +878,7 @@ if CommandLine.arguments.contains("--swing") || CommandLine.arguments.contains("
     let sp = Spider(map: jm)
     sp.config.scale = 1.0
     sp.config.followCursor = false
+    sp.config.approachCursor = false
     NSGraphicsContext.current = NSGraphicsContext(cgContext: j, flipped: false)
     let hv = HammockView(frame: CGRect(x: 0, y: 0, width: 190, height: 130))
 
@@ -1104,6 +1113,7 @@ if CommandLine.arguments.contains("--drop") {
     let sp = Spider(map: jm)
     sp.config.scale = 1.0
     sp.config.followCursor = false
+    sp.config.approachCursor = false
     sp.debugAttach(loopID: "screen:0", segIdx: 0, t: 200, dir: 1)
     for _ in 0..<20 { sp.setCursor(V2(-9e4, -9e4)); sp.update(dt: dt) }
     let hand = V2(300, CGFloat(dh) - 110)
@@ -1154,6 +1164,7 @@ if CommandLine.arguments.contains("--drop") {
     let sp2 = Spider(map: jm)
     sp2.config.scale = 1.0
     sp2.config.followCursor = false
+    sp2.config.approachCursor = false
     sp2.debugAttach(loopID: "screen:0", segIdx: 0, t: 200, dir: 1)
     for _ in 0..<20 { sp2.setCursor(V2(-9e4, -9e4)); sp2.update(dt: dt) }
     sp2.beginGrab(at: sp2.worldPos)

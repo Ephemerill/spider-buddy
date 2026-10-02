@@ -38,6 +38,7 @@ private func knownTank(width: CGFloat = 1800, spiderAt x: CGFloat, personality: 
     let tank = surfaces(h, standoff: standoff)
     let s = Spider(map: desk)
     s.config.followCursor = false
+    s.config.approachCursor = false
     s.config.scale = scale
     var d = s.design
     d.personality = personality

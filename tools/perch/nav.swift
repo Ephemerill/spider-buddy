@@ -56,6 +56,7 @@ private func navSpider(_ h: Habitat, at wantX: CGFloat) -> (SurfaceMap, Spider, 
     let x = openFloor(m, near: wantX)
     let s = Spider(map: desk)
     s.config.followCursor = false
+    s.config.approachCursor = false
     s.config.scale = scale
     s.knowledge = HabitatKnowledge()
     for _ in 0..<600 { s.setCursor(V2(-4000, -4000)); s.update(dt: dt); if s.debugState.hasPrefix("attached") { break } }
