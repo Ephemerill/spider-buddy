@@ -4,24 +4,31 @@
     <title>Spider Buddy</title>
     <link>https://github.com/Ephemerill/spider-buddy/releases</link>
     <item>
-      <title>Spider Buddy 0.9.0</title>
-      <pubDate>Sun, 27 Sep 2026 07:36:31 +0000</pubDate>
-      <sparkle:version>0.9.0</sparkle:version>
-      <sparkle:shortVersionString>0.9.0</sparkle:shortVersionString>
+      <title>Spider Buddy 1.0.0</title>
+      <pubDate>Fri, 02 Oct 2026 15:38:28 +0000</pubDate>
+      <sparkle:version>1.0.0</sparkle:version>
+      <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <sparkle:fullReleaseNotesLink>https://github.com/Ephemerill/spider-buddy/releases/tag/v0.9.0</sparkle:fullReleaseNotesLink>
-      <description sparkle:format="markdown"><![CDATA[## What's new
+      <sparkle:fullReleaseNotesLink>https://github.com/Ephemerill/spider-buddy/releases/tag/v1.0.0</sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown"><![CDATA[## What's new in 1.0
 
-- **Signed and notarized by Apple.** Spider Buddy now opens like any other app — no more right-click → Open on first launch.
-- **Surer footing.** Its legs find real ground in corners, at the lip of a step, across gaps and round window edges, instead of stretching out to ground they couldn't reach.
+**A habitat of its own.** The tank is now a whole world bigger than its window, with a camera that follows your spider and an overview map. Build it a home from the house kit and furniture, or fill it with 84 natural things (branches, rocks, plants, logs and shelters it can walk into). Save your habitats and bring them back any time.
 
-**One-time step:** because the app is now signed differently, macOS may ask you to allow Screen Recording (and Accessibility, if you'd granted it) again after this update.]]></description>
-      <enclosure url="https://github.com/Ephemerill/spider-buddy/releases/download/v0.9.0/SpiderBuddy-0.9.0.dmg" type="application/octet-stream" sparkle:edSignature="xI1Ds1hsEbSfmC93F7K3wMgv+5b8sM4shC8lblKrIphw28FlbZDJfklZQfkK1Y7126fS6n4BTvCirrtYYmZnDA==" length="2743886"/>
+**A spider that lives there.** It gets to know new things, finds its own way around (walking, leaping, through doors), and uses its tank: drinking, sheltering, looking out, resting and sleeping, and preferring the cover you built. Creatures turn up depending on what's in the tank, and weather falls on it: rain wets what's open to the sky, snow settles and stone warms in the sun.
+
+**More alive.** It dances when music plays on your Mac, wanders with a purpose and doesn't turn back on every whim, and has body language: walking turned toward you, head cocks, double takes, winks, nods and sighs.
+
+**Smoother on its feet.** A new *Refined* leg motion (Studio ▸ Gait ▸ Leg motion), and rounding window corners now looks natural in every leg motion.
+
+**The cursor.** *Watch the Cursor* and *Come to the Cursor* are now separate settings.
+
+**Also:** you can send a bug report from inside the app, and it's steadier across Macs. It no longer freezes when a display is unplugged, it respects Low Power Mode from launch, and it keeps up better on slower machines.]]></description>
+      <enclosure url="https://github.com/Ephemerill/spider-buddy/releases/download/v1.0.0/SpiderBuddy-1.0.0.dmg" type="application/octet-stream" sparkle:edSignature="SoJ8eOjH3IJIoX7M86vUy3HzqDFFL2aEmtWD3QxGlCEgytvDkpFWRO/aVhBCx+WTBTUP6/SvS3sklEB7MX/kBg==" length="5673878"/>
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: w4j1Fg6xvFOL2aIR0FPdHiP2GnIzpshI4rnSAdWOe8E/uTOfHT7UAa8yROe9+Fqdq9riLcBuEffMsOIGqwAiDw==
-length: 1608
+edSignature: hJJcHeQ781TC0cdaye5AdvA99wVl511fFgtbnkxU/i344jvs/CjyglCyyd4rUSJqA5YCyB9umU3yslSoPjFzAQ==
+length: 2539
 -->
