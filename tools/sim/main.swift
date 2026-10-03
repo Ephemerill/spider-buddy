@@ -1619,6 +1619,37 @@ do {
            "moved \(Int(s9.worldPos.distance(to: seat))) px, \(s9.debugState)")
 }
 
+// Full screen on a notched display: the picture stops short of the camera
+// housing, leaving a black strip too shallow for the spider. Its ceiling is
+// the top of the picture, never up in the strip, where it would be cut off
+// by the top of the display — and on the ceiling as the film starts, it is
+// carried down to it, not dropped.
+do {
+    let housing: CGFloat = 32
+    let m = SurfaceMap()
+    m.standoff = map.standoff
+    m.debugRebuild(screen: screen, menuBarHeight: housing + 1, windows: [], cinema: true, housing: housing)
+    let lip = screen.maxY - housing
+    let rim = m.loop("screen:0")
+    expect("notched full screen: the ceiling is under the camera housing",
+           rim.map { $0.edge.allSatisfy { $0.a.y <= lip + 0.5 && $0.b.y <= lip + 0.5 } } ?? false,
+           "edge tops \(rim.map { $0.edge.map { Int(max($0.a.y, $0.b.y)) } } ?? [])")
+    let s = Spider(map: m)
+    _ = settleUntilAttached(s)
+    s.fullScreenApp = true
+    guard let r = rim, let ceiling = r.segs.firstIndex(where: { $0.facing == .down }) else {
+        expect("notched full screen: a ceiling to hang from", false); fatalError()
+    }
+    s.debugAttach(loopID: "screen:0", segIdx: ceiling, t: r.segs[ceiling].len * 0.85, dir: 1)
+    var highest = -CGFloat.infinity
+    for _ in 0..<Int(40 / dt) {
+        s.setCursor(V2(screen.maxX - 200, screen.maxY - 4)); s.update(dt: dt)
+        highest = max(highest, s.worldPos.y)
+    }
+    expect("notched full screen: never up in the black strip", highest < lip - m.standoff * 0.5,
+           "body as high as \(Int(highest)), the strip starts at \(Int(lip))")
+}
+
 // A window dragged to the top of the screen and tiled to fill it (or
 // maximized) is as good as full screen: the screen's rim under the menu
 // bar is all there is, and cinema manners. On the window's bottom or its

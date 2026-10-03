@@ -1,0 +1,1230 @@
+# Spider Buddy
+
+A friendly jumping spider that lives on your Mac's screen. It crawls the edges
+of your display, leaps between your open windows, walks along the Dock, rappels
+from the menu bar on a silk thread, and can be picked up and thrown around.
+
+## Install
+
+Grab the `.dmg` from the [latest release](https://github.com/Ephemerill/spider-buddy/releases/latest),
+open it and drag Spider to Applications.
+
+## What it does
+
+**Places it can walk**
+- The inside border of every display, all the way around the corners
+- The whole perimeter of any open window — standing on the top like a shelf,
+  round the corner and down the side, hanging under the bottom — riding along
+  when you move or resize the window
+- The top of the Dock
+- The underside of the menu bar
+
+**How it carries itself**
+
+It is drawn **in profile**, standing on the edge: body above the ledge, legs
+reaching down to it, seen from the side. A spider on a shelf drawn from above
+reads as crawling across whatever is behind it; drawn from the side it reads
+as standing on the shelf. Its feet land on the edge itself — the path stands
+off the border by the height of the body — so it perches on the rim and never
+covers a window's contents. Turning round is a mirror image animated through
+zero width, not a rotation; rounding a corner is a rotation. On a window's side
+it clings with its feet on the window; under the menu bar it hangs upside down.
+
+- Crouches, aims and leaps head-first with a visible push-off, pitching into
+  the arc but never rolling past fifty degrees. (A real jumping spider
+  trails a safety line on every leap; this one does not — it looked odd
+  here, so it is gone.) Over the last stretch of a leap it turns to meet the surface
+  it is going to land on — feet first, flipping right over to land upside
+  down under a window — and reaches its legs out for it, so touchdown is the
+  end of a movement rather than a snap; a fall or a throw looks ahead for
+  whatever it is about to hit and does the same. It lands with a squash,
+  takes a beat to get its feet under it, then carries on
+- Falls, bounces off screen edges, and fires a rescue line if it drops too far
+- Rappels head-down on a dragline from its spinnerets, seen side on with its
+  head straight below the rest of it: the back four legs hold the silk above
+  its abdomen and the front four hang free, swinging with it; to climb back
+  up it turns end for end, hugs the silk tight along its belly and goes up
+  it hand over hand
+- Walks a proper alternating-tetrapod gait, driven by distance travelled rather
+  than a timer: four legs swing while four stay planted, and planted feet hold
+  still on the ledge while the body moves over them, so it never skates. The
+  body bobs twice a cycle and the planted legs flex against it.
+
+**What it gets up to**
+
+Everything it does is a *posture* — height off the ledge, nose pitch, crouch,
+abdomen wag, eyelids — and springs carry the body between postures, so nothing
+ever snaps from one stance to the next. The feet are looked after the same
+way across every hand-off: a foot left in the air by whatever came before (a
+wave, a greeting, a grip on a line) *steps* down onto the ledge, folding at
+the knee as it comes rather than sweeping down as a bar; a foot left mid-
+stride when a walk stops takes one small step to its place instead of
+sliding there, one leg at a time; a step that would begin with the gait
+clock already part-way through its window waits for the next one; and a
+turn begun face-on (after a greeting, say) sets off from the front view
+rather than snapping to profile first. Landing, the body gathers itself
+onto the edge and swings square to it over a few frames. It gets going over
+a few steps and stops short, leaning into a start and rocking forward on a
+stop. And it walks the way a jumping spider walks — in bursts: a few steps,
+a stop to look about, a few more — and a walk is usually *for* something,
+so at the end of it it has a look round, checks on you, or peers over the
+edge. The repertoire, all picked from at random with weights that shift
+with context:
+
+- **Walk**, with a speed, stride and bob picked fresh for every bout and one
+  of four gaits — plain, bouncy, on tiptoe, or a lumbering trudge — plus a
+  slow drift in pace within the bout; **sneak** (low and slow); **scurry** (a
+  burst)
+- **Glance** — every few seconds it turns three-quarters toward you for a
+  look, even mid-stride, and carries on
+- **Turn round** — a real turn on the spot: the profile swings through a
+  front view (the pose of the reference art) and out the other side, and the
+  feet *step* round in the usual tetrapod waves; a **spin** is two of those
+  back to back
+- **Round a corner** — the path is rounded so the body swings round, and every
+  foot is placed on the *actual* edge, so the feet wrap onto the next side
+- **Wave** — big sweeps from the shoulder, leaning back; **arms up** — both
+  front legs thrown high, as a greeting or a threat display
+- **Nervous hop** — whip the pointer past it (fast, within a hand's width)
+  and it gives a small startled hop on the spot, legs tucked for an instant,
+  with a little burst of "!!" — and that is all; it does not run. Only the
+  pointer whipping right across its body properly startles it
+- **Stare** — sits still, turned square on to face you, and just watches,
+  eyes following the pointer, blinking now and then
+- **Bed on a window** — sleepy, it prefers the top of a window: it walks
+  round its own window to the top, or leaps onto one it can reach, settles,
+  and drops off with Z's rising out of it, drifting and growing as they go
+- **Thoughts** — a thought bubble now and then: a heart, a juicy cricket
+  when it is hungry, a rain cloud, sunshine, the moon when it is sleepy, a
+  music note, a star, a fly, its hammock — or words, from the packs it has
+  been given (see Thoughts in the Studio)
+- **Drum** — braced low, it drums on whatever it is standing on with its
+  front two legs, the way a jumping spider signals: bursts of quick
+  alternating taps, then three slower beats with both legs together and a
+  dip of the body on each, abdomen quivering in time, music notes on the
+  beat. Playful, energetic spiders drum most; a click sometimes gets a drum
+  in reply
+- **Greet** — turns right round to face you square on, big eyes on the
+  pointer, and raises both front legs up and out beside its head in a V,
+  waving them a little. It does this when you rest the pointer near it,
+  sometimes when you click it, now and then on its own while you are about
+  (affectionate spiders most), and **Behavior ▸ Say Hi** asks for it
+- **Roll** — gathers itself with its feet planted, rocking back, then tucks
+  into a ball and rolls a full turn along the ledge: the ball sits on the
+  ledge and turns exactly with the ground it covers, so it never slides, and
+  it comes out of it with a squash before the feet come back down
+- **Dance** — bounces side to side with the abdomen going and the front legs
+  pumping, to music notes
+- **Peek** over the end of a ledge nose-down; **peer** nose-down at the ledge
+  itself, then look up. Every lean like this is a lean of the *body*, about
+  the hips: the planted feet stay where they are on the ledge and the legs
+  flex under it, the way a real spider shifts its weight — only a foot
+  already in the air goes with the body
+- **Crouch and wiggle** before a leap — the abdomen-wiggle tell of a real
+  jumping spider
+- **Look about** (eyes dart), **rest** (settles low, heavy-lidded), **sleep**,
+  then **stretch** up on tiptoe and **shake** itself off on waking
+- **Groom** its face, **scratch** its abdomen with a back leg, **fidget** with
+  a front foot, stretch one **back leg** out behind it then the other, do a few
+  **push-ups**, **wiggle** happily, **bounce**
+- **Curious** — front legs come up and feel the air when your pointer hovers
+  near, with a "?"
+- Standing, it is never quite still — a slow shift of weight, breathing, eyes
+  that dart, blinks singly or twice. On a web it hangs head-down, twists
+  slowly, and hauls itself up hand over hand.
+
+**Interaction**
+- **Click and drag** to pick it up; **flick and release** to throw it with real
+  momentum. Throw it hard enough and it will catch itself on a web.
+- **Click** it for a wave, arms up, a startle, a curious look, or a glance
+- **Double-click** for a bounce-and-wiggle or a dance with arms up
+- **Scroll** over it to send it up or down: on a ledge, scroll down and it
+  rappels half way down to whatever is below and hangs there; on a line,
+  scroll up and it climbs all the way up and over onto what it hangs from,
+  scroll down and it goes all the way down to the next thing it can stand
+  on. One swipe is one order, and it keeps to it — it does not turn back
+  part way of its own accord
+- **Stroke it** — move the pointer back and forth over it and it squints,
+  blushes, wiggles and puffs hearts
+- **Right-click** it for the menu
+- Swipe the cursor at it fast and it gets startled and scurries away
+- **Bring the pointer close** while it is sitting about or ambling and it
+  notices: it turns round to face it, eyes on it, head tipped toward it, up
+  on its toes and leaning after it; straight overhead, it squares up to you
+  and looks up. Busy with something — a hunt, a job, a film, a nap — it does
+  not stop for you, and a pointer that just sits there is old news after ten
+  or twenty seconds.
+- **Fidget the pointer** close by like something alive and it decides you
+  are prey: a freeze, a creep along its ledge, the poised wiggle, and it
+  springs at the pointer and catches it — then hangs off it by its front legs for a few seconds,
+  swinging as you drag it, before it drops away on a line. Shake the
+  pointer back and forth to fling it off sooner. Turn the hunt off with
+  **Pounce on the Cursor** (it still watches).
+- Leave it alone for a while and it grooms, rests, then falls asleep
+
+Clicks pass straight through to whatever is underneath unless the pointer is
+actually on the spider.
+
+## Silk
+
+Its silk:
+
+- **Swinging.** From a ledge it picks something up ahead — a window corner,
+  the menu bar, the screen top — rears up, fires a line at it (one leg
+  pointing the way), pushes off and swings on it, reeling in to gather
+  speed. Nothing comes from nowhere: if the push-off did not make a big
+  enough arc, or it starts from a plain hang, it pumps the swing up pass by
+  pass — kicking its legs and shifting its weight in time with the motion —
+  until the arc is as big as it wants. Then it lets go near the top of a
+  swing and flies, or grabs whatever it swings past. Swinging, it hangs the
+  way a weight on a string does: in line with the thread, head to the
+  ground, tilting with the line at the ends of the arc and trailing it a
+  little through each pass. A rescue line caught at speed turns into a
+  swing too, so a bad leap can chain into another. **Swing!** is in the
+  menu.
+- **Hanging.** On a dragline it hangs head down, the way a spider does,
+  always side on, its head straight below its abdomen and the line running
+  up from its spinnerets. The back four legs hold the silk above the
+  abdomen — the third pair out to the side and in to it just over the tip,
+  the fourth reaching up along the abdomen to hold it higher — and the
+  front four hang free under their own weight, splayed a little: each foot
+  is a weight on the end of its leg, so they swing with the body, trail
+  when it moves and settle when it stops, and stir now and then. Going
+  down, it pays the line out through its hind feet, which take turns
+  drawing the silk from the spinnerets, while the first pair reach down for
+  whatever is below. It lets go of a ledge to drop by dabbing the line down
+  right by its spinnerets and swinging down head first about them; off the
+  top of something, where there is nothing over the drop, it steps off the
+  edge on its dragline and lets the line take it a short way down first.
+  To climb it turns end for end — head first, round by its belly — and
+  hugs the line: the silk runs right along its belly, tucked in under the
+  edge of its abdomen, as close to its middle as a line on the outside of
+  a spider can be, and the body hangs back a touch from its front legs
+  with its weight under them. The front two pairs reach up the silk past
+  its head and the hind two pairs down it past its abdomen, knees bent out
+  from the thread. It goes up hand over hand, the body rising in pulls as
+  each front leg heaves. Every foot on the line keeps its hold on the
+  silk while the body goes past it, then lets go, lifts off and reaches on
+  up for the next hold, so no foot ever slides along the silk, and every
+  leg keeps its length however quickly it reaches. The silk it hauls in
+  hangs in a loop from its spinnerets to the line below its feet. At the
+  top its front feet take hold of whatever the line hangs from, and it
+  climbs up onto it and steps its other feet across, rather than landing
+  there. Come up the face of something it stepped off the top of, the
+  line runs up over the lip, and it pulls itself up and over: the front
+  legs reach out over the top, it pulls up until its waist is at the lip,
+  tips forward over it belly first between them, and the hind legs, which
+  have been pushing on the silk, come up over last before it stands up.
+  Coming down its line onto the top of something is the same the other
+  way about: the front legs, reaching down, take the ledge first, the body
+  comes down onto them and pitches over belly first, and the hind legs let
+  go of the silk last and step down. Once it stops a while, or sets off back down, it lets go with its
+  front legs and swings back round about the hind legs' hold to hang. A
+  leg swinging round a hip goes round at arm's length with its knee
+  turning over as a real one does, never folding in through the hip.
+  Swinging, the hind legs hold on and the front legs kick with the swing
+  to pump it up. The feet hold the line where it really lies, and stay on
+  it as the body bounces on the end of it.
+- **A line means something.** Dropping onto a thread it decides then and
+  there what the thread is for, and works through it: down to a chosen
+  height, a while hanging there (a bounce on arrival if it is that sort, the
+  odd shift of weight that sets it swaying, a note or a sparkle, a look
+  about — and it pays out line to come and see a pointer waiting
+  underneath), sometimes a second look further down or back up, and then
+  one way off it — hauling back up to whatever it hung from, all the way
+  down to the floor, working up a swing, or springing off to something
+  near. It does not change its mind every few seconds, and it does not turn
+  round on the line to show its other side or its face: on a thread that
+  would put its head beside its abdomen, so it turns end for end only on
+  purpose, to face up the line for a real climb. Pleased on a line, it
+  bounces on the end of it and kicks its free legs. A window sliding in
+  front of it, a meal or the red dot turning up, or being sent up or down
+  it with the scroll wheel all cut the plan short. Sent, it goes all the
+  way, and the pointer that sent it does not draw it back; it picks up a
+  fresh plan of its own after.
+- **The line is a string, not a rod.** Every thread is a short chain of
+  points under gravity, tied to the anchor at one end and the spinnerets at
+  the other: it sags when it goes slack, lags and whips when it is fired or
+  swung on, bows for a moment when it bounces, and — once let go — drifts
+  down from its anchor as it fades.
+- **The hammock.** Jumping spiders spin a silk retreat to sleep in. Once it
+  has been about for a while it picks a top corner of the screen, walks or
+  leaps to it, and spins one — on the real walls, with real silk. It backs
+  its abdomen onto the side wall and sticks the first thread down with a
+  few dabs of its spinnerets; then it climbs the wall, hops across the
+  corner onto the underside of the menu bar, and walks out along it with
+  the silk paying out behind it from the wall to its spinnerets, taut,
+  until it reaches the far anchor and sticks that end down — and the strand,
+  stuck at both ends, sinks from that taut line into its sag over a couple
+  of seconds, the way slack silk drapes. Back it goes
+  the other way — along the underside, a hop down to the wall, down to the
+  first anchor — laying the next strand, and so on, crossing and re-crossing
+  the corner until a sling of strands hangs there. Then it steps onto the
+  silk itself — the sling is ground to its feet like any ledge, so it
+  walks it, feet planting on the strand and stepping — in along the sling
+  to the middle, a few steps back and forth over the bed tying the
+  cross-ties off, and tests it with a bounce. Going to bed later is the
+  same walk in along the silk before it curls up, and getting up is a walk
+  out to the wall end before it steps off. It is all ordinary
+  walking, jumping and one fastening pose on the surfaces it always uses;
+  nothing glides. If something interrupts it (a window over the corner, a
+  fall, being picked up) what is spun stays, and it comes back to finish
+  it. The result is loose and stringy like its other
+  silk: uneven strands that each hang a little slack, loops of silk
+  drooping beneath, slack cross-ties, tufts where it is stuck down — and
+  the corner itself left open behind it. There are four kinds — a long
+  shallow **sling**, a deep **pouch** it sinks right into, a loose
+  criss-cross **tangle**, and a wide shallow **cradle** made mostly of
+  drooping loops — and every one is a little different. To nap it climbs
+  in and curls up: the sling gives under its weight, it lies in the lowest
+  of the sag with every leg drawn in tight and the front pair folded over
+  its face, and breathes, seen through the silk. Lazier spiders nap there
+  more often. **Wipe your pointer across it** to tear it down; a couple of
+  good swipes clear it, and a sleeping spider tumbles out startled.
+  **Build a Hammock**, **Nap in the Hammock** and **Clear the Hammock** are
+  under Behavior, and the hammock (kind and all) survives a restart.
+
+## Peek-a-boo
+
+The spider is drawn above every window, but not above the ones in front of
+the *window* it is standing on: whatever of it falls inside such a window
+is cut out, so a spider on a window's shelf with another window over part
+of it really does go behind that window. That is the game. (The screen's
+own rim, the menu bar and the Dock are the glass in front of everything:
+there it is never covered, however far a window reaches toward the edge —
+a Preview window taller than the screen used to hide it on the floor.) When someone is about and
+there is a window edge to hide behind nearby, now and then (playful ones
+more often) it creeps up to the edge, slips behind it, waits… and bursts
+out at you, front legs thrown up, eyes on the pointer — then back behind
+and again, two to four times, finishing with a happy wiggle. **Behavior ▸
+Peek-a-boo** asks for a game: if there is no edge to hide behind where it
+is, it leaps off to find one first.
+
+## Traces
+
+It leaves its mark about the desktop, and it all fades away again on its
+own:
+
+- **Silk strands.** Now and then a leap trails a line from the ledge it
+  left, and it is stuck down where it lands; the line it rappelled down on
+  is often left where it stepped off; a swing it lets go of, or a line it
+  jumps off, is left hanging loose from where it was fastened. Strands are
+  pinned to the real edges they join and are the same rope physics as its
+  dragline: drag a window and the strand rides along with it, stretching or
+  sagging; pull the two apart and it snaps, each end left hanging; close
+  the window, or bring another in front across it, and it tears there.
+- **Little webs** in sheltered spots: a sheet of criss-crossed threads in a
+  corner where the floor meets a wall (or the side of the Dock), or a
+  tangle hung under a window it is hanging from. It walks over, backs up
+  to the spot and dabs the threads down.
+- **Meals carried off.** A catch is often taken to the end of its ledge
+  before it is eaten, and what is left — a pair of wings, the two halves of
+  a beetle's shell — is left lying there. Leftovers ride along with a
+  window they are on, fall when it goes, and land on whatever is below; it
+  kicks them along as it walks into them.
+- **Toys hauled off.** Instead of a pat, it sometimes turns its back on a
+  ball, bell or wind-up bug lying still beside it, dabs a line onto it and
+  walks off towing it; pulled over the end of a ledge, the toy swings on
+  the line — and a heavy one snaps it.
+
+Flies that blunder into any of the silk are stuck there struggling for a
+while, and the spider feels it (a caught fly wakes it) and comes for them.
+The pointer can brush through it all: a slow push bends a strand aside, a
+quick swipe snaps it, a sweep tears a web, and a flick knocks a husk off
+its ledge.
+
+It is only ever drawn — in a click-through window of its own, under the
+spider — and nothing on the real desktop is touched. It is off to begin
+with: **Behavior ▸ Leave Traces** in the menu bar panel turns it on (and
+off again, clearing whatever is out). **Most at Once** sets how many
+traces — strands, webs and leftovers together — may be out at a time,
+from 3 up to 60, the oldest fading as new ones come; at the very top it is
+**Unlimited**, and everything stays until it fades on its own. **Tidy Up**
+clears it all at once. Only your own spider leaves any, never a visitor.
+
+## Feeding it
+
+**Feed** in the menu releases a cricket, a worm, a fruit fly, a moth, a
+beetle, an ant, a mosquito or a ladybug onto the
+desktop. Ground creatures drop in onto a ledge some way off — the cricket
+sits, twitching its antennae, and hops away when the spider closes in; the
+worm inches along, and a little faster when something big is near. The fly
+is let go in the air and buzzes about in a jittery random walk, perching on
+edges to clean itself and taking off again when the spider gets close.
+
+The spider drops whatever it was doing and hunts: it watches its quarry,
+walks round its own window to it or leaps to whichever ledge gets it
+nearest, walks in, stalks the last stretch low and slow, and pounces once
+it is close and the prey is sitting still — snatching whatever its fangs
+pass in the air, or catching a fly that comes within reach. A pounce is
+aimed at the prey, not the furniture: it sails past any window edge on the
+way and only grabs on once it is at its mark or has flown past it. Stalking
+works the way it does in life: a creature notices something big moving fast
+nearby at once, but something creeping up slowly not until it is very close
+— and a frightened cricket as often freezes as hops.
+
+The rest of **Feed** each get about their own way, and each is hunted its
+own way:
+
+- **Moth** — slow and floppy, and drawn to the pointer like a lamp: it
+  circles it until it tires, then rests a long while on a wall with its
+  wings folded back like a roof. Dozy — slow to notice anything coming.
+- **Beetle** — plods along, and never runs. Something walking right at it
+  makes it shut itself up in its shell, and fangs just skid off that. So
+  the spider creeps up on one from well off, or, if it has clammed up,
+  keeps quite still beside it until it comes out. Knocked about enough, it
+  opens its wing cases and blunders off to another ledge.
+- **Ant** — quick, tireless, and climbs anything: round corners, up the
+  sides of windows, underneath them. It hardly sees, but it feels anything
+  big walking on its window and turns tail. Chasing one is hopeless, so the
+  spider lies in wait in its path and snaps it up as it walks into its
+  jaws, or leaps on ahead of it and waits there.
+- **Mosquito** — hangs in the air with a wobble, then darts off dead
+  straight, and likes to pester the pointer. It is only to be caught while
+  it hangs still, so the spider watches, and strikes then.
+- **Ladybug** — always climbing: up any wall to the top of things, where it
+  opens its shell and flies. It tastes horrible. The first one is caught,
+  tasted and spat out (none the worse for it) — and with **Learn From
+  Experience** on, the spider remembers, and after that only watches them.
+
+### Wildlife
+
+**Let Creatures Wander In** (Settings ▸ Feed, or Feed ▸ in the right-click
+menu; off to begin with) lets small creatures turn up by themselves, rarely:
+a slider goes from about one every hour and a half to one every ten minutes
+or so, never on the dot. What comes depends on the hour and the weather —
+moths and mosquitoes at night, ladybugs by day, worms when it rains (with
+Notice the Weather on) — and ants come in a little line. Fliers come in
+through the side of the screen; walkers come out of a crack somewhere.
+
+The spider has to spot them first: sooner if they are close and moving,
+hardly at all in its sleep. Until it does they go about their business, so
+you may well see one before it does. They don't stay: after a few minutes
+anything not caught flies off the side of the screen or slips away into a
+crack. Nothing wanders in while nobody is at the Mac, while the spider is in
+the habitat (which has creatures of its own: see *The tank alive*), or while
+a full-screen app has the desktop, and never more than a few at once.
+
+You can pick the creatures up and move them, the same way as the spider:
+drag one somewhere else (or flick it) and it drops onto whatever is below,
+and the spider's interest is renewed. Then it settles down over the
+meal, holding it under its fangs with the front legs and chewing, and the
+catch shrinks away as it is eaten. A good meal leaves it visibly happier
+(the grin, the sparkle, the hearts, a wiggle) and well fed for a good
+while. Up to four things can be loose at once; anything that loses its
+surface (a window closing) falls to whatever is below.
+
+## Windows coming over it
+
+The rim of the screen, the menu bar and the Dock are always its to walk:
+the spider draws above every window, so a window overlapping the edge of
+the display never blocks the edge, and it simply walks along the rim across
+it. A *window's* edge is different — a window in front of it hides it. If
+such a window opens on top of the spider, or is dragged over it, it gets out
+from under at once — within a poll or two — rather than sitting there as if
+perched on the glass. It either fires a line straight up and hauls itself,
+double time, to whatever is above (a window's underside, the menu bar, the
+top of the screen), or lets go and drops — often shooting a line on the way
+down to swing out on; from the floor, where a drop is no use, it always goes
+up. It never walks along the covered edge to the open part of it: that edge
+is behind the window now. If neither is possible it leaps for the nearest
+clear spot. Nor does it ever take hold of a window where another hides it —
+no dragline fastened to the covered stretch, and no landing on a window
+edge unless all of it is clear of every window in front. The same applies when it is
+hanging on a line (it climbs straight up out of the way) or asleep in its
+hammock (it bails out). "Covered" means either its edge is blocked by a
+window in front, or its body is: a window that only overlaps the body
+counts too.
+
+## The habitat
+
+**Open Habitat** (Play ▸ Places in the menu bar panel) opens a terrarium
+for it: a glass tank in a dark frame, with a painted, living scene behind
+the glass, a substrate you can see through the front, and furniture to
+climb. The tank rises into place over the spider, and the spider shoots a
+line up to the lip of the tank's ground, climbs it hand over hand, and
+hops over onto the ground inside. (Up on a window or a wall, it drops down
+first; off to one side, it walks over; in its hammock, it gets up; thrown
+over the tank, it just drops in.)
+
+The lid along the top has the tank's buttons, in the order anyone uses
+them: on the left, getting about — **Let Out** and the **Map**; the tank's
+name in the middle (click it to rename it); on the right, what to do with
+it — **Feed** and **Weather**, then **Decorate** — and **?**, which shows
+you round. On a narrow window the buttons keep just their pictures.
+
+The first time the tank opens, a short tour shows you round it: the window
+dims and a spotlight goes from the glass to each button in turn, with a few
+words by each (Return or → for the next, Esc to skip). Decorating has a
+tour of its own the first time. The **?** button shows the tour for what is
+on screen again, as does **Habitat ▸ Show Me Round the Habitat** in the menu
+bar.
+
+The tank is much bigger than its window — about two and three-quarter
+screens long and a screen and a third high, worked out from your display
+the first time — and the window is a pane of glass onto part of it.
+Everything in there is life size: the spider is exactly as big in the tank
+as on the desktop, and so are its prey and the furniture. Make the window
+bigger and you see more of the tank, not bigger things; make it any shape
+you like.
+
+The glass follows the spider about, quietly: it can wander over the middle
+of the window without anything moving, and only when it strays toward an
+edge does the view ease over after it and settle again, with a little more
+room ahead of it than behind. Drag the bare glass to look round the tank on
+your own (flick it and it coasts), swipe two fingers sideways (or shift and
+the wheel), or use the arrow keys; the spider carries on wherever it is.
+While it is out of sight a **Find …** button at the edge of the glass
+points the way to it, and takes you back there. Left looking somewhere else
+for a minute and a half, the view drifts back to it by itself.
+
+The **Map** (in the toolbar) shows the whole tank at once, small — a map,
+not a view into it: where the window is looking (drag the frame to look
+round), where the spider is and anything loose. Click anywhere and the
+glass goes there, life size again.
+
+Inside, it lives in the tank: it walks along the ground, up and over the
+logs and stones standing on it, onto branches, vines and the leaves of the
+plant, up the glass at either end and along under the lid, and out along
+the branches and vines up in the air of the tank — and it never leaves by
+itself. It is drawn *in*
+the tank, among its furniture, so foliage placed in front hides it as it
+walks behind, and other windows cover it like anything else in a window.
+Everything it does on the desktop it does in there — hunting what you let
+loose with **Feed**, drumming, napping, greeting you — and you can click
+it, scroll it on a line, pick it up and throw it just the same. Picked up,
+it is in your hand, drawn over everything; carried out through the glass
+and let go, it is out on the desktop, and after a while it climbs back in
+the same way. Carried over the tank and let go, it is in. Click the glass
+and it rings. Drag the tank about and it comes along.
+
+**Let Out** (or the window's close button) closes the tank: the spider
+drops from exactly where it was — off the log, the branch, the glass —
+onto whatever is below on the desktop, as the tank fades away. (If it is
+somewhere the window isn't showing, the view goes to it first, so it drops
+from where you can see it.) Opened again with it inside, it is back where
+it was, and so is the view. The app
+remembers which side of the glass it was on across a restart. Desktop-only
+things — the hammock, the box, cinema manners, the laser, visitors — wait
+for it outside (a box you have drawn is set aside while the tank is open).
+
+The scenery moves, all of it by Core Animation, so it costs the app next
+to nothing and stops altogether while the tank is hidden: clouds drift,
+light shafts breathe, leaves fall, mist rolls, butterflies wander, the sea
+rolls and sparkles with gulls and a sailboat on it, sand blows and a
+tumbleweed goes by, crystals glow and water drips in the cave, snow falls
+under the northern lights, stars twinkle and fireflies blink by moonlight.
+Plants sway, crystals and mushrooms glow, water dishes ripple.
+
+**Decorate** opens a panel beside the tank (the tank itself does not move;
+the button becomes **Done**). The glass stays put while decorating (it
+doesn't follow the spider), and a thing dragged to the edge of it takes the
+view along; the Map, decorating, lets you pick anything up and put it
+anywhere in the tank. The panel has three tabs, in the order they are used:
+- **Add**: perches it can climb (log, branch, driftwood, cork bark, hollow
+  log, rock, boulder, bamboo, cactus, leafy plant, hanging vine, water
+  dish), plants and details, shelters and the house kit, with a search and
+  a menu of kinds. Click one and it drops into the most open spot of what
+  the window is showing.
+- **Scenery**: Forest, Jungle, Desert, Meadow, Cave, Beach, Snowfall and
+  Moonlit, each a picture tile. The furniture takes on the light of the
+  place — bluer by moonlight, dimmer in the cave.
+- **Habitats**: **My Habitats** — the tank saved under a name, to come
+  back to. **Save This Habitat** keeps a copy of it as it is; click a saved
+  one to put it back in the tank (⌘Z undoes that). The one in the tank is
+  marked, and once you change it the button becomes **Save Changes** (with
+  **Save as New** beside it). Each one's **⋯** renames it, updates it to the
+  tank as it is now, shares a copy as a `.spiderhabitat` file, shows it in
+  the Finder or deletes it; the tray button brings a shared one in. They
+  live one file each in `~/Library/Application Support/<the app's id>/Habitats`.
+  A habitat saved in a world of another size (another display, someone
+  else's Mac) stands in the middle of this one. Under them, **Start
+  Afresh**: **Surprise Me**, **Empty the Tank**, and eight ready-made
+  tanks and a bare one. Each ready-made tank is laid out end to end: its
+  old arrangement in the middle, and either side of it parts with a
+  character of their own — a thicket, a clearing, a pool, rocks, a hollow
+  log and bark to shelter in, a trunk with branches going up into the air
+  of the tank and vines down from the lid. **Surprise Me** lays a new one
+  out the same way, part by part.
+- In the tank: click a piece to select it, drag to move it (rocks, pots and
+  the like stay on the ground; branches, logs and small things can be
+  propped up off it; vines hang from the lid), drag a corner handle to
+  resize it. The inspector sizes, flips, duplicates and removes it, and
+  puts plants and details **In Front** of the spider or **Behind** it
+  (perches are always behind — it climbs them). Keys: ⌫ remove, ⌘D
+  duplicate, F flip, arrows nudge (⇧ for more), ⌘Z / ⇧⌘Z undo and redo,
+  Esc deselect, then leave.
+
+While the tank is open the menu bar has a **Habitat** menu too: **Save This
+Habitat…** / **Save Changes** (⌘S), **Save as New…** (⇧⌘S), **Bring In a
+Habitat…** (⌘O), and My Habitats to put in the tank.
+
+The habitat is saved as you go, with its size; the window remembers its
+size and where it was looking. A habitat from before the tank was bigger
+than its window is moved into a world of its own: a ready-made layout
+becomes the new one of it, and one you made yourself is kept as it was, in
+the middle of the tank. Toys, the laser, the hammock and visitors stay out
+on the desktop.
+
+### Weather
+
+The tank has weather of its own: **Clear**, **Blazing Sun** (glare and heat
+haze), **Overcast**, **Fog**, **Drizzle**, **Rain** (puddles and splashes,
+the ground darkening), **Thunderstorm** (lightning, far off or right down
+to the ground, and thunder that shakes the tank), **Hail** (bouncing, and
+lying about after), **Snow** (settling on the ground and on top of the
+furniture, with footprints in it), **Blizzard**, **Gale** (leaves and
+streaks of wind blowing through, plants leaning over), **Sandstorm**, **Sun
+Shower** (with a rainbow), **Shooting Stars** and **Northern Lights**. Rain
+slants and snow drifts with the wind; cloud drifts over; the light dims
+under a storm and warms in the sun. It rolls in and clears over half a
+minute or so, sometimes turns into something else (rain into a storm, snow
+into a blizzard), and a rainbow often follows the rain.
+
+By default it **comes and goes**: a spell of something, then clear skies,
+then something else, from the kinds that suit the scenery — sandstorms and
+blazing sun in the desert, downpours in the jungle, snow and the northern
+lights in the snowfall. Which kinds come can be changed for each scenery
+with the **Weather** button in the tank's toolbar (click a tile to add it or take it out — snow in
+the desert, say — and **Back to … Own** undoes it), with how often it
+changes and how much of the time there is weather. Or keep it to one kind
+for good (**Always**), or have it follow the weather where you are
+(**Like Outside**, which needs Notice the Weather). The same panel says
+what it is doing now, and has **Bring Weather** — make it rain, snow,
+hail… this minute, or **Something Else** — and **Clear the Sky**. The
+Weather menu in the menu bar, while the tank is open, has all of it too. The weather
+keeps time while the tank is shut: open it an hour later and it has moved
+on.
+
+The spider feels it. Rain soaks it — a darker, glossy coat beaded with
+water, drops gathering under it and dripping off, rain splashing on its
+back — until it shakes itself off; in the fog it gets dewy. Snow settles on
+its back while it keeps still and slides off as it moves, climbs a wall or
+leaps; sand gets in its fur. It shivers in the cold and huddles up. The
+wind pushes it about on its feet: it leans into it, goes slower against it,
+flattens itself and holds on through the big gusts, and on its line it is
+blown out sideways (about 15° in a gale), its free legs streaming and the
+silk bowing; leaps drift. When it comes down hard it runs for cover —
+under a branch, the leaves of a plant, anything raised off the ground, the
+lid at a pinch — and sits it out there, watching it come down; a playful
+one may dance about in a warm rain instead, a bold one just braces. Hail
+makes it flinch, a clap of thunder overhead makes it jump and stare at
+where the lightning struck, it basks in the sun (or finds shade when it's
+too hot), reaches up for the snowflakes, and stops to look up at a rainbow
+or the northern lights — with a thought to go with it now and then. It
+dries off out on the desktop, where there is no weather.
+
+### The tank alive
+
+The things in the tank, the weather over it and the creatures that come to
+it work as one place (HabitatEcology.swift).
+
+**What the weather does to the things in it.** Rain wets, and snow lies,
+only where the sky is open: the floor under a table, a roof, a stone
+ledge, a cave stays dry and bare, and under broad leaves it only thins.
+(The tank is seen side on, so a branch or a vine over the floor keeps
+nothing off it.) Rain beads on the leaves out in it, and the drops stay
+there after, drying off quicker in the sun and the wind; a fog leaves a
+dew. Rain rings the water in a dish or a pool out under the sky. In a
+gale, plants and whatever hangs lean and flutter, those out in the open
+far more than any in under a roof. Stone warms through in the sun and
+stays warm a while after.
+
+**What comes, and where.** Now and then something finds its own way in
+(**Feed ▸ Creatures Find Their Own Way In** in the tank, or Settings ▸
+Feed ▸ Creatures Live in the Habitat — on to begin with), mostly near
+where you are looking. What comes depends on what is in there, the hour
+and the weather: flies to flowers, fungus and food; mosquitoes to water;
+beetles, worms and ants to leaf litter; beetles and ants to bark and logs;
+ladybugs to plants; crickets to dark shelters; worms to the damp and after
+rain; moths to a light after dark. None of it is certain — a lush tank
+just makes each more likely, and livelier: a bare one sees a visitor every
+half hour or so, one full of plants and litter every few minutes. Walkers
+come out from under the bark or up out of the litter; fliers come down
+onto what drew them.
+
+**What they do there.** A fly lands on the flowers; a moth rests up on a
+plant by day and goes round a light after dark; a mosquito hangs over the
+water. A beetle rushed makes for the bark and lies low under it, and
+wanders off under there now and then anyway; a cricket keeps to the dark
+by day; a worm gets into the litter out of the sun. An ant finds what is
+left of a meal — the spider leaves the husk in the tank — has a good nose
+round it, and carries it off. Anything caught out in a downpour gets in
+under something and waits it out. Crawlers walk up and over stones and
+logs rather than turning back at the first bump. Lying low, a creature is
+hard to see, for you and for the spider.
+
+**What the spider makes of it.** Out in the rain it feels it getting to it
+— sooner the harder it comes down, the stormier it is and the shyer the
+spider — and goes to the shelter it knows best (anything you built first),
+waits it out, and stays in a while after; then a look out, a look at the
+sky, and out it comes. A drop of rain on a leaf catches its eye: it goes
+over, a curious one gives it a touch (now and then it runs off the leaf),
+and it drinks it. In a hot sun it basks — on warm stone most of all — and
+after a while gets into the shade. In a gale it keeps off, and gets down
+off, whatever sways. The bold and curious go up somewhere open to watch a
+mild weather come over. It hunts by where things are: it lies in wait
+where prey comes, pokes about under bark and in the litter to turn out
+whatever is lying low, and full up, lets what wanders in be and watches it
+instead; gone a long while without, it is off hunting sooner, waits longer
+at it and sleeps less. None of it is a need or a chore; nothing goes wrong
+for going without.
+
+## Your Mac
+
+Under **Your Mac** in the menu bar panel:
+- **Low Power Mode**: the spider's own. It gets sleepy and slow, and draws
+  half as many frames, so it uses less power itself. It follows the Mac's
+  Low Power Mode, but you can switch it on while the Mac isn't in it, or
+  off while the Mac is — that asks first, since it costs battery, and lasts
+  until the Mac leaves Low Power Mode.
+- **Feel the Battery**: when the Mac goes into Low Power Mode, so does the
+  spider. Plugging in the charger perks it right up: it crackles with
+  lightning, and on top of something it jumps for joy — a real leap, up
+  off its legs and down onto them again; on a wall or underneath a window
+  it keeps every foot where it is and bobs and wiggles on them.
+- **Notice the Weather**: when it rains where you are, rain is on its mind
+  (checked every twenty minutes from Open-Meteo, going by roughly where
+  your internet connection is), and the habitat can have the same weather
+  (the tank's Weather ▸ Like Outside). **Rain on the Screen** adds faint streaks
+  across the desktop while it rains.
+- **Notice Pop-ups**: a notification sliding in makes it jump — right up
+  in the air if it is standing on top of something, a start where it
+  clings if it is on a side or underneath — and then it stares up at the
+  banner for a moment. Turn the volume or brightness up or down and it
+  only looks up to see. What a notification says is never read: it only
+  sees that a banner came up.
+
+Under **Visitors**, now and then another spider can drop by to play, then
+head off again. **Dismiss Visitors** sends everyone about on their way.
+
+## Growing up
+
+It remembers how things go — being stroked and said hello to, company and
+time on its own, being carried or flung, frights, games, meals, good hunts
+and misses, and the spots where it settles — and its personality drifts a
+little with them. A shy spider stroked every day slowly grows easier about
+the pointer while staying shy; a run of frights leaves it warier for an hour
+or so; good hunts make it surer of itself; hours on its own make it a bit
+more of a wanderer; favourite spots pull it back. Every memory has a feeling
+that passes within the hour and a lesson that builds slowly and fades over
+days, and none of it moves any trait more than a fifth of the way from what
+the Studio says — which it never changes. None of it is a rule: it nudges
+the same personality sliders every choice it makes already reads.
+
+Nothing is needed of you, and nothing goes wrong if you leave it be. It is
+on by default; **Learn From Experience** under **Growing Up** in the
+panel's Spider page turns it off (it is then exactly as the Studio made
+it, and what it remembers is kept for if you turn it back on), and the page
+says in a line how it has been shaped lately. **Forget It All** starts it
+afresh. Memories are saved in the app's defaults; time with the app closed
+counts toward forgetting, but only up to three days of it.
+
+## Keeping it in a box
+
+**Behavior ▸ Keep *name* in a Box…** dims the desktop and lets you drag out
+a rectangle (Escape cancels). That box is its patch. It is not a cage: a
+throw, a fall or a walk along an edge can take it outside — but the moment
+it finds itself out, getting back in is the first thing on its mind. It
+walks round its own window to the nearest stretch inside (whichever way
+round is open and shorter), or leaps to the nearest spot inside it can
+reach, or leaps to whatever gets it nearer and tries again; out for a very
+long while, it is fetched. Inside, it climbs whatever windows and screen
+edges fall within the box exactly as usual, turns back at the box's edge
+rather than leaping off, leaps only to spots inside, and prey is released
+inside. A box with nothing in it to stand on is different: it makes its
+way to it and hangs in from the top on a line, swaying lightly the way a
+draught would move it, shifting its height now and then, the odd little
+bounce — never a real swing.
+
+Boxed at all, it takes things easy: it decides things about half as often,
+rests and looks about far more, dashes about far less, and gives up
+swinging on lines and hammock trips altogether. The box shows as a faint
+dashed outline and survives a restart; **Redraw the Box…** and **Free
+*name* from the Box** sit alongside while it is set. Freed, it carries on
+from wherever it is and wanders off in its own time.
+
+## Full-screen video
+
+When any app takes a whole display — a film, most likely — the spider has
+cinema manners. On that display only the floor and the ceiling of the
+screen exist to walk on: no walls, no menu bar, no Dock, and no windows,
+none of which are visible under a full-screen video (so it can no longer
+end up walking on thin air where a hidden window used to be, or with only
+its legs showing at the edge). It walks to the nearest corner of the
+floor and lies down there, facing the picture with its head tipped right
+up at it (on the ceiling it hangs as usual in the corner, head turned to
+the picture), gaze drifting with whatever is happening on it; now and then
+it stretches its legs a short way, grooms, or glances your way; it does not leap,
+swing, spin silk, hunt or go to its hammock, it ignores the pointer, and
+only after a very long while might it nod off. When the video ends it
+carries on as before. (A window is counted as full screen when it covers
+the display, or all but the strip a notch takes.)
+
+A window maximized to fill its screen — zoomed, or dragged to the top of
+the screen and tiled to fill it, margins or not — counts just the same,
+so long as it is the front window there: its edges are the screen's, and
+there is nothing else on that screen to see. The menu bar is still showing
+over it, so the ceiling the spider walks is the menu bar's lower lip, and
+with a Dock that stays shown the floor is the Dock's top. A spider on the
+window as it grows to fill the screen goes with it and ends up on the
+screen's rim — never pushed off the bottom, or left on the window's
+underside. With another window brought in front of it the screen is an
+ordinary one again, but the maximized window still has no edges of its own
+to walk: only the screen's, and the windows in front.
+
+## Web pages
+
+A browser that fills its screen — zoomed to fill it, or gone full screen —
+leaves no desktop and no other windows to climb, so the spider climbs the
+page instead: along the tops of cards, bars, boxes and dividers, under
+them, and up their sides. It only does this when a browser window covers
+its screen (within a few points of it); a smaller browser window is just a
+window. Safari, Chrome, Brave, Arc, Edge, Firefox, Vivaldi, Opera, Orion,
+Zen, DuckDuckGo and the like all count.
+
+It goes by how the page *looks*, never what it says. About every second and
+a half it takes a picture of the browser window (off the main thread) and
+checks a fingerprint of it for changes; only when something has changed is
+the picture read (`PageLedges.swift`), for two things together:
+
+- **a line** — a straight run where the colour changes sharply and as one
+  step (the edge of a card, a bar, a box; a soft shadow along it is fine), or
+  a thin line drawn across (a divider), and whatever it is the edge of even
+  along it: the bottoms of a word's letters are not a line, and nor are the
+  edges of things in a photograph, which come and go along their length;
+- **room** — on one side of it, smooth open space (a flat colour, a gentle
+  gradient, a blurred photo behind frosted glass — never the strokes of text
+  or an icon) as deep as the spider is tall, for a good stretch along it.
+  Room that ends at another line all along — the inside of a text field, the
+  gap between two cards — is a slot, and needs more headroom.
+
+A line with room above is a ledge to stand on, with room below one to hang
+from, and an upright one with room beside it a wall. Where they meet at a
+corner (a rounded one, or inside a square one) they join up, so it walks
+over a card and round its corner down the side as it does round a window.
+The browser's own bars are left alone: the page starts under the lowest line
+right across the window near the top — whose underside is a ceiling to hang
+from.
+
+Each ledge keeps its name while it is found again (a pixel off, a little
+longer), so re-reading a page leaves a spider standing still. Clicking
+through to another page (or opening a panel, switching a tab) is noticed —
+a click in it, the window's title changing, or just the picture changing —
+and read at once; a ledge that has gone from under it, it catches itself on
+a line shot up to the ceiling. When the whole page moves by the same amount
+(a bar above it closing, the keys scrolling it), ledges that moved with it
+keep their names and carry it along.
+
+Scrolling is followed as it happens. While a page scrolls, every ledge on
+it is put aside but the one the spider is on, and that one is followed: a
+small patch round its feet, looked at thirty times a second and matched
+against the last, with the scroll's own distances filling in between (how
+far the page moves for a point of scrolling is learnt as it goes — nothing,
+over a part that stays put, like Gmail's header). It rides the ledge up or
+down; if it goes out of sight it falls. Once the page is still it is read
+afresh.
+
+Full screen, a browser showing a page is no cinema: the spider climbs it
+(with the browser's bars showing, they are a window of their own over the
+page's, which then reaches across and down to the bottom but not the top —
+that counts too, on a screen with no desktop showing). Showing a film (most
+of the picture changing, look after look) it is, and the spider sits down to
+watch as with any other.
+
+### The browser extension
+
+The pictures say where the ledges are; the Spider Buddy extension
+(`Extension/`, bundled into the app) says where they have got to since and
+when to look again, for Chrome, Brave, Edge, Arc, Vivaldi and the rest of the
+Chromium family. While the app is climbing a tab, the extension's script in
+it reports how far each part of the page has scrolled (the page itself, and
+any list or panel that scrolls on its own, each with what carries it), the
+parts that stay put (fixed and sticky), and that the page has changed — never
+anything on it. Each ledge the picture found is tied to the part of the page
+it is on, and moves exactly as far as that part scrolls, every frame; none is
+put aside, nothing is followed by pictures, and a ledge that scrolls out of
+its part's sight is gone. A change is looked at within a fifth of a second
+rather than at the next look. Without the extension (or in Safari and
+Firefox) it all works as above.
+
+The extension talks to the app over a WebSocket on `127.0.0.1` (ports 47219–
+47221, `PageBridge.swift`) that takes browser extensions only; the app says
+which windows it is climbing, and only the tab showing in each reports.
+**Your Mac ▸ Web Pages** offers *Add to Brave…* (or whichever browser) while
+it is not connected: until the extension is in the Chrome Web Store
+(`AppDelegate.extensionStore`), that copies it to Application Support, shows
+it in the Finder, puts the browser's extensions page on the clipboard, and
+says the three steps (Developer mode, Load unpacked, pick the folder).
+
+It needs to be allowed to see the screen. The first time a browser fills the
+screen it asks, once; after that **Your Mac ▸ Climb Web Pages** says how.
+That switch turns it off altogether. Costs: a look that finds nothing new is
+a few milliseconds of a background core every second and a half; a reading
+10–30 ms (Gmail's photo themes are the slowest), only after a change; the
+main thread lays the ledges out in well under a millisecond.
+
+## Thoughts and words
+
+The **Thoughts** tab in the Studio picks what it may say in a thought
+bubble: **Chit-chat** (hi!, boo!, tap tap…), **Encouragement** (drink some
+water, take a little break…), **Spider facts** (I have eight eyes…), and
+**Bible verses** (short verses with their references, in the King James
+wording). Tick any mix, and add your own lines underneath, one per line —
+they go into the same hat. **Think something now** tries one in the
+preview. Long lines wrap into a bigger bubble.
+
+## Toys
+
+**Play ▸ Toys** (or **Toys ▸** on the right-click menu) is what the
+pointer plays with, one at a time: the **Laser Pointer**, a **Ball**, a
+**Feather**, a **Bell** or a **Wind-up Bug**. **Put Away** puts it away.
+So does a **right-click** or **Esc** while the toy is on your pointer (the
+dot, the feather, a toy in your hand), or a right-click on a toy you have
+put down. While a toy is on your pointer, the pointer is for playing:
+clicks and scrolling don't reach the apps underneath (you can still pick
+up the spider) until you put the toy down or away.
+
+- **Laser** — the red dot sits right on your pointer for as long as it is
+  picked. It drops whatever it is doing and races after it — along its own
+  edge at a scurry, or with a leap to whatever is nearest the dot — and
+  pounces and pats at it; put away, it looks about for it, puzzled.
+- **Feather** — dangles on its string from your pointer the whole time,
+  like a wand toy, trailing behind as you move. It leaps at it, and now and
+  then gets hold of it and hauls it down on the string.
+- **Ball, Bell, Wind-up Bug** — picked, it comes in your hand, riding on
+  the pointer (it waits under it, eyes on it). Take it where you want it
+  and click to put it down there, or drag and flick to throw it; the bug is
+  set down wound up and scuttles off. That click is taken by the toy, not
+  passed to what is underneath, so there is no selection box on the
+  desktop. Once it's down, drag it to throw it again, click it to poke it,
+  or press its button again to pick it back up. The bell jingles when
+  knocked or shaken — out loud too, quietly, unless **Bell Sound** is off.
+
+While you are playing with one it goes
+for it like the dot — the playful at once, the lazy when they get round
+to it — and never tires of it while you play; a timid one looks a new toy
+over from a safe distance first, and jumps out of the way of one rolled at
+it (a bold one traps it with its legs). Left lying about, a toy still gets
+batted about and chased now and then as the mood takes it, until it tires
+of it. Clicks on the spider or a creature still pick them up as usual;
+visitors join in. Playing is something it remembers, and with learning on
+it comes to have a favourite toy.
+
+Every toy is the same object with simple physics — it falls, bounces off
+and lands on the same window edges, Dock and screen rim the spider walks,
+rolls or slides along them, tips off the end of a window and bounces back
+off a wall — and a kind of toy is only a set of numbers on it (see
+`Toys.swift`).
+
+## Spider Studio
+
+**Spider Studio…** in the menu (⌘,) opens a Mii-maker-style editor. The left
+side is a little terrarium with your spider living in it — it walks the walls,
+leaps to the ledge, and you can click, drag and throw it — and every change on
+the right shows up there and on your desktop immediately. Nothing is
+"applied"; it just is.
+
+| Tab | Options |
+|---|---|
+| Body | 11 shapes (Classic … Chonk, Tall, Pear, Big Head, Bean, Petite), 3 fuzz levels, size |
+| Face | 13 eye styles (Huge, Beady, Sleepy, Sparkly, Cross-eyed, Wink, Glowing, Dizzy, Heart Eyes, Button…), 10 brows, 11 mouths (fangs, tusks, the emerald chelicerae of a bold jumper, a smile, a blep, a grin, buck teeth…), and whether the face is drawn in front of the front legs or behind them |
+| Hats | 38 hats — top hat, party hat, crown, beanie, flower, bow, cap, halo, wizard, propeller (it spins as it walks), cowboy, chef, bucket hat, viking, tiara, pirate, mushroom, sombrero, fez, beret, bowler, santa, mortarboard, bunny ears, cat ears, antlers, hard hat, sailor, jester, horns, unicorn, ushanka, pumpkin, strawberry, sweatband, flower crown, a little bird |
+| Extras | 30 things to wear — glasses, monocle, shades, heart shades, goggles, eyepatch, a hero mask, a clown nose, moustache, beard, bow tie, necktie, scarf, bandana, bell collar, pearls, a medal, flower lei, headphones, sweater, tutu, backpack, satchel, bindle, jetpack (it fires in the air), balloon, cape, fairy wings, bat wings |
+| Legs | 13 styles — slender, chunky, stubby, long, spindly, fuzzy, knobbly, robot, banded, striped, socks, boots — which change the rig, so the walk, turn and jump all adapt |
+| Colours | 30 flat coats, 16 gradient coats, 15 *living* coats that move — Rainbow sliding along it, Hot Lava with glowing cracks between drifting crust, Camouflage that takes on the colour of whatever is behind it, Galaxy with twinkling stars, Ocean, Aurora, Disco, Fire, Frost, Toxic, Pearl, Candy Cane, Thunderstorm with lightning, Chrome, Web-Slinger (red and blue, webbed all over, with the emblem on its back) — plus your own: pick any body and leg colour, or blend two or three of your own colours in any direction, shimmering if you like |
+| Markings | 20 markings on the abdomen (stripe, spots, chevron, heart, star, skull, moon, flower, eyespots, hourglass, tiger, leopard, checker, lightning…), 20 accent colours or one of your own, or camouflage markings that take on the colour behind it along with a Camouflage coat |
+| Personality | a temperament preset (Friendly, Shy, Hyper, Lazy, Curious, Show-off, Chill, Grumpy) or six sliders — energy, curiosity, bravery, playfulness, affection, laziness |
+| Gait | walking style (steady, bouncy, tiptoe, lumbering, scurrying), pace, stride, bounce, stance |
+| Habits | a dial for each thing it does on its own — wandering, leaping, dropping on a thread, swinging, building and napping in a hammock, nodding off, drumming, dancing, rolling, spinning, push-ups, stretching, wiggling, arms up, looking about, resting, grooming, fidgeting, scratching, peering, thinking, coming to see the pointer, craning at it, staring, glancing, greeting, waving, peek-a-boo. All the way down it never does that; in the middle, as often as it usually would; all the way up, every chance it gets |
+
+Every part is drawn in the body's own frame, so hats stay on through
+corners, rolls and hanging upside down, and markings turn with the abdomen.
+A gradient or living coat is a colour field over the body: the body is
+filled with it, and each leg segment is painted the colour it passes
+through, so a rainbow spider's legs are each a different colour. Living
+coats are redrawn steadily even while it stands still. Camouflage goes by
+what it is standing on — the window colour for the current appearance on a
+window, the wallpaper's average colour on the edge of the screen — and, if
+you let it see the screen (Screen Recording, from the button in the
+Studio), by the actual pixels behind it; either way it drifts toward the
+new colour rather than snapping, so you can watch it change as it steps
+from a window onto the desktop. Every shade of it — blotches, legs, and the
+outline, always a touch darker than the body — is a fixed step from that
+colour, so nothing flips from darker to lighter as the colour behind it
+drifts.
+The personality sliders weight its decisions rather than switch things off: a
+shy spider still waves sometimes, a grumpy one occasionally turns its back on
+you when poked, a brave one stands its ground when you swipe at it. The habit
+dials are the switches: they sit on top of the personality, and the ends of
+each one really are never and always.
+
+Give it a **name** and it tells you: rest the pointer on it for a moment and a
+name tag appears. The dice picks one for you; **Surprise Me** rolls a whole
+new spider.
+
+The design is saved as JSON in the app's defaults.
+
+## Menu
+
+| Item | |
+|---|---|
+| Hide *name* / Show *name* | toggle it off and on (the icon dims while hidden) |
+| Spider Studio… | customise it (see above) |
+| Come Here | it walks or jumps to your pointer |
+| Open Habitat / Close Habitat | the terrarium; see The habitat |
+| Behavior ▸ | everything it can be asked to do: Say Hi, Toss It, Swing!, Feed ▸, the hammock, and the box |
+| Behavior ▸ Build a Hammock / Nap in the Hammock / Clear the Hammock | see Silk |
+| Size | Tiny → Chonky |
+| Energy | Sleepy → Caffeinated (the same slider as the studio's) |
+| Follow the Cursor | whether it cares where your pointer is |
+| Pounce on the Cursor | whether a pointer that fidgets close by gets stalked and caught (it still watches it either way) |
+| Shoot Webs | whether it rappels, swings, drops on a dragline and catches a fall on a line |
+| Build Hammocks | whether it spins a hammock in a corner on its own (also gates Behavior ▸ Build a Hammock) |
+| Click to Pick Up | turn off to make it fully click-through |
+| Climb Web Pages | (Your Mac) with a browser filling the screen, it climbs about the page; see Web pages |
+| Pause | freeze it |
+| Launch at Login | |
+| Check for Updates | looks for a newer version now and offers it with its release notes (see Install). The App page also has Check Automatically (daily) and Install Automatically (on quit); an update the daily check finds waits as an **Update to …** button at the top of the panel rather than popping up |
+| Bring *name* to the Middle | lost it? puts it in the air in the middle of the main screen, letting go of everything (line, hammock, pointer, meal), and it falls from there onto whatever is below |
+| Reset Everything | starts over: the app relaunches itself, rebuilding every window and re-reading the desktop. The design, settings and hammock are kept — they are saved |
+
+## Permissions
+
+Window geometry comes from `CGWindowListCopyWindowInfo`, which needs no
+entitlement. Notification banners are noticed the same way, by their windows
+alone; the volume comes from Core Audio, and the brightness of a built-in
+display from DisplayServices.
+
+Screen Recording is used, if you allow it, in three places: camouflage
+matching what is behind it, measuring how round each window's corners are,
+and climbing web pages (see Web pages) — for which it also reads a browser
+window's title, boiled down to a number, only to notice that the page has
+changed. Pictures of pages are looked at for lines and open space and not
+kept; nothing is ever sent anywhere.
+
+## Code map
+
+| File | |
+|---|---|
+| `Math.swift` | vectors, springs, easing, smooth noise |
+| `Surfaces.swift` | turns screens/windows/Dock/menu bar into walkable loops (and a page's joined-up edges, `pathLoop`) |
+| `PageLedges.swift` | reads a picture of a web page for ledges: lines with room beside them, joined up at corners — plain pixels in, geometry out |
+| `WebPages.swift` | which browser windows fill their screens, when to look at them, naming what is found, following a scroll (by pictures, or exactly with the extension), and the ledges as surfaces |
+| `PageBridge.swift` | the browser extension's line to the app: a WebSocket on 127.0.0.1, what scrolls on the page and by how much, and word of changes |
+| `Habitat.swift` | the tank's model: its world's size, biomes, furniture, layouts laid out in parts, regions, and the surfaces the spider walks on in there |
+| `HabitatArt.swift` | painting the tank: palettes, sky, scenery, substrate, glass, and the pictures the moving parts are made of |
+| `HabitatItems.swift` | painting the furniture, and the picker's thumbnails |
+| `HabitatAtmosphere.swift` | what moves in the tank's air, per biome, as Core Animation layers and emitters |
+| `Weather.swift` | the tank's weather: its kinds, each scenery's list, the settings, and the clock that brings it in and clears it |
+| `HabitatWeather.swift` | the weather drawn in the tank — cloud, rain, snow, lightning, puddles, snow lying about — and the weather panel's tiles |
+| `HabitatCamera.swift` | the coordinate spaces round the tank (screen, window, glass, world), and the camera: following, panning, gliding, kept for next time |
+| `HabitatScene.swift` | the inside of the tank: its layers (backdrop, world, glass), the conversions between spaces, the spider and creatures drawn in it, the mouse, decorating |
+| `HabitatOverview.swift` | the whole tank at once, small: going anywhere in it, and moving the furniture about it |
+| `HabitatWindow.swift` | the tank's window: frame, toolbar buttons, the decorating panel, undo |
+| `HabitatControls.swift` | the weather panel that drops from its button, the saved-habitat cards, and bits the panels share |
+| `HabitatLibrary.swift` | My Habitats: saved habitats as files, saving, putting back, sharing and bringing in |
+| `HabitatTour.swift` | the spotlight tours of the tank and of decorating |
+| `Prey.swift` | the creatures: their behaviour, drawing, and the click-through window they (and the toys) live in |
+| `Toys.swift` | the toys: kinds as data, one physics body for all of them, the toy box, and their drawing |
+| `Traces.swift` | what it leaves about: silk pinned to real edges, little webs, meal leftovers, their physics and their window |
+| `WindowTracker.swift` | polls window rectangles — 30 Hz while any window is moving, 10 Hz when the desktop is still — and spots notification banners coming up; which apps are browsers |
+| `SystemSense.swift` | the Mac it lives on: Low Power Mode, the charger, the weather, the volume and the brightness |
+| `Visitors.swift` | spiders from elsewhere dropping by to play |
+| `Panel.swift` | the menu bar panel: its pages, switches, sliders and buttons |
+| `Spider.swift` | state machine, physics, gait, decisions |
+| `Memory.swift` | what it remembers — experiences, places, prey — and the small shifts to its personality they add up to |
+| `SpiderRenderer.swift` | all the drawing, in body-local coordinates, parametrised by the look |
+| `SpiderDesign.swift` | every part, colourway, personality and gait option; the saved design |
+| `Skin.swift` | how the coat is painted: flat, gradient, custom and living coats, and the palette the renderer draws with |
+| `Studio.swift` | the studio window, option grids, thumbnails and the terrarium preview |
+| `OverlayWindow.swift` | transparent always-on-top panel, silk layers, input |
+| `AppDelegate.swift` | menu bar item, display link, settings |
+| `Updater.swift` | updates, through Sparkle: its settings, and holding an update found in the background for the panel |
+
+### Releasing
+
+```bash
+echo 0.8.0 > VERSION                           # bump; the tag will be v0.8.0
+NOTES=notes.md tools/release.sh --publish      # build, package, sign, and create the GitHub release
+tools/release.sh --appcast                     # after editing a release's notes on GitHub
+```
+
+`build.sh` stamps `VERSION` into the app's `Info.plist` and bakes in the
+Sparkle feed, `https://ephemerill.github.io/spider-buddy/appcast.xml` — GitHub
+Pages serving the repo's `gh-pages` branch, which holds nothing but that file.
+Every shipped copy reads that address, so it must never move. `tools/release.sh`
+writes the appcast (`build/appcast.xml`), creates the release with the `.dmg`,
+and then commits the appcast to `gh-pages` through the GitHub API (your local
+checkout is not touched); installed copies see it within about ten minutes.
+`NOTES` (markdown) becomes the "What's new" in the update window and at the top
+of the release; everything after the `<!-- install -->` marker in the notes is
+for people downloading by hand and is left out of the window. Edited the notes
+on GitHub afterwards? `tools/release.sh --appcast` rewrites the appcast from
+them.
+
+The `.dmg` and the appcast are both signed with an EdDSA key; the app checks
+both against `SUPublicEDKey` (in `build.sh`) before installing anything. The
+private key lives in the release Mac's login keychain (made once with
+`build/Sparkle/bin/generate_keys`; `SPARKLE_KEY_FILE=<file>` uses an exported
+copy). **Back it up** — `build/Sparkle/bin/generate_keys -x sparkle-key` — and
+keep it out of the repo: without it, installed copies can never be updated
+again.
+
+`tools/sparkle.sh` fetches the pinned Sparkle release (framework and its
+`sign_update`/`generate_keys` tools) into `build/Sparkle`, checksum-checked;
+`build.sh` calls it and embeds the framework in `Contents/Frameworks`.
+Publishing needs the `gh` CLI (`brew install gh`), logged in or with
+`GH_TOKEN` set. `SPIDER_UPDATE_TEST=1` makes the app run the background check
+straight away, for trying a feed out.
+
+### Tools
+
+| | |
+|---|---|
+| `./tools/preview.sh` | renders a contact sheet of every pose to `build/preview.png` — the fastest way to judge a drawing change. `--single` renders one big. |
+| `./build/Preview x --cliptest` | measures how far the furthest drawn pixel actually is from the body centre, across every pose and angle, and checks `SpiderRenderer.drawRadius` covers it. The sprite is re-rasterised every frame, so its size is a direct CPU cost — run this after any change to the art or to the splay/stretch extremes |
+| `./tools/film.sh` | filmstrip of the real walk cycle along each screen edge, with the edge drawn in, plus a standoff-drift readout |
+| `./tools/film.sh out.png --cycle` | one full gait cycle at 2×, for judging the walk itself |
+| `./tools/film.sh out.png --desk` | the spider at actual size on a mock desktop, on every kind of edge — the most useful single view |
+| `./tools/film.sh out.png --peekaboo` | the peek-a-boo game as a strip of moments, window drawn over it |
+| `./tools/film.sh out.png --hunt cricket\|worm\|fly` | releases prey on a mock desktop and films the chase, with close-ups of the pounce and the meal |
+| `./tools/film.sh out.png --jump [--under]` | a real leap drawn along its own trajectory — onto a window's side, or up onto its underside |
+| `./tools/film.sh out.png --hang` | descending, hanging and climbing a dragline |
+| `./tools/film.sh out.png --swing [--floor \| --fromhang]` | a swing on a line, onion-skinned, from a window top, the floor, or worked up from a hang; prints where each pass reverses |
+| `./tools/film.sh out.png --hammock` | the hammock being spun in a corner, panel by panel, and slept in |
+| `./tools/film.sh out.png --strip corner` | walks it round a window corner, onion-skinned in world space |
+| `./tools/film.sh out.png --strip turn` / `--strip peek` / any activity name (`watch` included) | filmstrip of that animation |
+| `./tools/film.sh x --seq walk:2,look,greet:1.6,turn` | runs activities back to back (`:seconds` optional) and lays out every 4th frame in a grid — `build/seq.png` — for looking at one hand-off frame by frame. `SEQ_EVERY=1` for every frame, `SEQ_TRACE=1` to print foot positions |
+| `./tools/jerk.sh [seconds] [runs]` | the jerk detector: runs the spider headless and flags every frame where the body, the heading or a foot (relative to the body) moves further than a frame's worth should, grouped by what it was doing on either side. Anything over about two flags a minute is worth a look; `JERK_VERBOSE=1` prints each one with the frames leading up to it |
+| `./tools/sim.sh` | runs the spider headless against a synthetic desktop for four simulated minutes, then a scripted pass over grab / throw / rappel / window-closes-underneath / petting, swing / hammock build / nap / wipe-away, then every temperament preset for 150 s each |
+| `./tools/gallery.sh` | every studio option thumbnailed the way the studio shows it, plus random designs mid-walk — `build/studio.png` |
+| `SPIDER_STUDIO_SHOT=dir ./spiders.app/Contents/MacOS/DesktopSpider` | writes a PNG of each studio tab to `dir` and quits |
+| `./tools/bench.sh` | times one rendered frame |
+| `SPIDER_STATS=1 ./spiders.app/Contents/MacOS/DesktopSpider` | prints fps and a per-frame budget once a second |
+| `SPIDER_TRACE_TEST=secs ./spiders.app/Contents/MacOS/DesktopSpider` | takes every chance to leave a trace (memory and hammocks off for the run, nothing saved), lays a few out to look at, lets a fly loose now and then, prints what is out and what the traces cost a frame every two seconds, turns traces off halfway to compare, and quits |
+| `SPIDER_HABITAT_CAMERA=1 ./spiders.app/Contents/MacOS/DesktopSpider` | the big tank and its camera: following end to end and up the glass, panned away and found again, resized, furniture added and dragged far along the tank, layouts and Surprise Me, prey, a throw, carried out and back, closed with the spider out of sight and opened again, weather while it moves, the overview — `[ok]`/`[FAIL]` for each, then the habitat keys put back |
+| `SPIDER_HABITAT_SHOT=dir ./spiders.app/Contents/MacOS/DesktopSpider` | pictures of every layout from the middle, one end and up high, its overview, and the decorating panel (`SPIDER_HABITAT_SHOT_ONLY=forestFloor` for one) |
+| `SPIDER_TOY_TEST=secs ./spiders.app/Contents/MacOS/DesktopSpider` | picks each toy in turn (memory off), throws it now and then as if by you, prints what the spider and the toy are up to every two seconds, and quits |
+| `./tools/pages.sh see page.png out.png [scale]` | what it would climb on a picture of a web page (a window capture at 1×): the ledges drawn over it — green to stand on, blue to hang from, orange/magenta walls, red corners — and listed. `./tools/pages.sh time page.png` times a reading |
+| `SPIDER_PAGE_TEST=secs ./spiders.app/Contents/MacOS/DesktopSpider` | climbs pages whatever the setting (memory off, nothing saved), puts the spider on the longest page ledge (`SPIDER_PAGE_PUT=0` not to), prints where it is every half second and what the pages cost, and quits. `SPIDER_PAGE_OFF=1` to compare with pages off, `SPIDER_PAGE_SHOT=dir` for every reading drawn over its picture; `SPIDER_PAGE_LOG=1` (any run) logs each look. Run it from a terminal that may see the screen |
+
+## Performance
+
+Roughly 15% of one core while it is up and about, ~4% resting, 12 MB
+resident. Every visible change redraws the sprite — the earlier, cheaper
+threshold was quietly dropping frames while it walked. Three things get it there, and all three are easy to undo by
+accident:
+
+- **The window is small and follows the spider.** A screen-sized transparent
+  overlay has to be recomposited every frame — that alone was most of an
+  earlier 26%. Silk needs to reach across the desktop, so it lives in a
+  separate screen-sized window that is ordered out whenever no thread is out.
+- **The layer is only re-rasterised when the spider's *shape* changes.**
+  Position is just `layer.position`, which is free. A spider standing still or
+  asleep redraws almost never.
+- **The display link is asked for 60 Hz outright** (`preferredFrameRateRange`),
+  and skips two frames in three when the picture has not changed for a
+  second. Gating a 120 Hz link by elapsed time instead gave alternating 16 ms
+  and 25 ms steps, which read as stutter in everything that moved.
+
+## Notes
+
+- If your Dock is set to auto-hide, there is nothing there to walk on most of
+  the time; the spider will use it during the moment it slides into view. Turn
+  auto-hide off to get a Dock it can properly patrol.
+- It draws above the menu bar and the Dock but below open menus, so it can hang
+  in front of the clock without ever swallowing a menu click.
+
+### Tuning
+
+Almost everything worth playing with is at the top of `Spider.swift`
+(`SpiderConfig`, `gravity`, `strideLength`, `swingDuty`, `maxJumpSpeed`), the
+pose presets in `Spider.poseTarget`, and the palette, leg rig and metrics at the
+top of `SpiderRenderer.swift`.
+
+Two things there are less obvious than they look:
+
+- **`ballistic` checks reachability before it commits.** The obvious version
+  picks a flight time, solves for the velocity, then clamps the speed to
+  something sane — which quietly breaks the equation it just solved and turns
+  every long jump into a fall short of the target. It solves for the
+  minimum-energy launch instead and returns nil when a target is genuinely out
+  of range, so a jump either looks like a jump or is never attempted.
+- **An escape is never restarted while it is under way.** The covered check
+  runs every frame; it used to call the escape again each time it fired, and
+  since the escape begins with a turn and a crouch that take longer than the
+  check's delay, the crouch was restarted forever — a spider under a window
+  froze in place. `escapeUntil` holds the check off while an escape is in
+  progress.
+- **The top of the screen is not a surface.** The very top edge of a display
+  is under the menu bar, where the spider cannot be seen; it used to walk
+  along it and vanish, and a throw could leave it lost up there. On a display
+  with a menu bar the border is now a U — down one wall, along the floor, up
+  the other — with the walls stopping short of the menu bar, under whose lip
+  it hangs instead. (Under a full-screen video there is no menu bar, and the
+  ceiling is a surface again.)
+- **A hammock that is not being built does not exist.** Planning a hammock
+  used to stake out the corner at once, and if the trip there was called off
+  (a full-screen video, a long detour) the two anchor tufts stayed in the
+  corner for ever with nothing to build. Now nothing is drawn until the first
+  strand is laid, an unfinished hammock nobody is working on fades away on
+  its own, a half-made one goes with a single wipe of the pointer, and the
+  menu offers **Clear the Hammock** whenever there is any silk there at all.
+- **A line hung near a screen edge could pin it dead still — or jitter.**
+  The sideways snag that keeps a swing on the display reversed the angular
+  velocity whenever the body was inside the edge margin. A line whose
+  anchor was itself in that margin has the bottom of its swing "outside"
+  already, so the snag fired at the bottom of every pass — at first pinning
+  it dead still, and after the first fix (snag only when heading further
+  out) shaking it back and forth at the bottom of the line every frame. The
+  snag now applies only to lines hung from well inside the screen; one at
+  the very edge is simply left to hang a little off it. The widest-swing
+  limit is likewise a gentle push back rather than a bounce.
+- **It no longer tumbles at the ends of a swing.** It used to turn to face
+  the way it was going on every pass, and on a line that turn is a
+  half-roll of the whole body — so each end of the arc was a somersault.
+  Now it keeps the same side to you for the whole swing and simply hangs
+  along the thread, the body trailing the line a little as it goes.
+- **Turning round on a hang no longer jumps it sideways.** When it twists
+  to show its other side, the spinnerets swap sides in sprite space at
+  the instant it passes the front view, while the body takes a moment to
+  come round. Taken literally that moved the body the width of its abdomen
+  in one frame and wobbled it back. The body's offset from the point it
+  holds on the line now eases over, and the thread, pinned to the real
+  spinnerets, bends a touch until it has.
+- **A low window is a step down, not a jump.** Hanging under a window that
+  sits just above the floor, the spider's body is at almost the same height
+  as it would be standing on the floor, so no jump target ever qualified
+  (the search wanted a spot at least 70 px away) and every leap it did pick
+  would have fired straight into the window it was hanging from. Now
+  anything below counts as a drop, however short; a launch that points into
+  the surface it is on becomes a let-go-and-fall with a push away from it;
+  and from any underside it as often as not simply lets go.
+- **A lean never moves the feet.** `pitch` used to be folded into the sprite's
+  heading, which tilted the whole drawing — legs, feet and all — so a peek
+  over a ledge lifted the back feet off it. It is now `pose.bodyPitch`: the
+  renderer turns the body, face and hat about `leanPivot` (between the hips)
+  and the pose moves the hips with it, while a foot on the ground is left
+  exactly where the gait put it. The legs are drawn outside that transform.
+- **The leg rig is art, not IK — except on a thread.** `SpiderRenderer.knee`
+  swings the designed rest shape about the hip rather than solving a two-bone
+  chain, because a solver picks a different elbow side as the foot crosses the
+  body and the legs stop looking like they belong to one animal. The one place
+  a real solver is used is a leg holding the line (`kneeIK`), where the bend
+  side is chosen on purpose — outward from the thread — and each foot is
+  pulled back along the line to the nearest point that leg can actually reach,
+  so nothing strains. The held stretch of line is drawn inside the sprite
+  between the far legs and the body, which is what makes the far feet read as
+  behind it and the near feet in front. Near-side legs are drawn in front of
+  the body, far-side legs behind it and a shade darker, feet staggered so all
+  eight show.
+- **The turn is a yaw, not a mirror.** `pose.facing` runs from +1 through 0 to
+  -1; its sign picks the mirror and its magnitude blends every part of the
+  layout between profile and a front view. The front-view leg layout is
+  symmetric under leg i ↔ 7-i, so at the exact moment the mirror flips the
+  feet are re-paired and nothing jumps.
+- **`Seg` fixes its own handedness.** The sprite frame is built from the edge:
+  +x along it, +y along its outward normal. `Seg.init` reorders its endpoints
+  so the normal is always 90° counter-clockwise of the direction of travel, so
+  an edge wired up backwards cannot stand the spider on its head.

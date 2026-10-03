@@ -41,7 +41,8 @@ sm.debugRebuild(screen: screenRect, menuBarHeight: 0,
 
 /// Every joint that is drawn, in screen space: 8 feet then 8 knees, plus
 /// the body origin. Slots are re-paired across a mirror flip (leg i is
-/// drawn where leg 7-i was), so a flip is not counted as a jump.
+/// drawn where leg i+4 was — its opposite number), so a flip is not counted
+/// as a jump.
 func joints(_ p: SpiderPose) -> [V2] {
     let mirror: CGFloat = p.facing >= 0 ? 1 : -1
     let g = SpiderRenderer.ground
@@ -78,7 +79,7 @@ final class Meter {
         let j = joints(p)
         let mirror: CGFloat = p.facing >= 0 ? 1 : -1
         if mirror != prevMirror {
-            // The model swapped leg i with leg 7-i at the flip.
+            // The model hands leg i over to slot i+4 (and back) at the flip.
             prev = remap(prev); vel = remap(vel)
         }
         prevMirror = mirror
@@ -100,7 +101,7 @@ final class Meter {
     private func remap(_ a: [V2]) -> [V2] {
         guard a.count == 17 else { return a }
         var k = a
-        for i in 0..<8 { k[i] = a[7 - i]; k[8 + i] = a[15 - i] }
+        for i in 0..<8 { k[i] = a[(i + 4) % 8]; k[8 + i] = a[8 + (i + 4) % 8] }
         return k
     }
 }
@@ -301,7 +302,7 @@ func runTrace(_ spec: String) {
             let mirror: CGFloat = p.facing >= 0 ? 1 : -1
             if mirror != prevMirror, prev.count == 17 {
                 var k = prev, w = vel
-                for i in 0..<8 { k[i] = prev[7 - i]; k[8 + i] = prev[15 - i]; w[i] = vel[7 - i]; w[8 + i] = vel[15 - i] }
+                for i in 0..<8 { let o = (i + 4) % 8; k[i] = prev[o]; k[8 + i] = prev[8 + o]; w[i] = vel[o]; w[8 + i] = vel[8 + o] }
                 prev = k; vel = w
                 print(String(format: "%4d  -- mirror flip, yaw %.2f", f, p.facing))
             }

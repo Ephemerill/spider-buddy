@@ -6,6 +6,7 @@ build/appcast.xml
 .swiftpm/
 build/art/
 build/Painter
+brag-output/
 
 # The report Worker's local state and secrets.
 tools/report-worker/.wrangler/

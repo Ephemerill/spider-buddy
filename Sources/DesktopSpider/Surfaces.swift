@@ -385,8 +385,17 @@ final class SurfaceMap {
     /// it — the ceiling is then the menu bar's lower lip, and the floor the
     /// Dock's top, as on the desktop. (A Dock hidden until it is wanted
     /// leaves a sliver of the screen under it, which is not kept back.)
-    static func stage(screen f: CGRect, visible vf: CGRect, zoomed: Bool) -> CGRect {
-        guard zoomed else { return f }
+    /// `housing`: how deep the camera housing comes down on a notched
+    /// display (its top safe-area inset). A full-screen window stops short
+    /// of it, leaving a black strip too shallow for the spider, which would
+    /// hang there cut off by the top of the display — so the ceiling is the
+    /// strip's lower lip, the top of the picture.
+    static func stage(screen f: CGRect, visible vf: CGRect, zoomed: Bool, housing: CGFloat = 0) -> CGRect {
+        guard zoomed else {
+            var r = f
+            r.size.height -= max(0, min(housing, f.height / 4))
+            return r
+        }
         let keptBack: CGFloat = 20
         let minX = vf.minX - f.minX > keptBack ? vf.minX : f.minX
         let maxX = f.maxX - vf.maxX > keptBack ? vf.maxX : f.maxX
@@ -444,7 +453,8 @@ final class SurfaceMap {
             let f = screen.frame
             frames.append(f)
             if cinema.contains(f) {
-                let stage = SurfaceMap.stage(screen: f, visible: screen.visibleFrame, zoomed: zoomed.contains(f))
+                let stage = SurfaceMap.stage(screen: f, visible: screen.visibleFrame, zoomed: zoomed.contains(f),
+                                             housing: screen.safeAreaInsets.top)
                 newLoops += SurfaceMap.cinemaLoops(id: "screen:\(i)", frame: stage, standoff: off)
                 continue
             }
@@ -675,8 +685,9 @@ final class SurfaceMap {
     /// so tooling can lay the spider out on a mock desktop.
     /// `zoomed`: the screen is taken (`cinema`) by a maximized window, not
     /// a full-screen one.
+    /// `housing`: a notched display's camera housing (see `stage`).
     func debugRebuild(screen: CGRect, menuBarHeight: CGFloat, windows: [TrackedWindow], cinema: Bool = false,
-                      zoomed: Bool = false, dock: CGRect? = nil) {
+                      zoomed: Bool = false, dock: CGRect? = nil, housing: CGFloat = 0) {
         dockRects = dock.map { [$0] } ?? []
         let off = standoff
         cinemaScreens = cinema ? [screen] : []
@@ -684,7 +695,7 @@ final class SurfaceMap {
             var visible = screen
             visible.size.height -= menuBarHeight
             if let dock, dock.minY <= screen.minY + 1 { visible.origin.y = dock.maxY; visible.size.height -= dock.maxY - screen.minY }
-            let stage = SurfaceMap.stage(screen: screen, visible: visible, zoomed: zoomed)
+            let stage = SurfaceMap.stage(screen: screen, visible: visible, zoomed: zoomed, housing: housing)
             let cl = SurfaceMap.cinemaLoops(id: "screen:0", frame: stage, standoff: off)
             occluders = []
             screenFrames = [screen]

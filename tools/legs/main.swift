@@ -332,8 +332,8 @@ final class Checker {
         // Pops: joint acceleration, re-paired across a mirror flip.
         let all = j.foot + j.knee
         if mirror != prevMirror, prevJ.count == 16 {
-            prevJ = (0..<8).map { prevJ[7 - $0] } + (0..<8).map { prevJ[15 - $0] }
-            if prevV.count == 16 { prevV = (0..<8).map { prevV[7 - $0] } + (0..<8).map { prevV[15 - $0] } }
+            prevJ = (0..<8).map { prevJ[($0 + 4) % 8] } + (0..<8).map { prevJ[8 + ($0 + 4) % 8] }
+            if prevV.count == 16 { prevV = (0..<8).map { prevV[($0 + 4) % 8] } + (0..<8).map { prevV[8 + ($0 + 4) % 8] } }
         }
         prevMirror = mirror
         if prevJ.count == 16 {
@@ -468,7 +468,7 @@ func live(_ world: World) -> Tally {
                 return String(format: "%d: thigh %.2f shin %.2f reach %.2f foot %.0f,%.0f", i, j.knee[i].distance(to: j.hip[i]) / a,
                               j.foot[i].distance(to: j.knee[i]) / b, j.foot[i].distance(to: j.hip[i]) / (a + b), j.foot[i].x, j.foot[i].y)
             }
-            print(f, s.debugState, String(format: "at %.0f,%.0f heading %.2f", p.pos.x, p.pos.y, p.heading))
+            print(f, s.debugState, String(format: "at %.0f,%.0f heading %.2f yaw %.3f", p.pos.x, p.pos.y, p.heading, p.facing))
             print("   " + legs.joined(separator: "\n   ") + "\n   " + s.debugFeetWhy)
         }
         exit(0)
