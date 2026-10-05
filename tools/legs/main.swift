@@ -332,8 +332,11 @@ final class Checker {
         // Pops: joint acceleration, re-paired across a mirror flip.
         let all = j.foot + j.knee
         if mirror != prevMirror, prevJ.count == 16 {
-            prevJ = (0..<8).map { prevJ[($0 + 4) % 8] } + (0..<8).map { prevJ[8 + ($0 + 4) % 8] }
-            if prevV.count == 16 { prevV = (0..<8).map { prevV[($0 + 4) % 8] } + (0..<8).map { prevV[8 + ($0 + 4) % 8] } }
+            // (With the new leg system each leg carries on in the slot
+            // opposite, i+4; without it, in slot 7-i.)
+            let twin: (Int) -> Int = SpiderRenderer.continuity ? { ($0 + 4) % 8 } : { 7 - $0 }
+            prevJ = (0..<8).map { prevJ[twin($0)] } + (0..<8).map { prevJ[8 + twin($0)] }
+            if prevV.count == 16 { prevV = (0..<8).map { prevV[twin($0)] } + (0..<8).map { prevV[8 + twin($0)] } }
         }
         prevMirror = mirror
         if prevJ.count == 16 {

@@ -27,7 +27,11 @@ final class Visitor {
 
     init(map: SurfaceMap, slot: Int, scale: CGFloat, stay: CFTimeInterval) {
         spider = Spider(map: map)
+        // (Which leg system a visitor has is its own affair: the renderer
+        // goes on laying legs out for your spider's.)
+        let yours = SpiderRenderer.continuity
         spider.apply(design: Visitor.randomDesign())
+        SpiderRenderer.continuity = yours
         spider.config.scale = scale
         spider.config.hammocks = false
         self.slot = slot

@@ -1192,6 +1192,9 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         legMotionPopup.action = #selector(legMotionPicked(_:))
         legRow.addArrangedSubview(legMotionPopup)
         col.addArrangedSubview(legRow)
+        let newLegs = checkbox("New leg system", get: { self.design.gait.continuity }, set: { self.design.gait.continuity = $0 })
+        newLegs.toolTip = "The leg system still being worked on: each leg keeps its place on the body as it turns toward you and away, and legs that cross are drawn the nearer one over the other. Off, its legs move exactly as they did in version 1.0.0."
+        col.addArrangedSubview(newLegs)
         col.addArrangedSubview(slider("Pace", low: "Ambling", high: "Brisk",
                                       get: { self.design.gait.pace }, set: { self.design.gait.pace = $0 }))
         col.addArrangedSubview(slider("Stride", low: "Short steps", high: "Long steps",
@@ -1316,9 +1319,10 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
 
     @objc private func randomize() {
         // (How its legs move is a choice of animation, not of spider: kept.)
-        let motion = design.gait.motion
+        let motion = design.gait.motion, continuity = design.gait.continuity
         design = SpiderDesign.random()
         design.gait.motion = motion
+        design.gait.continuity = continuity
         changed()
         preview.spider.celebrate()
     }

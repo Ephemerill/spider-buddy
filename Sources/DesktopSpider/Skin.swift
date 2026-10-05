@@ -507,6 +507,13 @@ struct Palette {
     var limbs: Limbs = .flesh
     /// A ring of light in each eye, for coats that are lit from within.
     var eyeGlow: RGB?
+    /// Debug Legs: each leg's own colour, by which leg it is — the right
+    /// side's front to back, then the left's — wherever it is drawn.
+    var legKey: [RGB]?
+    static let legKeyColours: [RGB] = [
+        RGB(0.90, 0.10, 0.18), RGB(1.00, 0.55, 0.05), RGB(1.00, 0.90, 0.10), RGB(0.20, 0.75, 0.25),
+        RGB(0.15, 0.35, 0.95), RGB(0.20, 0.85, 0.95), RGB(0.55, 0.15, 0.75), RGB(1.00, 0.40, 0.80),
+    ]
 
     enum Limbs {
         case flesh
@@ -793,6 +800,10 @@ extension LivingCoat {
             pal.eyeDark = RGB(0.05, 0.07, 0.10).cg
             pal.eyeGlow = glow.lighter(pulse * 0.3)
             pal.limbs = .machine(joint: RGB(0.26, 0.28, 0.33), glow: glow.lighter(pulse * 0.3))
+            return pal
+        case .legKey:
+            var pal = Palette(body: RGB(0.80, 0.80, 0.82), legs: RGB(0.6, 0.6, 0.6), accent: accent)
+            pal.legKey = Palette.legKeyColours
             return pal
         }
     }

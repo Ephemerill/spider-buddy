@@ -597,6 +597,9 @@ enum GradientCoat: String, Codable, CaseIterable {
 enum LivingCoat: String, Codable, CaseIterable {
     case rainbow, lava, camo, galaxy, ocean, aurora, disco, fire, frost, toxic, pearl, candy, storm, chrome, webSlinger
     case skeleton, zombie, robot
+    /// Not a coat to wear: a grey body and each leg its own colour, by
+    /// which leg it is, to see that no leg ever turns into another.
+    case legKey
     var label: String {
         switch self {
         case .rainbow: return "Rainbow"
@@ -617,6 +620,7 @@ enum LivingCoat: String, Codable, CaseIterable {
         case .skeleton: return "Skeleton"
         case .zombie: return "Zombie"
         case .robot: return "Robot"
+        case .legKey: return "Debug Legs"
         }
     }
     var blurb: String {
@@ -639,6 +643,7 @@ enum LivingCoat: String, Codable, CaseIterable {
         case .skeleton: return "Nothing but bones: a ribcage, a skull, and bony legs."
         case .zombie: return "Green, rotting and stitched back together."
         case .robot: return "Riveted steel plates, glowing joints and a scanning light."
+        case .legKey: return "Each leg its own colour, to keep track of which is which. Right side front to back: red, orange, yellow, green; left side: blue, cyan, purple, pink."
         }
     }
 }
@@ -766,7 +771,7 @@ struct SpiderLook: Codable, Hashable {
             l.gradient = GradientCoat.allCases.randomElement()!
         } else if roll < 0.88 {
             l.skin = .living
-            l.living = LivingCoat.allCases.randomElement()!
+            l.living = LivingCoat.allCases.filter { $0 != .legKey }.randomElement()!
         } else {
             l.skin = .custom
             let h = CGFloat.random(in: 0..<1)
@@ -875,6 +880,15 @@ struct Gait: Codable, Equatable {
         get { motion == .natural }
         set { motion = newValue ? .natural : .classic }
     }
+    /// The new leg system, still being worked on: every leg keeps its place
+    /// on the body as it turns — in the round, toward you and away — and
+    /// crossing legs are drawn the nearer over the other. Off, its legs
+    /// move exactly as they did in version 1.0.0.
+    var continuity: Bool = Gait.continuityByDefault
+    /// Which leg system a spider has until its design says: the one of
+    /// version 1.0.0 — or, for the tools and for trying it out, the new
+    /// one with `SPIDER_NEW_LEGS=1` in the environment.
+    static var continuityByDefault = ProcessInfo.processInfo.environment["SPIDER_NEW_LEGS"] == "1"
 
     init(pace: CGFloat = 0.5, stride: CGFloat = 0.5, bounce: CGFloat = 0.5, stance: CGFloat = 0.5,
          style: GaitPreference = .mixed, bounciness: CGFloat = 0.5, natural: Bool = false) {
@@ -885,7 +899,7 @@ struct Gait: Codable, Equatable {
     // Written out so a design saved before a dial existed still loads,
     // taking that dial at its middle. (The leg motion is saved under both
     // keys: a build from before the refined walk reads `natural`.)
-    private enum CodingKeys: String, CodingKey { case pace, stride, bounce, stance, style, bounciness, natural, motion }
+    private enum CodingKeys: String, CodingKey { case pace, stride, bounce, stance, style, bounciness, natural, motion, continuity }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         pace = (try? c.decodeIfPresent(CGFloat.self, forKey: .pace)) ?? 0.5
@@ -896,6 +910,7 @@ struct Gait: Codable, Equatable {
         bounciness = (try? c.decodeIfPresent(CGFloat.self, forKey: .bounciness)) ?? 0.5
         let natural = (try? c.decodeIfPresent(Bool.self, forKey: .natural)) ?? false
         motion = (try? c.decodeIfPresent(LegMotion.self, forKey: .motion)) ?? (natural ? .natural : .classic)
+        continuity = (try? c.decodeIfPresent(Bool.self, forKey: .continuity)) ?? Gait.continuityByDefault
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -907,6 +922,7 @@ struct Gait: Codable, Equatable {
         try c.encode(bounciness, forKey: .bounciness)
         try c.encode(natural, forKey: .natural)
         try c.encode(motion, forKey: .motion)
+        try c.encode(continuity, forKey: .continuity)
     }
 
     var speedMul: CGFloat { lerp(0.55, 1.7, pace) }
