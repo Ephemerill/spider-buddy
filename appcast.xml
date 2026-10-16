@@ -4,31 +4,32 @@
     <title>Spider Buddy</title>
     <link>https://github.com/Ephemerill/spider-buddy/releases</link>
     <item>
-      <title>Spider Buddy 1.0.0</title>
-      <pubDate>Fri, 02 Oct 2026 15:38:28 +0000</pubDate>
-      <sparkle:version>1.0.0</sparkle:version>
-      <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
+      <title>Spider Buddy 1.0.1</title>
+      <pubDate>Fri, 16 Oct 2026 20:24:35 +0000</pubDate>
+      <sparkle:version>1.0.1</sparkle:version>
+      <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <sparkle:fullReleaseNotesLink>https://github.com/Ephemerill/spider-buddy/releases/tag/v1.0.0</sparkle:fullReleaseNotesLink>
-      <description sparkle:format="markdown"><![CDATA[## What's new in 1.0
+      <sparkle:fullReleaseNotesLink>https://github.com/Ephemerill/spider-buddy/releases/tag/v1.0.1</sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown"><![CDATA[## What's new in 1.0.1
 
-**A habitat of its own.** The tank is now a whole world bigger than its window, with a camera that follows your spider and an overview map. Build it a home from the house kit and furniture, or fill it with 84 natural things (branches, rocks, plants, logs and shelters it can walk into). Save your habitats and bring them back any time.
+**It can talk.** On Macs with Apple Intelligence, turn on *Apple Intelligence* at the top of Studio ▸ Thoughts and your spider thinks its own thoughts out loud. Click its bubble, or right-click it, to talk back.
 
-**A spider that lives there.** It gets to know new things, finds its own way around (walking, leaping, through doors), and uses its tank: drinking, sheltering, looking out, resting and sleeping, and preferring the cover you built. Creatures turn up depending on what's in the tank, and weather falls on it: rain wets what's open to the sky, snow settles and stone warms in the sun.
+**My Spiders.** Save the spider you've made and try out new ones without losing it. Studio has a new *My Spiders* tab where you can bring any saved spider back out, make a copy or delete one. Studio also asks before Surprise Me or Start Over would throw away a spider you haven't saved.
 
-**More alive.** It dances when music plays on your Mac, wanders with a purpose and doesn't turn back on every whim, and has body language: walking turned toward you, head cocks, double takes, winks, nods and sighs.
+**Desktop widgets are furniture.** It can stand and walk on your desktop widgets. Turn this off under Settings ▸ Behavior ▸ *Stand on Widgets*.
 
-**Smoother on its feet.** A new *Refined* leg motion (Studio ▸ Gait ▸ Leg motion), and rounding window corners now looks natural in every leg motion.
-
-**The cursor.** *Watch the Cursor* and *Come to the Cursor* are now separate settings.
-
-**Also:** you can send a bug report from inside the app, and it's steadier across Macs. It no longer freezes when a display is unplugged, it respects Low Power Mode from launch, and it keeps up better on slower machines.]]></description>
-      <enclosure url="https://github.com/Ephemerill/spider-buddy/releases/download/v1.0.0/SpiderBuddy-1.0.0.dmg" type="application/octet-stream" sparkle:edSignature="SoJ8eOjH3IJIoX7M86vUy3HzqDFFL2aEmtWD3QxGlCEgytvDkpFWRO/aVhBCx+WTBTUP6/SvS3sklEB7MX/kBg==" length="5673878"/>
+**Fixes:**
+- On a window right under the menu bar it no longer keeps jumping and bumping its head when it heads for its hammock. It also gets to the hammock more directly.
+- Once it's settled in its hammock, windows no longer turn it out. Only moving the pointer over it wakes it, and it gets up gently instead of falling.
+- When you minimize a window it's standing on, it drops off straight away instead of riding the window into the Dock.
+- On Macs with a notch, it walks along the screen's top edge below the camera.
+- Fixed a brief flash in the middle of the screen.]]></description>
+      <enclosure url="https://github.com/Ephemerill/spider-buddy/releases/download/v1.0.1/SpiderBuddy-1.0.1.dmg" type="application/octet-stream" sparkle:edSignature="s5ya6UFK3EYbGtfOrhH5CKsKXg6SuDOkeqKBdXFj9JoHeEyQSj3nm5RS5TOBfa/tf6AXEcHPxs5pcU+8taenBQ==" length="5787929"/>
     </item>
   </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: hJJcHeQ781TC0cdaye5AdvA99wVl511fFgtbnkxU/i344jvs/CjyglCyyd4rUSJqA5YCyB9umU3yslSoPjFzAQ==
-length: 2539
+edSignature: nxqzVXkeilV3fJW7vkclAqrKr7WmFTueCtTikt4tay0f/g22sH7BIVcL6zjDUOGlnEQk7jrTzmpHOwR2v6hmBw==
+length: 2364
 -->
