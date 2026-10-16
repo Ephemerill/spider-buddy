@@ -50,6 +50,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var tracesShown = false
     /// Whether it leaves traces at all (the setting).
     private var leavesTraces = false
+    /// Whether the widgets on the desktop are furniture to it (the setting).
+    private var standsOnWidgets = true
+    /// The widgets at the last look (for SPIDER_WIDGET_TEST).
+    private var lastWidgets: [TrackedWindow] = []
     /// The slider, 0...1: how many traces may be out at once, from a few
     /// up to no limit at all at the very top.
     private var traceLimitSetting: CGFloat = 0.45
@@ -109,6 +113,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let updater = Updater()
     private var studio: StudioController?
+    /// Its own words (Apple Intelligence), and the box to talk back in.
+    private let voice = SpiderVoice()
+    private var chat: ChatPanel?
+    /// The spider as last drawn: where its thought bubble is, for clicks.
+    private var lastPose: SpiderPose?
+    private var chatWaiting = false
     private var bugReport: BugReportController?
     private var studioVisible = false
     private var welcome: OnboardingController?
@@ -202,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         traces.enabled = leavesTraces
         traces.limit = AppDelegate.traceLimit(for: traceLimitSetting)
         spider.traces = traces
+        tracker.standsOnWidgets = standsOnWidgets
 
         buildWindow()
         buildStatusItem()
@@ -231,6 +242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setClimbsPages(climbsPages, save: false)
         tracker.onUpdate = { [weak self] windows, fullScreens, docks, taken in
             guard let self else { return }
+            self.lastWidgets = windows.filter(\.widget)
             let t0 = Perf.timing ? CACurrentMediaTime() : 0
             defer {
                 if Perf.timing, CACurrentMediaTime() - t0 > 0.004 { Perf.note("windows: update (\(windows.count) windows)", ms: (CACurrentMediaTime() - t0) * 1000) }
@@ -469,6 +481,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if now - start > secs { timer.invalidate(); NSApp.terminate(nil) }
             }
         }
+        // SPIDER_WIDGET_TEST=1 lists the desktop widgets it sees, drops the
+        // spider over one no window covers, says whether it landed on it,
+        // then turns widgets off (in memory only) to see it lose its footing.
+        if ProcessInfo.processInfo.environment["SPIDER_WIDGET_TEST"] != nil {
+            memory = nil
+            spider.memory = nil
+            var target: TrackedWindow?
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self else { return }
+                let off = self.map.standoff
+                for w in self.lastWidgets {
+                    let top = V2(w.frame.midX, w.frame.maxY + off)
+                    let clear = self.map.isClear(top, depth: w.depth, margin: 40)
+                    print("widget test: \(w.owner) win:\(w.id) \(Int(w.frame.minX)),\(Int(w.frame.minY)) \(Int(w.frame.width))x\(Int(w.frame.height)) depth \(w.depth) in map \(self.map.loop("win:\(w.id)") != nil) top clear \(clear)")
+                    if clear, target == nil { target = w }
+                }
+                guard let w = target else {
+                    print("widget test: [FAIL] no widget with its top clear of windows (\(self.lastWidgets.count) seen)")
+                    NSApp.terminate(nil)
+                    return
+                }
+                self.spider.teleport(to: V2(w.frame.midX, min(w.frame.maxY + 90, (NSScreen.main?.visibleFrame.maxY ?? 900) - 30)))
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) { [weak self] in
+                guard let self, let w = target else { return }
+                let on = self.spider.standingOn?.loopID
+                print("widget test: [\(on == "win:\(w.id)" ? "ok" : "FAIL")] dropped over win:\(w.id), standing on \(on ?? "nothing") — \(self.spider.debugState)")
+                self.tracker.standsOnWidgets = false
+                self.tracker.pollNow()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6.5) { [weak self] in
+                guard let self, let w = target else { return }
+                let on = self.spider.standingOn?.loopID
+                print("widget test: [\(on != "win:\(w.id)" && self.map.loop("win:\(w.id)") == nil ? "ok" : "FAIL")] widgets off: standing on \(on ?? "nothing"), widget in map \(self.map.loop("win:\(w.id)") != nil)")
+                fflush(stdout)
+                NSApp.terminate(nil)
+            }
+        }
+        // SPIDER_MINIMIZE_TEST=1 opens a window of its own, stands the
+        // spider on top of it, minimizes it into the Dock (with whatever
+        // effect the Dock is set to), prints where the spider is every
+        // frame through it, and quits. It should let go at once.
+        if ProcessInfo.processInfo.environment["SPIDER_MINIMIZE_TEST"] != nil {
+            memory = nil
+            spider.memory = nil
+            let test = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 420),
+                                styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
+            test.isReleasedWhenClosed = false
+            test.title = "Minimize test"
+            test.center()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                guard let self else { return }
+                self.tracker.ownFurniture.insert(CGWindowID(test.windowNumber))
+                test.orderFrontRegardless()
+                self.tracker.pollNow()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self else { return }
+                let id = "win:\(test.windowNumber)"
+                guard !self.inHabitat, let loop = self.map.loop(id),
+                      let top = loop.segs.indices.filter({ loop.segs[$0].normal.y > 0.9 }).max(by: { loop.segs[$0].len < loop.segs[$1].len })
+                else {
+                    print("minimize test: no top to stand on (in its tank: \(self.inHabitat)); \(id) among \(self.map.loops.map(\.id)), visible \(test.isVisible)")
+                    NSApp.terminate(nil)
+                    return
+                }
+                self.spider.debugAttach(loopID: id, segIdx: top, t: loop.segs[top].len * 0.6, dir: 1)
+                print("minimize test: on \(id), \(self.spider.debugState)")
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self else { return }
+                let start = CACurrentMediaTime()
+                print("minimize test: minimizing")
+                test.miniaturize(nil)
+                Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { timer in
+                    let t = CACurrentMediaTime() - start
+                    print(String(format: "minimize test %.3fs: %@ at %.0f,%.0f, window %@", t, self.spider.debugState,
+                                 self.spider.worldPos.x, self.spider.worldPos.y,
+                                 self.map.loop("win:\(test.windowNumber)").map { "\(Int($0.rect.minX)),\(Int($0.rect.minY)) \(Int($0.rect.width))x\(Int($0.rect.height))" } ?? "gone"))
+                    fflush(stdout)
+                    if t > 1.2 {
+                        timer.invalidate()
+                        test.deminiaturize(nil)
+                        test.close()
+                        NSApp.terminate(nil)
+                    }
+                }
+            }
+        }
         // SPIDER_TRACE_TEST=secs takes every chance to leave a trace (memory
         // off, and hammocks off for the run — no setting is saved), lays out
         // a few to look at straight away — lines down from the menu bar, a
@@ -690,6 +791,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 wait(60)
             }
         }
+        // SPIDER_SPIDERS_TEST=dir checks My Spiders (with SPIDER_LIBRARY set
+        // to an empty folder of its own), shoots it there, then quits.
+        if let dir = ProcessInfo.processInfo.environment["SPIDER_SPIDERS_TEST"] {
+            openStudio()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                for line in self?.studio?.debugSpidersTest(shots: dir) ?? ["[FAIL] no studio"] { print(line) }
+                fflush(stdout)
+                NSApp.terminate(nil)
+            }
+        }
+        // SPIDER_CHAT_TEST="what to say" opens the conversation, says it, and
+        // prints a passing thought and the answers (SPIDER_CHAT_KEEP=1 leaves
+        // it running after).
+        if let said = ProcessInfo.processInfo.environment["SPIDER_CHAT_TEST"] { chatTest(said) }
+        if let n = ProcessInfo.processInfo.environment["SPIDER_VOICE_EVAL"].flatMap(Int.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.voiceEval(n) }
+        }
         // SPIDER_STUDIO=1 opens the studio straight away (handy for testing).
         if ProcessInfo.processInfo.environment["SPIDER_STUDIO"] == "1" { openStudio() }
         // SPIDER_STUDIO_SHOT=dir writes one PNG per studio tab there, then quits.
@@ -697,8 +815,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openStudio()
             // SPIDER_STUDIO_SHOT_CUSTOM=1 shows the hand-shaping sliders too.
             if ProcessInfo.processInfo.environment["SPIDER_STUDIO_SHOT_CUSTOM"] == "1" { studio?.debugSelectCustom() }
+            // SPIDER_STUDIO_SHOT_VOICE=pictures|phrases|intelligence: the Thoughts tab thinking that way.
+            if let v = ProcessInfo.processInfo.environment["SPIDER_STUDIO_SHOT_VOICE"] {
+                studio?.debugVoice(ThoughtVoice(rawValue: v) ?? .phrases, intelligence: v == "intelligence")
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-                for i in 0..<11 { self?.studio?.snapshot(to: "\(dir)/studio_tab\(i).png", tab: i) }
+                for i in 0..<12 { self?.studio?.snapshot(to: "\(dir)/studio_tab\(i).png", tab: i) }
                 NSApp.terminate(nil)
             }
         }
@@ -732,6 +854,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window = OverlayWindow(frame: CGRect(x: 0, y: 0, width: side, height: side))
         view = SpiderView(frame: CGRect(x: 0, y: 0, width: side, height: side))
         view.spider = spider
+        Spider.words = voice
+        view.bubbleAt = { [weak self] p in self?.bubbleUnder(p) ?? false }
+        view.onBubble = { [weak self] in self?.openChat() }
         view.onShow = { [weak self] pose in
             // (A picture that turns up after it has gone into the tank is
             // for nothing: it is drawn in there now.)
@@ -889,7 +1014,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // stale decision here is a spider you cannot pick up.
         let cursorNow = V2(NSEvent.mouseLocation)
         // (In the tank, it is the tank's window that takes the clicks.)
-        let wantsMouseNow = interactive && (spider.isHeld || (!inHabitat && spider.hitTest(cursorNow)))
+        let wantsMouseNow = interactive && (spider.isHeld || (!inHabitat && (spider.hitTest(cursorNow) || bubbleUnder(cursorNow))))
         if window.ignoresMouseEvents == wantsMouseNow {
             window.ignoresMouseEvents = !wantsMouseNow
         }
@@ -970,6 +1095,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let b = CACurrentMediaTime()
             let looked = tickTank(dt: dt)
             let pose = spider.pose()
+            lastPose = pose
             let moved = show(pose)
             settle(moved: updateVisitors(dt: dt, now: a) || moved || looked || toyBox.astir, critters: spider.preyAstir || traces.astir)
             let c = CACurrentMediaTime()
@@ -991,6 +1117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             spider.update(dt: dt)
             let pose = spider.pose()
+            lastPose = pose
             let wantsRoom = pose.emote == .thought
             if wantsRoom != thoughtRoom {
                 thoughtRoom = wantsRoom
@@ -1011,7 +1138,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateSurroundings(now: now)
 
         // Only swallow clicks when the pointer is actually on the spider.
-        let wantsMouse = interactive && (spider.isHeld || (!inHabitat && spider.hitTest(cursor)))
+        let wantsMouse = interactive && (spider.isHeld || (!inHabitat && (spider.hitTest(cursor) || bubbleUnder(cursor))))
+        keepChat()
         if window.ignoresMouseEvents == wantsMouse {
             window.ignoresMouseEvents = !wantsMouse
         }
@@ -1658,6 +1786,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshMenu()
     }
 
+    /// Widgets on or off as furniture: a fresh look at the desktop at once,
+    /// so one it is standing on goes from under it straight away (and it
+    /// falls, as off a window closed under it).
+    private func setStandsOnWidgets(_ on: Bool) {
+        standsOnWidgets = on
+        tracker.standsOnWidgets = on
+        tracker.pollNow()
+        saveSettings()
+        refreshMenu()
+    }
+
     // MARK: Web pages
 
     /// Climbing pages on or off: the watcher, the browsers' titles (a new
@@ -1875,6 +2014,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         toggle.target = self
         toggle.keyEquivalentModifierMask = []
         menu.addItem(toggle)
+        if spider.canTalk, !hidden { add(menu, "Talk to \(name)…", #selector(openChat), key: "t") }
         add(menu, "Spider Studio…", #selector(openStudio), key: "s")
         add(menu, "Settings…", #selector(openSettings), key: ",")
         menu.addItem(.separator())
@@ -2093,6 +2233,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         enabled: { [unowned self] in spider.config.followCursor }),
                 .toggle("Click to Pick Up", help: "Click it to say hello, drag it about and throw it. Off, clicks go straight through it.",
                         get: { [unowned self] in interactive }, set: { [unowned self] _ in toggleInteractive() }),
+            ]),
+            PanelSection(title: "The Desktop", rows: [
+                .toggle("Stand on Widgets", help: "It climbs onto the widgets on your desktop and gets about on them as it does on windows: along the top, round the corners, down the sides and underneath. A window in front of a widget hides it from the spider too.",
+                        get: { [unowned self] in standsOnWidgets }, set: { [unowned self] on in if on != standsOnWidgets { setStandsOnWidgets(on) } }),
             ]),
             PanelSection(title: "Silk", rows: [
                 .toggle("Shoot Webs", help: "Lines to swing on, drop down and climb up.",
@@ -2365,6 +2509,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             putAway()
             return
         }
+        // On the spider (or its bubble), with words of its own: a word with
+        // it, rather than the menu (all of which is up in the menu bar).
+        if let event = note.object as? NSEvent, spider.canTalk, !hidden, rightClickOnSpider(event) {
+            openChat()
+            return
+        }
         let menu = buildMenu()
         if let event = note.object as? NSEvent {
             NSMenu.popUpContextMenu(menu, with: event, for: event.window?.contentView ?? view)
@@ -2488,6 +2638,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hc.weather.persists = false
             hc.weather.debugForce(k)
         }
+        hc.scene.bubbleAt = { [weak self] p in self?.bubbleUnder(p) ?? false }
+        hc.scene.onBubble = { [weak self] in self?.openChat() }
         hc.scene.onThunder = { [weak self] p, loud in
             guard let self, self.inHabitat, !self.spider.isHeld else { return }
             self.spider.thunder(at: p, loud: loud)
@@ -5003,8 +5155,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         spriteSide = SpiderRenderer.spriteSide(for: spider.config.scale) + (thoughtRoom ? (240 * spider.config.scale).rounded() : 0)
         side = spriteSide + AppDelegate.windowSlack
         view.resize(sprite: spriteSide, window: side)
-        window.setContentSize(CGSize(width: side, height: side))
+        // Resized about the spider, and its picture put back where it is in
+        // the same moment: resized from a corner, the picture would sit for
+        // a frame or two where it was in the window, a long way off the
+        // spider — a thought bubble coming up flashed the spider elsewhere.
+        // (Where its picture is up — out of the tank in your hand, that is
+        // on the screen, not in the tank's world.)
+        let at = view.shownPos ?? spider.worldPos
+        window.setFrame(CGRect(x: (at.x - side / 2).rounded(), y: (at.y - side / 2).rounded(), width: side, height: side),
+                        display: false)
         view.worldOrigin = window.frame.origin
+        view.reseatSprite()
     }
 
     private func setEnergy(level s: CGFloat) {
@@ -5072,6 +5233,168 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         studio?.scale = spider.config.scale
         studio?.show()
+    }
+
+    // MARK: - Talking with it
+    //
+    // Its own words on (Studio ▸ Thoughts), a right-click on it, a click on
+    // its thought bubble — or Talk to … in the menu bar menu — opens a box
+    // by it to type in (ChatPanel).
+    // It listens while that is open, and answers in its bubble.
+
+    /// Its bubble is under `p` (on the screen, or in the tank's world,
+    /// wherever it is drawn), and it can be talked with.
+    private func bubbleUnder(_ p: V2) -> Bool {
+        guard spider.canTalk, let pose = lastPose, let r = SpiderRenderer.thoughtBubbleRect(pose) else { return false }
+        return r.contains(p.point)
+    }
+
+    /// Where the spider is on the screen, and its bubble.
+    private var spiderOnScreen: (at: CGPoint, bubble: CGRect?) {
+        var at = spider.worldPos
+        var bubble = lastPose.flatMap { SpiderRenderer.thoughtBubbleRect($0) }
+        if inHabitat, !spider.isHeld, let hc = habitat {
+            let shift = hc.scene.screenPoint(fromWorld: at) - at
+            at = at + shift
+            bubble = bubble?.offsetBy(dx: shift.x, dy: shift.y)
+        }
+        return (at.point, bubble)
+    }
+
+    /// A right-click was on the spider or its bubble: on its own window, or
+    /// on it in the tank.
+    private func rightClickOnSpider(_ event: NSEvent) -> Bool {
+        if event.window === window { return true }
+        guard inHabitat, let hc = habitat, event.window === hc.window else { return false }
+        let w = hc.scene.worldPoint(fromScreen: V2(NSEvent.mouseLocation))
+        return spider.hitTest(w) || bubbleUnder(w)
+    }
+
+    @objc private func openChat() {
+        guard spider.canTalk, !hidden else { return }
+        spider.startListening()
+        voice.prewarm(as: spider.design)
+        if chat == nil {
+            let c = ChatPanel()
+            c.onSend = { [weak self] text in
+                guard let self else { return }
+                self.spider.hear(text)
+                if let log = self.chatLog { log("you: \(text)") }
+            }
+            c.onClose = { [weak self] in self?.spider.stopListening() }
+            chat = c
+        }
+        let where_ = spiderOnScreen
+        chatWaiting = false
+        chat?.setWaiting(false)
+        chat?.open(name: spider.name, near: where_.at, bubble: where_.bubble)
+    }
+
+    /// Each frame with the conversation open: it keeps listening, and the
+    /// box keeps by it.
+    private func keepChat() {
+        guard let chat, chat.isVisible else { return }
+        guard spider.canTalk, !hidden else { chat.finish(); return }
+        spider.keepListening()
+        let where_ = spiderOnScreen
+        chat.place(near: where_.at, bubble: where_.bubble)
+        if chatWaiting != spider.awaitingReply {
+            chatWaiting = spider.awaitingReply
+            chat.setWaiting(chatWaiting)
+        }
+    }
+
+    private var chatLog: ((String) -> Void)?
+
+    /// SPIDER_VOICE_EVAL=n: n passing thoughts, and answers to a set of
+    /// things people say, straight from the model, then quits.
+    private func voiceEval(_ n: Int) {
+        var d = spider.design
+        d.intelligence = true
+        if let m = ProcessInfo.processInfo.environment["SPIDER_VOICE_MANNER"] { d.manner = m }
+        if let name = ProcessInfo.processInfo.environment["SPIDER_VOICE_PRESET"], let p = Personality.presets.first(where: { $0.name == name }) {
+            d.personality = p.p
+        }
+        if let packs = ProcessInfo.processInfo.environment["SPIDER_VOICE_PACKS"] {
+            d.packs = packs.split(separator: ",").compactMap { ThoughtPack(rawValue: String($0)) }
+        }
+        spider.apply(design: d)
+        print("voice: \(voice.status), packs \(d.packs.map(\.rawValue)), manner \"\(d.manner)\"")
+        print("situation: \(spider.situation())")
+        if ProcessInfo.processInfo.environment["SPIDER_VOICE_PERSONA"] == "1" { print(SpiderVoice.persona(d)) }
+        let questions = ProcessInfo.processInfo.environment["SPIDER_VOICE_ASK"]?.components(separatedBy: "|")
+            ?? ["hi!", "what are you doing?", "I'm having a rough day", "do you like bugs?", "what's the weather like?",
+                "can you help me with my homework?", "what's your name?", "I got a new puppy!", "goodnight!", "are you hungry?",
+                "what do you think of cats?", "I'm bored", "how old are you?", "thank you for being here"]
+        var jobs: [(@escaping () -> Void) -> Void] = []
+        for _ in 0..<n {
+            jobs.append { next in
+                let spark = self.spider.spark()
+                self.voice.muse(as: d, about: spark, avoiding: []) { line in
+                    print("THOUGHT [\(spark.prefix(48))] → \(line ?? "(none)")"); fflush(stdout); next()
+                }
+            }
+        }
+        for q in questions {
+            jobs.append { next in
+                self.voice.reply(as: d, situation: self.spider.situation(), to: q, after: []) { a in
+                    switch a {
+                    case .said(let line, let f): print("REPLY  \(q) → [\(f.rawValue)] \(line)")
+                    case .declined: print("REPLY  \(q) → (declined)")
+                    case .failed: print("REPLY  \(q) → (failed)")
+                    }
+                    fflush(stdout); next()
+                }
+            }
+        }
+        func run(_ i: Int) {
+            guard i < jobs.count else { NSApp.terminate(nil); return }
+            let job = jobs[i]; job { run(i + 1) }
+        }
+        run(0)
+    }
+
+    private func chatTest(_ said: String) {
+        chatLog = { print($0); fflush(stdout) }
+        var d = spider.design
+        if !d.intelligence { d.intelligence = true; spider.apply(design: d) }
+        print("voice: \(voice.status)")
+        print("situation: \(spider.situation())")
+        fflush(stdout)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard let self else { return }
+            if ProcessInfo.processInfo.environment["SPIDER_CHAT_RIGHTCLICK"] == "1" {
+                // As if right-clicked, on it.
+                let p = CGPoint(x: self.spider.worldPos.x - self.view.worldOrigin.x, y: self.spider.worldPos.y - self.view.worldOrigin.y)
+                if let e = NSEvent.mouseEvent(with: .rightMouseDown, location: p, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: self.window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                    self.view.rightMouseDown(with: e)
+                }
+            } else {
+                self.openChat()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                print("chat: visible \(self.chat?.isVisible == true), key \(self.chat?.isKeyWindow == true), listening \(self.spider.listening), at \(self.spiderOnScreen.at), panel \(self.chat?.frame ?? .zero)")
+                fflush(stdout)
+                // Its answers as they come.
+                var heard = self.spider.conversation.count
+                Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
+                    let c = self.spider.conversation
+                    if c.count != heard, let last = c.last {
+                        heard = c.count
+                        print("\(self.spider.name): \(last.it)   [bubble up: \(self.lastPose?.emote == .thought), chat open: \(self.chat?.isVisible == true), \(self.spider.debugState), hidden \(self.hidden)]")
+                        fflush(stdout)
+                    }
+                }
+                for (i, line) in said.components(separatedBy: "|").enumerated() {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 9) { self.chat?.debugSend(line) }
+                }
+                if ProcessInfo.processInfo.environment["SPIDER_CHAT_KEEP"] != "1" {
+                    let n = Double(said.components(separatedBy: "|").count)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + n * 9 + 2) { NSApp.terminate(nil) }
+                }
+            }
+        }
     }
 
     // MARK: - Bug reports
@@ -5568,6 +5891,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         d.set(tankWildOn, forKey: "tankWildlife")
         d.set(toySounds, forKey: "toySounds")
         d.set(leavesTraces, forKey: "traces")
+        d.set(standsOnWidgets, forKey: "widgets")
         if AppDelegate.pagesReady { d.set(climbsPages, forKey: "climbPages") }
     }
 
@@ -5579,7 +5903,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             "visitors": false, "visitFrequency": 0.5, "visitStay": 0.5,
             "feelPower": true, "feelWeather": true, "showRain": true, "feelCommotion": true, "danceToMusic": true,
             "learns": true, "wildlife": false, "wildFrequency": 0.35, "toySounds": true, "traces": false, "traceLimit": 0.45,
-            "tankWildlife": true, "climbPages": false,
+            "tankWildlife": true, "climbPages": false, "widgets": true,
         ])
         // (Not ready yet: off, and forget any old "on" so it starts off.)
         if !AppDelegate.pagesReady { d.removeObject(forKey: "climbPages") }
@@ -5587,6 +5911,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tankWildOn = d.bool(forKey: "tankWildlife")
         toySounds = d.bool(forKey: "toySounds")
         leavesTraces = d.bool(forKey: "traces")
+        standsOnWidgets = d.bool(forKey: "widgets")
         traceLimitSetting = CGFloat(d.double(forKey: "traceLimit"))
         feelsPower = d.bool(forKey: "feelPower")
         powerOverride = d.object(forKey: "lowPowerOverride") as? Bool

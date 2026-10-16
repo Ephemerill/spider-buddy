@@ -1505,6 +1505,99 @@ do {
     }
 }
 
+// A window nearly maximized over half of the hammock: it gets in and
+// sleeps all the same (the hammock is drawn over every window), and only a
+// window coming over it — dragged across — turns it out.
+do {
+    let s10 = Spider(map: map)
+    s10.config.followCursor = false
+    s10.config.approachCursor = false
+    _ = settleUntilAttached(s10)
+    s10.restoreHammock(left: true)
+    let h = s10.hammock!
+    // (Nearly maximized: a little short of the walls, its top half way
+    // down the hammock — under the bed.)
+    var big = CGRect(x: screen.minX + 14, y: screen.minY + 40,
+                     width: screen.width - 28, height: h.rect.midY - (screen.minY + 40))
+    map.rebuild(windows: [TrackedWindow(id: 888, frame: big, depth: 0, owner: "Mock")])
+    _ = settleUntilAttached(s10, limit: 10)
+    s10.napInHammock()
+    var inIt = -1.0, n = 0
+    var trail: [String] = []
+    while CGFloat(n) * dt < 120, inIt < 0 {
+        s10.setCursor(V2(-4000, -4000)); s10.update(dt: dt); n += 1
+        if trail.last != s10.debugState { trail.append(s10.debugState) }
+        if s10.debugState == "nesting" { inIt = Double(n) * Double(dt) }
+    }
+    var stayed = inIt >= 0
+    n = 0
+    while stayed, CGFloat(n) * dt < 15 {
+        s10.setCursor(V2(-4000, -4000)); s10.update(dt: dt); n += 1
+        if s10.debugState != "nesting" { stayed = false }
+    }
+    expect("hammock half under a window: gets in and stays", stayed,
+           (inIt < 0 ? "never got in" : String(format: "in at %.1fs, then %@", inIt, s10.debugState)) + "  " + trail.suffix(6).joined(separator: " > "))
+    expect("hammock half under a window: the window does cover its bed", !map.isVisible(s10.worldPos, depth: Int.max),
+           "\(big) bed \(Int(s10.worldPos.x)),\(Int(s10.worldPos.y))")
+    // Now drag the window across it, a little each frame: no matter to it.
+    for _ in 0..<40 {
+        big.origin.x -= 6
+        map.rebuild(windows: [TrackedWindow(id: 888, frame: big, depth: 0, owner: "Mock")])
+        s10.setCursor(V2(-4000, -4000)); s10.update(dt: dt)
+    }
+    expect("a window dragged across the hammock doesn't disturb it", s10.debugState == "nesting" && s10.pose().sleep > 0.5,
+           "\(s10.debugState) sleep \(String(format: "%.2f", Double(s10.pose().sleep)))")
+    // The pointer moved over it: it gets up and walks out, never falls.
+    let bed = s10.worldPos
+    var states: [String] = []
+    for i in 0..<30 {
+        s10.setCursor(bed + V2(CGFloat(i - 15) * 3, 0)); s10.update(dt: dt)
+        if states.last != s10.debugState { states.append(s10.debugState) }
+    }
+    n = 0
+    while CGFloat(n) * dt < 8 {
+        s10.setCursor(V2(-4000, -4000)); s10.update(dt: dt); n += 1
+        if states.last != s10.debugState { states.append(s10.debugState) }
+    }
+    expect("the pointer over it in its hammock: it gets up", states.count > 1, states.joined(separator: " > "))
+    expect("…on its feet, without falling", !states.contains { $0 == "fall" || $0.hasPrefix("jump") || $0 == "tumble" }
+           && (states.dropFirst().first?.hasPrefix("attached") ?? false),
+           states.prefix(6).joined(separator: " > "))
+    map.rebuild(windows: windows)
+}
+
+// On top of a window tucked right under the menu bar, off to its hammock:
+// no headroom to leap up from, so it doesn't — it used to, over and over,
+// knocking its head on the top of the screen and dropping back.
+do {
+    let mb = map.menuBarBottom(for: screen) ?? screen.maxY
+    let tucked = CGRect(x: screen.minX + 600, y: screen.minY + 300, width: 700, height: mb - (screen.minY + 300))
+    map.rebuild(windows: [TrackedWindow(id: 889, frame: tucked, depth: 0, owner: "Mock")])
+    var worst = 0, late: [String] = []
+    for _ in 0..<4 {
+        let s11 = Spider(map: map)
+        s11.config.followCursor = false
+        s11.config.approachCursor = false
+        _ = settleUntilAttached(s11)
+        s11.restoreHammock(left: true)
+        if let top = map.loop("win:889"), let seg = top.segs.firstIndex(where: { $0.facing == .up }) {
+            s11.debugAttach(loopID: top.id, segIdx: seg, t: 0.5, dir: -1)
+        }
+        s11.napInHammock()
+        var jumps = 0, n = 0, last = ""
+        while CGFloat(n) * dt < 40, s11.debugState != "nesting" {
+            s11.setCursor(V2(-4000, -4000)); s11.update(dt: dt); n += 1
+            if s11.debugState != last, s11.debugState.hasPrefix("jump") { jumps += 1 }
+            last = s11.debugState
+        }
+        worst = max(worst, jumps)
+        if s11.debugState != "nesting" { late.append(s11.debugState) }
+    }
+    expect("a window right under the menu bar: off its top to the hammock, no knocking its head", worst <= 3 && late.isEmpty,
+           "most leaps \(worst)" + (late.isEmpty ? "" : ", not in after 40 s: " + late.joined(separator: " | ")))
+    map.rebuild(windows: windows)
+}
+
 // Full-screen video: cinema manners. Only the floor and ceiling exist; it
 // settles and watches, wanders a little, never leaps or swings, does not
 // nod off for a long while, and ignores the pointer.

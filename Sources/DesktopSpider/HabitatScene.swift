@@ -1285,6 +1285,11 @@ final class HabitatSceneView: NSView {
     private var panning = false
     private var panSamples: [(p: CGPoint, t: TimeInterval)] = []
 
+    /// Its thought bubble is under this point (in the tank's world), to be
+    /// clicked to talk back; and what a click on it does.
+    var bubbleAt: ((V2) -> Bool)?
+    var onBubble: (() -> Void)?
+
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         camera.touched()
@@ -1292,6 +1297,10 @@ final class HabitatSceneView: NSView {
         guard let spider else { beginGlassPress(event); return }
         let s = screenPoint(event)
         let w = worldPoint(fromScreen: s)
+        if spider.inHabitat, spider.map === map, !spider.hitTest(w), bubbleAt?(w) == true {
+            onBubble?()
+            return
+        }
         pressedAt = s
         pressTime = event.timestamp
         dragSamples = [(s, event.timestamp)]

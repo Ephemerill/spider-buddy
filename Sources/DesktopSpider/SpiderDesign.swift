@@ -696,7 +696,7 @@ struct SpiderLook: Codable, Hashable {
     var fuzz: Int = 1
     /// Whether the face is drawn in front of the near-side legs (the leg that
     /// reaches ahead of the face crosses it) or behind them.
-    var faceOverLegs = true
+    var faceOverLegs = false
 
     init() {}
 
@@ -751,7 +751,7 @@ struct SpiderLook: Codable, Hashable {
         hat = (try? c.decodeIfPresent(Hat.self, forKey: .hat)) ?? .none
         accessory = (try? c.decodeIfPresent(Accessory.self, forKey: .accessory)) ?? .none
         fuzz = (try? c.decodeIfPresent(Int.self, forKey: .fuzz)) ?? 1
-        faceOverLegs = (try? c.decodeIfPresent(Bool.self, forKey: .faceOverLegs)) ?? true
+        faceOverLegs = (try? c.decodeIfPresent(Bool.self, forKey: .faceOverLegs)) ?? false
     }
 
     static func random() -> SpiderLook {
@@ -783,7 +783,7 @@ struct SpiderLook: Codable, Hashable {
         l.hat = chance(0.45) ? .none : Hat.allCases.randomElement()!
         l.accessory = chance(0.5) ? .none : Accessory.allCases.randomElement()!
         l.fuzz = Int.random(in: 0...2)
-        l.faceOverLegs = true
+        l.faceOverLegs = false
         return l
     }
 }
@@ -880,15 +880,6 @@ struct Gait: Codable, Equatable {
         get { motion == .natural }
         set { motion = newValue ? .natural : .classic }
     }
-    /// The new leg system, still being worked on: every leg keeps its place
-    /// on the body as it turns — in the round, toward you and away — and
-    /// crossing legs are drawn the nearer over the other. Off, its legs
-    /// move exactly as they did in version 1.0.0.
-    var continuity: Bool = Gait.continuityByDefault
-    /// Which leg system a spider has until its design says: the one of
-    /// version 1.0.0 — or, for the tools and for trying it out, the new
-    /// one with `SPIDER_NEW_LEGS=1` in the environment.
-    static var continuityByDefault = ProcessInfo.processInfo.environment["SPIDER_NEW_LEGS"] == "1"
 
     init(pace: CGFloat = 0.5, stride: CGFloat = 0.5, bounce: CGFloat = 0.5, stance: CGFloat = 0.5,
          style: GaitPreference = .mixed, bounciness: CGFloat = 0.5, natural: Bool = false) {
@@ -899,7 +890,7 @@ struct Gait: Codable, Equatable {
     // Written out so a design saved before a dial existed still loads,
     // taking that dial at its middle. (The leg motion is saved under both
     // keys: a build from before the refined walk reads `natural`.)
-    private enum CodingKeys: String, CodingKey { case pace, stride, bounce, stance, style, bounciness, natural, motion, continuity }
+    private enum CodingKeys: String, CodingKey { case pace, stride, bounce, stance, style, bounciness, natural, motion }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         pace = (try? c.decodeIfPresent(CGFloat.self, forKey: .pace)) ?? 0.5
@@ -910,7 +901,6 @@ struct Gait: Codable, Equatable {
         bounciness = (try? c.decodeIfPresent(CGFloat.self, forKey: .bounciness)) ?? 0.5
         let natural = (try? c.decodeIfPresent(Bool.self, forKey: .natural)) ?? false
         motion = (try? c.decodeIfPresent(LegMotion.self, forKey: .motion)) ?? (natural ? .natural : .classic)
-        continuity = (try? c.decodeIfPresent(Bool.self, forKey: .continuity)) ?? Gait.continuityByDefault
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -922,7 +912,6 @@ struct Gait: Codable, Equatable {
         try c.encode(bounciness, forKey: .bounciness)
         try c.encode(natural, forKey: .natural)
         try c.encode(motion, forKey: .motion)
-        try c.encode(continuity, forKey: .continuity)
     }
 
     var speedMul: CGFloat { lerp(0.55, 1.7, pace) }
@@ -1009,7 +998,6 @@ struct Habits: Codable, Equatable {
         ("Quiet moments", [
             ("Looking about", \.look), ("Resting", \.rest), ("Grooming", \.groom),
             ("Fidgeting", \.fidget), ("Scratching", \.scratch), ("Peering over the edge", \.peer),
-            ("Thinking out loud", \.muse),
         ]),
         ("With you", [
             ("Coming to see the pointer", \.approach), ("Craning at the pointer", \.curious),
@@ -1106,6 +1094,63 @@ enum ThoughtPack: String, Codable, CaseIterable {
     }
 }
 
+/// How it puts what it thinks into the bubble (with Apple Intelligence off,
+/// or not to be had).
+enum ThoughtVoice: String, Codable, CaseIterable {
+    /// Little drawings only: a heart, the rain, a bug.
+    case pictures
+    /// Lines from its packs and your own, as written.
+    case phrases
+
+    var label: String {
+        switch self {
+        case .pictures: return "Pictures"
+        case .phrases: return "Phrases"
+        }
+    }
+}
+
+/// Whether this Mac can give it words of its own (Apple Intelligence's
+/// on-device model).
+enum VoiceStatus: Equatable {
+    case ready
+    /// Apple Intelligence is off in System Settings.
+    case turnedOff
+    /// It is on, and the model is still coming down.
+    case gettingReady
+    /// The Mac cannot run Apple Intelligence.
+    case notThisMac
+    /// Older than macOS 26.
+    case needsNewerMacOS
+
+    var explanation: String {
+        switch self {
+        case .ready: return "Ready. Everything it writes is made on this Mac and stays here."
+        case .turnedOff: return "Turn on Apple Intelligence in System Settings to give it words of its own."
+        case .gettingReady: return "Apple Intelligence is still getting ready on this Mac. Until then it thinks the usual way."
+        case .notThisMac: return "This Mac can't run Apple Intelligence, so it thinks the usual way."
+        case .needsNewerMacOS: return "Words of its own need macOS 26 or later with Apple Intelligence."
+        }
+    }
+}
+
+extension ThoughtPack {
+    /// What the pack is about, for a spider using its own words: the topic,
+    /// told to the model.
+    var topic: String {
+        switch self {
+        case .chitchat: return "small talk about your day and whatever is going on around you"
+        case .encouragement: return "gentle encouragement for the person at the computer: breaks, water, being kind to themselves"
+        case .spiderFacts: return "true facts about jumping spiders, told about yourself"
+        case .bibleVerses: return "your Christian faith, warmly and simply (never quoting or making up Bible verses yourself)"
+        }
+    }
+
+    /// Lines worth saying exactly as written, never put in its own words: a
+    /// verse is quoted, not paraphrased.
+    var keepsItsWords: Bool { self == .bibleVerses }
+}
+
 struct SpiderDesign: Codable, Equatable {
     var name: String = "Spider"
     var look = SpiderLook()
@@ -1115,9 +1160,17 @@ struct SpiderDesign: Codable, Equatable {
     /// Which packs of things it thinks, and any of your own.
     var packs: [ThoughtPack] = [.chitchat]
     var customPhrases: [String] = []
+    /// Pictures or phrases.
+    var voice: ThoughtVoice = .phrases
+    /// Apple Intelligence on: words of its own, written for the moment on
+    /// the Mac (SpiderVoice.swift), and it answers when you talk to it.
+    var intelligence = false
+    /// How it talks, in your words ("dry wit, loves puns"), for its own words.
+    var manner: String = ""
 
     init(name: String = "Spider", look: SpiderLook = SpiderLook(), personality: Personality = Personality(),
-         gait: Gait = Gait(), habits: Habits = Habits(), packs: [ThoughtPack] = [.chitchat], customPhrases: [String] = []) {
+         gait: Gait = Gait(), habits: Habits = Habits(), packs: [ThoughtPack] = [.chitchat], customPhrases: [String] = [],
+         voice: ThoughtVoice = .phrases, intelligence: Bool = false, manner: String = "") {
         self.name = name
         self.look = look
         self.personality = personality
@@ -1125,10 +1178,13 @@ struct SpiderDesign: Codable, Equatable {
         self.habits = habits
         self.packs = packs
         self.customPhrases = customPhrases
+        self.voice = voice
+        self.intelligence = intelligence
+        self.manner = manner
     }
 
-    // Older saved designs have no thought or habit fields.
-    private enum CodingKeys: String, CodingKey { case name, look, personality, gait, habits, packs, customPhrases }
+    // Older saved designs have no thought, habit or voice fields.
+    private enum CodingKeys: String, CodingKey { case name, look, personality, gait, habits, packs, customPhrases, voice, intelligence, manner }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Spider"
@@ -1138,6 +1194,9 @@ struct SpiderDesign: Codable, Equatable {
         habits = try c.decodeIfPresent(Habits.self, forKey: .habits) ?? Habits()
         packs = try c.decodeIfPresent([ThoughtPack].self, forKey: .packs) ?? [.chitchat]
         customPhrases = try c.decodeIfPresent([String].self, forKey: .customPhrases) ?? []
+        voice = (try? c.decodeIfPresent(String.self, forKey: .voice)).flatMap { $0.flatMap(ThoughtVoice.init(rawValue:)) } ?? .phrases
+        intelligence = try c.decodeIfPresent(Bool.self, forKey: .intelligence) ?? false
+        manner = try c.decodeIfPresent(String.self, forKey: .manner) ?? ""
     }
 
     /// Everything it might say, from the packs it has and your own lines.

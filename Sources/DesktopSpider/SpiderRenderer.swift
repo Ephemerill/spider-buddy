@@ -91,33 +91,9 @@ enum SpiderRenderer {
         LegRig(hip: V2(-5, -7), knee: V2(-21, 3), foot: V2(-30, ground)),
     ]
 
-    /// The new leg system (see `Gait.continuity`) — legs standing in
-    /// space, turned in the round, kept in their places as the body turns,
-    /// drawn crossing in depth — or, off, the legs exactly as they were in
-    /// version 1.0.0. Each spider sets it for itself as it moves
-    /// (`Spider.update`), and each pose carries it to be drawn by
-    /// (`SpiderPose.continuity`). It is kept per thread: the spider is
-    /// drawn off the main thread (see `SpriteShower`) while another moves
-    /// on it, and neither may change the other's.
-    static var continuity: Bool {
-        get {
-            // (Never set on this thread: as a spider is until its design
-            // says.)
-            guard let set = pthread_getspecific(continuityKey) else { return Gait.continuityByDefault }
-            return Int(bitPattern: set) == 2
-        }
-        set { pthread_setspecific(continuityKey, UnsafeRawPointer(bitPattern: newValue ? 2 : 1)) }
-    }
-    private static let continuityKey: pthread_key_t = {
-        var key = pthread_key_t()
-        pthread_key_create(&key, nil)
-        return key
-    }()
-
-    /// Legs 0-3 are the near side, 4-7 the far side, front to back: as
-    /// they stand side on.
+    /// Legs 0-3 are the near side, 4-7 the far side, front to back.
     static func rig(_ index: Int) -> LegRig {
-        continuity && rigidLegs ? rig(index, profile: 1) : (index < 4 ? nearLegs[index] : farLegs[index - 4])
+        index < 4 ? nearLegs[index] : farLegs[index - 4]
     }
     static let legCount = 8
 
@@ -137,43 +113,11 @@ enum SpiderRenderer {
         (V2(11.6, 1.4), 2.9, false),
         (V2(-11.6, 1.4), 2.9, false),
     ]
-    /// Indexed like the profile rig. Turning is a real turn about the
-    /// body's middle: from side on round to face on, the near legs swing
-    /// round to the left of the face and the far legs to the right — the
-    /// front pair innermost, reaching out toward you either side of the
-    /// face, the back pair widest, out behind — the front ones sweeping
-    /// round in front of the body, the back ones round behind it (see
-    /// `legDepth`). So the legs on a side stay in their row as it turns
-    /// toward you, front to back as they stand side on, front to inside
-    /// face on: none passes another where it can be seen. (Each joint is
-    /// blended straight across, as a point on a body turning about its
-    /// middle is seen to move, keeping its height: a leg pointing out at
-    /// you part way round is seen end on, short. Carried round on a circle
-    /// instead, a leg is seen at its full length part way, which in the
-    /// flat picture reads as a leg stretched out along the ground — or,
-    /// swung round its hip, held up in the air.) The layout is symmetric
-    /// under i <-> i+4 (a leg and the one opposite it): past the front
-    /// view the sprite mirrors and each leg carries on as its opposite
-    /// number's slot, so no leg ever jumps or changes which leg it is.
-    /// (That is `roundFrontLegs`, the new leg system's; without it, the
-    /// front view is `classicFrontLegs`.)
-    static var frontLegs: [LegRig] { continuity ? roundFrontLegs : classicFrontLegs }
-    static let roundFrontLegs: [LegRig] = [
-        LegRig(hip: V2(-8, -8), knee: V2(-15, -2), foot: V2(-14, ground)),
-        LegRig(hip: V2(-8, -8), knee: V2(-21, -1), foot: V2(-22, ground)),
-        LegRig(hip: V2(-7, -9), knee: V2(-27, -1), foot: V2(-31, ground)),
-        LegRig(hip: V2(-5, -9), knee: V2(-32, -4), foot: V2(-38, ground)),
-        LegRig(hip: V2(8, -8), knee: V2(15, -2), foot: V2(14, ground)),
-        LegRig(hip: V2(8, -8), knee: V2(21, -1), foot: V2(22, ground)),
-        LegRig(hip: V2(7, -9), knee: V2(27, -1), foot: V2(31, ground)),
-        LegRig(hip: V2(5, -9), knee: V2(32, -4), foot: V2(38, ground)),
-    ]
-    /// The front view as it was before the new leg system (see
-    /// `continuity`): each leg's front-view spot the one nearest its
-    /// profile spot, so feet only shuffle a few units in a turn; and the
-    /// layout symmetric under i <-> 7-i, which is what lets the sprite
-    /// mirror at the front view without any foot jumping.
-    static let classicFrontLegs: [LegRig] = [
+    /// Indexed like the profile rig. Each leg's front-view spot is the one
+    /// nearest its profile spot, so feet only shuffle a few units in a turn;
+    /// and the layout is symmetric under i <-> 7-i, which is what lets the
+    /// sprite mirror at the front view without any foot jumping.
+    static let frontLegs: [LegRig] = [
         LegRig(hip: V2(8, -8), knee: V2(31, -4), foot: V2(38, ground)),
         LegRig(hip: V2(7, -9), knee: V2(18, 0), foot: V2(22, ground)),
         LegRig(hip: V2(-5, -9), knee: V2(-11, -3), foot: V2(-14, ground)),
@@ -184,195 +128,8 @@ enum SpiderRenderer {
         LegRig(hip: V2(-8, -8), knee: V2(-31, -4), foot: V2(-38, ground)),
     ]
 
-    /// The order the legs are drawn in side on, as a depth: the far legs
-    /// behind the body and the near legs in front, each by how far toward
-    /// you its foot stands — the same order they have in space at every
-    /// turn, so it never changes on the way round (see `restLegs`).
-    static func sideOnOrder(_ i: Int) -> CGFloat {
-        rigidLegs ? (i < 4 ? 1 : -1) * restLegs[i % 4].foot.out : [38, 31, 22, 14, -14, -22, -31, -38][i]
-    }
-
-    /// How far round from side on (0) to face on (π/2) the body has turned,
-    /// for a profile amount.
-    static func turnAngle(profile: CGFloat) -> CGFloat {
-        (1 - clamp(profile, 0, 1)) * .pi / 2
-    }
-
-    /// A point of a leg standing at rest, in space: `fwd` along the body
-    /// toward the nose, `up`, and `out` to the leg's own side.
-    struct RestPoint {
-        var fwd: CGFloat
-        var up: CGFloat
-        var out: CGFloat
-    }
-    struct RestLeg {
-        var hip: RestPoint
-        var knee: RestPoint
-        var foot: RestPoint
-        func at(_ joint: Int) -> RestPoint { joint == 0 ? hip : (joint == 1 ? knee : foot) }
-    }
-
-    /// The four legs of a side as they stand, front to back, in space: the
-    /// front leg reaching out ahead of the face, the second under the head,
-    /// the third under the waist, the back leg out behind. Each is fastened
-    /// to the body at its hip and holds its knee and foot where they are as
-    /// the body turns — none ever rises over another or drops under it, or
-    /// trades places with it, on the way round. Side on the four stand side
-    /// by side, each behind the one in front of it: the front pair as the
-    /// back pair are, the inner leg's knee just over the outer one's thigh,
-    /// meeting it only by its hip — never one tucked in under another's arch.
-    /// Face on they fan out from the hips, the front legs innermost. The far
-    /// side is the mirror image.
-    static var restLegs: [RestLeg] = [
-        RestLeg(hip: RestPoint(fwd: 9, up: -9, out: 8), knee: RestPoint(fwd: 24, up: 2, out: 15), foot: RestPoint(fwd: 30, up: ground, out: 14)),
-        RestLeg(hip: RestPoint(fwd: 6, up: -10, out: 8), knee: RestPoint(fwd: 12, up: -2, out: 21), foot: RestPoint(fwd: 12, up: ground, out: 22)),
-        RestLeg(hip: RestPoint(fwd: 1, up: -10, out: 7), knee: RestPoint(fwd: -6, up: -2, out: 27), foot: RestPoint(fwd: -6, up: ground, out: 31)),
-        RestLeg(hip: RestPoint(fwd: -3, up: -9, out: 5), knee: RestPoint(fwd: -17, up: -1, out: 32), foot: RestPoint(fwd: -24, up: ground, out: 38)),
-    ]
-    /// Side on, the far legs are drawn a little back and up from right behind
-    /// the near ones, staggered so the feet show; the shift fades out as it
-    /// turns to you (face on the two sides are each other's mirror). (Not
-    /// the front feet: a far front foot set back behind the near one would
-    /// have the two front legs pass each other in front of the face at the
-    /// end of every turn.)
-    static var farShift: [LegRig] = zip([CGFloat(-1), -4, -5, -4], [CGFloat(0), -5, -7, -6]).map { k, f in
-        LegRig(hip: V2(-2, 2), knee: V2(k, 3), foot: V2(f, 0))
-    }
-    /// Tools only, while comparing: the legs blended across from the side
-    /// view's layout to the front view's, as before (false).
-    static var rigidLegs = true
-
-    /// Joint `joint` (hip 0, knee 1, foot 2) of leg `i` at rest in space,
-    /// with the look's leg style: `out` toward the leg's own side.
-    static func restPoint(_ i: Int, joint: Int, look: SpiderLook) -> RestPoint {
-        let L = restLegs[i % 4]
-        var q = L.at(joint)
-        let m = look.legMetrics
-        if joint > 0, m.reach != 1 || m.knee != 0 {
-            let h = L.hip
-            q.fwd = h.fwd + (q.fwd - h.fwd) * m.reach
-            q.out = h.out + (q.out - h.out) * m.reach
-            if joint == 1 { q.up = h.up + (q.up - h.up) * m.reach + m.knee }
-        }
-        return q
-    }
-
-    /// How far toward you (+) or away (−) leg `i` is, turned this far round:
-    /// its foot's depth, with the body's middle at 0. Side on that is how far
-    /// to the near or far side it splays (the front view's spread); face on,
-    /// how far ahead or behind it reaches (the side view's).
-    static func legDepth(_ i: Int, profile: CGFloat) -> CGFloat {
-        restDepth(i, joint: 2, profile: profile)
-    }
-
-    /// How far toward you (+) or away (−) a joint of leg `i` stands at rest,
-    /// turned this far round, the body's middle at 0: as `legDepth`, for the
-    /// hip (0), knee (1) or foot (2), with the look's leg style.
-    static func restDepth(_ i: Int, joint: Int, profile: CGFloat, look: SpiderLook = SpiderLook()) -> CGFloat {
-        let a = turnAngle(profile: profile)
-        guard rigidLegs else {
-            let s = rig(i, profile: 1, look: look), f = rig(i, profile: 0, look: look)
-            func x(_ r: LegRig) -> CGFloat { joint == 0 ? r.hip.x : (joint == 1 ? r.knee.x : r.foot.x) }
-            return x(s) * sin(a) - x(f) * cos(a)
-        }
-        let q = restPoint(i, joint: joint, look: look)
-        return q.fwd * sin(a) + (i < 4 ? q.out : -q.out) * cos(a)
-    }
-
-    /// How much of a point's way along the body (`fwd`) and how much of its
-    /// way out to the side (`out`) is seen across the screen, turned this far
-    /// round: side on all of the one, face on all of the other. Part way the
-    /// two are blended straight across (`legRoundness` 0) — a leg pointing
-    /// out at you part way round is seen end on, short — or carried round on
-    /// a circle (1), as a solid thing turning is seen.
-    static func turnShares(profile: CGFloat) -> (along: CGFloat, out: CGFloat) {
-        let a = turnAngle(profile: profile), p = clamp(profile, 0, 1)
-        return (lerp(p, cos(a), legRoundness), lerp(1 - p, sin(a), legRoundness))
-    }
-    static var legRoundness: CGFloat = 0
-
-    /// The knee of leg `i` worked out in the round: hip, knee and foot as
-    /// they stand at rest are points in space (across, up, and toward you —
-    /// see `restDepth`), and the leg keeps its rest bones and its bend as
-    /// its foot goes anywhere about it — `foot` across and up, `depth`
-    /// toward you — swung round its hip in the level and bent in the
-    /// upright, knee always up. A leg reaching out toward you or away is
-    /// seen end on, short, with its knee up over it — never flattened out
-    /// along the ground, as a leg worked out in the flat picture is. (At
-    /// rest it is the rig's knee exactly.) A foot further than the leg
-    /// reaches straightens it, but only so far: the bones give a little
-    /// first, so a leg never lies straight along the ground.
-    static func knee3D(leg i: Int, hip: V2, foot: V2, depth: CGFloat, profile: CGFloat,
-                       look: SpiderLook = SpiderLook()) -> V2 {
-        let r = rig(i, profile: profile, look: look)
-        let hz = restDepth(i, joint: 0, profile: profile, look: look)
-        let kz = restDepth(i, joint: 1, profile: profile, look: look)
-        let fz = restDepth(i, joint: 2, profile: profile, look: look)
-        // The rest leg in its own upright plane: `u` out along the level
-        // line from hip to foot, `s` to the side of it, `v` up.
-        var rh = V2(r.foot.x - r.hip.x, fz - hz)
-        if rh.length < 0.5 { rh = V2(r.foot.x >= r.hip.x ? 1 : -1, 0) }
-        let rd = rh.normalized, rs = V2(-rd.y, rd.x)
-        let kr = V2(r.knee.x - r.hip.x, kz - hz)
-        let ku = kr.dot(rd), ks = kr.dot(rs), kv = r.knee.y - r.hip.y
-        let fu = rh.length, fv = r.foot.y - r.hip.y
-        let a = max(V2(ku, kv).length, 1), b = max(V2(fu - ku, fv - kv).length, 1)
-        let side: CGFloat = V2(fu, fv).cross(V2(ku, kv)) >= 0 ? 1 : -1
-        // The leg as it is now.
-        var ch = V2(foot.x - hip.x, depth - hz)
-        let cl = ch.length
-        if cl < 0.5 { ch = rd } else { ch = ch / cl }
-        let cs = V2(-ch.y, ch.x)
-        let to = V2(max(cl, 0.5), foot.y - hip.y)
-        var dist = to.length
-        // (Stretched past 90% of its reach, the bones give — up to a fifth
-        // longer — keeping the knee bent rather than laying the leg out.)
-        let give = clamp(dist / ((a + b) * 0.9), 1, 1.2)
-        let ga = a * give, gb = b * give
-        dist = clamp(dist, abs(ga - gb) + 0.5, ga + gb - 0.5)
-        let dir = to.normalized
-        let x = (ga * ga - gb * gb + dist * dist) / (2 * dist)
-        let h = max(ga * ga - x * x, 0).squareRoot()
-        let k2 = dir * x + dir.perp * (h * side)
-        // (A foot right under its hip, seen from above, leaves the leg no
-        // way it faces: the knee comes in over the hip there, the leg near
-        // straight, rather than flicking from one side of it to the other
-        // as the foot passes under. Never as near as a foot at rest.)
-        let under = smoothstep(clamp(cl / max(min(8, fu * 0.7), 0.5), 0, 1))
-        let level = ch * (k2.x * under) + cs * ks
-        return V2(hip.x + level.x, hip.y + k2.y)
-    }
-
-    /// How much of leg `i`'s knee is worked out in the round (`knee3D`)
-    /// rather than in the flat: all of it turned toward you, or turning on
-    /// the spot (`turning`), or with its foot well off where it stands in
-    /// the round at rest (`depth` — a turn cut short with a foot out in
-    /// front); none side on with the foot where it stands, where the flat
-    /// picture is the leg.
-    static func roundShare(leg i: Int, profile: CGFloat, look: SpiderLook = SpiderLook(), turning: CGFloat = 0,
-                           depth: CGFloat? = nil) -> CGFloat {
-        var w = max(smoothstep(clamp((1 - profile) / 0.4, 0, 1)), turning)
-        if let depth, w < 1 {
-            let off = abs(depth - restDepth(i, joint: 2, profile: profile, look: look))
-            w = max(w, smoothstep(clamp((off - 1) / 6, 0, 1)))
-        }
-        return w
-    }
-
     static func rig(_ index: Int, profile: CGFloat, look: SpiderLook = SpiderLook()) -> LegRig {
-        if continuity && rigidLegs {
-            // The leg in space, turned with the body and seen from in front
-            // of the screen.
-            let (c, s) = turnShares(profile: profile)
-            let far = index >= 4, shift = farShift[index % 4]
-            func seen(_ joint: Int, _ cheat: V2) -> V2 {
-                let q = restPoint(index, joint: joint, look: look)
-                let out = far ? -q.out : q.out
-                return V2(q.fwd * c - out * s, q.up) + (far ? cheat * c : .zero)
-            }
-            return LegRig(hip: seen(0, shift.hip), knee: seen(1, shift.knee), foot: seen(2, shift.foot))
-        }
-        let a = index < 4 ? nearLegs[index] : farLegs[index - 4], b = frontLegs[index]
+        let a = rig(index), b = frontLegs[index]
         let f = clamp(profile, 0, 1)
         var r = LegRig(hip: V2.lerp(b.hip, a.hip, f), knee: V2.lerp(b.knee, a.knee, f),
                        foot: V2.lerp(b.foot, a.foot, f))
@@ -420,7 +177,7 @@ enum SpiderRenderer {
     /// A leg in the air folds up — the crook deepens rather than the limb
     /// lengthening — which is what a raised leg looks like.
     static func knee(leg index: Int, hip: V2, foot: V2, lift: CGFloat, profile: CGFloat = 1,
-                     look: SpiderLook = SpiderLook(), turning: CGFloat = 0, depth: CGFloat? = nil, splay: CGFloat = 0) -> V2 {
+                     look: SpiderLook = SpiderLook()) -> V2 {
         let r = rig(index, profile: profile, look: look)
         let restVec = r.foot - r.hip
         let curVec = foot - hip
@@ -432,14 +189,10 @@ enum SpiderRenderer {
             // Closer in than it stands: the leg folds — thigh and shin keep
             // their lengths and the knee rises — rather than the whole leg
             // shrinking. (At its standing reach this is the rest shape
-            // exactly, so there is no seam.) Standing, `splay` of the way
-            // only so far (see `foldedBones`).
+            // exactly, so there is no seam.)
+            let a = max((r.knee - r.hip).length, 1)
+            let b = max((r.foot - r.knee).length, 1)
             let dist = max(curVec.length, 0.01)
-            var a = max((r.knee - r.hip).length, 1)
-            var b = max((r.foot - r.knee).length, 1)
-            if continuity {
-                (a, b) = foldedBones(a, b, rest: kneeAngle(hip: r.hip, knee: r.knee, foot: r.foot), dist: dist, share: splay)
-            }
             let dir = curVec / dist
             let d = clamp(dist, abs(a - b) + 0.5, a + b - 0.5)
             let x = (a * a - b * b + d * d) / (2 * d)
@@ -451,52 +204,7 @@ enum SpiderRenderer {
             let bulge: CGFloat = restVec.cross(r.knee - r.hip) >= 0 ? 1 : -1
             off = off.rotated(by: bulge * lift * 0.18)
         }
-        // Turned toward you, the legs are carried round the body (see
-        // `frontLegs`) and a foot can be anywhere round its hip — a front
-        // foot still planted out ahead as its spot comes round behind it,
-        // or stepping round in front of the body. Worked out in the flat,
-        // a leg reaching toward you reads as one laid out along the ground,
-        // its knee dragging; in the round (`knee3D`, with the foot's
-        // `depth`) it is seen end on with its knee up over it, as a
-        // spider's knees always are. (Side on, the rest shape as before —
-        // but for a turn on the spot, `turning`, or a foot left off its
-        // place in the round: see `roundShare`.)
-        let w = continuity ? roundShare(leg: index, profile: profile, look: look, turning: turning, depth: depth) : 0
-        if w > 0 {
-            let z = depth ?? restDepth(index, joint: 2, profile: profile, look: look)
-            let k = knee3D(leg: index, hip: hip, foot: foot, depth: z, profile: profile, look: look)
-            return V2.lerp(hip + off, k, w)
-        }
         return hip + off
-    }
-
-    /// A leg's bones, thigh `a` and shin `b`, with its hip and foot `dist`
-    /// apart: its own, as long as that leaves the knee bent no tighter than
-    /// `foldLeast` — or than a little past how it stands at rest (`rest`,
-    /// the angle at its knee), if that is tighter; closer in than that,
-    /// both shorter by as much, the knee kept at that bend (`share` of the
-    /// way: walking, its legs are as they always have been). So a leg the
-    /// body settles low over folds only so far and then is seen to splay
-    /// out to its side — shorter, side on — rather than folding on round
-    /// until its knee goes back past its hip, over the next leg's (the
-    /// second and third legs, with their long shins straight down under
-    /// their knees, would).
-    static func foldedBones(_ a: CGFloat, _ b: CGFloat, rest: CGFloat, dist: CGFloat, share: CGFloat = 1) -> (a: CGFloat, b: CGFloat) {
-        let most = min(rest - foldGive, foldLeast)
-        let span = max(a * a + b * b - 2 * a * b * cos(most), 0).squareRoot()
-        guard dist < span, span > 0.01, share > 0 else { return (a, b) }
-        let s = lerp(1, max(dist, 0.01) / span, clamp(share, 0, 1))
-        return (a * s, b * s)
-    }
-    static let foldLeast: CGFloat = 28 * .pi / 180
-    /// How much tighter than at rest a leg folded up tight standing (the
-    /// far second leg) may fold before it splays: its breathing, the body
-    /// bobbing on its legs, is a fold as it always was.
-    static let foldGive: CGFloat = 6 * .pi / 180
-    /// The angle at a leg's knee, between its thigh and its shin.
-    static func kneeAngle(hip: V2, knee: V2, foot: V2) -> CGFloat {
-        let u = hip - knee, v = foot - knee
-        return acos(clamp(u.dot(v) / max(u.length * v.length, 0.0001), -1, 1))
     }
 
     /// Two-bone IK for a leg holding something: femur and tibia keep their
@@ -622,10 +330,6 @@ enum SpiderRenderer {
 
     /// `bounds` is the layer's rect; the body origin is drawn at its centre.
     static func draw(_ pose: SpiderPose, in ctx: CGContext, bounds: CGRect) {
-        // (Its legs by the leg system they were laid out by.)
-        let ambient = continuity
-        if let own = pose.continuity { continuity = own }
-        defer { continuity = ambient }
         ctx.saveGState()
         ctx.setAllowsAntialiasing(true)
         ctx.translateBy(x: bounds.midX, y: bounds.midY)
@@ -698,9 +402,9 @@ enum SpiderRenderer {
             ctx.rotate(by: pose.bodyPitch)
             ctx.translateBy(x: -pv.x, y: -pv.y)
         }
-        // The legs turned away are behind everything. The face goes over
-        // or under the ones toward you as the look says; the hat is always
-        // on top, since nothing reaches up past the head.
+        // The far legs are always behind everything. The face goes over
+        // or under the near legs as the look says; the hat is always on
+        // top, since nothing reaches up past the head.
         //
         // Head and abdomen can be turned further round than the legs are
         // standing: they are drawn for their own yaw (see `upperTurn`),
@@ -717,34 +421,7 @@ enum SpiderRenderer {
             drawFaceAccessory(pose, profile: fu, look: look, pal: pal, in: ctx)
             ctx.restoreGState()
         }
-        // Each leg is behind the body or in front of it as it is turned:
-        // side on, the far legs behind and the near legs in front; turning,
-        // each goes round behind or comes round in front out beside the
-        // body — one passing the body's middle is cut there, so it comes
-        // out from behind the body along its length rather than all at
-        // once — and crossing legs are drawn the nearer over the other
-        // where they cross (see `legParts`).
-        var parts: (behind: [LegPart], front: [LegPart]) = continuity ? legParts(pose, profile: profile, look: look) : ([], [])
-        if debugWholeLegs, continuity {
-            // (Tools only: each leg whole, in the order of its foot's depth.)
-            let (behind, front) = legLayers(pose, profile: profile)
-            func whole(_ i: Int, _ f: Bool) -> LegPart { LegPart(leg: i, clip: nil, front: f, line: [], order: 0, reach: []) }
-            parts = (behind.map { whole($0, false) }, front.map { whole($0, true) })
-        }
-        // (Before the new leg system: the far legs always behind
-        // everything, the near legs in front, each side back to front.)
-        func nearLegs() {
-            if continuity {
-                drawParts(parts.front, pose, profile: profile, look: look, pal: pal, in: ctx)
-            } else {
-                drawClassicLegs(pose, far: false, profile: profile, look: look, pal: pal, in: ctx)
-            }
-        }
-        if continuity {
-            drawParts(parts.behind, pose, profile: profile, look: look, pal: pal, in: ctx)
-        } else {
-            drawClassicLegs(pose, far: true, profile: profile, look: look, pal: pal, in: ctx)
-        }
+        drawLegs(pose, far: true, profile: profile, look: look, pal: pal, in: ctx)
         ctx.saveGState()
         lean(ctx)
         drawThread(pose, in: ctx)
@@ -768,7 +445,7 @@ enum SpiderRenderer {
             let head = headOutline(pose, hr: hrN, lean: lean, in: ctx)
             ctx.saveGState()
             ctx.addPath(head); ctx.clip()
-            nearLegs()
+            drawLegs(pose, far: false, profile: profile, look: look, pal: pal, in: ctx)
             ctx.restoreGState()
             face(ctx)
             hat(ctx)
@@ -776,12 +453,12 @@ enum SpiderRenderer {
             ctx.addRect(CGRect(x: -400, y: -400, width: 800, height: 800))
             ctx.addPath(head)
             ctx.clip(using: .evenOdd)
-            nearLegs()
+            drawLegs(pose, far: false, profile: profile, look: look, pal: pal, in: ctx)
             ctx.restoreGState()
         } else {
             face(ctx)
             hat(ctx)
-            nearLegs()
+            drawLegs(pose, far: false, profile: profile, look: look, pal: pal, in: ctx)
         }
 
         ctx.restoreGState()
@@ -1013,11 +690,9 @@ enum SpiderRenderer {
         }
     }
 
-    /// The legs as they were drawn before the new leg system (see
-    /// `continuity`): the far side's or the near side's, back legs first so
-    /// the front pair sits on top.
-    private static func drawClassicLegs(_ pose: SpiderPose, far: Bool, profile: CGFloat,
-                                        look: SpiderLook, pal: Palette, in ctx: CGContext) {
+    private static func drawLegs(_ pose: SpiderPose, far: Bool, profile: CGFloat,
+                                 look: SpiderLook, pal: Palette, in ctx: CGContext) {
+        // Back legs first so the front pair sits on top.
         let order = far ? [7, 6, 5, 4] : [3, 2, 1, 0]
         for idx in order where idx < pose.legs.count {
             drawLeg(pose.legs[idx], index: idx, far: far, profile: profile, look: look, pal: pal,
@@ -1025,494 +700,18 @@ enum SpiderRenderer {
         }
     }
 
-    /// A leg, or the stretch of it on one side of the body's middle —
-    /// toward you or away from you — where it passes the body: drawn
-    /// whole, cut to `clip` (nil for all of the leg).
-    struct LegPart {
-        var leg: Int
-        var clip: CGPath?
-        /// In front of the body's middle (drawn after the body) or behind it.
-        var front: Bool
-        /// The stretch of the leg, as points along it and how far toward
-        /// you each is.
-        var line: [(p: V2, z: CGFloat)]
-        /// The order the leg is drawn in side on (its foot's depth), which
-        /// the order of crossing legs comes round to there.
-        var order: CGFloat
-        /// How far out from its line the leg is drawn, on each bone.
-        var reach: [CGFloat]
-        /// Added to its depth in deciding which of two crossing legs is on
-        /// top (see `layerBias`, `raiseBias`).
-        var bias: CGFloat = 0
-        /// How far it is held up off the ledge (see `raised`): where it
-        /// crosses another leg by its hip counts as much as out along it.
-        var raise: CGFloat = 0
-    }
-
-    /// How far toward you each joint of leg `i` is — hip, knee and foot —
-    /// the body's middle at 0. The hip is where it joins the body for
-    /// however it is turned; the foot where the pose has it (`depth`, a
-    /// foot held where it was as the body turned over it), else at rest;
-    /// the knee between them as its rest shape has it, carried along.
-    static func jointDepths(_ i: Int, _ leg: LegPose, profile: CGFloat, look: SpiderLook) -> (hip: CGFloat, knee: CGFloat, foot: CGFloat) {
-        let rh = restDepth(i, joint: 0, profile: profile, look: look)
-        let rk = restDepth(i, joint: 1, profile: profile, look: look)
-        let rf = restDepth(i, joint: 2, profile: profile, look: look)
-        let r = rig(i, profile: profile, look: look)
-        let ra = (r.knee - r.hip).length, rb = (r.foot - r.knee).length
-        let rt = ra / max(ra + rb, 0.001)
-        let a = leg.knee.distance(to: leg.hip), b = leg.foot.distance(to: leg.knee)
-        let t = a / max(a + b, 0.001)
-        let fz = leg.depth ?? rf
-        return (rh, lerp(rh, fz, t) + (rk - lerp(rh, rf, rt)), fz)
-    }
-
-    /// How much nearer you leg `i` counts as than it is, in deciding which
-    /// of two crossing legs of the same side is on top: side on they are
-    /// stacked as they always have been, the front leg on top; face on
-    /// the front leg (reaching out toward you) is nearest anyway; and in
-    /// between the one eases into the other — so the legs of a side keep
-    /// one order the whole way round, never trading places.
-    static func layerBias(_ i: Int, profile: CGFloat, look: SpiderLook) -> CGFloat {
-        (sideOnOrder(i) - restDepth(i, joint: 2, profile: 1, look: look)) * cos(turnAngle(profile: profile))
-    }
-
-    /// Side on, how much nearer you a leg held up off the ledge counts as
-    /// than it stands, in deciding which of two crossing legs of a side is
-    /// on top: raised in a greeting, its arms up, grooming its face, it is
-    /// lifted up and out to its own side — nearer you on the near side,
-    /// further on the far one — and shows over the legs it rises past, not
-    /// tucked in under them. Nothing for a foot only stepping, nor off the
-    /// ledge, nor turned toward you, where how near you each part of each
-    /// leg is says it all.
-    static func raiseBias(_ i: Int, _ pose: SpiderPose, profile: CGFloat) -> CGFloat {
-        raised(i, pose, profile: profile) * raisedOut * (i < 4 ? 1 : -1)
-    }
-    static let raisedOut: CGFloat = 20
-    /// How far leg `i` is held up off the ledge, side on, 0…1 (see
-    /// `raiseBias`).
-    static func raised(_ i: Int, _ pose: SpiderPose, profile: CGFloat) -> CGFloat {
-        guard pose.legs.count == legCount, pose.grounded > 0.01 else { return 0 }
-        let low = (i < 4 ? 0..<4 : 4..<8).map { pose.legs[$0].foot.y }.min() ?? pose.legs[i].foot.y
-        let up = smoothstep(clamp((pose.legs[i].foot.y - low - 8) / 12, 0, 1))
-        return up * cos(turnAngle(profile: profile)) * clamp(pose.grounded, 0, 1)
-    }
-
-    /// Every leg, cut where it passes the body's middle, toward you or
-    /// away, if it does — the parts in front of the body and those behind
-    /// it, each furthest first. Two legs crossing are drawn one over the
-    /// other all the way across where they cross, the one nearer you there
-    /// on top — never one partly over and partly under the other, as if
-    /// passing through it — and side on in the order they always are.
-    static func legParts(_ pose: SpiderPose, profile: CGFloat, look: SpiderLook) -> (behind: [LegPart], front: [LegPart]) {
-        var parts: [LegPart] = []
-        // (Out to either side of the leg and past its ends, far enough to
-        // take in all of it — hairs, boots, a foot pad, glowing joints.)
-        let side: CGFloat = 16
-        let wm = look.legMetrics.width
-        let hair: CGFloat = look.legs == .fuzzy ? 3.2 : (look.fuzz == 2 ? 2.2 : 0)
-        for (i, leg) in pose.legs.enumerated() {
-            let z = jointDepths(i, leg, profile: profile, look: look)
-            let order = pose.legs.count == legCount ? sideOnOrder(i) : (i < 4 ? CGFloat(4 - i) : -CGFloat(i))
-            let shade = i >= 4 ? profile : 0
-            let reach = [lerp(5.6, 4.8, shade) * wm, lerp(4.4, 3.8, shade) * wm].map { $0 * 0.75 + 1.15 + hair + 0.5 }
-            let P = [leg.hip, leg.knee, leg.foot], Z = [z.hip, z.knee, z.foot]
-            // The leg as runs along it on one side of the middle or the
-            // other: (bone, from, to) shares of each bone, and their points.
-            var runs: [(front: Bool, spans: [(seg: Int, u0: CGFloat, u1: CGFloat)], line: [(p: V2, z: CGFloat)])] = []
-            var cur: (front: Bool, spans: [(seg: Int, u0: CGFloat, u1: CGFloat)], line: [(p: V2, z: CGFloat)]) = (Z[0] >= 0, [], [(P[0], Z[0])])
-            for seg in 0..<2 {
-                let za = Z[seg], zb = Z[seg + 1]
-                var u0: CGFloat = 0
-                if (za >= 0) != (zb >= 0), abs(zb - za) > 1e-4 {
-                    let u = za / (za - zb)
-                    if u > 0.001, u < 0.999 {
-                        let c = V2.lerp(P[seg], P[seg + 1], u)
-                        cur.spans.append((seg, u0, u))
-                        cur.line.append((c, 0))
-                        runs.append(cur)
-                        cur = (zb >= 0, [], [(c, 0)])
-                        u0 = u
-                    }
-                }
-                cur.spans.append((seg, u0, 1))
-                cur.line.append((P[seg + 1], zb))
-            }
-            runs.append(cur)
-            if runs.count == 1 {
-                parts.append(LegPart(leg: i, clip: nil, front: runs[0].front, line: runs[0].line, order: order, reach: reach,
-                                     bias: layerBias(i, profile: profile, look: look) + raiseBias(i, pose, profile: profile),
-                                     raise: raised(i, pose, profile: profile)))
-                continue
-            }
-            // Cut: each run's stretch of each bone, out to its sides and on
-            // past the leg's ends, kept to that bone's side of the knee.
-            let H = P[0], K = P[1], F = P[2]
-            let a = (H - K).length > 0.01 ? (H - K).normalized : V2(-1, 0)
-            let b = (F - K).length > 0.01 ? (F - K).normalized : a * -1
-            var m = a + b
-            m = m.length > 0.05 ? m.normalized : a.perp
-            var toThigh = m.perp
-            if toThigh.dot(a) < 0 || (abs(toThigh.dot(a)) < 1e-4 && toThigh.dot(b) > 0) { toThigh = toThigh * -1 }
-            let sides = [toThigh, toThigh * -1]
-            for run in runs {
-                let clip = CGMutablePath()
-                for span in run.spans {
-                    let A = P[span.seg], B = P[span.seg + 1]
-                    let len = A.distance(to: B)
-                    let d = len > 0.01 ? (B - A) / len : (span.seg == 0 ? a * -1 : b)
-                    let n = d.perp
-                    // (Each end at a cut runs a touch past it, so no seam
-                    // shows between the two parts.)
-                    let s0 = span.u0 <= 0.001 ? -side : span.u0 * len - 0.4
-                    let s1 = span.u1 >= 0.999 ? len + side : span.u1 * len + 0.4
-                    let slab = [A + d * s0 - n * side, A + d * s1 - n * side, A + d * s1 + n * side, A + d * s0 + n * side]
-                    let kept = clipPolygon(slab, through: K, keeping: sides[span.seg])
-                    guard kept.count >= 3 else { continue }
-                    clip.addLines(between: kept.map(\.point))
-                    clip.closeSubpath()
-                }
-                parts.append(LegPart(leg: i, clip: clip, front: run.front, line: run.line, order: order, reach: reach,
-                                     bias: layerBias(i, profile: profile, look: look) + raiseBias(i, pose, profile: profile),
-                                     raise: raised(i, pose, profile: profile)))
-            }
-        }
-        // Two legs crossing: whichever is nearer you where they cross is on
-        // top (see `wholeOrder`).
-        let whole = wholeOrder(profile: profile)
-        func layer(_ ps: [LegPart]) -> [LegPart] {
-            let n = ps.count
-            guard n > 1 else { return ps }
-            func key(_ k: Int) -> CGFloat {
-                let zs = ps[k].line.map(\.z)
-                return lerp(zs.reduce(0, +) / CGFloat(zs.count), ps[k].order, whole)
-            }
-            let keys = (0..<n).map(key)
-            // Which is over which, for each pair that overlap, and by how
-            // much (how far apart they are in depth there).
-            var edges: [(under: Int, over: Int, w: CGFloat, on: Bool)] = []
-            for x in 0..<n {
-                for y in (x + 1)..<n where ps[x].leg != ps[y].leg {
-                    guard let raw = nearer(ps[x], ps[y], whole: whole) else { continue }
-                    var lead = raw
-                    // (As they have been, while they cross.)
-                    if let stack = pose.legStack, stack.mirror == (pose.facing >= 0 ? 1 : -1) {
-                        let v = stack.get(ps[x].leg, ps[y].leg)
-                        if v != 0 { lead = CGFloat(v) }
-                    }
-                    guard lead != 0 else { continue }
-                    edges.append(lead < 0 ? (x, y, abs(raw), true) : (y, x, abs(raw), true))
-                }
-            }
-            // Furthest first, each after all it is drawn over. (Where legs
-            // go round in a ring, each over the next, the ring is broken
-            // where two of them are nearest the same depth.)
-            var count = [Int](repeating: 0, count: n)
-            for e in edges { count[e.over] += 1 }
-            var done = [Bool](repeating: false, count: n)
-            var out: [LegPart] = []
-            while out.count < n {
-                var pick = -1
-                for k in 0..<n where !done[k] && count[k] == 0 {
-                    if pick < 0 || keys[k] < keys[pick] || (keys[k] == keys[pick] && ps[k].leg < ps[pick].leg) { pick = k }
-                }
-                if pick < 0 {
-                    var weakest = -1
-                    for (e, edge) in edges.enumerated() where edge.on && !done[edge.under] && !done[edge.over] {
-                        if weakest < 0 || edge.w < edges[weakest].w { weakest = e }
-                    }
-                    guard weakest >= 0 else { break }
-                    edges[weakest].on = false
-                    count[edges[weakest].over] -= 1
-                    continue
-                }
-                done[pick] = true
-                out.append(ps[pick])
-                for e in edges.indices where edges[e].on && edges[e].under == pick { count[edges[e].over] -= 1 }
-            }
-            return out
-        }
-        return (layer(parts.filter { !$0.front }), layer(parts.filter { $0.front }))
-    }
-
-    /// Which of two crossing legs is drawn over the other: `over[i * 8 + j]`
-    /// is +1 if leg `i` is over leg `j`, −1 if under it, 0 if they do not
-    /// cross. Two legs crossing are drawn one over the other, never one
-    /// through the other; which is on top only changes once the other has
-    /// come nearer you by a little (so it never flickers between them), and
-    /// then not at once: the one going under fades out over the other
-    /// where they overlap (`fade`, 0…1 through it), rather than either
-    /// jumping in front of the other.
-    struct LegStack {
-        var over = [Int8](repeating: 0, count: legCount * legCount)
-        var fade = [CGFloat](repeating: 1, count: legCount * legCount)
-        /// The slots as they were: past the front view each leg carries on
-        /// in the slot opposite (see `Spider.updateYaw`).
-        var mirror: CGFloat = 1
-        var time: CGFloat = 0
-        func get(_ i: Int, _ j: Int) -> Int8 { over[i * legCount + j] }
-        func fading(_ i: Int, _ j: Int) -> CGFloat { fade[i * legCount + j] }
-    }
-    /// How long a crossing pair takes to change which is on top, seconds.
-    private static let legSwapTime: CGFloat = 0.07
-
-    /// This frame's `LegStack`, carried on from the last.
-    static func legStack(_ pose: SpiderPose, profile: CGFloat, look: SpiderLook, previous: LegStack?) -> LegStack {
-        var out = LegStack()
-        out.mirror = pose.facing >= 0 ? 1 : -1
-        out.time = pose.time
-        guard pose.legs.count == legCount else { return out }
-        var prev = previous
-        if let p = previous, p.mirror != out.mirror {
-            // (Re-paired across the mirror: slot i is now slot i + 4.)
-            var q = p
-            for i in 0..<legCount {
-                for j in 0..<legCount {
-                    q.over[i * legCount + j] = p.get((i + 4) % legCount, (j + 4) % legCount)
-                    q.fade[i * legCount + j] = p.fading((i + 4) % legCount, (j + 4) % legCount)
-                }
-            }
-            prev = q
-        }
-        let step = clamp(pose.time - (previous?.time ?? pose.time), 0, 0.1) / legSwapTime
-        let whole = wholeOrder(profile: profile)
-        let lines = (0..<legCount).map { wholeLeg($0, pose, profile: profile, look: look) }
-        for i in 0..<legCount {
-            for j in (i + 1)..<legCount {
-                guard let lead = nearer(lines[i], lines[j], whole: whole, mean: true) else { continue }
-                var v: Int8 = lead > 0 ? 1 : (lead < 0 ? -1 : (i < j ? 1 : -1))
-                let was = prev?.get(i, j) ?? 0
-                if was != 0, was != v, abs(lead) < legStackGive * (1 - whole) { v = was }
-                // A change while they overlap is faded through; a pair just
-                // come to cross starts as it is.
-                var f: CGFloat = 1
-                if was != 0 {
-                    // (Going back the way it was part way through a change,
-                    // it fades back from as far as it had got.)
-                    let had = prev?.fading(i, j) ?? 1
-                    f = was != v ? 1 - had : min(had + step, 1)
-                    // (Side on, none: there they are as they always are.)
-                    if whole >= 1 { f = 1 }
-                }
-                out.over[i * legCount + j] = v
-                out.over[j * legCount + i] = -v
-                out.fade[i * legCount + j] = f
-                out.fade[j * legCount + i] = f
-            }
-        }
-        return out
-    }
-
-    /// How far two crossing legs are stacked by their whole legs' order
-    /// (`sideOnOrder`) rather than by how near you each is where they cross:
-    /// not at all — the legs stand in space (`restLegs`), so where one
-    /// crosses another by its hip, side on as at any turn, the one nearer
-    /// you there is on top (the second leg's shin over the front leg's
-    /// thigh, the third's over the back leg's). (Before the legs stood in
-    /// space, side on was its own drawing, stacked front leg on top.)
-    static func wholeOrder(profile: CGFloat) -> CGFloat {
-        rigidLegs ? 0 : smoothstep(clamp((profile - 0.8) / 0.2, 0, 1))
-    }
-
-    /// How much nearer you (on average, where they overlap) the leg
-    /// underneath must come before it goes over the other while they cross.
-    /// (Side on, none: there they are in the order they always are.)
-    private static let legStackGive: CGFloat = 2
-
-    /// Leg `i` as one part, all of it (for `legStack`).
-    private static func wholeLeg(_ i: Int, _ pose: SpiderPose, profile: CGFloat, look: SpiderLook) -> LegPart {
-        let leg = pose.legs[i]
-        let z = jointDepths(i, leg, profile: profile, look: look)
-        let shade = i >= 4 ? profile : 0
-        let wm = look.legMetrics.width
-        let hair: CGFloat = look.legs == .fuzzy ? 3.2 : (look.fuzz == 2 ? 2.2 : 0)
-        return LegPart(leg: i, clip: nil, front: z.foot >= 0, line: [(leg.hip, z.hip), (leg.knee, z.knee), (leg.foot, z.foot)],
-                       order: sideOnOrder(i),
-                       reach: [lerp(5.6, 4.8, shade) * wm, lerp(4.4, 3.8, shade) * wm].map { $0 * 0.75 + 1.15 + hair + 0.5 },
-                       bias: layerBias(i, profile: profile, look: look) + raiseBias(i, pose, profile: profile),
-                       raise: raised(i, pose, profile: profile))
-    }
-
-    /// Whether leg part `a` is nearer you than `b` where they are drawn
-    /// over each other (+), or further (−); nil if they are not. Every
-    /// place they overlap counts, by how much they overlap there — so as
-    /// they move the answer changes only as they really pass each other,
-    /// never flicking between one spot and another where they touch.
-    /// (`whole`: side on, how far it is their side-on order that counts.)
-    private static func nearer(_ a: LegPart, _ b: LegPart, whole: CGFloat, mean: Bool = false) -> CGFloat? {
-        var sum: CGFloat = 0, weight: CGFloat = 0
-        var any = false
-        for i in 0..<(a.line.count - 1) {
-            for j in 0..<(b.line.count - 1) {
-                let (s, t, d) = segmentsClosest(a.line[i].p, a.line[i + 1].p, b.line[j].p, b.line[j + 1].p)
-                let r = a.reach[min(i, 1)] + b.reach[min(j, 1)]
-                guard d < r else { continue }
-                any = true
-                // (The stacking of a side's legs only among themselves.)
-                let same = (a.leg < legCount / 2) == (b.leg < legCount / 2)
-                let za = lerp(lerp(a.line[i].z, a.line[i + 1].z, s) + (same ? a.bias : 0), a.order, whole)
-                let zb = lerp(lerp(b.line[j].z, b.line[j + 1].z, t) + (same ? b.bias : 0), b.order, whole)
-                // (Out along both legs counts most: where two legs leave the
-                // body side by side, which is over the other is no telling,
-                // and it shows least.)
-                let ua = (CGFloat(i) + s) / CGFloat(a.line.count - 1), ub = (CGFloat(j) + t) / CGFloat(b.line.count - 1)
-                // (Unless one of them is held up off the ledge: lifted out
-                // over the other, it shows all along it.)
-                let w = (r - d) * (r - d) * (lerp(ua * ub, 1, same ? max(a.raise, b.raise) : 0) + 0.02)
-                sum += w * (za - zb)
-                weight += w
-            }
-        }
-        // (`mean`: as an average depth apart, weighted the same way.)
-        return any ? (mean ? sum / max(weight, 1e-6) : sum) : nil
-    }
-
-    /// The nearest points of segments `p0`–`p1` and `q0`–`q1`, as shares
-    /// along each, and how far apart they are.
-    private static func segmentsClosest(_ p0: V2, _ p1: V2, _ q0: V2, _ q1: V2) -> (CGFloat, CGFloat, CGFloat) {
-        let d1 = p1 - p0, d2 = q1 - q0, r = p0 - q0
-        let a = d1.dot(d1), e = d2.dot(d2), f = d2.dot(r)
-        var s: CGFloat = 0, t: CGFloat = 0
-        if a <= 1e-6 && e <= 1e-6 {
-            return (0, 0, p0.distance(to: q0))
-        }
-        if a <= 1e-6 {
-            t = clamp(f / e, 0, 1)
-        } else {
-            let c = d1.dot(r)
-            if e <= 1e-6 {
-                s = clamp(-c / a, 0, 1)
-            } else {
-                let bb = d1.dot(d2)
-                let den = a * e - bb * bb
-                s = den > 1e-9 ? clamp((bb * f - c * e) / den, 0, 1) : 0
-                t = (bb * s + f) / e
-                if t < 0 { t = 0; s = clamp(-c / a, 0, 1) } else if t > 1 { t = 1; s = clamp((bb - c) / a, 0, 1) }
-            }
-        }
-        return (s, t, (p0 + d1 * s).distance(to: q0 + d2 * t))
-    }
-
-    /// Tools only: a leg left out of the picture, everything else drawn
-    /// exactly as it would be — to see how much of it shows.
-    static var debugHiddenLeg: Int?
-    /// Tools only: legs drawn whole, each behind the body or in front of
-    /// it as its foot is — the way they were before they were cut and
-    /// ordered where they cross — to compare.
-    static var debugWholeLegs = false
-    /// Tools only: with `debugWholeLegs`, the far legs side on in the order
-    /// they were drawn in before (the far front leg under the others).
-    static var debugClassicOrder = false
-
-    /// The part of convex polygon `poly` on the `keeping` side of the line
-    /// through `p` square to it.
-    private static func clipPolygon(_ poly: [V2], through p: V2, keeping s: V2) -> [V2] {
-        var out: [V2] = []
-        for k in 0..<poly.count {
-            let a = poly[k], b = poly[(k + 1) % poly.count]
-            let da = (a - p).dot(s), db = (b - p).dot(s)
-            if da >= 0 { out.append(a) }
-            if (da >= 0) != (db >= 0) { out.append(a + (b - a) * (da / (da - db))) }
-        }
-        return out
-    }
-
-    /// Draws `parts`, the last on top. A leg that has just gone under one
-    /// drawn after it (see `LegStack`) still shows over it where they
-    /// overlap, fading out.
-    private static func drawParts(_ parts: [LegPart], _ pose: SpiderPose, profile: CGFloat,
-                                  look: SpiderLook, pal: Palette, in ctx: CGContext) {
-        let stack = pose.legStack.flatMap { $0.mirror == (pose.facing >= 0 ? 1 : -1) ? $0 : nil }
-        func draw(_ part: LegPart) {
-            let i = part.leg
-            if let clip = part.clip {
-                ctx.saveGState()
-                ctx.addPath(clip)
-                ctx.clip()
-            }
-            drawLeg(pose.legs[i], index: i, far: i >= 4, profile: profile, look: look, pal: pal,
-                    which: whichLeg(i, pose), in: ctx)
-            if part.clip != nil { ctx.restoreGState() }
-        }
-        for (k, part) in parts.enumerated() {
-            let i = part.leg
-            guard i < pose.legs.count, i != debugHiddenLeg else { continue }
-            draw(part)
-            guard let stack else { continue }
-            for under in parts[..<k] where under.leg != i && under.leg != debugHiddenLeg {
-                let f = stack.fading(i, under.leg)
-                guard f < 1, stack.get(i, under.leg) > 0 else { continue }
-                // Over this leg, only where it is: the outline of this leg,
-                // a touch generous.
-                let line = CGMutablePath()
-                line.addLines(between: part.line.map(\.p.point))
-                let reach = (part.reach.max() ?? 6) * 2 + 1
-                let over = line.copy(strokingWithWidth: reach, lineCap: .round, lineJoin: .round, miterLimit: 4)
-                ctx.saveGState()
-                ctx.addPath(over)
-                ctx.clip()
-                if let clip = part.clip { ctx.addPath(clip); ctx.clip() }
-                ctx.setAlpha(1 - smoothstep(f))
-                ctx.beginTransparencyLayer(auxiliaryInfo: nil)
-                draw(under)
-                ctx.endTransparencyLayer()
-                ctx.restoreGState()
-            }
-        }
-    }
-
-    /// The legs behind the body and in front of it, each in the order they
-    /// are drawn, furthest first. Side on, the far legs are behind and the
-    /// near legs in front, the widest-splayed (front) leg of each furthest
-    /// out: near legs back to front, far legs front to back.
-    static func legLayers(_ pose: SpiderPose, profile: CGFloat) -> (behind: [Int], front: [Int]) {
-        let n = pose.legs.count
-        guard n == legCount else {
-            return ([7, 6, 5, 4].filter { $0 < n }, [3, 2, 1, 0].filter { $0 < n })
-        }
-        let sideOn: [CGFloat] = debugClassicOrder ? [38, 31, 22, 14, -38, -31, -22, -14] : (0..<legCount).map { sideOnOrder($0) }
-        let depth = (0..<n).map { profile >= 0.999 ? sideOn[$0] : pose.legs[$0].depth ?? legDepth($0, profile: profile) }
-        let order = (0..<n).sorted { depth[$0] < depth[$1] }
-        return (order.filter { depth[$0] < 0 }, order.filter { depth[$0] >= 0 })
-    }
-
-    /// Where on the coat a painted palp takes its colour from: where it is,
-    /// side on, folding over to the same both sides of the middle toward
-    /// the legs' front view, where the sprite mirrors.
-    static func legPaintSpot(_ p: V2, profile: CGFloat) -> V2 {
-        V2(lerp(abs(p.x), p.x, profile * profile), p.y)
-    }
-
-    /// Where on the coat a painted leg takes its colour from: side on, where
-    /// the leg is — the front legs the head end's colour, the back legs the
-    /// tail's. As it turns the legs are carried round, but each keeps its
-    /// own colour: it is taken from where the leg would be side on. (Face
-    /// on, from midway between it and the leg opposite, whose slot it
-    /// carries on in past the front view — so nothing changes colour there.)
-    static func legPaintSpot(_ p: V2, leg i: Int, segment: Int, profile: CGFloat, look: SpiderLook) -> V2 {
-        guard profile < 1 else { return p }
-        func mid(_ r: LegRig) -> CGFloat { segment == 0 ? (r.hip.x + r.knee.x) / 2 : (r.knee.x + r.foot.x) / 2 }
-        let w = profile * profile
-        let side = mid(rig(i, profile: 1, look: look)), opposite = mid(rig((i + 4) % 8, profile: 1, look: look))
-        let rest = mid(rig(i, profile: profile, look: look))
-        return V2(lerp((side + opposite) / 2, side, w) + (p.x - rest) * w, p.y)
+    /// Which leg slot `i` of this pose is drawing (for the Debug Legs coat):
+    /// past the front view the sprite is mirrored and each leg carries on in
+    /// slot 7-i.
+    static func whichLeg(_ i: Int, _ pose: SpiderPose) -> Int {
+        guard pose.legs.count == legCount, pose.facing < 0 else { return i }
+        return legCount - 1 - i
     }
 
     private static func mix(_ a: CGColor, _ b: CGColor, _ t: CGFloat) -> CGColor {
         let ca = a.components ?? [0, 0, 0, 1], cb = b.components ?? [0, 0, 0, 1]
         return CGColor(red: lerp(ca[0], cb[0], t), green: lerp(ca[1], cb[1], t),
                        blue: lerp(ca[2], cb[2], t), alpha: 1)
-    }
-
-    /// Which leg the one drawn in slot `i` is: the right side's front to
-    /// back (0–3), then the left's (4–7). Facing right the near side is its
-    /// right; past the front view, mirrored, each leg carries on in the
-    /// slot opposite (see `frontLegs`).
-    /// (Without the new leg system, in the slot it changes places with
-    /// there: 7 - i, the front leg carrying on as the back one.)
-    static func whichLeg(_ i: Int, _ pose: SpiderPose) -> Int {
-        guard pose.legs.count == legCount, pose.facing < 0 else { return i }
-        return continuity ? (i + 4) % legCount : legCount - 1 - i
     }
 
     private static func drawLeg(_ leg: LegPose, index: Int, far: Bool, profile: CGFloat,
@@ -1536,8 +735,7 @@ enum SpiderRenderer {
             if let key = pal.legKey { return key[which % key.count].darker(shade * 0.24).cg }
             if pal.paint != nil || pal.legTones != nil {
                 let mid = V2((a.x + b.x) / 2, (a.y + b.y) / 2)
-                let spot = continuity ? legPaintSpot(mid, leg: index, segment: seg, profile: profile, look: look) : mid
-                let c = pal.legColour(at: spot, segment: seg)
+                let c = pal.legColour(at: mid, segment: seg)
                 return c.darker(shade * 0.24).lighter(lit * 0.18).cg
             }
             return mix(mix(pal.legFill, pal.legFar, shade), pal.legLight, lit)
@@ -1930,13 +1128,10 @@ enum SpiderRenderer {
             ctx.setLineWidth(5.6 * w)
             ctx.beginPath(); ctx.move(to: base.point); ctx.addLine(to: tip.point); ctx.strokePath()
             // (Painted legs take their colour from where the palp would be
-            // un-mirrored, as the coat does — and fold over toward the front
-            // view of the legs, as the legs' own colours do.)
+            // un-mirrored, as the coat does.)
             let mid = (base + tip) * 0.5
-            let unflipped = flipped ? V2(-mid.x, mid.y) : mid
-            let spot = continuity ? legPaintSpot(unflipped, profile: profileAmount(yaw: pose.facing)) : unflipped
             ctx.setStrokeColor(pal.paint != nil || pal.legTones != nil
-                               ? pal.legColour(at: spot, segment: 0).cg : pal.legFill)
+                               ? pal.legColour(at: flipped ? V2(-mid.x, mid.y) : mid, segment: 0).cg : pal.legFill)
             ctx.setLineWidth(3.6 * w)
             ctx.beginPath(); ctx.move(to: base.point); ctx.addLine(to: tip.point); ctx.strokePath()
         }
@@ -2083,37 +1278,6 @@ enum SpiderRenderer {
         return symmetric
     }
     private static var symmetryKnown: [SpiderLook: Bool] = [:]
-
-    /// Where a point of the rig — a hip — in the legs' frame (before the
-    /// lean) is on the body as it is drawn. The legs grow out of the
-    /// underside of the head, and they go where it goes: tipped up or down
-    /// on its neck, risen face on, cocked, or turned further round than the
-    /// legs stand (carried along with it as it swings across) — so the top
-    /// of a leg never slides about on the body, or off it. With the head
-    /// straight on the legs it is the rig's hip exactly (nil). (The head
-    /// as `enterHead` and `headTurn` draw it.)
-    static func headCarry(_ pose: SpiderPose, look: SpiderLook) -> ((V2) -> V2)? {
-        guard pose.headTurn != 0 || abs(pose.headTilt) > 0.0005 || abs(pose.headCock) > 0.0005 else { return nil }
-        let fl = profileAmount(yaw: pose.facing)
-        let upper = upperTurn(pose)
-        let fu = upper.f
-        let m: CGFloat = upper.flip ? -1 : 1
-        let hcL = V2.lerp(frontHead.c, head.c, fl)
-        let hcU = V2.lerp(frontHead.c, head.c, fu)
-        let hr = lerp(frontHead.r, head.r, fu) * look.bodyMetrics.head
-        // The head's middle in the legs' frame, and its neck.
-        let shift = V2(hcU.x * m - hcL.x, hcU.y - hcL.y)
-        let n = neck(hc: hcU, hr: hr, profile: fu)
-        let neckL = V2(n.x * m, n.y)
-        // (Mirrored, the head's turn on its neck goes the other way round
-        // in the legs' frame.)
-        let turn = (pose.headTilt * fu + drawnCock(pose, profile: fu)) * m
-        let rise = V2(0, headRise * sin(pose.headTilt) * (1 - fu))
-        return { h in
-            let q = h + shift
-            return neckL + (q - neckL).rotated(by: turn) + rise
-        }
-    }
 
     /// From the legs' frame into the head's: mirrored if the upper body is
     /// round past the front view from them, tipped on its neck, and folded
@@ -4366,18 +3530,34 @@ enum SpiderRenderer {
     /// small puffs leading up to it, with a picture or some words inside.
     /// Drawn in the emote frame (already scaled by the sprite's scale, origin
     /// 30 units above the body), so it grows with the spider.
-    private static func drawThought(_ pose: SpiderPose, alpha: CGFloat, in ctx: CGContext) {
-        let t = pose.emoteT
-        let pop = easeOutBack(min(t * 3, 1))
+    /// The words in a thought, set in lines, and the cloud's size and
+    /// middle, in the emote frame.
+    private struct ThoughtLayout {
+        var lines: [CTLine] = []
+        var cw: CGFloat, ch: CGFloat, cx: CGFloat, cy: CGFloat
+    }
+
+    /// One layout per thought, kept: the words are set once, not every frame.
+    /// (Behind a lock: the tools draw off the main thread.)
+    private static var thoughtLayoutCache: (Thought, ThoughtLayout)?
+    private static let thoughtLayoutLock = NSLock()
+
+    private static func thoughtLayout(_ thought: Thought) -> ThoughtLayout {
+        thoughtLayoutLock.lock()
+        defer { thoughtLayoutLock.unlock() }
+        if let (th, l) = thoughtLayoutCache, th == thought { return l }
         // Size the cloud to what is in it.
         var textLines: [CTLine] = []
         var textW: CGFloat = 0, textH: CGFloat = 0
         let ink = NSColor(calibratedRed: 0.22, green: 0.14, blue: 0.08, alpha: 1)
-        if case .text(let str) = pose.thought {
+        if case .text(let str) = thought {
             let font = CTFontCreateWithName("HelveticaNeue-Medium" as CFString, 8.5, nil)
             let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: ink]
-            let maxW: CGFloat = 96
-            // Word-wrap by hand: greedy lines up to maxW, at most four.
+            // A long answer gets a wider cloud, and a line or two more.
+            let long = str.count > 64
+            let maxW: CGFloat = long ? 118 : 96
+            let most = long ? 6 : 4
+            // Word-wrap by hand: greedy lines up to maxW, at most four (six).
             var lines: [String] = []
             var cur = ""
             for word in str.split(separator: " ").map(String.init) {
@@ -4386,7 +3566,7 @@ enum SpiderRenderer {
                 if w > Double(maxW), !cur.isEmpty { lines.append(cur); cur = word } else { cur = trial }
             }
             if !cur.isEmpty { lines.append(cur) }
-            if lines.count > 4 { lines = Array(lines.prefix(3)) + [lines[3] + "…"] }
+            if lines.count > most { lines = Array(lines.prefix(most - 1)) + [lines[most - 1] + "…"] }
             for l in lines {
                 let line = CTLineCreateWithAttributedString(NSAttributedString(string: l, attributes: attrs))
                 textLines.append(line)
@@ -4397,7 +3577,50 @@ enum SpiderRenderer {
         let innerW = max(18, textW + 4), innerH = max(16, textH + 2)
         let cw = innerW + 14, ch = innerH + 10
         // The cloud sits up and back over the head.
-        let cx: CGFloat = -6, cy: CGFloat = 18 + ch / 2
+        let l = ThoughtLayout(lines: textLines, cw: cw, ch: ch, cx: -6, cy: 18 + ch / 2)
+        thoughtLayoutCache = (thought, l)
+        return l
+    }
+
+    /// Where its thought bubble is on the screen (in its world), bumps and
+    /// all; nil with none up, or one too faint to click.
+    static func thoughtBubbleRect(_ pose: SpiderPose) -> CGRect? {
+        guard pose.emote == .thought, pose.emoteT > 0.05, pose.emoteT < 0.9 else { return nil }
+        let l = thoughtLayout(pose.thought)
+        let k = pose.scale * 1.45
+        let r = CGRect(x: l.cx - l.cw / 2 - 6, y: l.cy - l.ch / 2 - 6, width: l.cw + 12, height: l.ch + 12)
+        return CGRect(x: pose.pos.x + r.minX * k, y: pose.pos.y + 30 * pose.scale + r.minY * k,
+                      width: r.width * k, height: r.height * k)
+    }
+
+    /// A thought bubble on its own, fully up, its cloud centred on `centre`
+    /// and drawn `size` times its size in the emote frame (the Studio's
+    /// pictures of how it thinks).
+    /// (`fitting`: no bigger than that, bumps and all.)
+    static func drawThoughtBubble(_ thought: Thought, centre: CGPoint, size: CGFloat, fitting: CGSize? = nil,
+                                  time: CGFloat = 0, in ctx: CGContext) {
+        let l = thoughtLayout(thought)
+        var size = size
+        if let fit = fitting { size = min(size, fit.width / (l.cw + 12), fit.height / (l.ch + 22)) }
+        var pose = SpiderPose()
+        pose.emote = .thought
+        pose.thought = thought
+        pose.emoteT = 0.5
+        pose.emoteClock = time
+        ctx.saveGState()
+        ctx.translateBy(x: centre.x, y: centre.y)
+        ctx.scaleBy(x: size, y: size)
+        ctx.translateBy(x: -l.cx, y: -l.cy + 4)
+        drawThought(pose, alpha: 1, in: ctx)
+        ctx.restoreGState()
+    }
+
+    private static func drawThought(_ pose: SpiderPose, alpha: CGFloat, in ctx: CGContext) {
+        let t = pose.emoteT
+        let pop = easeOutBack(min(t * 3, 1))
+        let layout = thoughtLayout(pose.thought)
+        let textLines = layout.lines
+        let cw = layout.cw, ch = layout.ch, cx = layout.cx, cy = layout.cy
         ctx.saveGState()
         ctx.translateBy(x: cx, y: cy)
         ctx.scaleBy(x: pop, y: pop)
@@ -4452,6 +3675,17 @@ enum SpiderRenderer {
                 ctx.textPosition = CGPoint(x: -w / 2, y: total / 2 - 8.5 - CGFloat(i) * 10.5)
                 ctx.setAlpha(alpha)
                 CTLineDraw(line, ctx)
+            }
+        case .dots:
+            // Three dots bobbing one after another, on the clock (a wait can
+            // be long, and the bubble's own time is held while it lasts).
+            let clock = pose.emoteClock
+            ctx.setFillColor(CGColor(red: 0.30, green: 0.18, blue: 0.09, alpha: Double(alpha * 0.85)))
+            for k in 0..<3 {
+                let ph = clock * 5.5 - CGFloat(k) * 0.9
+                let up = max(0, sin(ph)) * 2.2
+                let r: CGFloat = 1.7
+                ctx.fillEllipse(in: CGRect(x: CGFloat(k - 1) * 5.2 - r, y: -1 + up - r, width: r * 2, height: r * 2))
             }
         case .heart:
             drawHeart(at: CGPoint(x: 0, y: 0), size: 5.5 + sin(t * 12) * 0.5, alpha: alpha, in: ctx)

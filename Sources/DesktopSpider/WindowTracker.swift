@@ -25,6 +25,8 @@ struct TrackedWindow {
     /// top and tiled to fill it — rather than having a full-screen Space of
     /// its own (see `WindowTracker.fills`).
     var maximized = false
+    /// One of the widgets on the desktop: furniture behind every window.
+    var widget = false
 }
 
 /// Polls the window server for on-screen window rectangles so the spider knows
@@ -54,6 +56,8 @@ final class WindowTracker {
     /// Reads browser windows' titles (as a sign of the page changing): on
     /// while pages are being climbed.
     var readsBrowserTitles = false
+    /// The widgets on the desktop count as furniture (Settings ▸ Behavior).
+    var standsOnWidgets = true
     /// Screens with no desktop showing at the last look: a full-screen
     /// Space (whatever is on it — a browser with its bars showing is two
     /// windows, neither covering the screen).
@@ -126,10 +130,11 @@ final class WindowTracker {
         let pid = selfPID
         let own = ownFurniture
         let titles = readsBrowserTitles
+        let widgets = standsOnWidgets
         queue.async { [weak self] in
             guard let self else { return }
             let (found, fullScreens, banners, taken, bare, zoomed) = self.snapshot(primaryTop: primaryTop, screens: visible, selfPID: pid,
-                                                                                  own: own, titles: titles)
+                                                                                  own: own, titles: titles, widgets: widgets)
             let result = self.withCornerRadii(found, primaryTop: primaryTop)
             let docks = SurfaceMap.dockStrips(screens: visible)
             DispatchQueue.main.async {
@@ -143,15 +148,78 @@ final class WindowTracker {
                 self.zoomedScreens = zoomed
                 var frames: [CGWindowID: CGRect] = [:]
                 var changed = false
+                let now = CACurrentMediaTime()
                 for w in result {
                     frames[w.id] = w.frame
-                    if self.lastFrames[w.id] != w.frame { changed = true }
+                    if let was = self.lastFrames[w.id], was != w.frame {
+                        changed = true
+                        if self.leaving[w.id] != nil || WindowTracker.minimizing(from: was, to: w.frame, dock: self.dockEdge()) {
+                            self.leaving[w.id] = now
+                        }
+                    } else if self.lastFrames[w.id] == nil { changed = true }
                 }
                 if frames.count != self.lastFrames.count { changed = true }
                 self.lastFrames = frames
-                if changed { self.busyUntil = CACurrentMediaTime() + 0.8 }
-                self.onUpdate?(result, fullScreens, docks, taken)
+                // A window on its way into the Dock is gone the moment it
+                // sets off: until it is out of the list — or, if it was not
+                // going after all (tiled to the bottom of the screen, say),
+                // has been still a moment.
+                // (A window already on its way stays so while it moves.)
+                self.leaving = self.leaving.filter { id, since in frames[id] != nil && now - since < 0.6 }
+                if changed { self.busyUntil = now + 0.8 }
+                self.onUpdate?(self.leaving.isEmpty ? result : result.filter { self.leaving[$0.id] == nil }, fullScreens, docks, taken)
             }
+        }
+    }
+
+    // MARK: Minimizing
+    //
+    // Minimized, a window goes down into the Dock over a quarter to half a
+    // second, and all the while the window server lists it where it is
+    // drawn: shrinking (Scale), or warped and stretched toward its tile
+    // (Genie, whose box widens and slides down whole). Anything standing
+    // on it would ride that box about in mid-air, so it is let go of at
+    // once (see `leaving`).
+
+    /// Windows seen setting off into the Dock, and when they last moved
+    /// like it: left out of what is reported.
+    private var leaving: [CGWindowID: CFTimeInterval] = [:]
+
+    /// Which side of the screen the Dock is on (shown or hidden), from its
+    /// own settings, read now and then.
+    private var dockSide: (read: CFTimeInterval, edge: SurfaceMap.DockEdge)?
+    private func dockEdge() -> SurfaceMap.DockEdge {
+        let now = CACurrentMediaTime()
+        if let d = dockSide, now - d.read < 5 { return d.edge }
+        CFPreferencesAppSynchronize("com.apple.dock" as CFString)
+        let edge: SurfaceMap.DockEdge
+        switch UserDefaults(suiteName: "com.apple.dock")?.string(forKey: "orientation") {
+        case "left": edge = .left
+        case "right": edge = .right
+        default: edge = .bottom
+        }
+        dockSide = (now, edge)
+        return edge
+    }
+
+    /// Whether a window's frame changing from `was` to `now` between two
+    /// looks is the start of it going into the Dock. Dragged, a window keeps
+    /// its size; resized by an edge or a corner, it keeps a corner where it
+    /// was (and resized with ⌥ held, its middle). Going into the Dock, its
+    /// size changes with no corner kept, its middle heads for the Dock and
+    /// the side away from the Dock comes along with it.
+    static func minimizing(from was: CGRect, to now: CGRect, dock: SurfaceMap.DockEdge) -> Bool {
+        let slack: CGFloat = 1.5
+        let resized = abs(now.width - was.width) > slack || abs(now.height - was.height) > slack
+        guard resized else { return false }
+        let left = abs(now.minX - was.minX) <= slack, right = abs(now.maxX - was.maxX) <= slack
+        let bottom = abs(now.minY - was.minY) <= slack, top = abs(now.maxY - was.maxY) <= slack
+        if (left || right) && (bottom || top) { return false }
+        let lead: CGFloat = 2
+        switch dock {
+        case .bottom: return was.maxY - now.maxY >= lead && was.midY - now.midY >= lead
+        case .left: return was.maxX - now.maxX >= lead && was.midX - now.midX >= lead
+        case .right: return now.minX - was.minX >= lead && now.midX - was.midX >= lead
         }
     }
 
@@ -184,6 +252,8 @@ final class WindowTracker {
         cornerRadii = cornerRadii.filter { live.contains($0.key) }
         return windows.map { w in
             var w = w
+            // (A widget's corners are always the same.)
+            if w.widget { return w }
             if let r = cornerRadii[w.id] {
                 w.cornerRadius = r
             } else if canSee, budget > 0, let measure = measureCorner {
@@ -246,9 +316,13 @@ final class WindowTracker {
     }
     /// How far short of each side of the screen a maximized window may stop.
     static let maximizedSlack: CGFloat = 24
+    /// A desktop widget's card, inside its window (measured on macOS 26:
+    /// the same for every size of widget), and how round its corners are.
+    static let widgetMargin: CGFloat = 8
+    static let widgetCornerRadius: CGFloat = 26
 
     private func snapshot(primaryTop: CGFloat, screens visibleFrames: [(CGRect, CGRect)], selfPID: Int32,
-                          own: Set<CGWindowID>, titles: Bool)
+                          own: Set<CGWindowID>, titles: Bool, widgets: Bool)
         -> ([TrackedWindow], [CGRect], [CGWindowID: CGRect], [TrackedWindow], [CGRect], [CGRect]) {
         let screens = visibleFrames.map(\.0)
         // Desktop elements are listed too: the wallpaper is how a display
@@ -362,6 +436,39 @@ final class WindowTracker {
             out.append(tracked)
             depth += 1
             if out.count >= 28 { break }
+        }
+        // The widgets on the desktop: Notification Center's windows down
+        // there, one each, just above the desktop icons — so behind every
+        // window, which hides what it covers of them. Each window has a
+        // clear margin round the card it shows; the card is what is stood on.
+        if widgets {
+            var count = 0
+            for dict in info {
+                guard let layer = dict[kCGWindowLayer as String] as? Int,
+                      layer > WindowTracker.desktopIconLayer, layer < 0,
+                      let number = dict[kCGWindowNumber as String] as? Int,
+                      let ownerPID = dict[kCGWindowOwnerPID as String] as? Int32,
+                      ownerPID != selfPID, isNotificationCenter(ownerPID),
+                      let boundsDict = dict[kCGWindowBounds as String] as? [String: CGFloat],
+                      let cg = CGRect(dictionaryRepresentation: boundsDict as CFDictionary)
+                else { continue }
+                if let alpha = dict[kCGWindowAlpha as String] as? CGFloat, alpha < 0.35 { continue }
+                let card = CGRect(x: cg.minX, y: primaryTop - cg.maxY, width: cg.width, height: cg.height)
+                    .insetBy(dx: WindowTracker.widgetMargin, dy: WindowTracker.widgetMargin)
+                // (Nothing the size of a screen: that is no widget.)
+                guard card.width > 130, card.height > 90,
+                      !screens.contains(where: { card.width >= $0.width * 0.9 && card.height >= $0.height * 0.9 })
+                else { continue }
+                var tracked = TrackedWindow(id: CGWindowID(number), frame: card, depth: depth,
+                                            owner: (dict[kCGWindowOwnerName as String] as? String) ?? "",
+                                            pid: ownerPID, bundleID: "com.apple.notificationcenterui")
+                tracked.widget = true
+                tracked.cornerRadius = WindowTracker.widgetCornerRadius
+                out.append(tracked)
+                depth += 1
+                count += 1
+                if count >= 16 { break }
+            }
         }
         // Whatever else is listed on a taken display is on a different
         // Space, or under the video: nothing to walk on.

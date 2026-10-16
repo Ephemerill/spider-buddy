@@ -98,6 +98,101 @@ final class OptionCell: NSControl {
     }
 }
 
+/// The Apple Intelligence switch, in a card of its own that lights up in
+/// Apple Intelligence's colours when it is on.
+final class IntelligenceCard: NSView {
+    var isOn = false { didSet { needsDisplay = true } }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let r = bounds.insetBy(dx: 2, dy: 2)
+        let path = NSBezierPath(roundedRect: r, xRadius: 14, yRadius: 14)
+        NSColor.quaternaryLabelColor.withAlphaComponent(isOn ? 0.12 : 0.08).setFill()
+        path.fill()
+        if isOn, let g = NSGradient(colors: [.systemBlue, .systemPurple, .systemPink, .systemOrange]) {
+            // A rim in its colours: the gradient, clipped to a ring.
+            NSGraphicsContext.saveGraphicsState()
+            let ring = NSBezierPath(roundedRect: r, xRadius: 14, yRadius: 14)
+            ring.append(NSBezierPath(roundedRect: r.insetBy(dx: 2, dy: 2), xRadius: 12, yRadius: 12).reversed)
+            ring.addClip()
+            g.draw(in: r, angle: -20)
+            NSGraphicsContext.restoreGraphicsState()
+        }
+    }
+}
+
+/// One way it can think, as a card: a real thought bubble of that kind, its
+/// name and a line on what it means. Picked like an option cell.
+final class VoiceCard: NSControl {
+    var title = "" { didSet { needsDisplay = true } }
+    var detail = "" { didSet { needsDisplay = true } }
+    var thought: Thought = .heart { didSet { needsDisplay = true } }
+    var isSelected = false { didSet { needsDisplay = true } }
+    var onPick: (() -> Void)?
+    private var hovered = false { didSet { needsDisplay = true } }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        translatesAutoresizingMaskIntoConstraints = false
+        widthAnchor.constraint(equalToConstant: frame.width).isActive = true
+        heightAnchor.constraint(equalToConstant: frame.height).isActive = true
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func mouseEntered(with event: NSEvent) { hovered = true }
+    override func mouseExited(with event: NSEvent) { hovered = false }
+    override func mouseUp(with event: NSEvent) {
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { onPick?() }
+    }
+    override var acceptsFirstResponder: Bool { false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        let r = bounds.insetBy(dx: 2, dy: 2)
+        let path = NSBezierPath(roundedRect: r, xRadius: 14, yRadius: 14)
+        if isSelected {
+            NSColor.controlAccentColor.withAlphaComponent(0.14).setFill()
+            path.fill()
+            NSColor.controlAccentColor.setStroke()
+            path.lineWidth = 2.5
+            path.stroke()
+        } else {
+            (hovered ? NSColor.quaternaryLabelColor.withAlphaComponent(0.25) : NSColor.quaternaryLabelColor.withAlphaComponent(0.08)).setFill()
+            path.fill()
+        }
+        // A little sky for the bubble to sit in, the colour of its box.
+        let sky = CGRect(x: r.minX + 8, y: r.maxY - 72, width: r.width - 16, height: 64)
+        let skyPath = NSBezierPath(roundedRect: sky, xRadius: 10, yRadius: 10)
+        NSColor(calibratedRed: 0.98, green: 0.96, blue: 0.92, alpha: 1).setFill()
+        skyPath.fill()
+        NSColor(calibratedRed: 0.80, green: 0.72, blue: 0.60, alpha: 0.6).setStroke()
+        skyPath.lineWidth = 1
+        skyPath.stroke()
+        ctx.saveGState()
+        skyPath.addClip()
+        SpiderRenderer.drawThoughtBubble(thought, centre: CGPoint(x: sky.midX, y: sky.midY + 2), size: 1.25,
+                                         fitting: CGSize(width: sky.width - 10, height: sky.height), in: ctx)
+        ctx.restoreGState()
+        // The name, and what it means.
+        let titleAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12.5, weight: .semibold),
+            .foregroundColor: NSColor.labelColor,
+        ]
+        NSAttributedString(string: title, attributes: titleAttrs).draw(at: CGPoint(x: r.minX + 10, y: sky.minY - 22))
+        let para = NSMutableParagraphStyle()
+        para.lineBreakMode = .byWordWrapping
+        let detailAttrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10.5),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: para,
+        ]
+        NSAttributedString(string: detail, attributes: detailAttrs)
+            .draw(with: CGRect(x: r.minX + 10, y: r.minY + 6, width: r.width - 18, height: sky.minY - 26 - r.minY - 6),
+                  options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+    }
+}
+
 /// A fixed-column grid of option cells; sized to its content.
 final class OptionGrid: NSView {
     private(set) var cells: [OptionCell] = []
@@ -301,8 +396,10 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
     func textDidChange(_ notification: Notification) {
         guard let tv = notification.object as? NSTextView, tv === phrasesView else { return }
         design.customPhrases = tv.string.split(separator: "\n").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        throwaway = false
         preview.spider.apply(design: design)
         onChange?(design)
+        refreshKept()
     }
 
     private(set) var design: SpiderDesign
@@ -331,6 +428,14 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
     private var stylePopup: NSPopUpButton!
     private var legMotionPopup: NSPopUpButton!
     private var sizeSlider: NSSlider!
+    /// My Spiders: whether the one out is kept as it is, and the shelf.
+    private var keptLabel: NSTextField!
+    private var saveButton: NSButton!
+    private var revertButton: NSButton!
+    private var shelf: NSStackView!
+    /// Fresh from Surprise Me or Start Over and not touched since: nothing
+    /// anyone would miss, so nothing to ask about before it goes.
+    private var throwaway = false
     var scale: CGFloat = 0.95
     var onScale: ((CGFloat) -> Void)?
     /// A habit that needs the real desktop to be shown (a hammock wants a
@@ -339,6 +444,7 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
 
     init(design: SpiderDesign) {
         self.design = design
+        SpiderLibrary.seed(with: design)
         super.init()
         build()
     }
@@ -368,6 +474,15 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         design.look.body = .custom
         design.look.eyes = .custom
         design.look.legs = .custom
+        preview.spider.apply(design: design)
+        syncControls()
+    }
+
+    /// For studio snapshots: thinking in this way (only the draft: nothing
+    /// is saved).
+    func debugVoice(_ v: ThoughtVoice, intelligence: Bool) {
+        design.voice = v
+        design.intelligence = intelligence
         preview.spider.apply(design: design)
         syncControls()
     }
@@ -444,6 +559,28 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         nameRow.addArrangedSubview(dice)
         left.addArrangedSubview(nameRow)
 
+        // Whether the spider out is kept in My Spiders as it is now.
+        let keptRow = NSStackView()
+        keptRow.orientation = .horizontal
+        keptRow.spacing = 8
+        keptLabel = NSTextField(labelWithString: "")
+        keptLabel.font = .systemFont(ofSize: 11)
+        keptLabel.textColor = .secondaryLabelColor
+        saveButton = NSButton(title: "Save", target: self, action: #selector(saveSpider))
+        saveButton.bezelStyle = .rounded
+        saveButton.controlSize = .small
+        saveButton.keyEquivalent = "s"
+        saveButton.keyEquivalentModifierMask = .command
+        saveButton.toolTip = "Keep it in My Spiders just as it is now (⌘S)"
+        revertButton = NSButton(title: "Revert", target: self, action: #selector(revertSpider))
+        revertButton.bezelStyle = .rounded
+        revertButton.controlSize = .small
+        revertButton.toolTip = "Put it back as it was when you last saved it"
+        keptRow.addArrangedSubview(keptLabel)
+        keptRow.addArrangedSubview(saveButton)
+        keptRow.addArrangedSubview(revertButton)
+        left.addArrangedSubview(keptRow)
+
         let poseRow = NSStackView()
         poseRow.orientation = .horizontal
         poseRow.spacing = 8
@@ -461,7 +598,7 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         poseRow.addArrangedSubview(poses)
         left.addArrangedSubview(poseRow)
 
-        let hint = NSTextField(wrappingLabelWithString: "Click, drag and throw it in the box. Everything you change here happens on your desktop straight away.")
+        let hint = NSTextField(wrappingLabelWithString: "Click, drag and throw it in the box. Everything you change here happens on your desktop straight away; save to keep it in My Spiders.")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = .secondaryLabelColor
         hint.translatesAutoresizingMaskIntoConstraints = false
@@ -505,7 +642,7 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
             [("Body", buildBodyTab), ("Face", buildFaceTab), ("Legs", buildLegsTab),
              ("Colours", buildColourTab), ("Markings", buildMarkingsTab), ("Hats", buildHatTab), ("Extras", buildExtrasTab)],
             [("Personality", buildPersonalityTab), ("Gait", buildGaitTab),
-             ("Habits", buildHabitsTab), ("Thoughts", buildThoughtsTab)],
+             ("Habits", buildHabitsTab), ("Thoughts", buildThoughtsTab), ("My Spiders", buildSpidersTab)],
         ]
         var rows: [[(String, NSView)]] = []
         for row in builders {
@@ -532,6 +669,7 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
 
         window.contentView = root
         refreshGrids()
+        refreshKept()
     }
 
     /// Shows tab `index` (counting across both rows) and lights its name.
@@ -1106,47 +1244,236 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         return col
     }
 
+    // MARK: Thoughts
+    //
+    // How it thinks, picked from three cards — pictures, phrases, or its own
+    // words — with what goes with each shown under them: the packs and your
+    // own lines for phrases; for its own words, how it talks, what it likes
+    // to talk about, lines to say just as written, and a box to try talking
+    // with it in the preview.
+
     private var packBoxes: [ThoughtPack: NSButton] = [:]
+    private var packNotes: [ThoughtPack: NSTextField] = [:]
     private var phrasesView: NSTextView!
+    private var intelligenceCard: IntelligenceCard!
+    private var intelligenceSwitch: NSSwitch!
+    private var voiceCards: [ThoughtVoice: VoiceCard] = [:]
+    private var voiceHeader: NSView!
+    private var voiceCardRow: NSView!
+    private var voiceStatusRow: NSStackView!
+    private var voiceStatusIcon: NSImageView!
+    private var voiceStatusLabel: NSTextField!
+    private var voiceSettingsButton: NSButton!
+    private var picturesNote: NSView!
+    private var wordsSection: NSView!
+    private var packsHeader: NSTextField!
+    private var packsSection: NSView!
+    private var linesHeader: NSTextField!
+    private var linesNote: NSTextField!
+    private var linesSection: NSView!
+    private var mannerField: NSTextField!
+    private var mannerChips: [NSButton] = []
+    private var talkField: NSTextField!
+    private var talkButton: NSButton!
+
+    private static let mannerIdeas = ["Cheerful", "Silly", "Shy", "Dramatic", "Sleepy", "Pirate"]
 
     private func buildThoughtsTab() -> NSView {
         let col = column()
-        col.addArrangedSubview(header("What it thinks about"))
-        let note = NSTextField(wrappingLabelWithString: "Now and then a thought bubble appears over its head with a picture or a few words. Tick the packs of words it may use, and add lines of your own below, one per line.")
-        note.font = .systemFont(ofSize: 11)
-        note.textColor = .secondaryLabelColor
-        note.translatesAutoresizingMaskIntoConstraints = false
-        note.widthAnchor.constraint(equalToConstant: 470).isActive = true
-        col.addArrangedSubview(note)
+        col.spacing = 10
+
+        // Apple Intelligence: on, it thinks in its own words and talks back.
+        let card = IntelligenceCard()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.widthAnchor.constraint(equalToConstant: 470).isActive = true
+        let icon = NSImageView()
+        let symbol = NSImage(systemSymbolName: "apple.intelligence", accessibilityDescription: "Apple Intelligence")
+            ?? NSImage(systemSymbolName: "sparkles", accessibilityDescription: "Apple Intelligence")
+        icon.image = symbol?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 22, weight: .regular)
+            .applying(.init(paletteColors: [.systemPurple, .systemPink, .systemOrange])))
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        let title = NSTextField(labelWithString: "Apple Intelligence")
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        let detail = NSTextField(wrappingLabelWithString: "Lets it think in its own words, and talk with you: right-click it, or click its thought bubble.")
+        detail.font = .systemFont(ofSize: 11)
+        detail.textColor = .secondaryLabelColor
+        detail.preferredMaxLayoutWidth = 320
+        detail.translatesAutoresizingMaskIntoConstraints = false
+        detail.widthAnchor.constraint(equalToConstant: 320).isActive = true
+        let words = NSStackView(views: [title, detail])
+        words.orientation = .vertical
+        words.alignment = .leading
+        words.spacing = 2
+        intelligenceSwitch = NSSwitch()
+        intelligenceSwitch.target = self
+        intelligenceSwitch.action = #selector(intelligenceToggled(_:))
+        let row = NSStackView(views: [icon, words, intelligenceSwitch])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 10
+        row.edgeInsets = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 16)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.topAnchor.constraint(equalTo: card.topAnchor), row.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: card.leadingAnchor), row.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+        ])
+        intelligenceCard = card
+        col.addArrangedSubview(card)
+
+        // Whether this Mac has its own words to give it.
+        voiceStatusRow = NSStackView()
+        voiceStatusRow.orientation = .horizontal
+        voiceStatusRow.alignment = .centerY
+        voiceStatusRow.spacing = 6
+        voiceStatusIcon = NSImageView()
+        voiceStatusIcon.translatesAutoresizingMaskIntoConstraints = false
+        voiceStatusIcon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+        voiceStatusIcon.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        voiceStatusLabel = NSTextField(wrappingLabelWithString: "")
+        voiceStatusLabel.font = .systemFont(ofSize: 11)
+        voiceStatusLabel.textColor = .secondaryLabelColor
+        voiceStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        voiceStatusLabel.widthAnchor.constraint(equalToConstant: 340).isActive = true
+        voiceSettingsButton = NSButton(title: "Open Settings…", target: self, action: #selector(openIntelligenceSettings))
+        voiceSettingsButton.bezelStyle = .rounded
+        voiceSettingsButton.controlSize = .small
+        voiceStatusRow.addArrangedSubview(voiceStatusIcon)
+        voiceStatusRow.addArrangedSubview(voiceStatusLabel)
+        voiceStatusRow.addArrangedSubview(voiceSettingsButton)
+        col.addArrangedSubview(voiceStatusRow)
+
+        // Off: pictures or phrases, as cards with a bubble in each.
+        let voiceTop = column()
+        voiceTop.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 0, right: 0)
+        voiceTop.addArrangedSubview(header("How it thinks"))
+        voiceTop.addArrangedSubview(note("Now and then a thought bubble comes up over its head. Choose what goes in it."))
+        voiceHeader = voiceTop
+        col.addArrangedSubview(voiceTop)
+        let cards = NSStackView()
+        cards.orientation = .horizontal
+        cards.spacing = 10
+        let samples: [ThoughtVoice: (Thought, String)] = [
+            .pictures: (.heart, "Little drawings: a heart, the rain, a bug it fancies."),
+            .phrases: (.text("hello there"), "Lines from the packs below, and your own."),
+        ]
+        for v in ThoughtVoice.allCases {
+            let c = VoiceCard(frame: CGRect(x: 0, y: 0, width: 230, height: 144))
+            c.title = v.label
+            c.detail = samples[v]!.1
+            c.thought = samples[v]!.0
+            c.onPick = { [weak self] in
+                guard let self else { return }
+                self.design.voice = v
+                self.changed()
+            }
+            voiceCards[v] = c
+            cards.addArrangedSubview(c)
+        }
+        voiceCardRow = cards
+        col.addArrangedSubview(cards)
+
+        col.addArrangedSubview(slider("How often it thinks out loud", low: "Hardly ever", high: "All the time",
+                                      get: { self.design.habits.muse }, set: { self.design.habits.muse = $0 },
+                                      play: ("Have a thought in the preview", { [weak self] in self?.preview.spider.thinkSomething(always: true) })))
+
+        // Pictures: nothing more to set.
+        picturesNote = note("It thinks in pictures only: a heart for you, a cricket when it's hungry, the weather, home. Nothing to set up.")
+        col.addArrangedSubview(picturesNote)
+
+        // Its own words: how it talks, and a word with it.
+        let talk = column()
+        talk.edgeInsets = NSEdgeInsets()
+        talk.spacing = 8
+        talk.addArrangedSubview(spacer(4))
+        talk.addArrangedSubview(header("How it talks"))
+        mannerField = NSTextField(string: design.manner)
+        mannerField.placeholderString = "e.g. cheerful and a little dramatic, loves a pun"
+        mannerField.delegate = self
+        mannerField.translatesAutoresizingMaskIntoConstraints = false
+        mannerField.widthAnchor.constraint(equalToConstant: 470).isActive = true
+        talk.addArrangedSubview(mannerField)
+        let chips = NSStackView()
+        chips.orientation = .horizontal
+        chips.spacing = 5
+        for idea in StudioController.mannerIdeas {
+            let b = NSButton(title: idea, target: self, action: #selector(mannerChipTapped(_:)))
+            b.bezelStyle = .recessed
+            b.setButtonType(.pushOnPushOff)
+            b.controlSize = .small
+            b.font = .systemFont(ofSize: 11)
+            mannerChips.append(b)
+            chips.addArrangedSubview(b)
+        }
+        talk.addArrangedSubview(chips)
+        talk.addArrangedSubview(subheader("Say something to it"))
+        let talkRow = NSStackView()
+        talkRow.orientation = .horizontal
+        talkRow.spacing = 6
+        talkField = NSTextField(string: "")
+        talkField.placeholderString = "Hello! How's the view up there?"
+        talkField.translatesAutoresizingMaskIntoConstraints = false
+        talkField.widthAnchor.constraint(equalToConstant: 390).isActive = true
+        talkField.target = self
+        talkField.action = #selector(talkInPreview)
+        talkButton = NSButton(title: "Say It", target: self, action: #selector(talkInPreview))
+        talkButton.bezelStyle = .rounded
+        talkRow.addArrangedSubview(talkField)
+        talkRow.addArrangedSubview(talkButton)
+        talk.addArrangedSubview(talkRow)
+        talk.addArrangedSubview(note("It answers in its bubble in the preview. On your desktop, right-click it or click its thought bubble to talk with it there."))
+        wordsSection = talk
+        col.addArrangedSubview(talk)
+
+        // The packs: lines to say, or things to talk about.
+        packsHeader = header("What it says")
+        col.addArrangedSubview(spacer(4))
+        col.addArrangedSubview(packsHeader)
+        let packs = column()
+        packs.edgeInsets = NSEdgeInsets()
+        packs.spacing = 2
         for pack in ThoughtPack.allCases {
             let box = NSButton(checkboxWithTitle: pack.label, target: self, action: #selector(packToggled(_:)))
             box.state = design.packs.contains(pack) ? .on : .off
             box.tag = ThoughtPack.allCases.firstIndex(of: pack) ?? 0
             packBoxes[pack] = box
-            col.addArrangedSubview(box)
-            let sample = NSTextField(labelWithString: "e.g. " + (pack.phrases.first ?? ""))
+            packs.addArrangedSubview(box)
+            let sample = NSTextField(labelWithString: "")
             sample.font = .systemFont(ofSize: 10)
             sample.textColor = .tertiaryLabelColor
             sample.lineBreakMode = .byTruncatingTail
             sample.translatesAutoresizingMaskIntoConstraints = false
-            sample.widthAnchor.constraint(equalToConstant: 460).isActive = true
-            col.addArrangedSubview(sample)
+            sample.widthAnchor.constraint(equalToConstant: 450).isActive = true
+            packNotes[pack] = sample
+            let indent = NSStackView(views: [spacer(0, width: 18), sample])
+            indent.orientation = .horizontal
+            indent.spacing = 0
+            packs.addArrangedSubview(indent)
+            packs.setCustomSpacing(8, after: indent)
         }
-        col.addArrangedSubview(header("Your own lines"))
+        packsSection = packs
+        col.addArrangedSubview(packs)
+
+        // Your own lines.
+        linesHeader = header("Your own lines")
+        col.addArrangedSubview(linesHeader)
+        linesNote = note("")
+        col.addArrangedSubview(linesNote)
         let scroll = NSScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.widthAnchor.constraint(equalToConstant: 470).isActive = true
-        scroll.heightAnchor.constraint(equalToConstant: 150).isActive = true
+        scroll.heightAnchor.constraint(equalToConstant: 110).isActive = true
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
-        let tv = NSTextView(frame: CGRect(x: 0, y: 0, width: 470, height: 150))
+        let tv = NSTextView(frame: CGRect(x: 0, y: 0, width: 470, height: 110))
         tv.isRichText = false
         tv.font = .systemFont(ofSize: 12)
         tv.isAutomaticQuoteSubstitutionEnabled = false
         tv.isAutomaticDashSubstitutionEnabled = false
         tv.string = design.customPhrases.joined(separator: "\n")
         tv.delegate = self
-        tv.minSize = CGSize(width: 0, height: 150)
+        tv.minSize = CGSize(width: 0, height: 110)
         tv.maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         tv.isVerticallyResizable = true
         tv.isHorizontallyResizable = false
@@ -1154,10 +1481,72 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         tv.textContainer?.containerSize = CGSize(width: 470, height: CGFloat.greatestFiniteMagnitude)
         scroll.documentView = tv
         phrasesView = tv
+        linesSection = scroll
         col.addArrangedSubview(scroll)
-        let tryButton = NSButton(title: "Think something now", target: self, action: #selector(thinkNow))
+
+        col.addArrangedSubview(spacer(2))
+        let tryButton = NSButton(title: "Think Something Now", target: self, action: #selector(thinkNow))
+        tryButton.bezelStyle = .rounded
         col.addArrangedSubview(tryButton)
+        syncers.append { [weak self] in self?.syncThoughts() }
+        syncThoughts()
         return col
+    }
+
+    private func spacer(_ height: CGFloat, width: CGFloat? = nil) -> NSView {
+        let v = NSView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.heightAnchor.constraint(equalToConstant: height).isActive = true
+        if let width { v.widthAnchor.constraint(equalToConstant: width).isActive = true }
+        return v
+    }
+
+    /// The tab, shown as it is for the way it thinks now.
+    private func syncThoughts() {
+        let ai = design.intelligence
+        let v = design.voice
+        intelligenceSwitch.state = ai ? .on : .off
+        intelligenceCard.isOn = ai
+        for (kind, card) in voiceCards { card.isSelected = kind == v }
+        let status = Spider.words?.status ?? .needsNewerMacOS
+        voiceStatusRow.isHidden = !ai
+        voiceStatusLabel.stringValue = status.explanation
+        let symbol = status == .ready ? "checkmark.circle.fill" : (status == .gettingReady ? "arrow.down.circle" : "exclamationmark.circle")
+        voiceStatusIcon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        voiceStatusIcon.contentTintColor = status == .ready ? .systemGreen : .secondaryLabelColor
+        voiceSettingsButton.isHidden = status != .turnedOff
+        talkField.isEnabled = status == .ready
+        talkButton.isEnabled = status == .ready
+
+        // (On but not to be had on this Mac: it thinks the usual way, so
+        // that stays to choose.)
+        let live = ai && status == .ready
+        voiceHeader.isHidden = live
+        voiceCardRow.isHidden = live
+        picturesNote.isHidden = live || v != .pictures
+        wordsSection.isHidden = !ai
+        let lines = ai || v == .phrases
+        for view in [packsHeader, packsSection, linesHeader, linesNote, linesSection] as [NSView?] { view?.isHidden = !lines }
+        packsHeader.stringValue = ai ? "What it likes to talk about" : "What it says"
+        for (pack, label) in packNotes {
+            label.stringValue = ai
+                ? (pack.keepsItsWords ? "Quotes real verses, word for word, now and then" : pack.topic.prefix(1).uppercased() + pack.topic.dropFirst())
+                : "e.g. " + (pack.phrases.first ?? "")
+        }
+        for (pack, box) in packBoxes { box.state = design.packs.contains(pack) ? .on : .off }
+        linesHeader.stringValue = ai ? "Lines it might say, word for word" : "Your own lines"
+        linesNote.stringValue = ai
+            ? "Now and then it says one of these just as you wrote it, and they give it a feel for how it talks. One per line."
+            : "Lines of your own for it to think, one per line."
+        if mannerField.currentEditor() == nil, mannerField.stringValue != design.manner { mannerField.stringValue = design.manner }
+        let manner = design.manner.lowercased()
+        for chip in mannerChips { chip.state = manner.contains(chip.title.lowercased()) ? .on : .off }
+    }
+
+    @objc private func intelligenceToggled(_ sw: NSSwitch) {
+        design.intelligence = sw.state == .on
+        changed()
+        if design.intelligence, Spider.words?.status == .ready { preview.spider.thinkSomething() }
     }
 
     @objc private func packToggled(_ box: NSButton) {
@@ -1165,8 +1554,34 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         changed()
     }
 
+    @objc private func mannerChipTapped(_ chip: NSButton) {
+        let word = chip.title.lowercased()
+        var parts = design.manner.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        if let i = parts.firstIndex(where: { $0.lowercased() == word }) {
+            parts.remove(at: i)
+        } else {
+            parts.append(word)
+        }
+        design.manner = parts.joined(separator: ", ")
+        mannerField.stringValue = design.manner
+        changed()
+    }
+
+    @objc private func talkInPreview() {
+        let text = talkField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, Spider.words?.status == .ready else { return }
+        talkField.stringValue = ""
+        preview.spider.hear(text)
+    }
+
+    @objc private func openIntelligenceSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Siri-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     @objc private func thinkNow() {
-        preview.spider.thinkSomething()
+        preview.spider.thinkSomething(always: true)
     }
 
     private func buildGaitTab() -> NSView {
@@ -1192,9 +1607,6 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         legMotionPopup.action = #selector(legMotionPicked(_:))
         legRow.addArrangedSubview(legMotionPopup)
         col.addArrangedSubview(legRow)
-        let newLegs = checkbox("New leg system", get: { self.design.gait.continuity }, set: { self.design.gait.continuity = $0 })
-        newLegs.toolTip = "The leg system still being worked on: each leg keeps its place on the body as it turns toward you and away, and legs that cross are drawn the nearer one over the other. Off, its legs move exactly as they did in version 1.0.0."
-        col.addArrangedSubview(newLegs)
         col.addArrangedSubview(slider("Pace", low: "Ambling", high: "Brisk",
                                       get: { self.design.gait.pace }, set: { self.design.gait.pace = $0 }))
         col.addArrangedSubview(slider("Stride", low: "Short steps", high: "Long steps",
@@ -1262,9 +1674,11 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
             }
         }
         refreshGrids()
+        refreshKept()
     }
 
     private func changed() {
+        throwaway = false
         preview.spider.apply(design: design)
         onChange?(design)
         syncControls()
@@ -1272,8 +1686,10 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
 
     @objc private func sliderMoved(_ s: NSSlider) {
         sliderSetters[ObjectIdentifier(s)]?(CGFloat(s.doubleValue))
+        throwaway = false
         preview.spider.apply(design: design)
         onChange?(design)
+        refreshKept()
         let presetIdx = Personality.presets.firstIndex { $0.p == design.personality }
         presetPopup.selectItem(at: presetIdx.map { $0 + 1 } ?? 0)
         // The thumbnails follow once the slider comes to rest, not on
@@ -1318,18 +1734,29 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
     }
 
     @objc private func randomize() {
-        // (How its legs move is a choice of animation, not of spider: kept.)
-        let motion = design.gait.motion, continuity = design.gait.continuity
-        design = SpiderDesign.random()
-        design.gait.motion = motion
-        design.gait.continuity = continuity
-        changed()
-        preview.spider.celebrate()
+        // A new spider, not the saved one changed: what was out is kept
+        // first if it needs to be.
+        keepingCurrent(before: "trying a new one") { [self] in
+            // (How its legs move is a choice of animation, not of spider: kept.)
+            let motion = design.gait.motion
+            design = SpiderDesign.random()
+            design.gait.motion = motion
+            SpiderLibrary.currentID = nil
+            changed()
+            throwaway = true
+            refreshKept()
+            preview.spider.celebrate()
+        }
     }
 
     @objc private func resetDesign() {
-        design = SpiderDesign()
-        changed()
+        keepingCurrent(before: "starting over") { [self] in
+            design = SpiderDesign()
+            SpiderLibrary.currentID = nil
+            changed()
+            throwaway = true
+            refreshKept()
+        }
     }
 
     @objc private func close() {
@@ -1337,8 +1764,256 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
     }
 
     func controlTextDidChange(_ obj: Notification) {
+        if let f = obj.object as? NSTextField, f === mannerField {
+            design.manner = f.stringValue
+            throwaway = false
+            preview.spider.apply(design: design)
+            onChange?(design)
+            refreshKept()
+            let manner = design.manner.lowercased()
+            for chip in mannerChips { chip.state = manner.contains(chip.title.lowercased()) ? .on : .off }
+            return
+        }
+        guard let f = obj.object as? NSTextField, f === nameField else { return }
         design.name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        throwaway = false
         preview.spider.apply(design: design)
         onChange?(design)
+        refreshKept()
+    }
+}
+
+// MARK: - My Spiders
+
+extension StudioController {
+    /// The saved spiders, to bring out one at a time: there is still only
+    /// the one spider, but the others are kept as they were.
+    fileprivate func buildSpidersTab() -> NSView {
+        let col = column()
+        col.addArrangedSubview(header("My Spiders"))
+        col.addArrangedSubview(note("Spiders you've kept. Click one to bring it out onto your desktop. Changes in the Studio go to the spider that's out, and only reach its card here when you press Save. Right-click a spider to copy or delete it."))
+        shelf = NSStackView()
+        shelf.orientation = .vertical
+        shelf.alignment = .leading
+        col.addArrangedSubview(shelf)
+        let buttons = NSStackView()
+        buttons.orientation = .horizontal
+        buttons.spacing = 8
+        let asNew = NSButton(title: "Save as a New Spider", target: self, action: #selector(saveSpiderAsNew))
+        asNew.bezelStyle = .rounded
+        asNew.toolTip = "Keep the spider that's out as another one, leaving any saved spider it came from as it was"
+        buttons.addArrangedSubview(asNew)
+        col.addArrangedSubview(buttons)
+        rebuildShelf()
+        return col
+    }
+
+    /// The cards, made again whenever the library changes.
+    private func rebuildShelf() {
+        guard let shelf else { return }
+        for v in shelf.arrangedSubviews { shelf.removeArrangedSubview(v); v.removeFromSuperview() }
+        let all = SpiderLibrary.all()
+        guard !all.isEmpty else {
+            shelf.addArrangedSubview(note("Nothing saved yet. Press Save to keep the spider that's out."))
+            return
+        }
+        let grid = OptionGrid(count: all.count, columns: 4, cellSize: CGSize(width: 120, height: 132))
+        let currentID = SpiderLibrary.currentID
+        for (i, s) in all.enumerated() {
+            let cell = grid.cells[i]
+            cell.label = s.name
+            cell.isSelected = s.id == currentID
+            cell.toolTip = s.id == currentID ? "\(s.name) is out on your desktop" : "Bring \(s.name) out"
+            cell.image = SpiderRenderer.thumbnail(look: s.design.look, side: 96, front: false)
+            cell.onPick = { [weak self] in self?.bringOut(s.id) }
+            let menu = NSMenu()
+            for (title, action) in [("Bring Out", #selector(bringOutItem(_:))), ("Make a Copy", #selector(copySpiderItem(_:))),
+                                    ("Delete…", #selector(deleteSpiderItem(_:)))] {
+                let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+                item.target = self
+                item.representedObject = s.id
+                item.isEnabled = !(title == "Bring Out" && s.id == currentID)
+                menu.addItem(item)
+            }
+            menu.autoenablesItems = false
+            cell.menu = menu
+        }
+        shelf.addArrangedSubview(grid)
+    }
+
+    /// Whether the spider out is one nobody has kept as it is now — and that
+    /// someone would miss.
+    private var needsKeeping: Bool {
+        !throwaway && !SpiderLibrary.all().contains { $0.matches(design) }
+    }
+
+    /// The line under the name, its buttons, and the shelf's ring.
+    fileprivate func refreshKept() {
+        guard keptLabel != nil else { return }
+        if let cur = SpiderLibrary.current {
+            let same = cur.matches(design)
+            keptLabel.stringValue = same ? "✓ Saved in My Spiders" : "Changed since you saved it"
+            saveButton.isEnabled = !same
+            revertButton.isHidden = same
+        } else {
+            keptLabel.stringValue = "Not saved in My Spiders"
+            saveButton.isEnabled = true
+            revertButton.isHidden = true
+        }
+        // Only the ring moves; the cards are made again when the library
+        // changes.
+        if let grid = shelf?.arrangedSubviews.first as? OptionGrid {
+            let all = SpiderLibrary.all(), id = SpiderLibrary.currentID
+            for (i, cell) in grid.cells.enumerated() where i < all.count { cell.isSelected = all[i].id == id }
+        }
+    }
+
+    /// Asks — if the spider out would be lost — whether to keep it first,
+    /// then does `then` (or nothing, if they think better of it).
+    fileprivate func keepingCurrent(before doing: String, then: @escaping () -> Void) {
+        guard needsKeeping else { then(); return }
+        let name = design.name.isEmpty ? "your spider" : design.name
+        let cur = SpiderLibrary.current
+        let alert = NSAlert()
+        alert.messageText = cur != nil ? "Save the changes to \(name) before \(doing)?" : "Save \(name) before \(doing)?"
+        alert.informativeText = cur != nil
+            ? "If you don't, \(cur!.name) stays in My Spiders as you last saved it."
+            : "\(name.prefix(1).uppercased() + name.dropFirst()) isn't in My Spiders, so it would be gone."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Don't Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] r in
+            guard let self else { return }
+            switch r {
+            case .alertFirstButtonReturn: self.saveSpider(); then()
+            case .alertSecondButtonReturn: then()
+            default: break
+            }
+        }
+    }
+
+    /// Kept in the saved spider it came from — or, from none, as a new one.
+    @objc fileprivate func saveSpider() {
+        guard var cur = SpiderLibrary.current else { saveSpiderAsNew(); return }
+        cur.design = design
+        SpiderLibrary.store(cur)
+        rebuildShelf()
+        refreshKept()
+    }
+
+    /// Kept as another saved spider, under a name none of the others has.
+    @objc fileprivate func saveSpiderAsNew() {
+        let base = design.name.isEmpty ? "Spider" : design.name
+        let fresh = SpiderLibrary.freshName(base)
+        if fresh != design.name {
+            design.name = fresh
+            changed()
+        }
+        let s = SavedSpider(design: design)
+        guard SpiderLibrary.store(s) else { return }
+        SpiderLibrary.currentID = s.id
+        throwaway = false
+        rebuildShelf()
+        refreshKept()
+    }
+
+    /// Back as it was last saved.
+    @objc fileprivate func revertSpider() {
+        guard let cur = SpiderLibrary.current else { return }
+        let motion = design.gait.motion
+        design = cur.design
+        design.gait.motion = motion
+        changed()
+    }
+
+    /// Puts the spider out back on its shelf (kept first, if need be) and
+    /// brings out the saved one.
+    private func bringOut(_ id: String) {
+        // (The one out already is: Revert is there for going back.)
+        guard id != SpiderLibrary.currentID, let s = SpiderLibrary.saved(id: id) else { return }
+        keepingCurrent(before: "bringing out \(s.name)") { [self] in
+            guard let s = SpiderLibrary.saved(id: id) else { return }
+            let motion = design.gait.motion
+            design = s.design
+            design.gait.motion = motion
+            SpiderLibrary.currentID = id
+            changed()
+            preview.spider.celebrate()
+        }
+    }
+
+    @objc private func bringOutItem(_ item: NSMenuItem) {
+        if let id = item.representedObject as? String { bringOut(id) }
+    }
+
+    /// Another of it, to change without touching the first.
+    @objc private func copySpiderItem(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? String, let s = SpiderLibrary.saved(id: id) else { return }
+        var copy = SavedSpider(design: s.design)
+        copy.design.name = SpiderLibrary.freshName(s.name)
+        SpiderLibrary.store(copy)
+        rebuildShelf()
+        refreshKept()
+    }
+
+    /// Tools only (SPIDER_SPIDERS_TEST): saving, changing, keeping a copy,
+    /// bringing one out and reverting, checked against the library on disk.
+    func debugSpidersTest(shots dir: String) -> [String] {
+        var out: [String] = []
+        func check(_ what: String, _ ok: Bool) { out.append("[\(ok ? "ok" : "FAIL")] \(what)") }
+        let first = SpiderLibrary.current
+        check("the spider out is seeded into My Spiders", first?.matches(design) == true && SpiderLibrary.all().count == 1)
+        check("saved: Save is off", !saveButton.isEnabled && revertButton.isHidden)
+        let original = design
+        design.look.hat = design.look.hat == .none ? .partyHat : .none
+        changed()
+        check("changed: Save on, Revert shown", saveButton.isEnabled && !revertButton.isHidden)
+        check("changed: the saved one is untouched", SpiderLibrary.current?.design == original)
+        snapshot(to: "\(dir)/changed.png", tab: 11)
+        saveSpiderAsNew()
+        let second = SpiderLibrary.current
+        check("save as new: two spiders, the new one out", SpiderLibrary.all().count == 2 && second?.id != first?.id
+              && second?.matches(design) == true)
+        check("save as new: a name of its own", second?.name != first?.name)
+        check("save as new: the first kept as it was", SpiderLibrary.saved(id: first!.id)?.design == original)
+        bringOut(first!.id)
+        check("bring out: the first is back, as saved", SpiderLibrary.currentID == first?.id && first!.matches(design))
+        design.personality.energy = design.personality.energy > 0.5 ? 0.1 : 0.9
+        changed()
+        revertSpider()
+        check("revert: back as saved", first!.matches(design) && !saveButton.isEnabled)
+        randomize()
+        check("surprise me: a new spider, not saved over the old", SpiderLibrary.currentID == nil
+              && SpiderLibrary.saved(id: first!.id)?.design == original && throwaway)
+        check("surprise me: nothing to ask about", !needsKeeping)
+        design.look.hat = .partyHat
+        changed()
+        check("touched: worth keeping now", needsKeeping)
+        saveSpider()
+        check("save with none out: kept as a third", SpiderLibrary.all().count == 3 && SpiderLibrary.current?.matches(design) == true)
+        snapshot(to: "\(dir)/three.png", tab: 11)
+        // (The desktop spider's own design is saved on every change: it goes
+        // back as it was.)
+        design = original
+        changed()
+        return out
+    }
+
+    @objc private func deleteSpiderItem(_ item: NSMenuItem) {
+        guard let id = item.representedObject as? String, let s = SpiderLibrary.saved(id: id) else { return }
+        let alert = NSAlert()
+        alert.messageText = "Delete \(s.name) from My Spiders?"
+        alert.informativeText = id == SpiderLibrary.currentID
+            ? "\(s.name) stays out on your desktop, but it won't be saved any more."
+            : "You can't undo this."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        alert.beginSheetModal(for: window) { [weak self] r in
+            guard let self, r == .alertFirstButtonReturn else { return }
+            SpiderLibrary.delete(id: id)
+            self.rebuildShelf()
+            self.refreshKept()
+        }
     }
 }

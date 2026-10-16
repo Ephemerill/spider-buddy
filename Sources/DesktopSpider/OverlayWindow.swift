@@ -34,6 +34,12 @@ final class SpriteShower {
 
     init() {
         layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        // A picture is shown at its own size, centred, never stretched to
+        // the layer: the layer grows or shrinks at once (room made for a
+        // thought bubble, say) while its new picture is still being drawn,
+        // and the old one, stretched to fit, would flash up a spider twice
+        // its size for a frame.
+        layer.contentsGravity = .center
         // No implicit animations: everything is driven frame by frame.
         layer.actions = ["contents": NSNull(), "position": NSNull(), "bounds": NSNull(), "hidden": NSNull(),
                          "contentsScale": NSNull(), "opacity": NSNull()]
@@ -90,6 +96,20 @@ final class SpriteShower {
         alongside?(pose)
         if let picture { layer.contents = picture }
         layer.position = place(pose)
+        shown = pose
+    }
+    /// The pose whose picture is up on the layer.
+    private(set) var shown: SpiderPose?
+
+    /// The layer put back where the picture that is up belongs, now: its
+    /// window has just been moved or resized under it, and the picture
+    /// is still where it was in the window until the next one goes up.
+    func reseat() {
+        guard let shown else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.position = place(shown)
+        CATransaction.commit()
     }
 
     /// The spider in `pose`, drawn in the middle of a `side`-point square at
@@ -171,6 +191,12 @@ final class SpiderView: NSView {
     /// Whether the last `apply` asked for a new picture.
     var didRedraw: Bool { shower.didRedraw }
 
+    /// The spider's picture put back where it is, after the window has
+    /// been moved or resized under it (see `SpriteShower.reseat`).
+    func reseatSprite() { shower.reseat() }
+    /// Where the spider whose picture is up is, on the screen.
+    var shownPos: V2? { shower.shown?.pos }
+
     /// Its next pose: up on the screen now if it has the shape it had, or
     /// as soon as its new picture is drawn (see `SpriteShower`).
     func apply(_ pose: SpiderPose) {
@@ -225,8 +251,13 @@ final class SpiderView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let spider else { return nil }
         let world = V2(point.x + worldOrigin.x, point.y + worldOrigin.y)
-        return spider.hitTest(world) ? self : nil
+        return spider.hitTest(world) || bubbleAt?(world) == true ? self : nil
     }
+
+    /// Its thought bubble is under this point, to be clicked to talk back
+    /// (see ChatPanel.swift); and what a click on it does.
+    var bubbleAt: ((V2) -> Bool)?
+    var onBubble: (() -> Void)?
 
     private func world(_ event: NSEvent) -> V2 {
         let p = convert(event.locationInWindow, from: nil)
@@ -240,6 +271,11 @@ final class SpiderView: NSView {
     override func mouseDown(with event: NSEvent) {
         guard let spider else { return }
         let w = world(event)
+        if !spider.hitTest(w), bubbleAt?(w) == true {
+            dragging = false
+            onBubble?()
+            return
+        }
         pressedAt = w
         pressTime = event.timestamp
         dragSamples = [(w, event.timestamp)]
