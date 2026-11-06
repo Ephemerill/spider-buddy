@@ -41,6 +41,7 @@ the reference for all of it, and a difference counts as a bug unless it is liste
 | Laptop checkout | Laptop: `C:\Users\User\Documents\Projects\spider-buddy` | Branch `windows`. Builds and runs here. Receives pushes (`receive.denyCurrentBranch=updateInstead`). Do not edit here. |
 | Backup | GitHub `Ephemerill/spider-buddy`, branch `windows` | Pushed from the Mac, because the laptop's GitHub login does not work over SSH. |
 | .NET SDK | Laptop: `<repo>\.tools\dotnet` | Inside the repo folder, ignored by git. The system `dotnet` has no SDK: always use this one (`lap` does). |
+| Swift 6.4.2 | Laptop: `%LOCALAPPDATA%\Programs\Swift` | Installed with winget, with VS 2022 Build Tools and the Windows 11 SDK. `build-trace.ps1` sets up the environment. |
 
 | Machine | Facts |
 |---|---|
@@ -58,8 +59,9 @@ the reference for all of it, and a difference counts as a bug unless it is liste
 | `WINDOWS_PORT_SPEC.md` | Long description of the Mac app, written for the first port. Useful as a map, but the Swift outranks it. |
 | `docs/windows/` | Older material: audit, Mac capture guide, progress log of the first port attempt |
 | `Sources/` | Mac Swift, read-only, the oracle |
-| `src/` | Windows code: `Core`, `Renderer`, `App`, `Tools` (C#) |
-| `tools/windows/dev/` | `lap` and the laptop bridge |
+| `src/` | Windows code. `SwiftShims` and `SwiftHost`: the Swift path. `Core`, `Renderer`, `App`, `Tools`: the older C# port |
+| `tools/windows/dev/` | `lap`, the laptop bridge, `difftrace.py`, `paritytraces.py`, `diffimages.py` |
+| `tools/windows/swift/` | `build-trace.ps1` (builds the Swift side on the laptop), `bt` (runs it from the Mac and shows the errors), `imgrun` |
 | `tools/windows/` | Packaging, signing, release and the release gate |
 | `tools/trace`, `rngprobe`, `imagedump`, `scrollprobe`, `capture-*.sh` | Mac-side oracle tools |
 | `tests/golden/` | Scenarios and desktops shared by both sides; captured Mac results |
@@ -109,6 +111,22 @@ export PATH="$PWD/tools/windows/dev:$PATH"
 | `lap idle` | Minutes since the owner touched the laptop (`none`, `.` or a low number means in use) |
 | `lap ps [file]` | Run a PowerShell script from a file or stdin on the laptop |
 | `lap fetch <remote-rel> [local]` / `lap put <local> <remote-rel>` | Copy files, relative to the laptop repo |
+
+### Building and checking the Swift side
+
+```bash
+tools/windows/swift/bt -Check                # typecheck everything: 45 s
+tools/windows/swift/bt                       # Trace.exe: 4 min
+tools/windows/swift/bt -NoTrace -ImageDump   # ImageDump.exe
+tools/windows/swift/bt -NoTrace -SpiderHost  # the desktop host
+lap run --log host --env SPIDER_HOST_LOG=1 'build\swift\SpiderHost.exe' 25    # 25 s on the real desktop, then quits
+tools/windows/dev/paritytraces.py capture/traces <work-dir>                   # every trace against the Mac
+tools/windows/swift/imgrun capture/images <work-dir>                          # every image against the Mac
+```
+
+The stand-in modules in `src/SwiftShims` carry Apple's names, so `Sources/` compiles unchanged. Anything needed from AppKit
+or Core Graphics goes there, not into the Mac sources. The two text swaps the trace build makes (seeded `Bool.random`,
+pinned hour) are the same ones `tools/trace.sh` makes on the Mac; the host build makes none.
 
 ---
 
@@ -214,7 +232,7 @@ every pose field.
 | Scenario type | Passes when |
 |---|---|
 | Exact | Every frame: positions and joints within 0.02 units, angles within 0.002 rad, 0-to-1 scalars within 0.005, discrete fields equal |
-| Statistical | Over 8 seeds: every activity's share of time within 2 points or 25%, and the same set of activities occurs |
+| Statistical | Over 8 seeds: every activity's share of time within 2 points or 25%, and the same set of activities occurs. Not needed while the Swift core is shared: even free runs match frame by frame. |
 
 The first failing frame and field is what to fix. Early failures matter more than late ones.
 
@@ -303,7 +321,11 @@ in `tests/golden/mac/MANIFEST.json`.
 | `defaults` reads the wrong settings store for these Mac builds | Do not use it; the oracle app has its own bundle id |
 | `tools/art.sh` rewrites `Resources/` | Never run it |
 | The trace tool reading the hour of day | `TR_HOUR` pins it; a warning prints if a read was missed |
+| `SWIFT_DETERMINISTIC_HASHING` does nothing on Windows | Test tools call `CGPinHashingForTests()` first thing. Without it, traces vary from run to run. |
 | Tools listing their Swift files explicitly | A new Swift file must be added to each tool's list |
+| PowerShell splats a one-item list as characters: `@files` | Wrap it: `@(Get-ChildItem ...)` |
+| Swift's `CGColor(red:...)` looks like sRGB and is not | It is Generic RGB at gamma 1.8. See `Color.swift`. Bodies look subtly wrong if this is skipped. |
+| Swift sees `TrackPopupMenu`'s result as a `BOOL` | The chosen command cannot be read back; give it a window message instead when a menu has several items |
 
 ---
 

@@ -52,3 +52,15 @@ untracked in git on the laptop.
 - `sk_matrix44` is laid out by columns.
 
 **Open:** the name tag and bubble text. The Mac uses Helvetica Neue Medium, Windows has no such face, and Arial has no medium weight, so text renders too light. Needs a decision on a font to bundle.
+
+## 2026-11-06: Full trace comparison, and a false failure run down
+
+**Result:** all five sizes and seeds 1, 2, 3, 42: **183 of 183** scenarios pass, worst position error 1.12e-6 units. Free runs, liveliness 3, 240 s, seeds 1 to 8: **8 of 8 frame-exact**, 14,400 frames each, every state name equal. The plan expected to need statistical comparison for these. It does not.
+
+**The false failure:** the first full run gave 180/183, with `climb` on 3 seeds differing in its last 10 frames while the body stayed identical. Leg 2 stepped on the Mac and leg 7 on Windows. The steps that found it:
+1. Suspected an unseeded `randomElement()`. Wrong: the Mac agreed with itself 5 for 5, and a probe gave the same random stream on both.
+2. Windows disagreed with itself between runs, and the probe showed why: **the Windows Swift runtime ignores `SWIFT_DETERMINISTIC_HASHING`**, so Set and Dictionary order changes each launch.
+
+The fix is `CGPinHashingForTests()`, which sets the runtime's `_swift_stdlib_Hashing_parameters` directly, in the test tools only. Hash values and Set order then match the Mac's exactly. The real app is unaffected: on the Mac too, that order varies from launch to launch.
+
+**Why it matters:** Set and Dictionary order does affect which leg moves, on both platforms. Any test run on Windows that does not pin hashing is not repeatable.

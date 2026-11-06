@@ -71,3 +71,21 @@ extension CGRect {
 /// the host turns this on and supplies the corners through WindowTracker.measureCorner.
 nonisolated(unsafe) public var CGCornersAvailable = false
 public func CGPreflightScreenCaptureAccess() -> Bool { CGCornersAvailable }
+
+#if os(Windows)
+import WinSDK
+
+/// Test tools only. On the Mac, SWIFT_DETERMINISTIC_HASHING=1 fixes Set and Dictionary order across runs. The Windows
+/// runtime does not read that variable, so comparison runs set the runtime's own parameters to what it means: seed zero,
+/// deterministic. Call it first thing, before anything hashes. Returns false if the symbol is not there.
+@discardableResult
+public func CGPinHashingForTests() -> Bool {
+    let module = "swiftCore.dll".withCString(encodedAs: UTF16.self) { GetModuleHandleW($0) }
+    guard let module, let sym = GetProcAddress(module, "_swift_stdlib_Hashing_parameters") else { return false }
+    let raw = unsafeBitCast(sym, to: UnsafeMutableRawPointer.self)
+    raw.storeBytes(of: UInt64(0), toByteOffset: 0, as: UInt64.self)
+    raw.storeBytes(of: UInt64(0), toByteOffset: 8, as: UInt64.self)
+    raw.storeBytes(of: true, toByteOffset: 16, as: Bool.self)
+    return true
+}
+#endif

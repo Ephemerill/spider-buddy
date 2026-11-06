@@ -1,5 +1,23 @@
 # Windows Spider Buddy: full plan to macOS parity
 
+> **Proposed revision (2026-11-06), waiting on the owner's decision.** The spike in `WINDOWS_WORKLOG.md` showed that the
+> Mac's Swift compiles for Windows unchanged and matches the Mac. If adopted, this replaces Track B of this plan:
+>
+> | Part of this plan | With the Swift core |
+> |---|---|
+> | Part 2, 3: oracle, compare tools | Kept. Mostly built. RNG fixtures are no longer needed: both sides run Swift's own generator. |
+> | Part 4: host | Kept, but in Swift, reusing the Mac's `AppDelegate` and `OverlayWindow` logic |
+> | Part 5: pose contract | Gone: it is the same code |
+> | Part 6: art port, transliterator | Gone for the spider and creatures: 768 of 770 images already match |
+> | Part 7: behavior port | Gone: 8 to 14 weeks of transliteration replaced by compiling |
+> | Part 8: desktop features | Windows for them only; the behavior and art already exist |
+> | Part 9: sensors | Kept: new Windows code behind the same names as `SystemSense` and `Ears` |
+> | Part 10: UI | Changes: a small AppKit stand-in so `Panel.swift`, `Studio.swift` etc. run unchanged, with controls drawn to look like the Mac's |
+> | Part 11: habitat | Art compiles; needs a compositor behind `CALayer` |
+> | Part 12: verification, release | Kept; the installer also has to bundle the Swift runtime |
+>
+> The C# in `src/Core`, `src/Renderer`, `src/App`, `src/Tools` stays until its replacement exists and the owner agrees.
+
 > **Where this stands (added 2026-11-06).** Day-to-day process is in `WINDOWS_DEV_WORKFLOW.md`, feature state in
 > `WINDOWS_PARITY_STATUS.md`, history in `WINDOWS_WORKLOG.md`. Files moved since this was written: `progress.md` is now
 > `docs/windows/progress-first-port.md`, and the audit and Mac handoff are in `docs/windows/`. This plan was written

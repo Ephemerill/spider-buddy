@@ -2,8 +2,8 @@
 //
 // Everything about the spider, the surface map and the window tracker is the Mac's code, compiled unchanged. This file
 // only does what the Mac's AppDelegate and OverlayWindow do for the spider's own window: reports screens and windows,
-// shows the picture in a layered window, flips click-through on each tick, and hands over mouse events. No silk,
-// creatures, menus or UI yet: those come with the real app shell.
+// shows the picture in a layered window, flips click-through on each tick, hands over mouse events, and lays its silk.
+// No creatures, menus or UI yet: those come with the real app shell.
 import AppKit
 import WinSDK
 
@@ -252,12 +252,70 @@ func present(_ pose: SpiderPose, hitDisc: Bool) {
     _ = UpdateLayeredWindow(hwnd, screenDC, &dst, &size, memDC, &src, 0, &blend, DWORD(ULW_ALPHA))
 }
 
+// MARK: Silk
+
+/// The thread gets its own window under the spider's, as on the Mac. The bitmap is screen-sized so it can be drawn in
+/// world coordinates, but only the box around the thread is ever touched, cleared or shown.
+let silkW = Int(screenWpx), silkH = Int(screenHpx)
+let silkWnd = clsName.withUnsafeBufferPointer { b in
+    CreateWindowExW(DWORD(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT), b.baseAddress, nil,
+                    DWORD(WS_POPUP), 0, 0, 1, 1, nil, nil, GetModuleHandleW(nil), nil)
+}
+_ = SetWindowPos(silkWnd, hwnd, 0, 0, 0, 0, UINT(SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE))
+var silkInfo = bmi
+silkInfo.bmiHeader.biWidth = Int32(silkW)
+silkInfo.bmiHeader.biHeight = -Int32(silkH)
+var silkBits: UnsafeMutableRawPointer? = nil
+let silkDC = CreateCompatibleDC(screenDC)
+let silkDib = CreateDIBSection(silkDC, &silkInfo, UINT(DIB_RGB_COLORS), &silkBits, nil, 0)
+_ = SelectObject(silkDC, silkDib)
+let silkCtx = CGContext(data: silkBits, width: silkW, height: silkH, bitsPerComponent: 8, bytesPerRow: silkW * 4,
+                        space: CGColorSpaceCreateDeviceRGB(),
+                        bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)!
+silkCtx.scaleBy(x: k, y: k)
+/// Pixel box last drawn: left, top, right, bottom in y-down pixels.
+nonisolated(unsafe) var silkBox: (Int, Int, Int, Int)? = nil
+
+func clearSilkBox() {
+    guard let b = silkBox, let silkBits else { return }
+    for y in b.1..<b.3 { memset(silkBits + y * silkW * 4 + b.0 * 4, 0, (b.2 - b.0) * 4) }
+    silkBox = nil
+}
+
+func showSilk(_ pose: SpiderPose) {
+    guard let web = pose.web, let path = SpiderRenderer.silkPath(pose) else {
+        if silkBox != nil { clearSilkBox(); _ = ShowWindow(silkWnd, SW_HIDE) }
+        return
+    }
+    let had = silkBox != nil
+    clearSilkBox()
+    // The same stroke and soft shadow as SilkView.
+    silkCtx.saveGState()
+    silkCtx.setAlpha(web.alpha)
+    silkCtx.setLineCap(.round)
+    silkCtx.setLineWidth(1.1)
+    silkCtx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.62))
+    silkCtx.setShadow(offset: CGSize(width: 0.5 * k, height: -0.5 * k), blur: 1.2 * k, color: CGColor(red: 0, green: 0, blue: 0, alpha: 0.45))
+    silkCtx.addPath(path)
+    silkCtx.strokePath()
+    silkCtx.restoreGState()
+    let r = path.boundingBoxOfPath.insetBy(dx: -6, dy: -6)
+    let l = max(0, Int((r.minX * k).rounded(.down))), rt = min(silkW, Int((r.maxX * k).rounded(.up)))
+    let t = max(0, Int(((screenH - r.maxY) * k).rounded(.down))), b = min(silkH, Int(((screenH - r.minY) * k).rounded(.up)))
+    guard rt > l, b > t else { return }
+    silkBox = (l, t, rt, b)
+    var dst = POINT(x: LONG(l), y: LONG(t)), size = SIZE(cx: LONG(rt - l), cy: LONG(b - t)), src = POINT(x: LONG(l), y: LONG(t))
+    var blend = BLENDFUNCTION(BlendOp: BYTE(AC_SRC_OVER), BlendFlags: 0, SourceConstantAlpha: 255, AlphaFormat: BYTE(AC_SRC_ALPHA))
+    _ = UpdateLayeredWindow(silkWnd, screenDC, &dst, &size, silkDC, &src, 0, &blend, DWORD(ULW_ALPHA))
+    if !had { _ = ShowWindow(silkWnd, SW_SHOWNA) }
+}
+
 // MARK: The clock
 
 let seconds = CommandLine.arguments.dropFirst().first.flatMap { Double($0) } ?? 0
 let began = now()
 var last = now()
-var frames = 0, statT = now(), workSum = 0.0, drawSum = 0.0
+var frames = 0, statT = now(), workSum = 0.0, drawSum = 0.0, runSum = 0.0, flushSum = 0.0, flushMax = 0.0
 var lastCursor = V2(-99999, -99999)
 let log = ProcessInfo.processInfo.environment["SPIDER_HOST_LOG"] != nil
 var msg = MSG()
@@ -269,8 +327,10 @@ while running {
         DispatchMessageW(&msg)
     }
     // The tracker's timer and everything the Mac sends to the main queue.
+    let r0 = now()
     _ = RunLoop.main.run(mode: .default, before: Date())
     let t0 = now()
+    runSum += t0 - r0
     let cursor = cursorWorld()
     // Whether clicks reach us is decided every tick (a stale answer is a spider you cannot pick up).
     let wants = spider.isHeld || spider.hitTest(cursor)
@@ -281,15 +341,19 @@ while running {
     spider.update(dt: dt)
     let pose = spider.pose()
     let t1 = now()
+    showSilk(pose)
     present(pose, hitDisc: wants)
     let t2 = now()
     flipClicks(wants: spider.isHeld || spider.hitTest(cursor))
     frames += 1; workSum += t1 - t0; drawSum += t2 - t1
     if log, t2 - statT > 2 {
         let f = Double(frames)
-        print(String(format: "%.1f fps | update %.2f ms | draw+present %.2f ms | %@ at (%.0f, %.0f)", f / (t2 - statT), workSum / f * 1000, drawSum / f * 1000, spider.debugState, pose.pos.x, pose.pos.y))
-        frames = 0; workSum = 0; drawSum = 0; statT = t2
+        print(String(format: "%.1f fps | runloop %.2f | update %.2f | draw+present %.2f | flush avg %.2f max %.1f ms | %@ at (%.0f, %.0f)", f / (t2 - statT), runSum / f * 1000, workSum / f * 1000, drawSum / f * 1000, flushSum / f * 1000, flushMax * 1000, spider.debugState, pose.pos.x, pose.pos.y))
+        frames = 0; workSum = 0; drawSum = 0; runSum = 0; flushSum = 0; flushMax = 0; statT = t2
     }
     if seconds > 0, t2 - began > seconds { running = false }
+    let f0 = now()
     _ = dwmFlush()
+    let fl = now() - f0
+    flushSum += fl; flushMax = max(flushMax, fl)
 }

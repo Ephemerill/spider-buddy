@@ -1,7 +1,7 @@
 # Releasing Spider Buddy
 
 For the Windows installer, signed appcast and release script, see
-[RELEASING-WINDOWS.md](RELEASING-WINDOWS.md).
+[docs/windows/RELEASING-WINDOWS.md](docs/windows/RELEASING-WINDOWS.md).
 
 How a version goes from this repo to people's Macs. Everything is driven by
 `tools/release.sh`; this is what it does and what it needs.

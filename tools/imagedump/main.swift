@@ -1,5 +1,10 @@
 import AppKit
 
+// The Windows runtime ignores SWIFT_DETERMINISTIC_HASHING, so it is set by hand there. First, before anything hashes.
+#if os(Windows)
+CGPinHashingForTests()
+#endif
+
 // Image exporter: every Studio option, and a set of hand-built poses, each as
 // its own PNG (transparent background, sRGB, 2 pixels per point), plus an
 // index.json naming them. The Windows port renders the same inputs and compares

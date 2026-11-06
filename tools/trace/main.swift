@@ -1,5 +1,10 @@
 import AppKit
 
+// The Windows runtime ignores SWIFT_DETERMINISTIC_HASHING, so it is set by hand there. First, before anything hashes.
+#if os(Windows)
+CGPinHashingForTests()
+#endif
+
 // Pose trace exporter: runs the real Spider headless through a scripted
 // scenario and writes one JSON line per frame, for the Windows port to be
 // compared against frame by frame (see MAC_HANDOFF.md and
