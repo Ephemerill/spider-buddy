@@ -14,3 +14,19 @@ tools/report-worker/.dev.vars
 tools/report-worker/node_modules/
 
 .build/
+
+# Windows release keys, private certificates, and generated packages.
+build/windows/
+*.pfx
+*.cer
+*.pvk
+*.snk
+
+# Windows port: local toolchain, outputs, and session leftovers. Never commit these.
+.tools/
+out/
+**/bin/
+**/obj/
+.cloud-attachments/
+.freebuff/
+*.log

@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <Version>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\VERSION').Trim())</Version>
+    <Company>Ephemerill</Company>
+    <Product>Spider Buddy</Product>
+    <Copyright>Copyright © Ephemerill</Copyright>
+    <RepositoryUrl>https://github.com/Ephemerill/spider-buddy</RepositoryUrl>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>
