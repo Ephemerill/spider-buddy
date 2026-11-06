@@ -22,7 +22,7 @@ public final class NSColor: NSObject, @unchecked Sendable {
         self.init(cgColor: CGColor(red: r, green: g, blue: b, alpha: a))
     }
     public convenience init(red r: CGFloat, green g: CGFloat, blue b: CGFloat, alpha a: CGFloat) {
-        self.init(cgColor: CGColor(red: r, green: g, blue: b, alpha: a))
+        self.init(cgColor: CGColor(srgbRed: r, green: g, blue: b, alpha: a))
     }
     public convenience init(white w: CGFloat, alpha a: CGFloat) { self.init(cgColor: CGColor(gray: w, alpha: a)) }
     public static let black = NSColor(white: 0, alpha: 1)
@@ -32,7 +32,9 @@ public final class NSColor: NSObject, @unchecked Sendable {
     public var greenComponent: CGFloat { cgColor.g }
     public var blueComponent: CGFloat { cgColor.b }
     public var alphaComponent: CGFloat { cgColor.a }
-    public func usingColorSpace(_ s: NSColorSpace) -> NSColor? { self }
+    public func usingColorSpace(_ s: NSColorSpace) -> NSColor? {
+        NSColor(cgColor: CGColor(srgbRed: cgColor.sr, green: cgColor.sg, blue: cgColor.sb, alpha: cgColor.a))
+    }
     public func withAlphaComponent(_ a: CGFloat) -> NSColor { NSColor(cgColor: cgColor.copy(alpha: a) ?? cgColor) }
 }
 public final class NSColorSpace: NSObject, @unchecked Sendable {
@@ -176,7 +178,14 @@ open class NSView: NSResponder {
 public final class NSGraphicsContext: NSObject, @unchecked Sendable {
     public let cgContext: CGContext
     public init(cgContext c: CGContext, flipped: Bool) { cgContext = c }
+    public convenience init?(cgContext c: CGContext, flipped: Bool, _ unused: Void = ()) { self.init(cgContext: c, flipped: flipped) }
     nonisolated(unsafe) public static var current: NSGraphicsContext? = nil
+    nonisolated(unsafe) private static var stack: [NSGraphicsContext?] = []
+    public static func saveGraphicsState() { stack.append(current); current?.cgContext.saveGState() }
+    public static func restoreGraphicsState() {
+        current?.cgContext.restoreGState()
+        if let top = stack.popLast() { current = top }
+    }
 }
 
 public final class NSImage: NSObject, @unchecked Sendable {
@@ -192,6 +201,78 @@ public final class NSImage: NSObject, @unchecked Sendable {
         NSGraphicsContext.current = NSGraphicsContext(cgContext: c, flipped: false)
         _ = handler?(CGRect(origin: .zero, size: size))
         NSGraphicsContext.current = prior
+    }
+    /// Draws straight into the current context. (AppKit caches a bitmap at the destination's resolution; drawing the
+    /// vectors at that resolution comes to the same picture.)
+    public func draw(in r: CGRect) {
+        guard let c = NSGraphicsContext.current?.cgContext else { return }
+        c.saveGState()
+        c.translateBy(x: r.minX, y: r.minY)
+        if size.width > 0, size.height > 0 { c.scaleBy(x: r.width / size.width, y: r.height / size.height) }
+        render(in: c)
+        c.restoreGState()
+    }
+}
+
+public final class NSBitmapImageRep: NSObject, @unchecked Sendable {
+    public enum FileType { case png, jpeg, tiff, bmp, gif }
+    public struct PropertyKey: Hashable { public let rawValue: String }
+    public let cgImage: CGImage?
+    public init(cgImage: CGImage) { self.cgImage = cgImage }
+    public func representation(using t: FileType, properties: [PropertyKey: Any]) -> Data? {
+        guard t == .png, let cgImage else { return nil }
+        return PNGWriter.encode(cgImage)
+    }
+}
+
+/// A plain PNG: unpremultiplies RGBA and stores the rows uncompressed (these files are tool output).
+enum PNGWriter {
+    private static let crcTable: [UInt32] = (0..<256).map { n -> UInt32 in
+        var c = UInt32(n)
+        for _ in 0..<8 { c = c & 1 != 0 ? 0xEDB88320 ^ (c >> 1) : c >> 1 }
+        return c
+    }
+    private static func crc(_ b: [UInt8]) -> UInt32 {
+        var c: UInt32 = 0xFFFFFFFF
+        for x in b { c = crcTable[Int((c ^ UInt32(x)) & 255)] ^ (c >> 8) }
+        return c ^ 0xFFFFFFFF
+    }
+    private static func be(_ v: UInt32) -> [UInt8] { [UInt8(v >> 24), UInt8((v >> 16) & 255), UInt8((v >> 8) & 255), UInt8(v & 255)] }
+    private static func chunk(_ t: String, _ d: [UInt8]) -> [UInt8] {
+        let body = Array(t.utf8) + d
+        return be(UInt32(d.count)) + body + be(crc(body))
+    }
+    static func encode(_ im: CGImage) -> Data {
+        var raw = [UInt8](); raw.reserveCapacity((im.width * 4 + 1) * im.height)
+        for y in 0..<im.height {
+            raw.append(0)
+            for x in 0..<im.width {
+                let i = y * im.bytesPerRow + x * 4
+                let a = im.pixels[i + 3]
+                if a == 0 || a == 255 {
+                    raw += [a == 0 ? 0 : im.pixels[i], a == 0 ? 0 : im.pixels[i + 1], a == 0 ? 0 : im.pixels[i + 2], a]
+                } else {
+                    func up(_ v: UInt8) -> UInt8 { UInt8(min(255, (Int(v) * 255 + Int(a) / 2) / Int(a))) }
+                    raw += [up(im.pixels[i]), up(im.pixels[i + 1]), up(im.pixels[i + 2]), a]
+                }
+            }
+        }
+        var z: [UInt8] = [0x78, 0x01]
+        var at = 0, s1: UInt32 = 1, s2: UInt32 = 0
+        while at < raw.count {
+            let n = min(65535, raw.count - at)
+            z.append(at + n >= raw.count ? 1 : 0)
+            z += [UInt8(n & 255), UInt8(n >> 8), UInt8(~n & 255), UInt8((~n >> 8) & 255)]
+            z += raw[at..<(at + n)]
+            at += n
+        }
+        for x in raw { s1 = (s1 + UInt32(x)) % 65521; s2 = (s2 + s1) % 65521 }
+        z += be((s2 << 16) | s1)
+        var out: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        out += chunk("IHDR", be(UInt32(im.width)) + be(UInt32(im.height)) + [8, 6, 0, 0, 0])
+        out += chunk("IDAT", z)
+        out += chunk("IEND", [])
+        return Data(out)
     }
 }
 
@@ -224,8 +305,11 @@ public final class CTLine: @unchecked Sendable {
 }
 
 /// Measures text. The host sets it to real font metrics; this default is a close estimate for headless runs.
-nonisolated(unsafe) public var CTTextMeasure: (_ text: String, _ font: String, _ size: CGFloat) -> (width: CGFloat, ascent: CGFloat, descent: CGFloat) = { text, _, size in
-    (CGFloat(text.count) * size * 0.52, size * 0.95, size * 0.21)
+nonisolated(unsafe) public var CTTextMeasure: (_ text: String, _ font: String, _ size: CGFloat) -> (width: CGFloat, ascent: CGFloat, descent: CGFloat) = { text, font, size in
+    #if os(Windows)
+    if SkiaText.available { return SkiaText.measure(text, font: font, size: size) }
+    #endif
+    return (CGFloat(text.count) * size * 0.52, size * 0.95, size * 0.21)
 }
 
 public func CTLineCreateWithAttributedString(_ s: NSAttributedString) -> CTLine {

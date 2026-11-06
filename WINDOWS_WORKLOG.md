@@ -40,3 +40,15 @@ untracked in git on the laptop.
 **Fixed in the Mac capture tools:** `tools/trace.sh` needed `SpiderLibrary` in its file list. `rngprobe`, `imagedump`, `trace` otherwise built and ran first time, and the same seed gives byte-identical traces.
 
 **Not yet shown:** drawing, the host, the UI. The C# code is still in place. Retiring anything is the owner's call.
+
+## 2026-11-06: Spike: the art draws the same
+
+- `CGContext` now draws through Skia (`src/SwiftShims/CoreGraphics/SkiaBackend.swift`, bound to `libSkiaSharp.dll` by name at run time).
+- The Mac's `tools/imagedump` runs on Windows from the same source. Its 770 images are every Studio option at two sizes plus 60 whole poses.
+- **768 of 770 pass** the image test against the Mac (SSIM at least 0.985, mean error at most 3/255). Median SSIM 0.9995, median error 0.15/255. The 2 misses are the text inside thought bubbles, a font difference.
+
+**Found by the diff:**
+- `CGColor(red:green:blue:)` and calibrated `NSColor` on the Mac are Generic RGB at gamma 1.8, and Core Graphics converts them to sRGB. Before handling this, 620 of 770 passed and bodies looked subtly off. The matrix comes from Apple's own profile and agrees with `CGColor.converted(to:)` within 0.0002. Gradients made from raw device components stay unconverted, also matching the Mac.
+- `sk_matrix44` is laid out by columns.
+
+**Open:** the name tag and bubble text. The Mac uses Helvetica Neue Medium, Windows has no such face, and Arial has no medium weight, so text renders too light. Needs a decision on a font to bundle.

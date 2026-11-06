@@ -99,7 +99,8 @@ func basePose(scale: CGFloat) -> SpiderPose {
     var p = SpiderPose()
     p.scale = scale
     p.legs = restLegs()
-    p.nameTag = 1
+    // ID_NO_TEXT=1 leaves the name tag out: text is compared by layout, since the fonts differ across platforms.
+    p.nameTag = ProcessInfo.processInfo.environment["ID_NO_TEXT"] == "1" ? 0 : 1
     p.name = "Mocha"
     p.time = 1.25
     return p

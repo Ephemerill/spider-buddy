@@ -74,7 +74,13 @@ public final class CGNullBackend: CGBackend {
 
 /// How bitmap contexts get a backend. Set once at startup by whichever module provides real drawing.
 public enum CGBackendFactory {
-    nonisolated(unsafe) public static var makeBitmapBackend: (_ data: UnsafeMutableRawPointer, _ width: Int, _ height: Int, _ bytesPerRow: Int, _ bitmapInfo: UInt32) -> CGBackend = { _, _, _, _, _ in CGNullBackend() }
+    nonisolated(unsafe) public static var makeBitmapBackend: (_ data: UnsafeMutableRawPointer, _ width: Int, _ height: Int, _ bytesPerRow: Int, _ bitmapInfo: UInt32) -> CGBackend = { data, w, h, row, info in
+        #if os(Windows)
+        return SkiaBackend(pixels: data, width: w, height: h, bytesPerRow: row, bitmapInfo: info) ?? CGNullBackend()
+        #else
+        return CGNullBackend()
+        #endif
+    }
 }
 
 public final class CGContext {

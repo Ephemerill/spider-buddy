@@ -1,0 +1,18 @@
+#!/bin/bash
+# imgrun <mac-images-dir> <work-dir>: run ImageDump.exe on the laptop, fetch, and diff against the Mac's.
+set -e
+HERE="$(cd "$(dirname "$0")" && pwd)"; export PATH="$HERE/../dev:$PATH"
+MAC="$1"; W="$2"; mkdir -p "$W"
+lap ps <<'PS' | tr -d '\000\r' | tail -2
+Set-Location C:\Users\User\Documents\Projects\spider-buddy
+$env:PATH = "$env:LOCALAPPDATA\Programs\Swift\Runtimes\6.4.2\usr\bin;$env:PATH"
+$env:SWIFT_DETERMINISTIC_HASHING='1'; $env:LC_SEED='1'
+$ErrorActionPreference='Continue'
+Remove-Item -Recurse -Force out\swift\images -ErrorAction SilentlyContinue
+& build\swift\ImageDump.exe out\swift\images 2>&1 | ForEach-Object { "$_" }
+Set-Location out\swift; tar -czf images.tgz images
+PS
+rm -rf "$W/win"; mkdir -p "$W/win"
+scp -q -o LogLevel=ERROR laptop:C:/Users/User/Documents/Projects/spider-buddy/out/swift/images.tgz "$W/images.tgz"
+tar -xzf "$W/images.tgz" -C "$W/win"
+python3 "$HERE/../dev/diffimages.py" "$MAC" "$W/win/images" --out "$W/diff" "${@:3}"
