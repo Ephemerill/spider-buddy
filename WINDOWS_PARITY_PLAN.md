@@ -1,5 +1,11 @@
 # Windows Spider Buddy: full plan to macOS parity
 
+> **Where this stands (added 2026-11-06).** Day-to-day process is in `WINDOWS_DEV_WORKFLOW.md`, feature state in
+> `WINDOWS_PARITY_STATUS.md`, history in `WINDOWS_WORKLOG.md`. Files moved since this was written: `progress.md` is now
+> `docs/windows/progress-first-port.md`, and the audit and Mac handoff are in `docs/windows/`. This plan was written
+> on Windows with no Mac; the Mac is now available in the same session, so Part 2 is done directly.
+
+
 **Goal:** the Windows app looks and feels almost exactly like the Mac app (1.0.1): same spider, same
 movement, same desktop life, same panel, Studio and habitat.
 

@@ -38,3 +38,6 @@ spiders.old.app/
 x
 .DS_Store
 
+
+# Oracle captures: bulky, regenerated, kept out of git.
+capture*/

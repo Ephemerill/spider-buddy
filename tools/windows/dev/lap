@@ -1,0 +1,75 @@
+#!/bin/bash
+# lap: drive the Windows laptop from the Mac. Run from anywhere in the Mac clone.
+# See WINDOWS_DEV_WORKFLOW.md for how this fits together.
+set -u
+HOST=${LAP_HOST:-laptop}
+WIN_REPO='C:\Users\User\Documents\Projects\spider-buddy'
+WIN_REPO_FWD='C:/Users/User/Documents/Projects/spider-buddy'
+WIN_TEMP='C:\Users\User\AppData\Local\Temp\spider-bridge'
+WIN_TEMP_FWD='C:/Users/User/AppData/Local/Temp/spider-bridge'
+ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
+# The port's SDK lives inside the repo (.tools/dotnet), not system-wide.
+DN="set \"PATH=$WIN_REPO\\.tools\\dotnet;%PATH%\" & set \"DOTNET_ROOT=$WIN_REPO\\.tools\\dotnet\""
+SSH=(ssh -o ConnectTimeout=15 -o LogLevel=ERROR "$HOST")
+SCP=(scp -q -o ConnectTimeout=15 -o LogLevel=ERROR)
+
+die() { echo "lap: $*" >&2; exit 1; }
+
+# Run PowerShell from a file or stdin on the laptop (uploaded so multi-line syntax works).
+ps_run() {
+  local src="${1:-/dev/stdin}"; local tmp; tmp=$(mktemp -t lapps)
+  { printf '\xef\xbb\xbf'; cat "$src"; } > "$tmp"
+  local n="lap-$$-$RANDOM.ps1"
+  "${SSH[@]}" "if not exist $WIN_TEMP mkdir $WIN_TEMP" >/dev/null
+  "${SCP[@]}" "$tmp" "$HOST:$WIN_TEMP_FWD/$n" || { rm -f "$tmp"; die "upload failed"; }
+  rm -f "$tmp"
+  "${SSH[@]}" "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $WIN_TEMP\\$n & set RC=%ERRORLEVEL% & del $WIN_TEMP\\$n & exit %RC%"
+}
+
+cmd=${1:-help}; [ $# -gt 0 ] && shift
+case "$cmd" in
+  ps)     ps_run "${1:-/dev/stdin}" ;;
+  sync)   # push the current branch to the laptop's checkout. Requires a commit: nothing moves untracked.
+          git -C "$ROOT" diff --quiet && git -C "$ROOT" diff --cached --quiet || die "uncommitted changes: commit first (or use lap sync-wip)"
+          git -C "$ROOT" push -q laptop HEAD:windows || die "push to laptop failed (is its tree dirty? run: lap status)"
+          echo "laptop at $(git -C "$ROOT" rev-parse --short HEAD)" ;;
+  sync-wip) # copy uncommitted changes over without a commit, for quick compile/test loops
+          cd "$ROOT" || exit 1
+          files=$( (git diff --name-only HEAD; git ls-files --others --exclude-standard) | sort -u)
+          [ -z "$files" ] && { echo "nothing to copy"; exit 0; }
+          existing=$(for f in $files; do [ -f "$f" ] && echo "$f"; done)
+          printf '%s\n' "$existing" | tar -cf - -T - | "${SSH[@]}" "tar -xf - -C $WIN_REPO_FWD" || die "copy failed"
+          echo "copied $(printf '%s\n' "$existing" | wc -l | tr -d ' ') file(s)" ;;
+  revert-wip) # throw away sync-wip copies so the next real sync applies cleanly
+          "${SSH[@]}" "cd /d $WIN_REPO && git checkout -q -- . && git clean -fdq src tools/windows tests/parity 2>nul" ; echo reverted ;;
+  status) "${SSH[@]}" "cd /d $WIN_REPO && git status --short --branch && git log --oneline -1 && query user" ;;
+  build)  # lap build [Debug|Release] : builds tools and app
+          c=${1:-Release}
+          "${SSH[@]}" "cd /d $WIN_REPO && $DN && dotnet build src\\Tools\\SpiderBuddy.Tools.csproj -c $c --nologo -v q -clp:ErrorsOnly && dotnet build src\\App\\SpiderBuddy.App.csproj -c $c --nologo -v q -clp:ErrorsOnly" ;;
+  tools)  # lap tools <args...> : run the headless harness on the laptop
+          "${SSH[@]}" "cd /d $WIN_REPO && $DN && src\\Tools\\bin\\Release\\net10.0\\SpiderBuddy.Tools.exe $*" ;;
+  idle)   # minutes since the person last touched the laptop ('.' means under a minute)
+          "${SSH[@]}" "query user" | tail -n +2 | awk '{print "idle:", $5}' ;;
+  run)    # lap run [--env K=V]... [--log name] [--wait secs] <exe-relative-to-repo> [args...] : launch in the REAL desktop session
+          envs=""; log=""; wait=0
+          while [ $# -gt 0 ]; do case "$1" in
+            --env) envs="$envs;$2"; shift 2 ;;
+            --log) log=$2; shift 2 ;;
+            --wait) wait=$2; shift 2 ;;
+            *) break ;;
+          esac; done
+          [ $# -gt 0 ] || die "run needs an exe"
+          exe=$1; shift; args="$*"
+          [ -z "$log" ] && log=$(basename "$exe" .exe)
+          { cat "$ROOT/tools/windows/dev/bridge-run.ps1"; printf '\nInvoke-Bridge -Repo "%s" -Exe "%s" -ExeArgs "%s" -EnvList "%s" -Log "%s" -Wait %s\n' "$WIN_REPO" "$exe" "$args" "$envs" "$log" "$wait"; } | ps_run ;;
+  stop)   "${SSH[@]}" "taskkill /F /IM SpiderBuddy.exe" 2>&1 | head -2 ;;
+  log)    # lap log <name> [lines]
+          "${SSH[@]}" "powershell -NoProfile -Command Get-Content $WIN_TEMP\\$1.log -Tail ${2:-40}" ;;
+  shot)   # lap shot <out.png> [x y w h] : capture the real desktop into a Mac file
+          out=${1:-shot.png}; shift || true
+          { cat "$ROOT/tools/windows/dev/bridge-run.ps1"; printf '\nInvoke-Shot -Rect "%s"\n' "$*"; } | ps_run >/dev/null
+          "${SCP[@]}" "$HOST:$WIN_TEMP_FWD/shot.png" "$out" && echo "$out" ;;
+  fetch)  "${SCP[@]}" -r "$HOST:$WIN_REPO_FWD/$1" "${2:-.}" ;;
+  put)    "${SCP[@]}" -r "$1" "$HOST:$WIN_REPO_FWD/$2" ;;
+  *) sed -n '2,3p' "$0"; grep -E '^  [a-z-]+\)' "$0" | sed 's/) .*//' ;;
+esac
