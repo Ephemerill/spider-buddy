@@ -23,7 +23,9 @@ var work = RECT()
 _ = withUnsafeMutablePointer(to: &work) { SystemParametersInfoW(UINT(SPI_GETWORKAREA), 0, UnsafeMutableRawPointer($0), 0) }
 let visible = CGRect(x: CGFloat(work.left) / k, y: (screenHpx - CGFloat(work.bottom)) / k,
                      width: CGFloat(work.right - work.left) / k, height: CGFloat(work.bottom - work.top) / k)
-NSScreen.screens = [NSScreen(frame: CGRect(x: 0, y: 0, width: screenW, height: screenH), visibleFrame: visible, backingScaleFactor: k)]
+// The work area is the screen (spec 2.8). The Mac's frame-versus-visibleFrame gap means a Dock, a short strip centered
+// on the floor; a taskbar runs the full width, and reporting it as a Dock would leave a floor on top of its icons.
+NSScreen.screens = [NSScreen(frame: visible, visibleFrame: visible, backingScaleFactor: k)]
 
 func world(_ p: POINT) -> V2 { V2(CGFloat(p.x) / k, (screenHpx - CGFloat(p.y)) / k) }
 
@@ -50,7 +52,7 @@ CGWindowListProvider = {
     // The Mac sees a window for the desktop picture: the tracker reads it as "this screen shows its desktop".
     list.append([kCGWindowLayer: Int(CGWindowLevelForKey(.desktopWindow)), kCGWindowNumber: 1, kCGWindowOwnerPID: Int32(0),
                  kCGWindowOwnerName: "Wallpaper",
-                 kCGWindowBounds: ["X": 0 as CGFloat, "Y": 0 as CGFloat, "Width": screenW, "Height": screenH]])
+                 kCGWindowBounds: ["X": visible.minX, "Y": 0 as CGFloat, "Width": visible.width, "Height": visible.height]])
     enumerated = []
     _ = EnumWindows({ hwnd, _ in
         guard let hwnd, IsWindowVisible(hwnd), !IsIconic(hwnd) else { return true }
@@ -315,22 +317,19 @@ func showSilk(_ pose: SpiderPose) {
 let seconds = CommandLine.arguments.dropFirst().first.flatMap { Double($0) } ?? 0
 let began = now()
 var last = now()
-var frames = 0, statT = now(), workSum = 0.0, drawSum = 0.0, runSum = 0.0, flushSum = 0.0, flushMax = 0.0
+var frames = 0, statT = now(), workSum = 0.0, drawSum = 0.0
 var lastCursor = V2(-99999, -99999)
 let log = ProcessInfo.processInfo.environment["SPIDER_HOST_LOG"] != nil
 var msg = MSG()
 print("spider host: \(Int(screenW))x\(Int(screenH)) pt, \(k)x, visible \(visible), sprite window \(sidePx) px")
 
-while running {
+/// One frame. Runs on the main thread, in the run loop, like the Mac's display-link tick.
+func tick() {
     while PeekMessageW(&msg, nil, 0, 0, UINT(PM_REMOVE)) {
         TranslateMessage(&msg)
         DispatchMessageW(&msg)
     }
-    // The tracker's timer and everything the Mac sends to the main queue.
-    let r0 = now()
-    _ = RunLoop.main.run(mode: .default, before: Date())
     let t0 = now()
-    runSum += t0 - r0
     let cursor = cursorWorld()
     // Whether clicks reach us is decided every tick (a stale answer is a spider you cannot pick up).
     let wants = spider.isHeld || spider.hitTest(cursor)
@@ -348,12 +347,32 @@ while running {
     frames += 1; workSum += t1 - t0; drawSum += t2 - t1
     if log, t2 - statT > 2 {
         let f = Double(frames)
-        print(String(format: "%.1f fps | runloop %.2f | update %.2f | draw+present %.2f | flush avg %.2f max %.1f ms | %@ at (%.0f, %.0f)", f / (t2 - statT), runSum / f * 1000, workSum / f * 1000, drawSum / f * 1000, flushSum / f * 1000, flushMax * 1000, spider.debugState, pose.pos.x, pose.pos.y))
-        frames = 0; workSum = 0; drawSum = 0; runSum = 0; flushSum = 0; flushMax = 0; statT = t2
+        print(String(format: "%.1f fps | update %.2f | draw+present %.2f ms | %@ at (%.0f, %.0f)", f / (t2 - statT), workSum / f * 1000, drawSum / f * 1000, spider.debugState, pose.pos.x, pose.pos.y))
+        frames = 0; workSum = 0; drawSum = 0; statT = t2
     }
     if seconds > 0, t2 - began > seconds { running = false }
-    let f0 = now()
-    _ = dwmFlush()
-    let fl = now() - f0
-    flushSum += fl; flushMax = max(flushMax, fl)
+}
+
+// The display's beat, on its own thread: DwmFlush waits for the next composition, then a tick is asked for unless the
+// last one has not finished. Waiting inside the frame loop instead cost 10 ms a frame in the run loop on Windows.
+nonisolated(unsafe) var tickWaiting = false
+let lock = NSLock()
+let beat = Thread {
+    while running {
+        _ = dwmFlush()
+        lock.lock()
+        let busy = tickWaiting
+        if !busy { tickWaiting = true }
+        lock.unlock()
+        if busy { continue }
+        DispatchQueue.main.async {
+            lock.lock(); tickWaiting = false; lock.unlock()
+            tick()
+        }
+    }
+}
+beat.qualityOfService = .userInteractive
+beat.start()
+while running {
+    _ = RunLoop.main.run(mode: .default, before: Date(timeIntervalSinceNow: 0.25))
 }

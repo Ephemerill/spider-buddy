@@ -64,3 +64,10 @@ untracked in git on the laptop.
 The fix is `CGPinHashingForTests()`, which sets the runtime's `_swift_stdlib_Hashing_parameters` directly, in the test tools only. Hash values and Set order then match the Mac's exactly. The real app is unaffected: on the Mac too, that order varies from launch to launch.
 
 **Why it matters:** Set and Dictionary order does affect which leg moves, on both platforms. Any test run on Windows that does not pin hashing is not repeatable.
+
+## 2026-11-06: Host: 60 fps, silk, and the taskbar
+
+- **60.0 fps, from about 44.** `RunLoop.main.run(mode:before:)` blocks about 10 ms per call on Windows, even with a deadline in the past. The frame loop now works as the Mac's does: the main thread stays in the run loop, and a thread waiting on `DwmFlush` queues each tick. Spider update is about 0.1 ms and draw plus present about 1.3 ms, with no redraw gating yet.
+- **Silk thread** has its own window under the spider, using the Mac's `silkPath`. Only the box around the thread is cleared or shown.
+- **The floor was on top of the taskbar icons.** Reporting the taskbar as the gap between `frame` and `visibleFrame` made the Mac's Dock logic treat it as a short centered strip. The work area is now the screen, as spec 2.8 says, and the floor sits on the taskbar across the full width.
+- The owner has been picking up and throwing the spider on the real desktop during these runs: `held` and `thrown` states in the host log, ending in normal landings.

@@ -57,8 +57,9 @@ Evidence: 768 of 770 images pass (work log).
 | Mac's `WindowTracker` on a real window list | E1 | DWM bounds, cloaking, layered alpha. Filter list is a first pass. |
 | Hit-testing, clicks only on the spider | E1 | Owner has picked it up. Not measured against the Mac. |
 | Scroll orders | E1 | Sign and touchpad scaling not checked against the Mac |
-| Silk thread | E1 | |
-| Frame rate | E1 | About 53 fps, target 60 |
+| Silk thread | E1 | Mac's stroke and shadow values; not diffed |
+| Taskbar as floor | E1 | Work area is the screen. Left, right and top taskbars untested. |
+| Frame rate | E1 | 60.0 fps on the laptop, about 1.5 ms of work a frame |
 | Redraw gating | E0 | Redraws every frame |
 | Multi-monitor, mixed DPI | E0 | Primary monitor only |
 | Prey, toys, traces, hammock, laser, visitors, box, rain layers | E0 | |
