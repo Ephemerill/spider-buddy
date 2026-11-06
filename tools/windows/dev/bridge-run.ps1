@@ -29,6 +29,7 @@ function Invoke-Bridge([string]$Repo, [string]$Exe, [string]$ExeArgs, [string]$E
     @"
 Set-Location '$Repo'
 `$env:DOTNET_ROOT = '$Repo\.tools\dotnet'
+`$env:PATH = "`$env:LOCALAPPDATA\Programs\Swift\Runtimes\6.4.2\usr\bin;`$env:PATH"
 $envLines
 `$psi = New-Object Diagnostics.ProcessStartInfo
 `$psi.FileName = '$path'

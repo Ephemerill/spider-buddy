@@ -67,6 +67,7 @@ extension CGRect {
     }
 }
 
-/// The Mac asks for permission before measuring a window's corners from its pixels. Windows reports corners
-/// through the host instead.
-public func CGPreflightScreenCaptureAccess() -> Bool { false }
+/// The Mac asks for permission before measuring a window's corners from its pixels. There is no such permission here:
+/// the host turns this on and supplies the corners through WindowTracker.measureCorner.
+nonisolated(unsafe) public var CGCornersAvailable = false
+public func CGPreflightScreenCaptureAccess() -> Bool { CGCornersAvailable }

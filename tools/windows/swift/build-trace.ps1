@@ -2,7 +2,8 @@
 # the same tools the Mac runs. Output in build/swift: Trace.exe (pose traces), ImageDump.exe (art).
 #   -ShimsOnly  just the stand-in modules     -Check  typecheck only (fast)
 #   -ImageDump  also the image tool           -NoTrace  skip the trace tool
-param([switch]$ShimsOnly, [switch]$Check, [switch]$ImageDump, [switch]$NoTrace, [string]$Opt = '-O')
+#   -SpiderHost also the desktop proof of concept (real random numbers, nothing swapped)
+param([switch]$ShimsOnly, [switch]$Check, [switch]$ImageDump, [switch]$NoTrace, [switch]$SpiderHost, [string]$Opt = '-O')
 $ErrorActionPreference = 'Continue'
 $repo = (Resolve-Path "$PSScriptRoot\..\..\..").Path
 Set-Location $repo
@@ -62,4 +63,9 @@ if ($ImageDump) {
     [IO.File]::WriteAllText($thumbFile, $thumb.Substring(0, $thumb.IndexOf('// MARK: - Option cell')), (New-Object Text.UTF8Encoding $false))
     & swiftc $Opt @common @link -o "$out\ImageDump.exe" @core $thumbFile @seeded 'tools\imagedump\main.swift' 2>&1 | ForEach-Object { "$_" }
     "swiftc exit $LASTEXITCODE (imagedump)"
+}
+if ($SpiderHost) {
+    $raw = @($files | ForEach-Object { "Sources\DesktopSpider\$_.swift" })
+    & swiftc $Opt @common @link -o "$out\SpiderHost.exe" @raw 'src\SwiftHost\main.swift' 2>&1 | ForEach-Object { "$_" }
+    "swiftc exit $LASTEXITCODE (host)"
 }

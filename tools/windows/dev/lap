@@ -62,7 +62,7 @@ case "$cmd" in
           exe=$1; shift; args="$*"
           [ -z "$log" ] && log=$(basename "$exe" .exe)
           { cat "$ROOT/tools/windows/dev/bridge-run.ps1"; printf '\nInvoke-Bridge -Repo "%s" -Exe "%s" -ExeArgs "%s" -EnvList "%s" -Log "%s" -Wait %s\n' "$WIN_REPO" "$exe" "$args" "$envs" "$log" "$wait"; } | ps_run ;;
-  stop)   "${SSH[@]}" "taskkill /F /IM SpiderBuddy.exe" 2>&1 | head -2 ;;
+  stop)   "${SSH[@]}" "taskkill /F /IM SpiderBuddy.exe & taskkill /F /IM SpiderHost.exe" 2>&1 | grep -v 'not found' | head -2 ;;
   log)    # lap log <name> [lines]
           "${SSH[@]}" "powershell -NoProfile -Command Get-Content $WIN_TEMP\\$1.log -Tail ${2:-40}" ;;
   shot)   # lap shot <out.png> [x y w h] : capture the real desktop into a Mac file
