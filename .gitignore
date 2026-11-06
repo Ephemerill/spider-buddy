@@ -30,3 +30,11 @@ out/
 .cloud-attachments/
 .freebuff/
 *.log
+
+# Mac build products are not part of the Windows branch.
+build/
+spiders.app/
+spiders.old.app/
+x
+.DS_Store
+
