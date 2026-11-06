@@ -1,0 +1,13 @@
+#!/bin/bash
+# Run build-trace on the laptop; show a digest of errors. Usage: bt [-ShimsOnly]
+export PATH="$(dirname "$0")/../dev:$PATH"
+LOG=$(mktemp)
+lap ps <<PS > "$LOG" 2>&1
+Set-Location C:\Users\User\Documents\Projects\spider-buddy
+\$t=[Diagnostics.Stopwatch]::StartNew()
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\windows\swift\build-trace.ps1 $* 2>&1 | ForEach-Object { "\$_" }
+"elapsed \$([int]\$t.Elapsed.TotalSeconds)s"
+PS
+tr -d '\000\r' < "$LOG" > "$LOG.c"; mv "$LOG.c" "$LOG"
+grep -a -E 'error:|^built|swiftc exit|elapsed|failed|Fatal|LINK :|lld-link|unresolved|undefined' "$LOG" | grep -a -v '^ *|' | grep -a -v 'emit-module command failed\|compile command failed' | sed -E 's/^.*[\\\/]([A-Za-z0-9_+.-]+\.swift):([0-9]+):[0-9]+: /\1:\2 /' | cut -c1-170 | awk '!s[$0]++' > "$LOG.d"
+n=$(grep -a -c 'error:' "$LOG.d"); echo "errors: $n"; head -${BT_SHOW:-70} "$LOG.d"; cp "$LOG" /tmp/bt-last.log 2>/dev/null

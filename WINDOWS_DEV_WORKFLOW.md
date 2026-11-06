@@ -298,6 +298,7 @@ in `tests/golden/mac/MANIFEST.json`.
 | Pushing to GitHub from the laptop hangs on a login prompt over SSH | Push from the Mac |
 | VBScript launchers do nothing on build 26300 | `conhost --headless` |
 | A GUI started directly over SSH is invisible | `lap run` |
+| macOS `tar` adds `._*` files that break Swift builds on the laptop | `COPYFILE_DISABLE=1 tar --no-mac-metadata` (`lap sync-wip` does this) |
 | A git commit message with `-m` or a here-string through PowerShell | Write the message to a file, use `-F` |
 | `defaults` reads the wrong settings store for these Mac builds | Do not use it; the oracle app has its own bundle id |
 | `tools/art.sh` rewrites `Resources/` | Never run it |

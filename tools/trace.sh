@@ -25,7 +25,7 @@ export SWIFT_DETERMINISTIC_HASHING=1
 export TR_COMMIT="${TR_COMMIT:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
 mkdir -p build
 
-FILES="Math Surfaces WindowTracker Spider Beat Memory SpiderRenderer AppIcon SpiderDesign Skin Prey Toys Traces Habitat HabitatObjects HabitatGeometry HabitatStructures HabitatPieces HabitatNature HabitatSemantics HabitatKnowledge HabitatPlaces HabitatEcology HabitatNav Studio"
+FILES="Math Surfaces WindowTracker Spider Beat Memory SpiderRenderer AppIcon SpiderDesign Skin Prey Toys Traces Habitat HabitatObjects HabitatGeometry HabitatStructures HabitatPieces HabitatNature HabitatSemantics HabitatKnowledge HabitatPlaces HabitatEcology HabitatNav Studio SpiderLibrary"
 OPT="-O"
 BIN="build/Trace"
 if [ "${TR_DEBUG_BUILD:-}" = "1" ]; then OPT="-Onone"; BIN="build/TraceDebug"; fi

@@ -38,7 +38,7 @@ case "$cmd" in
           files=$( (git diff --name-only HEAD; git ls-files --others --exclude-standard) | sort -u)
           [ -z "$files" ] && { echo "nothing to copy"; exit 0; }
           existing=$(for f in $files; do [ -f "$f" ] && echo "$f"; done)
-          printf '%s\n' "$existing" | tar -cf - -T - | "${SSH[@]}" "tar -xf - -C $WIN_REPO_FWD" || die "copy failed"
+          printf '%s\n' "$existing" | COPYFILE_DISABLE=1 tar --no-mac-metadata -cf - -T - | "${SSH[@]}" "tar -xf - -C $WIN_REPO_FWD" || die "copy failed"
           echo "copied $(printf '%s\n' "$existing" | wc -l | tr -d ' ') file(s)" ;;
   revert-wip) # throw away sync-wip copies so the next real sync applies cleanly
           "${SSH[@]}" "cd /d $WIN_REPO && git checkout -q -- . && git clean -fdq src tools/windows tests/parity 2>nul" ; echo reverted ;;

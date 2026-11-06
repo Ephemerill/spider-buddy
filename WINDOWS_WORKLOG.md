@@ -24,3 +24,19 @@ untracked in git on the laptop.
   owner's real spider.
 
 **Next:** see the status file.
+
+## 2026-11-06: Spike: the unchanged Mac Swift core runs on Windows
+
+**Question.** The plan's diagnosis is that the C# was never a port of the Swift, and its fix is to transliterate about 60k lines by hand. `Spider.swift` turned out to have only 3 AppKit references. Can the Mac's Swift just be compiled for Windows?
+
+**Result: yes, and it matches the Mac almost exactly.**
+- Installed Swift 6.4.2 with VS 2022 Build Tools and the Windows 11 SDK on the laptop.
+- Wrote stand-in modules (`src/SwiftShims/`): `CoreGraphics`, `QuartzCore`, `AppKit`, `Accelerate`. About 1,200 lines. `Sources/` unchanged: the build makes only the same two swaps `tools/trace.sh` makes on the Mac (seeded `Bool.random`, pinned hour).
+- `Spider.swift` and the 23 other core files compile and link; 240 s per optimized build, 45 s to typecheck.
+- **66 of 66 captured Mac scenarios match, x86-64 Windows against arm64 Mac: worst position error 1.82e-12 units**, against a tolerance of 0.02. Includes walks, corners, the 8 hunts, rappel, climb, swing, hammock, peek-a-boo, pointer play and 37 activities. Table in `tests/parity/parity-traces.md`.
+- Checked the checker: wrong scenario fails, a different hunt fails, and a 0.03 error injected on one frame is caught at that frame.
+- Compiler differences do not matter: `-O` against `-Onone` differs by at most 5e-15.
+
+**Fixed in the Mac capture tools:** `tools/trace.sh` needed `SpiderLibrary` in its file list. `rngprobe`, `imagedump`, `trace` otherwise built and ran first time, and the same seed gives byte-identical traces.
+
+**Not yet shown:** drawing, the host, the UI. The C# code is still in place. Retiring anything is the owner's call.
