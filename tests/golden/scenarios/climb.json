@@ -1,0 +1,8 @@
+{ "id": "climb", "desktop": "desk-a", "seconds": 14, "scale": 0.95, "detail": "full",
+  "config": { "followCursor": false, "approachCursor": false, "pounceOnCursor": false },
+  "cursor": { "mode": "none" },
+  "events": [
+    { "t": 0, "cmd": "attach", "loop": "win:1", "seg": 0, "at": 380, "dir": 1 },
+    { "t": 0, "cmd": "activity", "name": "rest", "seconds": 1 },
+    { "t": 1, "cmd": "scroll", "dy": -8, "precise": true, "starts": true },
+    { "t": 7, "cmd": "scroll", "dy": 8, "precise": true, "starts": true } ] }

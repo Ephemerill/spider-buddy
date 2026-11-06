@@ -1,0 +1,7 @@
+{ "id": "activity", "desktop": "desk-a", "seconds": 5, "scale": 0.95, "detail": "full",
+  "note": "One activity on a window top. Run once per name with TR_ACT=name. Names: walk sneak scurry look rest groom sleep wave startle peek stretch shake wiggle bounce curious fidget scratch armsUp roll dance glance peer pushup legStretch spin eat watch greet drum stare hop fasten groove brace bask doubleTake sigh",
+  "config": { "followCursor": false, "approachCursor": false, "pounceOnCursor": false },
+  "cursor": { "mode": "none" },
+  "events": [
+    { "t": 0, "cmd": "attach", "loop": "win:1", "seg": 0, "at": 380, "dir": 1 },
+    { "t": 0.2, "cmd": "activity", "name": "$ACT", "seconds": 4 } ] }

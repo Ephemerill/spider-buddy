@@ -1,0 +1,9 @@
+{ "id": "grab-throw", "desktop": "desk-a", "seconds": 9, "scale": 0.95, "detail": "full",
+  "config": { "followCursor": false, "approachCursor": false, "pounceOnCursor": false },
+  "cursor": { "mode": "none" },
+  "events": [
+    { "t": 0, "cmd": "attach", "loop": "win:1", "seg": 0, "at": 300, "dir": 1 },
+    { "t": 0, "cmd": "walk", "seconds": 2 },
+    { "t": 1, "cmd": "grab" },
+    { "t": 1, "cmd": "dragTo", "x": 700, "y": 950, "seconds": 1 },
+    { "t": 2.2, "cmd": "endGrab", "vx": 900, "vy": 600 } ] }

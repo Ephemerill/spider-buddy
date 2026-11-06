@@ -1,0 +1,7 @@
+{ "id": "hammock", "desktop": "desk-a", "seconds": 60, "scale": 0.95, "detail": "full",
+  "config": { "followCursor": false, "approachCursor": false, "pounceOnCursor": false, "hammocks": true },
+  "cursor": { "mode": "none" },
+  "events": [
+    { "t": 0, "cmd": "attach", "loop": "win:1", "seg": 0, "at": 700, "dir": 1 },
+    { "t": 1, "cmd": "buildHammock" },
+    { "t": 40, "cmd": "activity", "name": "nap", "seconds": 15 } ] }

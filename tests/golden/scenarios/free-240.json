@@ -1,0 +1,5 @@
+{ "id": "free-240", "desktop": "desk-a", "seconds": 240, "scale": 0.95, "detail": "state",
+  "note": "The free run of tools/sim.sh: liveliness 3 and a wandering pointer. Compared statistically over seeds 1 to 8.",
+  "config": { "followCursor": true, "approachCursor": true, "pounceOnCursor": true, "liveliness": 3.0 },
+  "cursor": { "mode": "orbit", "cx": 960, "cy": 540, "rx": 500, "ry": 320, "wx": 0.23, "wy": 0.17 },
+  "events": [ { "t": 0, "cmd": "attach", "loop": "screen:0", "seg": 0, "at": 600, "dir": 1 } ] }

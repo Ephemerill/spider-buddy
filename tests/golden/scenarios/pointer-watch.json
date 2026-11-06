@@ -1,0 +1,6 @@
+{ "id": "pointer-watch", "desktop": "desk-a", "seconds": 20, "scale": 0.95, "detail": "full",
+  "config": { "followCursor": true, "approachCursor": false, "pounceOnCursor": false },
+  "cursor": { "mode": "orbit", "cx": 480, "cy": 800, "rx": 420, "ry": 160, "wx": 0.8, "wy": 0.55 },
+  "events": [
+    { "t": 0, "cmd": "attach", "loop": "win:1", "seg": 0, "at": 300, "dir": 1 },
+    { "t": 0, "cmd": "activity", "name": "rest", "seconds": 20 } ] }

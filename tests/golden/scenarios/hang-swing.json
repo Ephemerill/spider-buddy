@@ -1,0 +1,4 @@
+{ "id": "hang-swing", "desktop": "desk-a", "seconds": 10, "scale": 0.95, "detail": "full",
+  "config": { "followCursor": false, "approachCursor": false, "pounceOnCursor": false },
+  "cursor": { "mode": "none" },
+  "events": [ { "t": 0, "cmd": "hang", "x": 960, "y": 900, "length": 250, "swing": true, "kick": 1.5 } ] }

@@ -1,0 +1,6 @@
+{ "id": "pointer-stroke", "desktop": "desk-a", "seconds": 10, "scale": 0.95, "detail": "full",
+  "config": { "followCursor": true, "approachCursor": false, "pounceOnCursor": false },
+  "cursor": { "mode": "wiggle", "cx": 480, "cy": 756, "ax": 40, "ay": 0, "hz": 2.5 },
+  "events": [
+    { "t": 0, "cmd": "attach", "loop": "win:1", "seg": 0, "at": 300, "dir": 1 },
+    { "t": 0, "cmd": "activity", "name": "rest", "seconds": 10 } ] }

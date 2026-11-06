@@ -1,0 +1,6 @@
+{ "id": "jump", "desktop": "desk-a", "seconds": 6, "scale": 0.95, "detail": "full",
+  "config": { "followCursor": false, "approachCursor": false, "pounceOnCursor": false },
+  "cursor": { "mode": "none" },
+  "events": [
+    { "t": 0, "cmd": "attach", "loop": "win:1", "seg": 0, "at": 100, "dir": 1 },
+    { "t": 1, "cmd": "jump", "x": 1000, "y": 845 } ] }

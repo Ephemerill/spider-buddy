@@ -1,0 +1,7 @@
+{ "id": "pointer-fidget", "desktop": "desk-a", "seconds": 20, "scale": 0.95, "detail": "full",
+  "note": "A pointer fidgeting near: stalk, pounce, cling, drop (spec 5.5).",
+  "config": { "followCursor": true, "approachCursor": true, "pounceOnCursor": true },
+  "cursor": { "mode": "wiggle", "cx": 560, "cy": 800, "ax": 14, "ay": 10, "hz": 2 },
+  "events": [
+    { "t": 0, "cmd": "attach", "loop": "win:1", "seg": 0, "at": 300, "dir": 1 },
+    { "t": 0, "cmd": "activity", "name": "rest", "seconds": 3 } ] }

@@ -1,0 +1,10 @@
+{
+  "note": "The parity desktop. y-up, origin bottom-left. Units are points on the Mac and physical pixels at 100 percent on Windows. No menu bar and no dock or taskbar, so both platforms build the same map. Window corner radius 26 on both.",
+  "screen": { "x": 0, "y": 0, "w": 1920, "h": 1080 },
+  "menuBarHeight": 0,
+  "windows": [
+    { "id": 1, "x": 180,  "y": 220, "w": 760, "h": 520, "depth": 0, "owner": "Editor",  "corner": 26 },
+    { "id": 2, "x": 700,  "y": 420, "w": 620, "h": 400, "depth": 1, "owner": "Browser", "corner": 26 },
+    { "id": 3, "x": 1460, "y": 120, "w": 400, "h": 300, "depth": 2, "owner": "Notes",   "corner": 26 }
+  ]
+}

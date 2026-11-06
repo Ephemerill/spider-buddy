@@ -1,0 +1,11 @@
+{ "id": "turn-around", "desktop": "desk-a", "seconds": 13, "scale": 0.95, "detail": "full",
+  "config": { "followCursor": false, "approachCursor": false, "pounceOnCursor": false },
+  "cursor": { "mode": "none" },
+  "events": [
+    { "t": 0,   "cmd": "attach", "loop": "win:1", "seg": 0, "at": 380, "dir": 1 },
+    { "t": 0,   "cmd": "noPauses" },
+    { "t": 0,   "cmd": "walk", "seconds": 3 },
+    { "t": 3,   "cmd": "activity", "name": "turn", "seconds": 1 },
+    { "t": 4.5, "cmd": "walk", "seconds": 3 },
+    { "t": 7.5, "cmd": "activity", "name": "turn", "seconds": 1 },
+    { "t": 9,   "cmd": "walk", "seconds": 3 } ] }

@@ -1,0 +1,7 @@
+{ "id": "pointer-whip", "desktop": "desk-a", "seconds": 8, "scale": 0.95, "detail": "full",
+  "note": "The pointer is whipped across the body: a nervous hop.",
+  "config": { "followCursor": true, "approachCursor": false, "pounceOnCursor": false },
+  "cursor": { "mode": "points", "points": [[0,100,760],[2,100,760],[2.12,860,760],[8,860,760]] },
+  "events": [
+    { "t": 0, "cmd": "attach", "loop": "win:1", "seg": 0, "at": 300, "dir": 1 },
+    { "t": 0, "cmd": "activity", "name": "rest", "seconds": 8 } ] }

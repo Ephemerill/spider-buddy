@@ -1,0 +1,8 @@
+{ "id": "carried", "desktop": "desk-a", "seconds": 8, "scale": 0.95, "detail": "full",
+  "note": "The Editor window is dragged up and right under the spider, then back down.",
+  "config": { "followCursor": false, "approachCursor": false, "pounceOnCursor": false },
+  "cursor": { "mode": "none" },
+  "windowPaths": [ { "id": 1, "points": [[0,180,220],[1,180,220],[3,360,380],[5,360,380],[7,180,220]] } ],
+  "events": [
+    { "t": 0, "cmd": "attach", "loop": "win:1", "seg": 0, "at": 380, "dir": 1 },
+    { "t": 0, "cmd": "activity", "name": "rest", "seconds": 8 } ] }

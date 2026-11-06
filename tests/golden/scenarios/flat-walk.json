@@ -1,0 +1,7 @@
+{ "id": "flat-walk", "desktop": "desk-a", "seconds": 12, "scale": 0.95, "detail": "full",
+  "config": { "followCursor": false, "approachCursor": false, "pounceOnCursor": false },
+  "cursor": { "mode": "none" },
+  "events": [
+    { "t": 0, "cmd": "attach", "loop": "win:1", "seg": 0, "at": 120, "dir": 1 },
+    { "t": 0, "cmd": "noPauses" },
+    { "t": 0, "cmd": "walk", "seconds": 12 } ] }

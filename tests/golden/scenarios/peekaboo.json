@@ -1,0 +1,6 @@
+{ "id": "peekaboo", "desktop": "desk-a", "seconds": 14, "scale": 0.95, "detail": "full",
+  "config": { "followCursor": false, "approachCursor": false, "pounceOnCursor": false },
+  "cursor": { "mode": "none" },
+  "events": [
+    { "t": 0, "cmd": "attach", "loop": "win:1", "seg": 0, "at": 600, "dir": 1 },
+    { "t": 0.5, "cmd": "activity", "name": "peekaboo", "seconds": 12 } ] }

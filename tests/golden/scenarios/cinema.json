@@ -1,0 +1,7 @@
+{ "id": "cinema", "desktop": "desk-a", "seconds": 20, "scale": 0.95, "detail": "full",
+  "config": { "followCursor": false, "approachCursor": false, "pounceOnCursor": false },
+  "cursor": { "mode": "none" },
+  "events": [
+    { "t": 0, "cmd": "attach", "loop": "win:1", "seg": 0, "at": 300, "dir": 1 },
+    { "t": 1, "cmd": "cinema", "on": true },
+    { "t": 15, "cmd": "cinema", "on": false } ] }
