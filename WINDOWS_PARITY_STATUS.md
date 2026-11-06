@@ -6,7 +6,7 @@ Evidence levels are defined in section 8 of [WINDOWS_DEV_WORKFLOW.md](WINDOWS_DE
 
 **Oracle:** Mac v1.0.1, `Sources` tree `7c878d73`. **Last reviewed:** 2026-11-06.
 
-Two codebases are in this branch. **Swift** is the Mac's unchanged source compiled for Windows (`Sources/`, `src/SwiftShims`, `src/SwiftHost`). **C#** is the earlier port from the spec (`src/Core`, `Renderer`, `App`, `Tools`). The levels below are for the Swift path where it covers a feature, and otherwise the C# app's level, taken from `docs/windows/WINDOWS_PORT_AUDIT.md`. Which path is final is the owner's call.
+Two codebases are in this branch. **Swift** is the Mac's unchanged source compiled for Windows (`Sources/`, `src/SwiftShims`, `src/SwiftHost`). **C#** is the earlier port from the spec (`src/Core`, `Renderer`, `App`, `Tools`). The levels below are for the Swift path where it covers a feature, and otherwise the C# app's level, taken from `docs/windows/WINDOWS_PORT_AUDIT.md`. **The Swift path is the plan (owner's decision, 2026-11-06);** the C# is retired part by part as it is replaced.
 
 ## Foundations
 

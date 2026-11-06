@@ -71,3 +71,7 @@ The fix is `CGPinHashingForTests()`, which sets the runtime's `_swift_stdlib_Has
 - **Silk thread** has its own window under the spider, using the Mac's `silkPath`. Only the box around the thread is cleared or shown.
 - **The floor was on top of the taskbar icons.** Reporting the taskbar as the gap between `frame` and `visibleFrame` made the Mac's Dock logic treat it as a short centered strip. The work area is now the screen, as spec 2.8 says, and the floor sits on the taskbar across the full width.
 - The owner has been picking up and throwing the spider on the real desktop during these runs: `held` and `thrown` states in the host log, ending in normal landings.
+
+## 2026-11-06: Decision: the Swift route
+
+The owner chose the Swift route. `Sources/` compiled against stand-in modules replaces the C# core and renderer; the UI will come from `Panel.swift`, `Studio.swift` and the rest running against a small AppKit stand-in. The C# stays until each part is replaced.

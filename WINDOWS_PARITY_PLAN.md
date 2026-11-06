@@ -1,9 +1,9 @@
 # Windows Spider Buddy: full plan to macOS parity
 
-> **Proposed revision (2026-11-06), waiting on the owner's decision.** The spike in `WINDOWS_WORKLOG.md` showed that the
-> Mac's Swift compiles for Windows unchanged and matches the Mac. If adopted, this replaces Track B of this plan:
+> **Revision adopted by the owner (2026-11-06).** The spike in `WINDOWS_WORKLOG.md` showed that the Mac's Swift compiles
+> for Windows unchanged and matches the Mac. This replaces Track B of this plan, and this table overrides what follows:
 >
-> | Part of this plan | With the Swift core |
+> | Part of this plan | Now |
 > |---|---|
 > | Part 2, 3: oracle, compare tools | Kept. Mostly built. RNG fixtures are no longer needed: both sides run Swift's own generator. |
 > | Part 4: host | Kept, but in Swift, reusing the Mac's `AppDelegate` and `OverlayWindow` logic |
@@ -16,7 +16,7 @@
 > | Part 11: habitat | Art compiles; needs a compositor behind `CALayer` |
 > | Part 12: verification, release | Kept; the installer also has to bundle the Swift runtime |
 >
-> The C# in `src/Core`, `src/Renderer`, `src/App`, `src/Tools` stays until its replacement exists and the owner agrees.
+> The C# in `src/Core`, `src/Renderer`, `src/App`, `src/Tools` is retired once each part is replaced, not before.
 
 > **Where this stands (added 2026-11-06).** Day-to-day process is in `WINDOWS_DEV_WORKFLOW.md`, feature state in
 > `WINDOWS_PARITY_STATUS.md`, history in `WINDOWS_WORKLOG.md`. Files moved since this was written: `progress.md` is now
