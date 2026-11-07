@@ -339,4 +339,5 @@ public final class CGMutablePath: CGPath, @unchecked Sendable {
     }
     public func addPath(_ p: CGPath, transform: CGAffineTransform = .identity) { adopt(p, transform) }
     public func closeSubpath() { rawClose() }
+    public func removeAll() { elements.removeAll(); subpathStart = nil; last = nil }
 }

@@ -6,57 +6,74 @@
 @_exported import Foundation
 
 public typealias pid_t = Int32
+
+// MARK: Selectors. There is no Objective-C runtime here: the build rewrites #selector(x) to _sel("x", Self.x), a typed
+// reference to the method, so targets and actions work the same way without one.
+
+public struct Selector: Hashable, ExpressibleByStringLiteral, @unchecked Sendable {
+    public let name: String
+    let invoke: ((AnyObject, Any?) -> Void)?
+    public init(_ n: String) { name = n; invoke = nil }
+    public init(stringLiteral n: String) { name = n; invoke = nil }
+    init(name: String, invoke: @escaping (AnyObject, Any?) -> Void) { self.name = name; self.invoke = invoke }
+    public static func == (a: Selector, b: Selector) -> Bool { a.name == b.name }
+    public func hash(into h: inout Hasher) { h.combine(name) }
+    /// Sends it. False if it has no method to go to (a responder-chain action such as `cut:`).
+    @discardableResult public func send(to target: AnyObject?, from sender: Any?) -> Bool {
+        guard let invoke, let target else { return false }
+        invoke(target, sender)
+        return true
+    }
+}
+public func _sel<T: AnyObject>(_ n: String, _ f: @escaping (T) -> () -> Void) -> Selector {
+    Selector(name: n) { t, _ in if let t = t as? T { f(t)() } }
+}
+public func _sel<T: AnyObject, A>(_ n: String, _ f: @escaping (T) -> (A) -> Void) -> Selector {
+    Selector(name: n) { t, s in
+        guard let t = t as? T else { return }
+        if let a = s as? A { f(t)(a) } else if let a = Optional<Any>.none as? A { f(t)(a) }
+    }
+}
+public func _sel<T: AnyObject, R>(_ n: String, _ f: @escaping (T) -> () -> R) -> Selector {
+    Selector(name: n) { t, _ in if let t = t as? T { _ = f(t)() } }
+}
+
+extension NotificationCenter {
+    /// The selector form of addObserver, which Foundation has only with Objective-C.
+    public func addObserver(_ observer: AnyObject, selector: Selector, name: Notification.Name?, object: Any?) {
+        weak var o = observer
+        _ = addObserver(forName: name, object: object as AnyObject?, queue: nil) { n in
+            if let o { selector.send(to: o, from: n) }
+        }
+    }
+}
 public typealias NSPoint = CGPoint
 public typealias NSSize = CGSize
 public typealias NSRect = CGRect
 
 // MARK: Colors
 
-public final class NSColor: NSObject, @unchecked Sendable {
-    public let cgColor: CGColor
-    public init(cgColor c: CGColor) { cgColor = c }
-    public convenience init(calibratedRed r: CGFloat, green g: CGFloat, blue b: CGFloat, alpha a: CGFloat) {
-        self.init(cgColor: CGColor(red: r, green: g, blue: b, alpha: a))
-    }
-    public convenience init(srgbRed r: CGFloat, green g: CGFloat, blue b: CGFloat, alpha a: CGFloat) {
-        self.init(cgColor: CGColor(red: r, green: g, blue: b, alpha: a))
-    }
-    public convenience init(red r: CGFloat, green g: CGFloat, blue b: CGFloat, alpha a: CGFloat) {
-        self.init(cgColor: CGColor(srgbRed: r, green: g, blue: b, alpha: a))
-    }
-    public convenience init(white w: CGFloat, alpha a: CGFloat) { self.init(cgColor: CGColor(gray: w, alpha: a)) }
-    public static let black = NSColor(white: 0, alpha: 1)
-    public static let white = NSColor(white: 1, alpha: 1)
-    public static let clear = NSColor(white: 0, alpha: 0)
-    public var redComponent: CGFloat { cgColor.r }
-    public var greenComponent: CGFloat { cgColor.g }
-    public var blueComponent: CGFloat { cgColor.b }
-    public var alphaComponent: CGFloat { cgColor.a }
-    public func usingColorSpace(_ s: NSColorSpace) -> NSColor? {
-        NSColor(cgColor: CGColor(srgbRed: cgColor.sr, green: cgColor.sg, blue: cgColor.sb, alpha: cgColor.a))
-    }
-    public func withAlphaComponent(_ a: CGFloat) -> NSColor { NSColor(cgColor: cgColor.copy(alpha: a) ?? cgColor) }
-}
-public final class NSColorSpace: NSObject, @unchecked Sendable {
-    public static let sRGB = NSColorSpace()
-    public static let deviceRGB = NSColorSpace()
-    public static let genericRGB = NSColorSpace()
-}
-
 // MARK: Screens
 
-public struct NSEdgeInsets: Equatable, Sendable {
-    public var top: CGFloat, left: CGFloat, bottom: CGFloat, right: CGFloat
-    public init(top: CGFloat = 0, left: CGFloat = 0, bottom: CGFloat = 0, right: CGFloat = 0) {
-        self.top = top; self.left = left; self.bottom = bottom; self.right = right
-    }
-}
+public struct NSDeviceDescriptionKey: Hashable, Sendable { public let rawValue: String; public init(_ s: String) { rawValue = s }; public init(rawValue: String) { self.rawValue = rawValue } }
+public typealias CGDirectDisplayID = UInt32
 
 public final class NSScreen: NSObject, @unchecked Sendable {
     public let frame: CGRect
     public let visibleFrame: CGRect
     public let backingScaleFactor: CGFloat
     public var safeAreaInsets = NSEdgeInsets()   // No notch on Windows.
+    public var localizedName = "Display"
+    public var screenNumber = 1
+    public struct DeviceKey: Hashable { public let rawValue: String; public init(_ s: String) { rawValue = s }; public init(rawValue: String) { self.rawValue = rawValue } }
+    public var deviceDescription: [NSDeviceDescriptionKey: Any] { [NSDeviceDescriptionKey("NSScreenNumber"): NSNumber(value: screenNumber)] }
+    public var maximumFramesPerSecond: Int { 60 }
+    public var colorSpace: NSColorSpace? { .sRGB }
+    /// A display link for this screen. The frame source drives it (see Window.swift).
+    public func displayLink(target: AnyObject, selector: Selector) -> CADisplayLink {
+        weak var t = target
+        return CADisplayLink { if let t { selector.send(to: t, from: nil) } }
+    }
     public init(frame: CGRect, visibleFrame: CGRect, backingScaleFactor: CGFloat) {
         self.frame = frame; self.visibleFrame = visibleFrame; self.backingScaleFactor = backingScaleFactor
     }
@@ -100,6 +117,24 @@ public final class NSRunningApplication: NSObject, @unchecked Sendable {
 public final class NSWorkspace: NSObject, @unchecked Sendable {
     public static let shared = NSWorkspace()
     public var runningApplications: [NSRunningApplication] { [] }
+    public let notificationCenter = NotificationCenter()
+    public var frontmostApplication: NSRunningApplication? { nil }
+    public var menuBarOwningApplication: NSRunningApplication? { nil }
+    public static let willSleepNotification = Notification.Name("NSWorkspaceWillSleepNotification")
+    public static let didWakeNotification = Notification.Name("NSWorkspaceDidWakeNotification")
+    public static let screensDidSleepNotification = Notification.Name("NSWorkspaceScreensDidSleepNotification")
+    public static let screensDidWakeNotification = Notification.Name("NSWorkspaceScreensDidWakeNotification")
+    public static let sessionDidResignActiveNotification = Notification.Name("NSWorkspaceSessionDidResignActiveNotification")
+    public static let sessionDidBecomeActiveNotification = Notification.Name("NSWorkspaceSessionDidBecomeActiveNotification")
+    public static let activeSpaceDidChangeNotification = Notification.Name("NSWorkspaceActiveSpaceDidChangeNotification")
+    public static let didActivateApplicationNotification = Notification.Name("NSWorkspaceDidActivateApplicationNotification")
+    public struct DesktopImageOptionKey: Hashable { public let rawValue: String }
+    public func desktopImageURL(for s: NSScreen) -> URL? { nil }
+    public func desktopImageOptions(for s: NSScreen) -> [DesktopImageOptionKey: Any]? { nil }
+    @discardableResult public func open(_ url: URL) -> Bool { ShellOpen.open(url.isFileURL ? url.path : url.absoluteString) }
+    public func activateFileViewerSelecting(_ urls: [URL]) { if let u = urls.first { ShellOpen.reveal(u.path) } }
+    public func selectFile(_ path: String?, inFileViewerRootedAtPath root: String) -> Bool { if let path { ShellOpen.reveal(path) }; return true }
+    public func icon(forFile path: String) -> NSImage { NSImage(size: CGSize(width: 16, height: 16)) }
 }
 
 // MARK: Accessibility: the Mac reads the Dock through it. Windows has none: always "not trusted".
@@ -119,163 +154,6 @@ public let kAXListRole: CFString = "AXList"
 public let kAXPositionAttribute: CFString = "AXPosition"
 public let kAXSizeAttribute: CFString = "AXSize"
 
-// MARK: Events and views
-
-public final class NSEvent: NSObject, @unchecked Sendable {
-    public var locationInWindow = CGPoint.zero
-    public var clickCount = 1
-    public var pressure: Float = 0
-    public var stage = 0
-    public var modifierFlags = ModifierFlags()
-    public var scrollingDeltaY: CGFloat = 0
-    public var hasPreciseScrollingDeltas = false
-    public var timestamp: TimeInterval = 0
-    public struct ModifierFlags: OptionSet, Sendable {
-        public let rawValue: UInt
-        public init(rawValue: UInt) { self.rawValue = rawValue }
-        public static let shift = Self(rawValue: 1 << 17), control = Self(rawValue: 1 << 18), option = Self(rawValue: 1 << 19), command = Self(rawValue: 1 << 20)
-    }
-    /// Set by the host each tick.
-    nonisolated(unsafe) public static var mouseLocation = CGPoint.zero
-    nonisolated(unsafe) public static var pressedMouseButtons = 0
-}
-
-open class NSResponder: NSObject {
-    public override init() { super.init() }
-    open func mouseDown(with event: NSEvent) {}
-    open func mouseDragged(with event: NSEvent) {}
-    open func mouseUp(with event: NSEvent) {}
-    open func rightMouseDown(with event: NSEvent) {}
-    open func scrollWheel(with event: NSEvent) {}
-    open func pressureChange(with event: NSEvent) {}
-}
-
-open class NSWindow: NSResponder {
-    public var frame = CGRect.zero
-    public var ignoresMouseEvents = false
-    public func convertPoint(toScreen p: CGPoint) -> CGPoint { CGPoint(x: frame.minX + p.x, y: frame.minY + p.y) }
-    public func convertPoint(fromScreen p: CGPoint) -> CGPoint { CGPoint(x: p.x - frame.minX, y: p.y - frame.minY) }
-}
-
-open class NSView: NSResponder {
-    public var frame: CGRect
-    public var bounds: CGRect { get { CGRect(origin: .zero, size: frame.size) } set { frame.size = newValue.size } }
-    public var wantsLayer = false
-    public var layer: CALayer? = nil
-    public var needsDisplay = false
-    public var isHidden = false
-    public weak var window: NSWindow? = nil
-    public init(frame frameRect: CGRect) { frame = frameRect; super.init() }
-    public required init?(coder: NSCoder) { frame = .zero; super.init() }
-    open func hitTest(_ point: CGPoint) -> NSView? { self }
-    open func draw(_ dirtyRect: CGRect) {}
-    open func setNeedsDisplay(_ r: CGRect) { needsDisplay = true }
-    open func convert(_ p: CGPoint, from view: NSView?) -> CGPoint { p }
-    open func convert(_ p: CGPoint, to view: NSView?) -> CGPoint { p }
-    open var isFlipped: Bool { false }
-}
-
-public final class NSGraphicsContext: NSObject, @unchecked Sendable {
-    public let cgContext: CGContext
-    public init(cgContext c: CGContext, flipped: Bool) { cgContext = c }
-    public convenience init?(cgContext c: CGContext, flipped: Bool, _ unused: Void = ()) { self.init(cgContext: c, flipped: flipped) }
-    nonisolated(unsafe) public static var current: NSGraphicsContext? = nil
-    nonisolated(unsafe) private static var stack: [NSGraphicsContext?] = []
-    public static func saveGraphicsState() { stack.append(current); current?.cgContext.saveGState() }
-    public static func restoreGraphicsState() {
-        current?.cgContext.restoreGState()
-        if let top = stack.popLast() { current = top }
-    }
-}
-
-public final class NSImage: NSObject, @unchecked Sendable {
-    public var size: CGSize
-    public var isTemplate = false
-    private let handler: ((CGRect) -> Bool)?
-    public init(size: CGSize, flipped: Bool, drawingHandler: @escaping (CGRect) -> Bool) {
-        self.size = size; handler = drawingHandler
-    }
-    public init(size: CGSize) { self.size = size; handler = nil }
-    public func render(in c: CGContext) {
-        let prior = NSGraphicsContext.current
-        NSGraphicsContext.current = NSGraphicsContext(cgContext: c, flipped: false)
-        _ = handler?(CGRect(origin: .zero, size: size))
-        NSGraphicsContext.current = prior
-    }
-    /// Draws straight into the current context. (AppKit caches a bitmap at the destination's resolution; drawing the
-    /// vectors at that resolution comes to the same picture.)
-    public func draw(in r: CGRect) {
-        guard let c = NSGraphicsContext.current?.cgContext else { return }
-        c.saveGState()
-        c.translateBy(x: r.minX, y: r.minY)
-        if size.width > 0, size.height > 0 { c.scaleBy(x: r.width / size.width, y: r.height / size.height) }
-        render(in: c)
-        c.restoreGState()
-    }
-}
-
-public final class NSBitmapImageRep: NSObject, @unchecked Sendable {
-    public enum FileType { case png, jpeg, tiff, bmp, gif }
-    public struct PropertyKey: Hashable { public let rawValue: String }
-    public let cgImage: CGImage?
-    public init(cgImage: CGImage) { self.cgImage = cgImage }
-    public func representation(using t: FileType, properties: [PropertyKey: Any]) -> Data? {
-        guard t == .png, let cgImage else { return nil }
-        return PNGWriter.encode(cgImage)
-    }
-}
-
-/// A plain PNG: unpremultiplies RGBA and stores the rows uncompressed (these files are tool output).
-enum PNGWriter {
-    private static let crcTable: [UInt32] = (0..<256).map { n -> UInt32 in
-        var c = UInt32(n)
-        for _ in 0..<8 { c = c & 1 != 0 ? 0xEDB88320 ^ (c >> 1) : c >> 1 }
-        return c
-    }
-    private static func crc(_ b: [UInt8]) -> UInt32 {
-        var c: UInt32 = 0xFFFFFFFF
-        for x in b { c = crcTable[Int((c ^ UInt32(x)) & 255)] ^ (c >> 8) }
-        return c ^ 0xFFFFFFFF
-    }
-    private static func be(_ v: UInt32) -> [UInt8] { [UInt8(v >> 24), UInt8((v >> 16) & 255), UInt8((v >> 8) & 255), UInt8(v & 255)] }
-    private static func chunk(_ t: String, _ d: [UInt8]) -> [UInt8] {
-        let body = Array(t.utf8) + d
-        return be(UInt32(d.count)) + body + be(crc(body))
-    }
-    static func encode(_ im: CGImage) -> Data {
-        var raw = [UInt8](); raw.reserveCapacity((im.width * 4 + 1) * im.height)
-        for y in 0..<im.height {
-            raw.append(0)
-            for x in 0..<im.width {
-                let i = y * im.bytesPerRow + x * 4
-                let a = im.pixels[i + 3]
-                if a == 0 || a == 255 {
-                    raw += [a == 0 ? 0 : im.pixels[i], a == 0 ? 0 : im.pixels[i + 1], a == 0 ? 0 : im.pixels[i + 2], a]
-                } else {
-                    func up(_ v: UInt8) -> UInt8 { UInt8(min(255, (Int(v) * 255 + Int(a) / 2) / Int(a))) }
-                    raw += [up(im.pixels[i]), up(im.pixels[i + 1]), up(im.pixels[i + 2]), a]
-                }
-            }
-        }
-        var z: [UInt8] = [0x78, 0x01]
-        var at = 0, s1: UInt32 = 1, s2: UInt32 = 0
-        while at < raw.count {
-            let n = min(65535, raw.count - at)
-            z.append(at + n >= raw.count ? 1 : 0)
-            z += [UInt8(n & 255), UInt8(n >> 8), UInt8(~n & 255), UInt8((~n >> 8) & 255)]
-            z += raw[at..<(at + n)]
-            at += n
-        }
-        for x in raw { s1 = (s1 + UInt32(x)) % 65521; s2 = (s2 + s1) % 65521 }
-        z += be((s2 << 16) | s1)
-        var out: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
-        out += chunk("IHDR", be(UInt32(im.width)) + be(UInt32(im.height)) + [8, 6, 0, 0, 0])
-        out += chunk("IDAT", z)
-        out += chunk("IEND", [])
-        return Data(out)
-    }
-}
-
 public func CFPreferencesAppSynchronize(_ app: CFString) -> Bool { true }
 
 public func autoreleasepool<T>(_ body: () throws -> T) rethrows -> T { try body() }
@@ -293,8 +171,14 @@ public func CTFontCreateWithName(_ name: CFString, _ size: CGFloat, _ matrix: Un
 extension NSAttributedString.Key {
     public static let font = NSAttributedString.Key("NSFont")
     public static let foregroundColor = NSAttributedString.Key("NSColor")
+    public static let backgroundColor = NSAttributedString.Key("NSBackgroundColor")
     public static let kern = NSAttributedString.Key("NSKern")
     public static let paragraphStyle = NSAttributedString.Key("NSParagraphStyle")
+    public static let underlineStyle = NSAttributedString.Key("NSUnderline")
+    public static let strikethroughStyle = NSAttributedString.Key("NSStrikethrough")
+    public static let link = NSAttributedString.Key("NSLink")
+    public static let baselineOffset = NSAttributedString.Key("NSBaselineOffset")
+    public static let shadow = NSAttributedString.Key("NSShadow")
 }
 
 public final class CTLine: @unchecked Sendable {
@@ -314,7 +198,7 @@ nonisolated(unsafe) public var CTTextMeasure: (_ text: String, _ font: String, _
 
 public func CTLineCreateWithAttributedString(_ s: NSAttributedString) -> CTLine {
     let attrs: [NSAttributedString.Key: Any] = s.length > 0 ? s.attributes(at: 0, effectiveRange: nil) : [:]
-    let font = attrs[.font] as? CTFont
+    let font = (attrs[.font] as? CTFont) ?? (attrs[.font] as? NSFont).map { CTFont(name: $0.fontKey, size: $0.pointSize) }
     let color = (attrs[.foregroundColor] as? NSColor)?.cgColor ?? .black
     return CTLine(text: s.string, font: font, color: color)
 }

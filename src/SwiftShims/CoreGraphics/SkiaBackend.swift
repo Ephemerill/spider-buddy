@@ -92,11 +92,15 @@ public enum SkiaText {
     private static let lock = NSLock()
     nonisolated(unsafe) private static let mgr: P = Sk.fontMgrNew()
 
-    private static func windowsFace(_ name: String) -> (String, Int32) {
+    /// A font key is "Family|weight|italic"; a bare Mac face name also works.
+    private static func windowsFace(_ name: String) -> (String, Int32, Int32) {
+        let parts = name.split(separator: "|").map(String.init)
+        if parts.count >= 2 { return (parts[0], Int32(parts[1]) ?? 400, parts.count > 2 && parts[2] == "1" ? 1 : 0) }
         // The name tag and bubble use Helvetica Neue Medium. Arial has Helvetica's proportions.
-        if name.hasPrefix("HelveticaNeue") || name.hasPrefix("Helvetica") { return ("Arial", name.contains("Bold") ? 700 : name.contains("Medium") ? 500 : 400) }
-        if name.isEmpty { return ("Segoe UI", 400) }
-        return (name, 400)
+        if name.hasPrefix("HelveticaNeue") || name.hasPrefix("Helvetica") { return ("Arial", name.contains("Bold") ? 700 : name.contains("Medium") ? 500 : 400, 0) }
+        if name.hasPrefix("Menlo") || name.hasPrefix("Monaco") || name.hasPrefix("SFMono") { return ("Consolas", 400, 0) }
+        if name.isEmpty { return ("Segoe UI", 400, 0) }
+        return (name, 400, 0)
     }
     fileprivate static func font(_ name: String, _ size: CGFloat) -> P {
         lock.lock(); defer { lock.unlock() }
@@ -104,8 +108,8 @@ public enum SkiaText {
         if let known = faces[name] {
             face = known
         } else {
-            let (family, weight) = windowsFace(name)
-            let style = Sk.fontStyleNew(weight, 5, 0)
+            let (family, weight, slant) = windowsFace(name)
+            let style = Sk.fontStyleNew(weight, 5, slant)
             face = family.withCString { Sk.fontMatch(mgr, $0, style) }
             faces[name] = face
         }
@@ -127,9 +131,58 @@ public enum SkiaText {
     public static var available: Bool { Sk.available }
 }
 
+/// The pixels drawn so far, y-down. Windows use this to clear and present only what changed.
+public struct SkiaBox: Sendable { public var x0: Int, y0: Int, x1: Int, y1: Int }
+
+/// Image files, through Skia's codecs.
+public enum SkiaDecode {
+    private static let dataNew: @convention(c) (UnsafeRawPointer, Int) -> P = Sk.f("sk_data_new_with_copy")
+    private static let dataUnref: @convention(c) (P) -> Void = Sk.f("sk_data_unref")
+    private static let imageFrom: @convention(c) (P) -> P = Sk.f("sk_image_new_from_encoded")
+    private static let imageW: @convention(c) (P) -> Int32 = Sk.f("sk_image_get_width")
+    private static let imageH: @convention(c) (P) -> Int32 = Sk.f("sk_image_get_height")
+    public static func decode(_ d: Data) -> CGImage? {
+        guard Sk.available, !d.isEmpty else { return nil }
+        let data = d.withUnsafeBytes { dataNew($0.baseAddress!, d.count) }
+        defer { dataUnref(data) }
+        let im = imageFrom(data)
+        guard im != nil else { return nil }
+        defer { Sk.imageUnref(im) }
+        let w = Int(imageW(im)), h = Int(imageH(im))
+        guard w > 0, h > 0, let c = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue), let b = c.backend as? SkiaBackend else { return nil }
+        b.drawRaw(im, width: w, height: h)
+        return c.makeImage()
+    }
+}
+
 public final class SkiaBackend: CGBackend {
     private let canvas: P
     private let h: CGFloat
+    private let w: CGFloat
+    public private(set) var box: SkiaBox? = nil
+    private var wholeBox: SkiaBox { SkiaBox(x0: 0, y0: 0, x1: Int(w), y1: Int(h)) }
+    public func resetBox() { box = nil }
+    private func grow(_ x0: CGFloat, _ y0: CGFloat, _ x1: CGFloat, _ y1: CGFloat) {
+        let a = Int(x0.rounded(.down)), b = Int((h - y1).rounded(.down)), c = Int(x1.rounded(.up)), d = Int((h - y0).rounded(.up))
+        if var r = box { r.x0 = min(r.x0, a); r.y0 = min(r.y0, b); r.x1 = max(r.x1, c); r.y1 = max(r.y1, d); box = r } else { box = SkiaBox(x0: a, y0: b, x1: c, y1: d) }
+    }
+    private func growAll() { box = wholeBox }
+    private func grow(_ path: CGPath, margin m: CGFloat, _ s: CGState) {
+        var x0 = CGFloat.infinity, y0 = x0, x1 = -x0, y1 = -x0
+        func v(_ p: CGPoint) { x0 = min(x0, p.x); y0 = min(y0, p.y); x1 = max(x1, p.x); y1 = max(y1, p.y) }
+        for e in path.elements {
+            switch e {
+            case let .move(p), let .line(p): v(p)
+            case let .quad(a, p): v(a); v(p)
+            case let .cubic(a, b, p): v(a); v(b); v(p)
+            case .close: break
+            }
+        }
+        guard x0.isFinite else { return }
+        var pad = m + 2
+        if s.shadowColor != nil { pad += s.shadowBlur * 2 + max(abs(s.shadowOffset.width), abs(s.shadowOffset.height)) }
+        grow(x0 - pad, y0 - pad, x1 + pad, y1 + pad)
+    }
     /// Depth of saves, so a backend can be retired tidily.
     public init?(pixels: UnsafeMutableRawPointer, width: Int, height: Int, bytesPerRow: Int, bitmapInfo: UInt32) {
         guard Sk.available else { return nil }
@@ -138,6 +191,7 @@ public final class SkiaBackend: CGBackend {
         var info = SkiaImageInfo(width: Int32(width), height: Int32(height), colorType: bgra ? 6 : 4, alphaType: 2)
         canvas = withUnsafeBytes(of: &info) { Sk.canvasNew($0.baseAddress!, pixels, bytesPerRow, nil) }
         h = CGFloat(height)
+        w = CGFloat(width)
         if canvas == nil { return nil }
     }
     deinit { Sk.canvasDestroy(canvas) }
@@ -243,6 +297,7 @@ public final class SkiaBackend: CGBackend {
     }
 
     public func fill(_ path: CGPath, rule: CGPathFillRule, state s: CGState) {
+        grow(path, margin: 0, s)
         let p = skPath(path, rule: rule)
         let pt = paint(s.fill, s, style: 0)
         Sk.canvasDrawPath(canvas, p, pt)
@@ -252,6 +307,7 @@ public final class SkiaBackend: CGBackend {
 
     public func stroke(_ path: CGPath, state s: CGState) {
         let t = s.ctm
+        grow(path, margin: s.lineWidth * max(abs(t.a) + abs(t.b), abs(t.c) + abs(t.d)) * max(s.miter / 2, 1) + 1, s)
         let e1 = t.a * t.a + t.b * t.b, e2 = t.c * t.c + t.d * t.d, dot = t.a * t.c + t.b * t.d
         let uniform = abs(e1 - e2) < 1e-6 * max(e1, 1e-9) && abs(dot) < 1e-6 * max(e1, 1e-9)
         let pt = paint(s.stroke, s, style: 1)
@@ -304,6 +360,7 @@ public final class SkiaBackend: CGBackend {
     }
 
     private func drawGradientShader(_ shader: P, state s: CGState) {
+        growAll()
         let p = Sk.paintNew()
         Sk.paintAA(p, s.antialias)
         var white = SkiaColor4f(r: 1, g: 1, b: 1, a: flt(s.alpha))
@@ -344,6 +401,11 @@ public final class SkiaBackend: CGBackend {
     }
 
     public func drawImage(_ image: CGImage, in r: CGRect, state s: CGState) {
+        do {
+            let d = r.applying(s.ctm)
+            let pad: CGFloat = s.shadowColor != nil ? s.shadowBlur * 2 + 4 : 1
+            grow(d.minX - pad, d.minY - pad, d.maxX + pad, d.maxY + pad)
+        }
         var info = SkiaImageInfo(width: Int32(image.width), height: Int32(image.height), colorType: 4, alphaType: 2)
         let im = image.pixels.withUnsafeBytes { px in withUnsafeBytes(of: &info) { Sk.imageCopy($0.baseAddress!, px.baseAddress!, image.bytesPerRow) } }
         guard im != nil else { return }
@@ -389,6 +451,11 @@ public final class SkiaBackend: CGBackend {
     }
 
     public func drawText(_ text: String, font: String, size: CGFloat, color: CGColor, at position: CGPoint, state s: CGState) {
+        do {
+            let k = max(abs(s.ctm.a) + abs(s.ctm.b), 0.01)
+            let wd = SkiaText.measure(text, font: font, size: size).width * k + 8, ht = size * k * 2
+            grow(position.x - wd * 1.2, position.y - ht, position.x + wd * 1.2, position.y + ht)
+        }
         let f = SkiaText.font(font, size)
         defer { Sk.fontDelete(f) }
         let pt = paint(color, s, style: 0)
@@ -402,5 +469,16 @@ public final class SkiaBackend: CGBackend {
     }
 
     public func flush() {}
+
+    fileprivate func drawRaw(_ im: P, width: Int, height: Int) {
+        var dst = SkiaRect(left: 0, top: 0, right: Float(width), bottom: Float(height))
+        var src = dst
+        var sampling = SkiaSampling(filter: 0)
+        let p = Sk.paintNew()
+        withUnsafeBytes(of: &dst) { d in withUnsafeBytes(of: &src) { c in withUnsafeBytes(of: &sampling) { o in
+            Sk.canvasDrawImageRect(canvas, im, c.baseAddress!, d.baseAddress!, o.baseAddress!, p)
+        } } }
+        Sk.paintDelete(p)
+    }
 }
 #endif

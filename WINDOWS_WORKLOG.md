@@ -75,3 +75,18 @@ The fix is `CGPinHashingForTests()`, which sets the runtime's `_swift_stdlib_Has
 ## 2026-11-06: Decision: the Swift route
 
 The owner chose the Swift route. `Sources/` compiled against stand-in modules replaces the C# core and renderer; the UI will come from `Panel.swift`, `Studio.swift` and the rest running against a small AppKit stand-in. The C# stays until each part is replaced.
+
+## 2026-11-06: Whole-app build started (stopped mid-way: laptop going to sleep)
+
+**State: work in progress. `src/SwiftShims/AppKit` does not compile yet**, so `build-trace.ps1` and `build-app.ps1` fail until it does. The last good binaries are still in `build\swift` on the laptop (`SpiderHost.exe`, `Trace.exe`, `ImageDump.exe`).
+
+**Written, none of it run yet:**
+- `tools/windows/swift/build-app.ps1`, `ba`, `errs`: build everything in `Sources/`. Copies each file and mechanically rewrites `@objc` and `#selector` (no Objective-C runtime); `src/SwiftWin/` replaces Mac-service files by name (`Ears`, `SystemSense`, `Updater`, `PageBridge`, all stubs for now).
+- `QuartzCore`: real layer tree, compositing through Core Graphics, animations evaluated at draw time. Emitters hold state only; no particle simulation yet.
+- `AppKit`: `Layout` (anchors and a Cassowary solver), `View`, `Window` (Win32, layered or titled), `App` (display beat, input pump, screens, window list), `Text`, `Graphics`, `Controls`, `Menu` (native menus, tray, popover, alerts, panels, clipboard).
+
+**Next:**
+1. Fix the current error: `App.swift:291`, the `EnumWindows` callback captures context. Then `tools/windows/swift/ba -Check -Opt -Onone` and `tools/windows/swift/errs`, repeating until the whole app typechecks.
+2. Rerun `paritytraces.py` and `imgrun` after the shim changes: they must stay at 183/183, 8/8 and 768/770. The new `CGColor`, `CGContext` and `NSColor` paths are all shared with them.
+3. Run the real app: `main.swift` and `AppDelegate` on the desktop, with silk, prey, traces and hammock through the Mac's own code.
+4. Panel first, side by side with the Mac.
