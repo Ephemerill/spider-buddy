@@ -4,14 +4,17 @@
 # never touched. Sparkle is left out: Updater.swift is swapped for src/SwiftWin/Updater.swift, the same stand-in the
 # Windows build uses, so the two sides match there too. Output: build/oracle/Spider Oracle.app
 #   tools/oracle-app.sh            build
-#   tools/oracle-app.sh run ENV=.. run it with environment settings, waiting for it to quit
+#   tools/oracle-app.sh run ENV=.. [-- args]   run it with environment settings (and arguments), waiting for it to quit
 set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT=build/oracle
 APP="$OUT/Spider Oracle.app"
 if [ "${1:-}" = "run" ]; then
   shift
-  env SWIFT_DETERMINISTIC_HASHING=1 "$@" "$APP/Contents/MacOS/DesktopSpider"
+  envs=()
+  while [ $# -gt 0 ] && [ "$1" != "--" ]; do envs+=("$1"); shift; done
+  [ "${1:-}" = "--" ] && shift
+  env SWIFT_DETERMINISTIC_HASHING=1 ${envs[@]+"${envs[@]}"} "$APP/Contents/MacOS/DesktopSpider" "$@"
   exit
 fi
 if [ -z "${DEVELOPER_DIR:-}" ] && [ -d /Applications/Xcode.app/Contents/Developer ]; then

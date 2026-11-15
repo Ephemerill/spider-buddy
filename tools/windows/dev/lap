@@ -43,7 +43,7 @@ case "$cmd" in
           git ls-files --others --exclude-standard | "${SSH[@]}" "cd /d $WIN_REPO && more >> .git\\lap-wip-new" || die "could not record new files"
           echo "copied $(printf '%s\n' "$existing" | wc -l | tr -d ' ') file(s)" ;;
   revert-wip) # throw away sync-wip copies so the next real sync applies cleanly
-          "${SSH[@]}" "cd /d $WIN_REPO && git checkout -q -- . && git clean -fdq src tools/windows tests/parity 2>nul"
+          "${SSH[@]}" "cd /d $WIN_REPO && git checkout -q -- ."
           # Then the new files sync-wip recorded (only those, and only if still untracked), and folders left empty.
           ps_run /dev/stdin <<'PS' >/dev/null
 Set-Location C:\Users\User\Documents\Projects\spider-buddy

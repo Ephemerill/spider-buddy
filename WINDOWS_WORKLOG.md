@@ -198,3 +198,42 @@ size as on the Mac. Traces 183/183 (worst 1.12e-6), images 768/770: unchanged.
 **Seen on the Panel, not icons (next):** the header spider is drawn black (template image not tinted), section titles and
 secondary text are dimmer, the selected tab's highlight is shorter, the Pause switch shows on where the Mac shows off,
 and "Caffeinated" is cut off in its segment.
+
+## 2026-11-15 (later still): The Panel against the Mac, and AppKit's rules behind the gaps
+
+A workflow compared the Panel's seven pages with the Mac's (one agent per page, a merge, then a root cause per issue
+measured on real AppKit, each checked by a skeptic): 33 issues, 13 diagnosed and confirmed. A second workflow reviewed
+the fixes by area and confirmed 19 defects in them, all fixed. What AppKit does, measured on macOS 27 with probes, and
+what the stand-in now does the same way:
+
+- **Alignment rectangles.** Constraints act on a view's alignment rectangle, not its frame. A label's frame reaches 2
+  points past its text on each side; a symbol image view or image-only button lines up the symbol's baseline-to-cap
+  rectangle (now measured per symbol and configuration by `tools/symbols`); a borderless button with its image above a
+  title lines up the image's top. Baselines too are measured from the alignment rectangle.
+- **Priorities are strictly ranked.** No number of constraints at 249.99998 outweighs one at 250. The solver's objective
+  is now one row per priority level, minimised in order (lexicographic simplex, as Cassowary describes); before, close
+  priorities were weighed as near-equal numbers and outvoted by count, which narrowed the welcome's bullet rows.
+- **Text fields:** AppKit's hugging and compression by kind (label 251 across; field 250 across and 750 down; wrapping
+  and attributed labels 250 and 250); bezel and border flags coupled; widths to a half point; and the no-orphan line
+  break (a word is pushed down so the last line is never one word; plain string drawing doesn't).
+- **Text ink.** macOS dilates glyphs when it draws text (about 0.31 px a side for light text, 0.1 for dark, whatever the
+  alpha), except in button titles and segment labels on macOS 27; label text and tinted stock buttons get the 1-(1-a)^2
+  boost, checkboxes, segments, button subclasses and drawn strings don't. Ink now matches within 1-6% for labels, titles
+  and buttons.
+- **Popover vibrancy.** In a popover, secondary, tertiary, quaternary and disabled colours become opaque greys added
+  plus-lighter by text fields, image views and borderless buttons; the filter stays when a view leaves the popover
+  (which is why the Mac's panel pictures show that text brighter). Light mode keeps the plain colours (Skia has no
+  plus-darker).
+- **Controls:** the segmented control's padding, water-filled `.fillEqually` widths and centred overflow; the slider's
+  per-size knob and bar, see-through knob and clamped value; the switch's off track (grey 90 at 52%) and disabled look
+  (half the track, the knob unchanged); a button's 2-point image gap measured from the alignment width; disabled
+  borderless buttons at half their tint; template images (bitmaps and drawn) tinted as masks; images drawn with
+  lockFocus (the welcome's menu-bar icons were drawn at the view's corner instead).
+- **Harness.** `shot-diff` starts both apps as already welcomed (`-welcomed YES`): a pending welcome pauses the spider,
+  which was the only reason the Pause switch differed.
+
+**Evidence:** Panel pages and welcome pages side by side (`shot-diff`); text ink per element against the Mac; layout
+solves still 0.3 s at most. Traces 183/183 (worst 1.12e-6), images 768/770: unchanged.
+
+**Not done:** the "Dance to Music" row is off and disabled because the audio service is still the Windows stub (sensors
+phase). Live popover colours are modelled from AppKit's values but not compared live on screen.

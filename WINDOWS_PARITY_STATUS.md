@@ -47,7 +47,7 @@ Evidence: 768 of 770 images pass (work log).
 | Poses, emotes, thought icons, weather coats | E3 | |
 | Name tag and bubble text | E2 | Shapes match. The font is too light: needs a decision on what to bundle. |
 | Controls (buttons, switches, segments, fields, pop-ups, sliders) | E2 | Control gallery: sizes and styling measured from AppKit on macOS 27. Active colours from the welcome; gallery on the Mac renders inactive. |
-| System font | E2 | Segoe UI with SF Pro's metrics and widths (measured): text takes the same room as on the Mac. Glyph shapes differ (accepted). |
+| System font | E2 | Segoe UI with SF Pro's metrics and widths (measured): text takes the same room as on the Mac, and as much ink (macOS's smoothing dilation, measured). Glyph shapes differ (accepted). |
 | SF Symbols | E2 | Fluent System Icons (owner's choice) for all 117 names the app uses, each in its SF Symbol's measured box, ink rectangle and weight (`tools/symbols`). Panel side by side: icons sit and size as on the Mac. Shapes differ (accepted). |
 | Creatures, toys | E1 | Same code, not diffed |
 | Habitat items, scenery, weather | E0 | Art compiles later with the tank; needs a `CALayer` compositor |
@@ -76,10 +76,10 @@ The whole Mac app runs on Windows on the Swift path (`Sources/` unchanged). Comp
 | Screen | Level | Notes |
 |---|---|---|
 | Tray icon and menus | E0 | Right-click has only Quit |
-| Panel, 7 pages | E1 | Runs; its picture in the welcome matches the Mac's layout. Not compared as a live panel. |
+| Panel, 7 pages | E2 | All seven pages side by side with the Mac (`shot-diff SPIDER_PANEL_SHOT`): layout, wrap points, text ink, icons, controls. Dance to Music waits for the audio service. Not compared as a live popover on screen. |
 | Studio, 12 tabs | E0 | |
 | My Spiders | E0 | |
-| Welcome tour, first entrance | E2 | Pages 1-3 side by side: layout, wrap points, colours, controls match. Symbols differ (owner's decision pending). Studio step and entrance not compared. |
+| Welcome tour, first entrance | E2 | Pages 1-3 side by side: layout, wrap points (with AppKit's no-orphan breaks), colours, controls and the menu-bar picture match; symbols are Fluent. Studio step and entrance not compared. |
 | Chat, bug report | E0 | |
 | Habitat window and controls | E0 | |
 

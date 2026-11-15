@@ -84,10 +84,11 @@ open class NSControl: NSView {
     func valueChanged() { invalidateIntrinsicContentSize(); needsDisplay = true }
     @discardableResult open func sendAction(_ a: Selector?, to t: Any?) -> Bool { a?.send(to: (t as AnyObject?), from: self) ?? false }
     func fire() { _ = sendAction(action, to: target) }
+    /// The frame: the intrinsic (alignment) size plus the insets around it, as AppKit sizes it.
     open func sizeToFit() {
-        let s = intrinsicContentSize
-        if s.width >= 0 { frame.size.width = s.width }
-        if s.height >= 0 { frame.size.height = s.height }
+        let s = intrinsicContentSize, i = alignmentRectInsets
+        if s.width >= 0 { frame.size.width = s.width + i.left + i.right }
+        if s.height >= 0 { frame.size.height = s.height + i.top + i.bottom }
     }
     open func abortEditing() -> Bool { false }
     open func validateEditing() {}
@@ -95,14 +96,14 @@ open class NSControl: NSView {
     var effectiveFont: NSFont { font ?? .systemFont(ofSize: controlSize.fontSize) }
     var dark: Bool { effectiveAppearance.isDark }
     var ctx: CGContext? { NSGraphicsContext.current?.cgContext }
-    func drawString(_ s: String, in r: CGRect, color: NSColor, alignment a: NSTextAlignment, font f: NSFont, mode: NSLineBreakMode = .byTruncatingTail) {
+    func drawString(_ s: String, in r: CGRect, color: NSColor, alignment a: NSTextAlignment, font f: NSFont, mode: NSLineBreakMode = .byTruncatingTail, boost: Bool = true, dilate: Bool = true) {
         guard let g = NSGraphicsContext.current else { return }
         let run = [TextRun(text: s, font: f, color: color.cgColor, underline: false)]
         var lines = TextLayout.lines(run, width: nil, mode: .byClipping)
         lines = lines.map { TextLayout.truncate($0, width: r.width, mode: mode) }
         let z = TextLayout.size(lines, spacing: 0)
         let box = CGRect(x: r.minX, y: r.midY - z.height / 2, width: r.width, height: z.height)
-        TextLayout.draw(lines, in: box, alignment: a == .natural ? .left : a, spacing: 0, ctx: g.cgContext, flipped: g.isFlipped)
+        TextLayout.draw(lines, in: box, alignment: a == .natural ? .left : a, spacing: 0, ctx: g.cgContext, flipped: g.isFlipped, boost: boost, dilate: dilate)
     }
     func withAppearance(_ f: () -> Void) { effectiveAppearance.performAsCurrentDrawingAppearance(f) }
 }
@@ -128,10 +129,12 @@ open class NSTextField: NSControl, NSTextInputClient {
     public static let textDidChangeNotification = Notification.Name("NSTextDidChangeNotification")
     open var isEditable = true { didSet { needsDisplay = true } }
     open var isSelectable = true
-    open var isBordered = true { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
-    open var isBezeled = true { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
+    // AppKit's text field starts bezeled, not bordered; setting either flag clears the bezel, and bezeling clears
+    // the border (measured: a field made borderless is then a label-like field with 2-point insets).
+    open var isBordered = false { didSet { if isBezeled { isBezeled = false }; invalidateIntrinsicContentSize(); needsDisplay = true } }
+    open var isBezeled = true { didSet { if isBezeled, isBordered { isBordered = false }; invalidateIntrinsicContentSize(); needsDisplay = true } }
     open var bezelStyle = NSTextFieldBezelStyle.squareBezel
-    open var drawsBackground = true { didSet { needsDisplay = true } }
+    open var drawsBackground = true { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
     open var backgroundColor: NSColor? { didSet { needsDisplay = true } }
     open var textColor: NSColor? { didSet { needsDisplay = true } }
     open var placeholderString: String? { didSet { needsDisplay = true } }
@@ -146,27 +149,44 @@ open class NSTextField: NSControl, NSTextInputClient {
     private var lastMeasuredWidth: CGFloat = -1
     private var wrappedTextCell = false
 
-    public override init(frame r: CGRect) { super.init(frame: r); setContentHuggingPriority(NSLayoutPriority(251), for: .horizontal); setContentHuggingPriority(NSLayoutPriority(251), for: .vertical) }
+    /// AppKit's priorities by kind (measured): a field hugs 250 across and 750 down; a label hugs 251 across; a
+    /// wrapping or attributed label hugs and resists 250 across, so it stretches to what it is given.
+    public override init(frame r: CGRect) { super.init(frame: r); setContentHuggingPriority(NSLayoutPriority(250), for: .horizontal); setContentHuggingPriority(NSLayoutPriority(750), for: .vertical) }
     public required init?(coder: NSCoder) { super.init(coder: coder) }
     public convenience init(labelWithString s: String) {
         self.init(frame: .zero)
         isEditable = false; isSelectable = false; isBordered = false; isBezeled = false; drawsBackground = false
         stringValue = s
         lineBreakMode = .byClipping
+        setContentHuggingPriority(NSLayoutPriority(251), for: .horizontal)
     }
     public convenience init(wrappingLabelWithString s: String) {
         self.init(labelWithString: s)
         lineBreakMode = .byWordWrapping
         isSelectable = true
         wrappedTextCell = true
+        setContentHuggingPriority(NSLayoutPriority(250), for: .horizontal)
+        setContentCompressionResistancePriority(NSLayoutPriority(250), for: .horizontal)
     }
     public convenience init(string s: String) { self.init(frame: .zero); stringValue = s }
-    public convenience init(labelWithAttributedString s: NSAttributedString) { self.init(labelWithString: s.string); attributedStringValue = s }
+    public convenience init(labelWithAttributedString s: NSAttributedString) {
+        self.init(labelWithString: s.string); attributedStringValue = s
+        setContentHuggingPriority(NSLayoutPriority(250), for: .horizontal)
+        setContentCompressionResistancePriority(NSLayoutPriority(250), for: .horizontal)
+    }
     public static func wrappingLabel(_ s: String) -> NSTextField { NSTextField(wrappingLabelWithString: s) }
 
     open override var acceptsFirstResponder: Bool { isEditable && isEnabled }
     var wraps: Bool { (lineBreakMode == .byWordWrapping || lineBreakMode == .byCharWrapping) && maximumNumberOfLines != 1 }
     var padX: CGFloat { isBezeled || isBordered ? 4 : 2 }
+    /// A label (no bezel, border or background) lines up its text: its frame reaches 2 points past it on each side
+    /// (AppKit, measured; bezeled, bordered and background-drawing fields have none).
+    open override var alignmentRectInsets: NSEdgeInsets {
+        isBezeled || isBordered || drawsBackground ? NSEdgeInsets() : NSEdgeInsets(top: 0, left: padX, bottom: 0, right: padX)
+    }
+    open override var allowsVibrancy: Bool { (textColor ?? .labelColor).vibrancyCapable }
+    /// Horizontal padding inside the alignment rectangle: none for a label, all of it for a field.
+    private var extraX: CGFloat { let i = alignmentRectInsets; return padX * 2 - i.left - i.right }
     private func textRuns() -> ([TextRun], NSParagraphStyle?) {
         let color = (textColor ?? NSColor.labelColor).vibrant(in: self)
         var out: ([TextRun], NSParagraphStyle?) = ([], nil)
@@ -182,27 +202,33 @@ open class NSTextField: NSControl, NSTextInputClient {
         guard !r.isEmpty else { return [TextLine(runs: [], width: 0, ascent: effectiveFont.metrics.ascent, descent: effectiveFont.metrics.descent, height: effectiveFont.labelLineHeight)] }
         if wraps, let width {
             var l = TextLayout.lines(r, width: width, mode: lineBreakMode)
+            if !r.contains(where: { $0.text.contains("\n") }) { l = TextLayout.pushOut(l) }
             if maximumNumberOfLines > 0, l.count > maximumNumberOfLines { l = Array(l.prefix(maximumNumberOfLines)) }
             return l
         }
         return TextLayout.lines(r, width: nil, mode: .byClipping)
     }
     open override var intrinsicContentSize: CGSize {
-        let wrapW: CGFloat? = wraps ? (preferredMaxLayoutWidth > 0 ? preferredMaxLayoutWidth - padX * 2 : (lastMeasuredWidth > 0 ? lastMeasuredWidth - padX * 2 : nil)) : nil
+        // (preferredMaxLayoutWidth is an alignment width; the width last laid out at is a frame width.)
+        let wrapW: CGFloat? = wraps ? (preferredMaxLayoutWidth > 0 ? preferredMaxLayoutWidth - extraX : (lastMeasuredWidth > 0 ? lastMeasuredWidth - padX * 2 : nil)) : nil
         let z = TextLayout.size(layoutLines(width: wrapW), spacing: 0)
         let vPad: CGFloat = isBezeled || isBordered ? 8 : 0
-        // A wrapping label still wants its whole text on one line, as AppKit's do (a set preferredMaxLayoutWidth caps
-        // that): its lowered compression resistance lets constraints narrow it, and its height follows the width it
-        // was last laid out at. Reporting no width at all let a label in a stack collapse to nothing.
-        var width = z.width + padX * 2
-        // An editable field has no width of its own in AppKit: its frame or constraints give it one.
+        // A wrapping label's height follows the width it was last laid out at.
+        // (The text width rounded up to a half point, as on a 2x Mac, then the whole-point padding: "Settings" 50.07
+        // gives a label 50.5, with a background 54.5, bordered 58.5, bezeled 62.5, measured. Rounding a frame down
+        // by a fraction would truncate the text.)
+        let half: (CGFloat) -> CGFloat = { ($0 * 2).rounded(.up) / 2 }
+        var width = half(z.width) + extraX
+        // An editable field has no width of its own in AppKit: its frame or constraints give it one. A wrapping field
+        // in a window wants its whole text on one line (a preferredMaxLayoutWidth caps that) at hugging and
+        // compression resistance 250, so with AppKit's strictly ranked priorities it fills what a stack offers once
+        // its text needs more, and keeps its own width when it fits (measured on the welcome's rows).
         if isEditable, isBezeled || isBordered { width = NSViewNoIntrinsicMetric }
         else if wraps {
-            let natural = TextLayout.size(layoutLines(width: nil), spacing: 0).width + padX * 2
-            width = preferredMaxLayoutWidth > 0 ? min(natural, preferredMaxLayoutWidth) : natural
+            let natural = half(TextLayout.size(layoutLines(width: nil), spacing: 0).width) + extraX
+            width = preferredMaxLayoutWidth > 0 ? min(natural, half(preferredMaxLayoutWidth)) : natural
         }
-        // (Whole points, rounded up, as AppKit reports them: rounding a frame down by a fraction truncates the text.)
-        return CGSize(width: width < 0 ? width : ceil(width), height: ceil(z.height + vPad))
+        return CGSize(width: width, height: ceil(z.height + vPad))
     }
     /// The text laid out to `size`'s width (wrapping if the field wraps), as tall as it comes out.
     open override func sizeThatFits(_ size: CGSize) -> CGSize {
@@ -223,6 +249,16 @@ open class NSTextField: NSControl, NSTextInputClient {
         guard let c = ctx, let g = NSGraphicsContext.current else { return }
         withAppearance {
             let b = bounds
+            // (Text in a vibrancy-capable colour shown in a popover is composited plus-lighter, as AppKit's layer is.)
+            c.saveGState()
+            let blend = vibrancyBlend
+            if let blend { c.setBlendMode(blend) }
+            NSColor.vibrantly(blend != nil) { drawField(c, g, b) }
+            c.restoreGState()
+        }
+    }
+    private func drawField(_ c: CGContext, _ g: NSGraphicsContext, _ b: CGRect) {
+        do {
             if isBezeled || isBordered {
                 let r = b.insetBy(dx: 0.5, dy: 0.5)
                 // macOS 27 (measured: tools/controls): darker than the window in dark, white in light, a faint
@@ -484,7 +520,39 @@ open class NSButton: NSControl {
     open override func draw(_ d: CGRect) { withAppearance { drawButton() } }
     var isCheck: Bool { type == .switch || type == .radio }
     /// Whole points, rounded up, as AppKit reports them.
-    open override var intrinsicContentSize: CGSize { let z = buttonSize; return CGSize(width: ceil(z.width), height: ceil(z.height)) }
+    /// Whole points, rounded up, as AppKit reports them; a borderless button with an image reports its exact size.
+    open override var intrinsicContentSize: CGSize {
+        let z = buttonSize
+        if !isBordered, !isCheck, image != nil, imagePosition != .noImage { return z }
+        return CGSize(width: ceil(z.width), height: ceil(z.height))
+    }
+    /// A borderless button that shows only its image lines up the image's alignment rectangle, as AppKit does.
+    var imageAlone: NSImage? {
+        guard !isBordered, !isCheck, let img = image, imagePosition == .imageOnly || (title.isEmpty && imagePosition != .noImage) else { return nil }
+        return img
+    }
+    /// A borderless button lines up its image's alignment rectangle on the side the image takes: all round for the image
+    /// alone, the top above a title, the bottom below one (measured on InspectorButton's set-up).
+    open override var alignmentRectInsets: NSEdgeInsets {
+        if let img = imageAlone { return img.alignmentInsets }
+        guard !isBordered, !isCheck, let img = image, !title.isEmpty else { return NSEdgeInsets() }
+        if imagePosition == .imageAbove { return NSEdgeInsets(top: img.alignmentInsets.top, left: 0, bottom: 0, right: 0) }
+        if imagePosition == .imageBelow { return NSEdgeInsets(top: 0, left: 0, bottom: img.alignmentInsets.bottom, right: 0) }
+        return NSEdgeInsets()
+    }
+    /// The colours of the title and the image (measured on macOS 27, dark): a disabled borderless button draws its
+    /// content tint at half its alpha, title and image alike; with no tint both take the disabled text colour. An
+    /// enabled borderless button with no tint draws its image in the secondary label colour.
+    var contentColours: (title: NSColor, image: NSColor) {
+        let isDefault = keyEquivalent == "\r"
+        let base: NSColor = (isBordered && !isEnabled ? nil : contentTintColor) ?? (isDefault && isBordered ? .white : isEnabled ? .labelColor : .disabledControlTextColor)
+        return (base, !isBordered && isEnabled && contentTintColor == nil ? .secondaryLabelColor : base)
+    }
+    open override var allowsVibrancy: Bool {
+        guard !isBordered, !isCheck else { return false }
+        let (t, i) = contentColours
+        return t.vibrancyCapable || (image != nil && i.vibrancyCapable)
+    }
     private var buttonSize: CGSize {
         let f = effectiveFont
         let t = title.isEmpty ? 0 : f.width(title)
@@ -494,14 +562,21 @@ open class NSButton: NSControl {
             let h: CGFloat = [.regular: 16, .large: 18, .small: 14, .mini: 12][controlSize] ?? 16
             return CGSize(width: t + pad, height: h)
         }
-        let iw = image?.size.width ?? 0, ih = image?.size.height ?? 0
+        if let img = imageAlone { return img.alignmentRect.size }
+        let iw = image?.alignmentRect.width ?? 0, ih = image?.size.height ?? 0
         if !isBordered {
-            if imagePosition == .imageAbove || imagePosition == .imageBelow { return CGSize(width: max(iw, t), height: ih + f.lineHeight + 2) }
+            // (Above or below a title: the image less its inset on that side, measured.)
+            if imagePosition == .imageAbove || imagePosition == .imageBelow {
+                let i = alignmentRectInsets
+                return CGSize(width: max(iw, t), height: ih - i.top - i.bottom + f.lineHeight + 2)
+            }
             // (A borderless button keeps a little room either side of its title: 4.8 points, measured.)
-            return CGSize(width: t + iw + (t > 0 && iw > 0 ? 4 : 0) + (t > 0 ? 4.8 : 0), height: max(ih, f.lineHeight))
+            // With an image: its alignment width, 2, the title rounded up, and 4 (measured: " Quit" 49.5, "Quit" 46).
+            if iw > 0 { return CGSize(width: iw + (t > 0 ? 2 + ceil(t) + 4 : 0), height: max(ih, f.lineHeight)) }
+            return CGSize(width: t + 4.8, height: max(ih, f.lineHeight))
         }
         if bezelStyle == .inline { return CGSize(width: t + iw + (t > 0 && iw > 0 ? 4 : 0) + 6, height: 18) }
-        let w = t + iw + (t > 0 && iw > 0 ? 4 : 0) + (bezelStyle == .rounded ? controlSize.bezelPadding : 12)
+        let w = t + iw + (t > 0 && iw > 0 ? 2 : 0) + (bezelStyle == .rounded ? controlSize.bezelPadding : 12)
         return CGSize(width: w, height: controlSize.height)
     }
     func drawButton() {
@@ -527,7 +602,7 @@ open class NSButton: NSControl {
                     c.move(to: CGPoint(x: box.minX + 3.2, y: Y(7))); c.addLine(to: CGPoint(x: box.minX + 6, y: Y(4))); c.addLine(to: CGPoint(x: box.minX + 10.8, y: Y(10))); c.strokePath()
                 }
             }
-            drawString(title, in: CGRect(x: 20, y: b.minY, width: b.width - 20, height: b.height), color: isEnabled ? .labelColor : .disabledControlTextColor, alignment: .left, font: effectiveFont)
+            drawString(title, in: CGRect(x: 20, y: b.minY, width: b.width - 20, height: b.height), color: isEnabled ? .labelColor : .disabledControlTextColor, alignment: .left, font: effectiveFont, boost: false)
             return
         }
         let on = state == .on && (type == .pushOnPushOff || type == .toggle || type == .onOff)
@@ -553,7 +628,26 @@ open class NSButton: NSControl {
         } else if isHighlighted {
             c.setAlpha(0.6)
         }
-        let tint = (contentTintColor ?? (isDefault && isBordered ? .white : isEnabled ? .labelColor : .disabledControlTextColor)).vibrant(in: self)
+        let (titleBase, imageBase) = contentColours
+        let halve = !isEnabled && !isBordered && contentTintColor != nil
+        // (Resolved where drawn, so a popover's vibrant colours apply inside `blended`.)
+        func resolved(_ k: NSColor) -> NSColor { (halve ? k.withAlphaComponent(k.alphaComponent * 0.5) : k).vibrant(in: self) }
+        // In a popover AppKit composites the image and title layers plus-lighter when their colour is
+        // vibrancy-capable (measured: NSButtonImageView and NSButtonTextField take plusL).
+        let blend = isBordered ? nil : vibrancyBlend
+        func blended(_ capable: Bool, _ f: () -> Void) {
+            let b = capable ? blend : nil
+            c.saveGState()
+            if let b { c.setBlendMode(b) }
+            NSColor.vibrantly(b != nil, f)
+            c.restoreGState()
+        }
+        func drawTitle(_ t: String, in r: CGRect, alignment a: NSTextAlignment, font f: NSFont, boost: Bool) {
+            blended(titleBase.vibrancyCapable) { drawString(t, in: r, color: resolved(titleBase), alignment: a, font: f, boost: boost, dilate: false) }
+        }
+        // Titles get the label boost only on a stock borderless button with a tint. Every NSButton subclass in the app
+        // draws itself (overrides draw), and AppKit draws those plain, as it does bordered ones (measured).
+        let boost = !isBordered && contentTintColor != nil && Swift.type(of: self) == NSButton.self
         let f = effectiveFont
         let t = title
         let showTitle = imagePosition != .imageOnly && !t.isEmpty
@@ -572,29 +666,35 @@ open class NSButton: NSControl {
                 c.saveGState()
                 if flip { c.translateBy(x: r.minX, y: r.maxY); c.scaleBy(x: 1, y: -1) } else { c.translateBy(x: r.minX, y: r.minY) }
                 c.scaleBy(x: iz.width / max(img.size.width, 1), y: iz.height / max(img.size.height, 1))
-                if !isEnabled { c.setAlpha(0.4) }
-                img.render(in: c, tint: tint)
+                // A tinted (template) image takes the disabled tint; any other image is faded (0.475, measured).
+                if !isEnabled && !img.isTemplate { c.setAlpha(c.state.alpha * 0.475) }
+                blended(imageBase.vibrancyCapable) { img.render(in: c, tint: resolved(imageBase)) }
                 c.restoreGState()
             }
-            switch imagePosition {
+            // (An image with an empty title is laid out as the image alone: drawn so.)
+            switch imageAlone != nil ? .imageOnly : imagePosition {
             case .imageAbove:
                 let total = iz.height + f.lineHeight + 2
                 let top = b.midY + total / 2
                 let imgY = flip ? b.midY - total / 2 : top - iz.height
                 place(CGRect(x: b.midX - iz.width / 2, y: imgY, width: iz.width, height: iz.height))
                 let ty = flip ? b.midY + total / 2 - f.lineHeight : top - total
-                drawString(t, in: CGRect(x: b.minX, y: ty, width: b.width, height: f.lineHeight), color: tint, alignment: .center, font: f)
+                drawTitle(t, in: CGRect(x: b.minX, y: ty, width: b.width, height: f.lineHeight), alignment: .center, font: f, boost: boost)
             case .imageOnly:
                 place(CGRect(x: b.midX - iz.width / 2, y: b.midY - iz.height / 2, width: iz.width, height: iz.height))
             default:
-                let total = iz.width + (showTitle ? tw + 4 : 0)
+                // AppKit lines up the image's alignment width, then 2 points, then the title's width rounded up,
+                // and centres that group; the image is drawn at its full size from the group's start (measured).
+                let aw = img.alignmentRect.width * iz.width / max(img.size.width, 1)
+                let titleBox = showTitle ? ceil(tw) : 0
+                let total = aw + (showTitle ? 2 + titleBox : 0)
                 let x = b.midX - total / 2
                 place(CGRect(x: x, y: b.midY - iz.height / 2, width: iz.width, height: iz.height))
-                if showTitle { drawString(t, in: CGRect(x: x + iz.width + 4, y: b.minY, width: tw + 2, height: b.height), color: tint, alignment: .left, font: f) }
+                if showTitle { drawTitle(t, in: CGRect(x: x + aw + 2, y: b.minY, width: titleBox + 2, height: b.height), alignment: .left, font: f, boost: boost) }
             }
         } else if showTitle {
             // (A borderless button is only as wide as its title: no inset.)
-            drawString(t, in: isBordered ? b.insetBy(dx: bezelStyle == .inline ? 2 : 4, dy: 0) : b, color: tint, alignment: alignment == .natural ? .center : alignment, font: f)
+            drawTitle(t, in: isBordered ? b.insetBy(dx: bezelStyle == .inline ? 2 : 4, dy: 0) : b, alignment: alignment == .natural ? .center : alignment, font: f, boost: boost)
         }
     }
     private var pressedInside = false
@@ -645,9 +745,12 @@ open class NSSwitch: NSControl {
             let z = intrinsicContentSize
             let r = CGRect(x: bounds.midX - z.width / 2, y: bounds.midY - z.height / 2, width: z.width, height: z.height)
             let on = state == .on
-            c.setAlpha(isEnabled ? 1 : 0.5)
+            // The off track in dark is grey 90 at 52%: 61.5 on the window's 30, 72 on a card's 52 (measured; white at
+            // 14% fitted only the first). Disabled halves the track's alpha and leaves the knob as it is (measured:
+            // 62 on 52, knob 226).
+            let track: NSColor = on ? NSControl.glassAccent : dark ? NSColor(white: 90 / 255, alpha: 0.523) : NSColor(white: 0, alpha: 0.14)
             c.addPath(CGPath(roundedRect: r, cornerWidth: r.height / 2, cornerHeight: r.height / 2, transform: nil))
-            c.setFillColor((on ? NSControl.glassAccent : NSColor(white: dark ? 1 : 0, alpha: 0.14)).cgColor)
+            c.setFillColor((isEnabled ? track : track.withAlphaComponent(track.alphaComponent * 0.5)).cgColor)
             c.fillPath()
             let kh = r.height - 4, kw = (r.width * 0.59).rounded()
             let knob = CGRect(x: on ? r.maxX - 2 - kw : r.minX + 2, y: r.minY + 2, width: kw, height: kh)
@@ -685,36 +788,57 @@ open class NSSlider: NSControl {
     }
     /// 16 high, as macOS 27's are (measured: tools/controls); smaller sizes scaled as before.
     open override var intrinsicContentSize: CGSize { CGSize(width: NSViewNoIntrinsicMetric, height: controlSize == .small ? 14 : controlSize == .mini ? 12 : 16) }
-    private var knobD: CGFloat { controlSize == .small ? 12 : controlSize == .mini ? 10 : 16 }
-    private var frac: CGFloat { maxValue > minValue ? CGFloat((doubleValue - minValue) / (maxValue - minValue)) : 0 }
+    /// macOS 27's knob and bar by control size (measured, NSSliderCell knobRect and barRect): knob 20 x 16 with a
+    /// 6-point bar at regular, 18 x 14 with 4 at small, 16 x 12 with 4 at mini.
+    private var knobH: CGFloat { controlSize == .small ? 14 : controlSize == .mini ? 12 : 16 }
+    private var knobW: CGFloat { knobH + 4 }
+    private var barH: CGFloat { controlSize == .small || controlSize == .mini ? 4 : 6 }
+    /// (AppKit clamps the value to the range: so does the knob.)
+    private var frac: CGFloat { maxValue > minValue ? max(0, min(1, CGFloat((doubleValue - minValue) / (maxValue - minValue)))) : 0 }
     open override func draw(_ d: CGRect) {
         guard let c = ctx else { return }
         withAppearance {
-            // macOS 27 (measured: tools/controls): a 6-point track, 10% where it is not filled, and a pill knob
-            // 20 by 16.
+            // The bar runs the full width, 10% where it is not filled. The knob is a pill, white at 0.85 in dark (so
+            // 221 on the window, 225 on a card): see-through to what is behind the control but hiding its own bar,
+            // so the bar is drawn with the knob cut out. A faint shadow under it in both appearances.
             let b = bounds
-            let h: CGFloat = 6
-            let kw = knobD * 1.25, kh = knobD
+            let h = barH, kw = knobW, kh = knobH
             let track = CGRect(x: b.minX, y: b.midY - h / 2, width: b.width, height: h)
+            let x = b.minX + kw / 2 + (b.width - kw) * frac
+            let knob = CGPath(roundedRect: CGRect(x: x - kw / 2, y: b.midY - kh / 2, width: kw, height: kh), cornerWidth: kh / 2, cornerHeight: kh / 2, transform: nil)
+            func outsideKnob() { c.addRect(b.insetBy(dx: -20, dy: -20)); c.addPath(knob); c.clip(using: .evenOdd) }
+            c.saveGState()
+            outsideKnob()
             c.addPath(CGPath(roundedRect: track, cornerWidth: h / 2, cornerHeight: h / 2, transform: nil))
             c.setFillColor(NSColor(white: dark ? 1 : 0, alpha: 0.1).cgColor)
             c.fillPath()
-            let x = b.minX + kw / 2 + (b.width - kw) * frac
             let done = CGRect(x: track.minX, y: track.minY, width: max(0, x - track.minX), height: h)
             c.addPath(CGPath(roundedRect: done, cornerWidth: h / 2, cornerHeight: h / 2, transform: nil))
             c.setFillColor((isEnabled ? (trackFillColor ?? NSControl.glassAccent) : .disabledControlTextColor).cgColor)
             c.fillPath()
+            c.restoreGState()
+            let k = NSScreen.primaryScale
+            if dark {
+                // Only the shadow: the black that casts it is clipped away.
+                c.saveGState()
+                outsideKnob()
+                c.setShadow(offset: CGSize(width: 0, height: -1 * k), blur: 3 * k, color: NSColor(white: 0, alpha: 0.2).cgColor)
+                c.setFillColor(NSColor.black.cgColor)
+                c.addPath(knob)
+                c.fillPath()
+                c.restoreGState()
+            }
             c.saveGState()
-            if !dark { c.setShadow(offset: CGSize(width: 0, height: -0.5 * NSScreen.primaryScale), blur: 1.5 * NSScreen.primaryScale, color: NSColor(white: 0, alpha: 0.25).cgColor) }
-            c.setFillColor(NSColor(white: dark ? 221 / 255 : 1, alpha: 1).cgColor)
-            c.addPath(CGPath(roundedRect: CGRect(x: x - kw / 2, y: b.midY - kh / 2, width: kw, height: kh), cornerWidth: kh / 2, cornerHeight: kh / 2, transform: nil))
+            if !dark { c.setShadow(offset: CGSize(width: 0, height: -0.5 * k), blur: 1.5 * k, color: NSColor(white: 0, alpha: 0.25).cgColor) }
+            c.setFillColor(NSColor(white: 1, alpha: dark ? 0.85 : 1).cgColor)
+            c.addPath(knob)
             c.fillPath()
             c.restoreGState()
         }
     }
     private func track(_ e: NSEvent) {
         let p = convert(e.locationInWindow, from: nil)
-        let u = max(0, min(1, (p.x - knobD * 0.625) / max(bounds.width - knobD * 1.25, 1)))
+        let u = max(0, min(1, (p.x - knobW / 2) / max(bounds.width - knobW, 1)))
         var v = minValue + Double(u) * (maxValue - minValue)
         if allowsTickMarkValuesOnly, numberOfTickMarks > 1 {
             let step = (maxValue - minValue) / Double(numberOfTickMarks - 1)
@@ -786,34 +910,51 @@ open class NSSegmentedControl: NSControl {
         } else {
             for i in 0..<segmentCount { w += natural(i) }
         }
-        return CGSize(width: ceil(w), height: controlSize.height)
+        return CGSize(width: w, height: controlSize.height)
     }
+    /// A segment's own width: its content and the segment padding (mini 16, small 20, regular 24, large 28), up to a
+    /// half point (measured on macOS 27: at small, "Tiny" 42.5, "Caffeinated" 81).
     private func natural(_ i: Int) -> CGFloat {
         guard labels.indices.contains(i) else { return 16 }
         if widths[i] > 0 { return widths[i] }
         let tw = labels[i].isEmpty ? 0 : segmentFont.width(labels[i])
         let iw = images[i]?.size.width ?? 0
-        return tw + iw + (tw > 0 && iw > 0 ? 4 : 0) + controlSize.bezelPadding - 0.2
+        let pad: CGFloat = [.mini: 16, .small: 20, .regular: 24, .large: 28][controlSize] ?? 24
+        return ((tw + iw + (tw > 0 && iw > 0 ? 4 : 0) + pad) * 2).rounded(.up) / 2
     }
     /// Segments keep 13-point titles at every control size, as AppKit's do.
     var segmentFont: NSFont { font ?? .systemFont(ofSize: 13)
     }
+    /// Measured on macOS 27 (its segmented control is drawn by SwiftUI): segments never go below their own widths.
+    /// When those don't fit, the segments keep them and the control spills past its frame equally on both sides;
+    /// .fillEqually gives each an equal share but lets wider segments keep theirs, the rest sharing what is left.
     private func rects() -> [CGRect] {
-        let b = bounds
-        let total = (0..<segmentCount).reduce(CGFloat(0)) { $0 + natural($1) }
-        let extra = segmentCount > 0 ? (b.width - total) / CGFloat(segmentCount) : 0
+        let b = bounds, n = segmentCount
+        guard n > 0 else { return [] }
+        let nat = (0..<n).map(natural)
+        let total = nat.reduce(0, +)
+        var ws: [CGFloat]
         var x = b.minX
-        return (0..<segmentCount).map { i in
-            let w: CGFloat
+        if total >= b.width {
+            ws = nat
+            x = b.midX - total / 2
+        } else {
             switch segmentDistribution {
-            case .fillEqually: w = b.width / CGFloat(segmentCount)
-            case .fillProportionally: w = total > 0 ? natural(i) * b.width / total : b.width / CGFloat(segmentCount)
-            case .fit: w = natural(i)
-            case .fill: w = natural(i) + extra
+            case .fillEqually:
+                var fixed = Set<Int>(), share = b.width / CGFloat(n)
+                while true {
+                    let more = (0..<n).filter { !fixed.contains($0) && nat[$0] > share }
+                    if more.isEmpty { break }
+                    fixed.formUnion(more)
+                    share = (b.width - fixed.reduce(0) { $0 + nat[$1] }) / CGFloat(n - fixed.count)
+                }
+                ws = (0..<n).map { fixed.contains($0) ? nat[$0] : share }
+            case .fillProportionally: ws = nat.map { $0 * b.width / total }
+            case .fit: ws = nat
+            case .fill: ws = nat.map { $0 + (b.width - total) / CGFloat(n) }
             }
-            defer { x += w }
-            return CGRect(x: x, y: b.minY, width: w, height: b.height)
         }
+        return ws.map { w in defer { x += w }; return CGRect(x: x, y: b.minY, width: w, height: b.height) }
     }
     private var pressed = -1
     open override func draw(_ d: CGRect) {
@@ -823,10 +964,12 @@ open class NSSegmentedControl: NSControl {
             // further 12.7% over it.
             let b = bounds
             let radius: CGFloat = controlSize == .large ? b.height / 2 : ([.mini: 3.5, .small: 4.5, .regular: 5][controlSize] ?? 5)
-            c.addPath(CGPath(roundedRect: b, cornerWidth: radius, cornerHeight: radius, transform: nil))
+            let rs = rects()
+            // The track runs under the segments, past the frame when they spill over it.
+            let track = rs.isEmpty ? b : CGRect(x: rs.first!.minX, y: b.minY, width: rs.last!.maxX - rs.first!.minX, height: b.height)
+            c.addPath(CGPath(roundedRect: track, cornerWidth: radius, cornerHeight: radius, transform: nil))
             c.setFillColor(NSColor(white: dark ? 1 : 0, alpha: dark ? 0.08 : 0.078).cgColor)
             c.fillPath()
-            let rs = rects()
             for i in 0..<segmentCount {
                 let r = rs[i]
                 if selected.contains(i) || pressed == i {
@@ -846,9 +989,9 @@ open class NSSegmentedControl: NSControl {
                     if isFlipped { c.translateBy(x: x0, y: r.midY + z.height / 2); c.scaleBy(x: 1, y: -1) } else { c.translateBy(x: x0, y: r.midY - z.height / 2) }
                     img.render(in: c, tint: color)
                     c.restoreGState()
-                    if tw > 0 { drawString(labels[i], in: CGRect(x: x0 + z.width + 4, y: r.minY, width: tw, height: r.height), color: color, alignment: .left, font: segmentFont) }
+                    if tw > 0 { drawString(labels[i], in: CGRect(x: x0 + z.width + 4, y: r.minY, width: tw, height: r.height), color: color, alignment: .left, font: segmentFont, boost: false, dilate: false) }
                 } else {
-                    drawString(labels[i], in: r, color: color, alignment: .center, font: segmentFont)
+                    drawString(labels[i], in: r, color: color, alignment: .center, font: segmentFont, boost: false, dilate: false)
                 }
             }
         }
@@ -963,7 +1106,10 @@ open class NSImageView: NSControl {
     open var allowsCutCopyPaste = false
     open var symbolConfiguration: NSImage.SymbolConfiguration? { didSet { if let c = symbolConfiguration, let i = image { image = i.withSymbolConfiguration(c) } } }
     public convenience init(image i: NSImage) { self.init(frame: .zero); image = i }
-    open override var intrinsicContentSize: CGSize { image?.size ?? CGSize(width: NSViewNoIntrinsicMetric, height: NSViewNoIntrinsicMetric) }
+    /// The image's alignment rectangle: that is what layout lines up (AppKit; a symbol's runs baseline to cap height).
+    open override var intrinsicContentSize: CGSize { image?.alignmentRect.size ?? CGSize(width: NSViewNoIntrinsicMetric, height: NSViewNoIntrinsicMetric) }
+    open override var alignmentRectInsets: NSEdgeInsets { image?.alignmentInsets ?? NSEdgeInsets() }
+    open override var allowsVibrancy: Bool { (contentTintColor ?? .secondaryLabelColor).vibrancyCapable && image?.isTemplate == true }
     open override func draw(_ d: CGRect) {
         guard let c = ctx, let img = image else { return }
         withAppearance {
@@ -984,7 +1130,10 @@ open class NSImageView: NSControl {
             c.saveGState()
             if isFlipped { c.translateBy(x: r.minX, y: r.maxY); c.scaleBy(x: 1, y: -1) } else { c.translateBy(x: r.minX, y: r.minY) }
             c.scaleBy(x: z.width / img.size.width, y: z.height / img.size.height)
-            img.render(in: c, tint: (contentTintColor ?? .labelColor).vibrant(in: self))
+            let blend = vibrancyBlend
+            if let blend { c.setBlendMode(blend) }
+            // (No tint: AppKit draws a template image in the secondary label colour, measured.)
+            NSColor.vibrantly(blend != nil) { img.render(in: c, tint: (contentTintColor ?? .secondaryLabelColor).vibrant(in: self)) }
             c.restoreGState()
         }
     }

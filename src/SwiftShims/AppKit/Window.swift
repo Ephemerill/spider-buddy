@@ -156,6 +156,8 @@ open class NSWindow: NSResponder, CALayerHost {
     public var subtitle = ""
     open var level = Level.normal { didSet { applyLevel() } }
     open var isOpaque = true
+    /// A popover's panel: views shown in it take vibrancy compositing.
+    var isPopoverPanel = false
     open var backgroundColor: NSColor = .windowBackgroundColor { didSet { layerTreeChanged() } }
     open var hasShadow = true
     open var alphaValue: CGFloat = 1 { didSet { layerTreeChanged() } }

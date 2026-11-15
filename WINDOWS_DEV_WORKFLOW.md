@@ -350,6 +350,11 @@ in `tests/golden/mac/MANIFEST.json`.
 | `didSet` in a class's own initializers | Does not run: anything sized in `didSet` must also be set up in the initializer |
 | AppKit probes on the Mac from a shell | The process cannot become active: controls draw inactive (grey). Take active colours from the oracle app's own captures. |
 | Swift sees `TrackPopupMenu`'s result as a `BOOL` | The chosen command cannot be read back; give it a window message instead when a menu has several items |
+| Probing AppKit layout outside a window | A wrapping label has no width constraint there and stretches or collapses; in a window it has its one-line width. Put probe views in an `NSWindow` |
+| Measuring text width with `NSString.size` to predict a label's wrap | Text fields push a word down so the last line is never one word (standard line-break strategy); plain string drawing doesn't |
+| Weighing close priorities as numbers | AppKit ranks priority levels strictly: one constraint at 250 beats any number at 249.99998. The solver keeps one objective row per level |
+| A snapshot of a view that was in a popover | AppKit keeps the plus-lighter vibrancy filter on it, so secondary text comes out brighter than in a never-shown view |
+| `rm -rf "$VAR/..."` in a scratch script | Refused by the safety check: write into a fresh folder instead |
 
 ---
 

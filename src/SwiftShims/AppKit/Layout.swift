@@ -212,12 +212,25 @@ final class LayoutSolver {
     private var rowTotal = 0
     private var vars: [LayoutVar: Sym] = [:]
     private var next: Int32 = 1
-    private let objective = Row()
+    /// The objective, one row per priority level, strongest first. As in Cassowary (and AppKit), levels are strictly
+    /// ranked: no number of constraints at one priority outweighs a single one at a higher priority, so 250 beats
+    /// 249.99998 however many of those there are. Each level is its own row, so no weights span many decades.
+    private var objectives: [Row] = []
+    private var levelStrengths: [Double] = []
     var pivots = 0, adds = 0, substitutions = 0, cellOps = 0
     var rowCount: Int { rowTotal }
     var shape: String {
         let sizes = rows.compactMap { $0?.syms.count }
-        return "rows avg \(sizes.reduce(0, +) / max(sizes.count, 1)) max \(sizes.max() ?? 0), objective \(objective.syms.count), cols max \(cols.map(\.count).max() ?? 0)"
+        return "rows avg \(sizes.reduce(0, +) / max(sizes.count, 1)) max \(sizes.max() ?? 0), objective \(objectives.map(\.syms.count).reduce(0, +)) in \(objectives.count) levels, cols max \(cols.map(\.count).max() ?? 0)"
+    }
+    /// The objective row for constraints of this strength (higher strength, higher priority).
+    private func level(_ strength: Double) -> Row {
+        var lo = 0, hi = levelStrengths.count
+        while lo < hi { let m = (lo + hi) >> 1; if levelStrengths[m] > strength { lo = m + 1 } else { hi = m } }
+        if lo < levelStrengths.count, levelStrengths[lo] == strength { return objectives[lo] }
+        let r = Row()
+        levelStrengths.insert(strength, at: lo); objectives.insert(r, at: lo)
+        return r
     }
     private func make(_ k: Sym.Kind) -> Sym {
         next += 1
@@ -260,8 +273,8 @@ final class LayoutSolver {
             for x in added { cols[Int(x.id)].append(k) }
             for x in removed { uncol(x.id, k) }
         }
-        objective.substitute(s, row)
-        if let extra, extra !== objective { extra.substitute(s, row) }
+        for o in objectives { o.substitute(s, row) }
+        if let extra, !objectives.contains(where: { $0 === extra }) { extra.substitute(s, row) }
     }
 
     /// terms·vars + constant (op) 0, at this strength. Returns false for a required constraint that cannot hold.
@@ -285,14 +298,15 @@ final class LayoutSolver {
                 let err = make(.error)
                 other = err
                 row.add(err, -coeff)
-                objective.add(err, strength)
+                level(strength).add(err, 1)
             }
         case .eq:
             if !required {
                 let ep = make(.error), em = make(.error)
                 marker = ep; other = em
                 row.add(ep, -1); row.add(em, 1)
-                objective.add(ep, strength); objective.add(em, strength)
+                let o = level(strength)
+                o.add(ep, 1); o.add(em, 1)
             } else {
                 let d = make(.dummy)
                 marker = d
@@ -314,7 +328,7 @@ final class LayoutSolver {
             row.solve(for: subject)
             insert(subject, row)
         }
-        optimize(objective)
+        optimize(objectives)
         return true
     }
     private func insert(_ s: Sym, _ row: Row) {
@@ -332,7 +346,7 @@ final class LayoutSolver {
         let art = make(.slack)
         setRow(art, Row(copy: row))
         let a = Row(copy: row)
-        optimize(a)
+        optimize([a])
         let ok = abs(a.constant) < 1e-6
         if let r = takeRow(art) {
             if r.isEmpty { return ok }
@@ -343,30 +357,35 @@ final class LayoutSolver {
         }
         for k in cols[Int(art.id)] { rows[Int(k)]?.remove(art) }
         cols[Int(art.id)] = []
-        objective.remove(art)
+        for o in objectives { o.remove(art) }
         return ok
     }
-    private func optimize(_ obj: Row) {
+    /// Minimises the objective levels in order: a symbol may enter only if it improves some level without changing any
+    /// stronger one (its cells there are zero), which is the lexicographic simplex.
+    private func optimize(_ objs: [Row]) {
         var guardCount = 0
         var degenerate = 0
         while true {
             guardCount += 1
             if guardCount == 20000 { fputs("layout: simplex did not settle\n", stderr); return }
-            // Entering: the most negative cell (Dantzig), which takes the fewest pivots; but during a run of
-            // degenerate pivots, which make no progress and can cycle on the systems view trees make, the lowest-numbered
-            // one (Bland's rule), which cannot. Ties go by id, so the result does not depend on hashing.
+            // Entering: in the strongest level that can improve, the most negative cell (Dantzig), which takes the
+            // fewest pivots; but during a run of degenerate pivots, which make no progress and can cycle on the systems
+            // view trees make, the lowest-numbered one (Bland's rule), which cannot. Ties go by id, so the result does
+            // not depend on hashing.
             var enter = Sym.invalid
-            if degenerate > 20 {
-                for i in obj.syms.indices where obj.coefs[i] < -1e-9 {
-                    let s = obj.syms[i]
-                    if s.kind != .dummy && s.kind != .external { enter = s; break }
+            for (li, obj) in objs.enumerated() {
+                func free(_ s: Sym) -> Bool {
+                    guard s.kind != .dummy && s.kind != .external else { return false }
+                    for k in 0..<li where abs(objs[k].coefficient(s)) > 1e-9 { return false }
+                    return true
                 }
-            } else {
-                var best = -1e-9
-                for i in obj.syms.indices where obj.coefs[i] < best {
-                    let s = obj.syms[i]
-                    if s.kind != .dummy && s.kind != .external { enter = s; best = obj.coefs[i] }
+                if degenerate > 20 {
+                    for i in obj.syms.indices where obj.coefs[i] < -1e-9 && free(obj.syms[i]) { enter = obj.syms[i]; break }
+                } else {
+                    var best = -1e-9
+                    for i in obj.syms.indices where obj.coefs[i] < best && free(obj.syms[i]) { enter = obj.syms[i]; best = obj.coefs[i] }
                 }
+                if enter != .invalid { break }
             }
             guard enter != .invalid else { return }
             pivots += 1
@@ -383,7 +402,7 @@ final class LayoutSolver {
             guard leave != .invalid, let row = takeRow(leave) else { return }
             degenerate = ratio < 1e-9 ? degenerate + 1 : 0
             row.solve(for: leave, enter)
-            substituteEverywhere(enter, row, extra: obj)
+            substituteEverywhere(enter, row, extra: objs.count == 1 ? objs[0] : nil)
             setRow(enter, row)
         }
     }
@@ -489,12 +508,34 @@ enum LayoutEngine {
         return 0
     }
 
+    /// Constraints act on alignment rectangles (AppKit): how far an attribute of the alignment rectangle lies from the
+    /// same attribute of the frame. Positions run down from the top. Baselines too are measured from the alignment
+    /// rectangle: a view without a baseline puts both at its bottom (an image view: AppKit, measured).
+    private static func alignConstant(_ o: AnyObject?, _ a: NSLayoutAttribute) -> Double {
+        guard let v = o as? NSView else { return 0 }
+        let i = v.alignmentRectInsets
+        if i.top == 0, i.left == 0, i.bottom == 0, i.right == 0 { return 0 }
+        switch a {
+        case .left, .leading: return Double(i.left)
+        case .right, .trailing: return -Double(i.right)
+        case .top: return Double(i.top)
+        case .bottom: return -Double(i.bottom)
+        case .width: return -Double(i.left + i.right)
+        case .height: return -Double(i.top + i.bottom)
+        case .centerX: return Double(i.left - i.right) / 2
+        case .centerY: return Double(i.top - i.bottom) / 2
+        case .firstBaseline: return v.firstBaselineFromTop == 0 ? -Double(i.bottom) : Double(i.top)
+        case .lastBaseline: return -Double(i.bottom)
+        default: return 0
+        }
+    }
+
     private static func add(_ s: LayoutSystem, _ c: NSLayoutConstraint, root: NSView) {
         var t = terms(c.firstItem, c.firstAttribute, 1, root: root)
-        var k = Double(-c.constant) + baselineConstant(c.firstItem, c.firstAttribute)
+        var k = Double(-c.constant) + baselineConstant(c.firstItem, c.firstAttribute) + alignConstant(c.firstItem, c.firstAttribute)
         if c.secondItem != nil, c.secondAttribute != .notAnAttribute {
             t += terms(c.secondItem, c.secondAttribute, -Double(c.multiplier), root: root)
-            k -= Double(c.multiplier) * baselineConstant(c.secondItem, c.secondAttribute)
+            k -= Double(c.multiplier) * (baselineConstant(c.secondItem, c.secondAttribute) + alignConstant(c.secondItem, c.secondAttribute))
         }
         t = merged(t)
         let op: LayoutSolver.Op = c.relation == .equal ? .eq : c.relation == .lessThanOrEqual ? .le : .ge
@@ -545,16 +586,19 @@ enum LayoutEngine {
                 }
             }
             if v.takesPartInConstraints || v === root {
-                let n = v.intrinsicContentSize
+                // The intrinsic size is the alignment rectangle's; the frame is that plus the insets.
+                let n = v.intrinsicContentSize, i = v.alignmentRectInsets
                 if n.width >= 0 {
                     let hug = v.contentHuggingPriority(for: .horizontal), res = v.contentCompressionResistancePriority(for: .horizontal)
-                    solver.add([(x.w, 1)], -Double(n.width), .le, strength: strength(hug), required: hug >= .required)
-                    solver.add([(x.w, 1)], -Double(n.width), .ge, strength: strength(res), required: res >= .required)
+                    let w = Double(n.width + i.left + i.right)
+                    solver.add([(x.w, 1)], -w, .le, strength: strength(hug), required: hug >= .required)
+                    solver.add([(x.w, 1)], -w, .ge, strength: strength(res), required: res >= .required)
                 }
                 if n.height >= 0 {
                     let hug = v.contentHuggingPriority(for: .vertical), res = v.contentCompressionResistancePriority(for: .vertical)
-                    solver.add([(x.h, 1)], -Double(n.height), .le, strength: strength(hug), required: hug >= .required)
-                    solver.add([(x.h, 1)], -Double(n.height), .ge, strength: strength(res), required: res >= .required)
+                    let h = Double(n.height + i.top + i.bottom)
+                    solver.add([(x.h, 1)], -h, .le, strength: strength(hug), required: hug >= .required)
+                    solver.add([(x.h, 1)], -h, .ge, strength: strength(res), required: res >= .required)
                 }
             }
         }

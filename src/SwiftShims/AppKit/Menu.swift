@@ -269,7 +269,9 @@ public final class NSPopover: NSResponder {
         p.isOpaque = false
         p.backgroundColor = .clear
         p.level = .popUpMenu
-        p.appearance = appearance
+        // The content draws in the vibrant kin of its appearance, as AppKit's popovers do.
+        p.appearance = (appearance ?? NSApp.effectiveAppearance).vibrantVariant
+        p.isPopoverPanel = true
         let host = p.contentView!
         host.wantsLayer = true
         host.backing.cornerRadius = 12
@@ -280,6 +282,7 @@ public final class NSPopover: NSResponder {
             content.autoresizingMask = [.width, .height]
             host.addSubview(content)
         }
+        content.takeVibrancy()
         delegate?.popoverWillShow(Notification(name: Notification.Name("NSPopoverWillShowNotification"), object: self))
         p.makeKeyAndOrderFront(nil)
         delegate?.popoverDidShow(Notification(name: Notification.Name("NSPopoverDidShowNotification"), object: self))

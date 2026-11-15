@@ -91,6 +91,9 @@ public enum SkiaText {
     nonisolated(unsafe) private static var faces: [String: (face: P, family: String, weight: Int32)] = [:]
     /// Horizontal scale for a face at a size: set by AppKit so the system font takes the width SF Pro takes on the Mac.
     nonisolated(unsafe) public static var widthScale: ((_ family: String, _ weight: Int32, _ size: CGFloat) -> CGFloat)?
+    /// How far, in device pixels, to thicken glyph outlines for text of this colour: macOS's text smoothing dilates
+    /// every glyph as it draws it, more for light text than dark (set by AppKit; nil draws bare outlines).
+    nonisolated(unsafe) public static var inkOutset: ((_ color: CGColor) -> CGFloat)?
     private static let lock = NSLock()
     nonisolated(unsafe) private static let mgr: P = Sk.fontMgrNew()
 
@@ -464,8 +467,15 @@ public final class SkiaBackend: CGBackend {
         }
         let f = SkiaText.font(font, size)
         defer { Sk.fontDelete(f) }
-        let pt = paint(color, s, style: 0)
+        // Fill, or fill and a round-joined stroke when the outline is thickened. The stroke is in text space, which
+        // the canvas scales by the transform: 2 * outset / k there is 2 * outset device pixels. Advances don't change.
+        let outset = s.dilatesText ? SkiaText.inkOutset?(color) ?? 0 : 0
+        let pt = paint(color, s, style: outset > 0 ? 2 : 0)
         defer { Sk.paintDelete(pt) }
+        if outset > 0 {
+            Sk.paintStrokeWidth(pt, Float(2 * outset / max(abs(s.ctm.a) + abs(s.ctm.b), 0.01)))
+            Sk.paintJoin(pt, 1)
+        }
         // Text is laid out in user space (the font size is in points), then taken through the transform.
         _ = Sk.canvasSave(canvas)
         let at = position.applying(s.ctm.inverted())

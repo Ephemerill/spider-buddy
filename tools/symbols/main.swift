@@ -295,7 +295,8 @@ for e in entries {
         let b = Bitmap(size: im.size)
         drawSF(im, in: b)
         let r = b.ink
-        sizeLines.append("\(e.sf) \(c.key) \(num(im.size.width)) \(num(im.size.height)) \(num(r.minX)) \(num(r.minY)) \(num(r.width)) \(num(r.height))")
+        let a = im.alignmentRect
+        sizeLines.append("\(e.sf) \(c.key) \(num(im.size.width)) \(num(im.size.height)) \(num(r.minX)) \(num(r.minY)) \(num(r.width)) \(num(r.height)) \(num(a.minX)) \(num(a.minY)) \(num(a.width)) \(num(a.height))")
     }
     // How much to thicken Fluent's outline, per weight, at 16 points.
     for w in [NSFont.Weight.regular, .medium, .semibold] {
@@ -337,7 +338,8 @@ out += "    /// \"fluent-key box path\": Fluent's outline in its box's units, y 
 out += "    static let outlines = #\"\"\"\n"
 for k in designs.keys.sorted() { for (box, segs) in designs[k]!.sorted(by: { $0.key < $1.key }) { out += "\(k) \(box) \(encode(segs))\n" } }
 out += "\"\"\"#\n\n"
-out += "    /// \"sf-name config width height inkX inkY inkW inkH\" in points, ink y up from the bottom.\n"
+out += "    /// \"sf-name config width height inkX inkY inkW inkH alignX alignY alignW alignH\" in points, y up from the bottom.\n"
+out += "    /// The alignment rectangle is AppKit's (baseline to cap height): layout lines that up, not the image's box.\n"
 out += "    /// Configs: d is the plain image, else point size and r, m or s for regular, medium, semibold.\n"
 out += "    static let sizes = #\"\"\"\n"
 out += sizeLines.joined(separator: "\n") + "\n\"\"\"#\n\n"

@@ -439,1998 +439,1999 @@ wrench_screwdriver_regular 20 M17 15.55L17 10.5Q17 10.34 16.93 10.23C16.889 10.1
 wrench_screwdriver_regular 24 M16.25 2C15.97 2.01 15.716 2.166 15.58 2.41L14.58 4.41C14.47 4.64 14.48 4.91 14.6 5.12L15.5 6.7L15.5 12L14.75 12C14.336 12 14 12.336 14 12.75L14 18.5C14 20.433 15.567 22 17.5 22C19.433 22 21 20.433 21 18.5L21 12.75C21 12.336 20.664 12 20.25 12L19.5 12L19.5 6.7L20.4 5.12C20.514 4.902 20.521 4.644 20.42 4.42L19.42 2.42C19.286 2.172 19.032 2.012 18.75 2ZM18 12L17 12L17 6.5C16.991 6.371 16.957 6.246 16.9 6.13L16.1 4.73L16.71 3.5L18.29 3.5L18.9 4.73L18.1 6.13C18.043 6.246 18.009 6.371 18 6.5ZM15.5 18.5L15.5 16L19.5 16L19.5 18.5C19.5 19.605 18.605 20.5 17.5 20.5C16.395 20.5 15.5 19.605 15.5 18.5M19.5 14.5L15.5 14.5L15.5 13.5L19.5 13.5ZM9.53 2.14C9.298 2.047 9.035 2.075 8.828 2.215C8.622 2.356 8.499 2.59 8.5 2.84L8.5 6.5C8.5 7.052 8.052 7.5 7.5 7.5C6.948 7.5 6.5 7.052 6.5 6.5L6.5 2.83C6.501 2.58 6.378 2.346 6.172 2.205C5.965 2.065 5.702 2.037 5.47 2.13C3.465 2.924 2.109 4.816 2.002 6.969C1.894 9.123 3.054 11.14 4.97 12.13L4.97 19.46C5.054 20.798 6.164 21.841 7.505 21.841C8.846 21.841 9.956 20.798 10.04 19.46L10.04 12.13C11.955 11.138 13.114 9.119 13.004 6.966C12.894 4.812 11.536 2.922 9.53 2.13M10 6.5L10 4.13C11.108 5.018 11.663 6.427 11.457 7.832C11.252 9.237 10.316 10.427 9 10.96C8.727 11.088 8.549 11.359 8.54 11.66L8.54 19.46C8.54 20.034 8.074 20.5 7.5 20.5C6.926 20.5 6.46 20.034 6.46 19.46L6.46 11.66C6.46 11.35 6.28 11.07 6 10.96C4.684 10.427 3.748 9.237 3.543 7.832C3.337 6.427 3.892 5.018 5 4.13L5 6.5C5 7.881 6.119 9 7.5 9C8.881 9 10 7.881 10 6.5
 """#
 
-    /// "sf-name config width height inkX inkY inkW inkH" in points, ink y up from the bottom.
+    /// "sf-name config width height inkX inkY inkW inkH alignX alignY alignW alignH" in points, y up from the bottom.
+    /// The alignment rectangle is AppKit's (baseline to cap height): layout lines that up, not the image's box.
     /// Configs: d is the plain image, else point size and r, m or s for regular, medium, semibold.
     static let sizes = #"""
-ant d 14 18 1.5 1 10.875 15.5
-ant 11s 13 16 1.25 1 9.5 13.25
-ant 12r 13 16 1.375 1 9.875 14
-ant 12m 14 17 1.5 1 10.875 14.25
-ant 12.5s 14 18 1.5 1.125 10.75 15
-ant 13r 14 18 1.5 1 10.875 15.5
-ant 13m 15 18 1.5 1.125 11 15.5
-ant 13s 15 18 1.5 1.125 11.125 15.625
-ant 14r 15 19 1.625 1.25 11.5 16.375
-ant 14m 15 19 1.5 1.25 11.125 15.75
-ant 16m 18 22 2 1.375 13.375 19
-ant 16s 18 23 2 1.5 13.625 20.125
-ant 17m 19 24 2.125 1.5 14.25 20.25
-ant 20r 22 27 2.5 1.75 16.375 23.375
-ant 21m 23 29 2.625 1.875 17.625 25
-ant 22r 24 30 2.75 1.875 18 25.75
-ant 24m 27 33 3 2.125 20.875 28.5
-apple.intelligence d 17 17 1.125 1 14.75 14.5
-apple.intelligence 11s 15 15 0.875 1 12.625 12.375
-apple.intelligence 12r 16 16 1 1 13.5 13.125
-apple.intelligence 12m 16 16 1 1 13.625 13.375
-apple.intelligence 12.5s 17 16 1 1 14.375 13.25
-apple.intelligence 13r 17 17 1.125 1 14.75 14.5
-apple.intelligence 13m 18 17 1 1.125 15.75 14.375
-apple.intelligence 13s 18 17 1 1.125 15.875 14.5
-apple.intelligence 14r 18 18 1.125 1.25 15.75 15.375
-apple.intelligence 14m 19 18 1.125 1.25 15.875 15.5
-apple.intelligence 16m 21 21 1.375 1.375 18 17.75
-apple.intelligence 16s 21 21 1.375 1.375 18.25 17.875
-apple.intelligence 17m 22 22 1.5 1.5 18.375 18.875
-apple.intelligence 20r 26 25 1.625 1.625 22.375 21.125
-apple.intelligence 21m 28 28 1.75 2 23.75 24
-apple.intelligence 22r 29 29 1.875 2 24.625 24.875
-apple.intelligence 24m 31 31 2.125 2.125 26.25 26.625
-arrow.counterclockwise d 14 16 1 1 11.5 13.875
-arrow.counterclockwise 11s 12 14 1 1 9.75 11.75
-arrow.counterclockwise 12r 13 15 1 1 10.375 12.625
-arrow.counterclockwise 12m 13 15 1 1 10.5 12.75
-arrow.counterclockwise 12.5s 13 16 1 1.125 10.25 13.375
-arrow.counterclockwise 13r 14 16 1 1 11.5 13.875
-arrow.counterclockwise 13m 14 16 1.125 1 11.375 13.125
-arrow.counterclockwise 13s 14 16 1.125 1 11.5 13.25
-arrow.counterclockwise 14r 15 17 1.25 1.125 12.125 14
-arrow.counterclockwise 14m 15 17 1.25 1.125 12.25 14.125
-arrow.counterclockwise 16m 17 20 1.375 1.375 14 17
-arrow.counterclockwise 16s 18 21 1.5 1.5 14.875 17.875
-arrow.counterclockwise 17m 18 22 1.5 1.5 14.875 18.125
-arrow.counterclockwise 20r 21 24 1.75 1.625 17.25 20.25
-arrow.counterclockwise 21m 23 27 1.875 1.875 18.375 22.25
-arrow.counterclockwise 22r 23 28 1.875 2 19 23.875
-arrow.counterclockwise 24m 25 30 2 2.125 20.25 25.5
-arrow.down d 13 14 1.5 1 10 12
-arrow.down 11s 12 13 1.375 1 8.5 10.25
-arrow.down 12r 12 14 1.5 1 8.875 11.125
-arrow.down 12m 13 14 1.5 1 9.125 11.125
-arrow.down 12.5s 13 14 1.5 1.125 9.625 11.625
-arrow.down 13r 13 14 1.5 1 10 12
-arrow.down 13m 13 15 1.5 1.125 9.125 12.125
-arrow.down 13s 13 15 1.5 1.125 9.25 12.125
-arrow.down 14r 14 15 1.75 1.125 10.375 12.25
-arrow.down 14m 14 15 1.625 1.125 9.875 12.25
-arrow.down 16m 17 18 2 1.375 12.125 14.875
-arrow.down 16s 17 18 2 1.375 12.375 14.875
-arrow.down 17m 17 19 2 1.5 12.125 15.75
-arrow.down 20r 20 22 2.5 1.75 14.875 18.5
-arrow.down 21m 21 24 2.5 1.875 15.125 19.5
-arrow.down 22r 22 25 2.75 1.875 16.375 20.375
-arrow.down 24m 25 27 3 2.125 18.125 22.25
-arrow.down.circle d 15 15 1 1 13 13
-arrow.down.circle 11s 14 14 1 1 11.25 11.25
-arrow.down.circle 12r 14 14 1 1 12 12
-arrow.down.circle 12m 15 15 1 1 12.125 12.125
-arrow.down.circle 12.5s 15 15 1.125 1.125 12.75 12.75
-arrow.down.circle 13r 15 15 1 1 13 13
-arrow.down.circle 13m 16 16 1.125 1.125 13.125 13.125
-arrow.down.circle 13s 16 16 1.125 1.125 13.25 13.25
-arrow.down.circle 14r 16 16 1.125 1.125 13.25 13.25
-arrow.down.circle 14m 17 17 1.25 1.25 14.125 14.125
-arrow.down.circle 16m 20 20 1.5 1.5 16.875 16.875
-arrow.down.circle 16s 20 20 1.375 1.375 16.375 16.375
-arrow.down.circle 17m 21 21 1.5 1.5 17.25 17.25
-arrow.down.circle 20r 23 23 1.625 1.625 19.25 19.25
-arrow.down.circle 21m 26 26 2 2 22 22
-arrow.down.circle 22r 26 26 1.875 1.875 22 22
-arrow.down.circle 24m 29 29 2.125 2.125 24.25 24.25
-arrow.down.left d 13 12 1.5 1 9.375 9.375
-arrow.down.left 11s 12 11 1.5 1 9 8.25
-arrow.down.left 12r 12 11 1.5 1 8.75 8.625
-arrow.down.left 12m 12 11 1.5 1 8.875 8.875
-arrow.down.left 12.5s 13 12 1.5 1.125 9.375 9.375
-arrow.down.left 13r 13 12 1.5 1 9.375 9.375
-arrow.down.left 13m 13 12 1.625 1.125 9.625 9.625
-arrow.down.left 13s 13 12 1.625 1 9.75 9
-arrow.down.left 14r 14 13 1.75 1.25 10.125 10.125
-arrow.down.left 14m 14 13 1.75 1.25 10.375 10.375
-arrow.down.left 16m 16 15 2 1.375 11.875 11.75
-arrow.down.left 16s 17 16 2.125 1.5 12.75 12.75
-arrow.down.left 17m 17 16 2.125 1.5 12.625 12.5
-arrow.down.left 20r 20 18 2.5 1.625 14.5 13.75
-arrow.down.left 21m 21 20 2.625 1.875 15.5 15.5
-arrow.down.left 22r 21 20 2.625 1.875 15.125 15.875
-arrow.down.left 24m 24 22 3 2 17.75 17
-arrow.down.right d 13 12 1.5 1 9.5 9.375
-arrow.down.right 11s 12 11 1.375 1 9.125 8.25
-arrow.down.right 12r 12 11 1.5 1 8.75 8.625
-arrow.down.right 12m 12 11 1.375 1 9 8.875
-arrow.down.right 12.5s 13 12 1.5 1.125 9.5 9.375
-arrow.down.right 13r 13 12 1.5 1 9.5 9.375
-arrow.down.right 13m 13 12 1.5 1.125 9.75 9.625
-arrow.down.right 13s 13 12 1.625 1 9.75 9
-arrow.down.right 14r 14 13 1.625 1.25 10.25 10.125
-arrow.down.right 14m 14 13 1.625 1.25 10.5 10.375
-arrow.down.right 16m 16 15 2 1.375 11.875 11.75
-arrow.down.right 16s 17 16 2.125 1.5 12.75 12.75
-arrow.down.right 17m 17 16 2.125 1.5 12.5 12.5
-arrow.down.right 20r 20 18 2.375 1.625 14.625 13.75
-arrow.down.right 21m 21 20 2.625 1.875 15.5 15.5
-arrow.down.right 22r 21 20 2.5 1.875 15.25 15.875
-arrow.down.right 24m 24 22 3 2 17.75 17
-arrow.down.right.and.arrow.up.left d 16 15 1.5 1 12.5 12.5
-arrow.down.right.and.arrow.up.left 11s 14 13 1.375 1 10.375 10.5
-arrow.down.right.and.arrow.up.left 12r 15 14 1.5 1 11.25 11.25
-arrow.down.right.and.arrow.up.left 12m 15 14 1.5 1 11.25 11.375
-arrow.down.right.and.arrow.up.left 12.5s 15 14 1.5 1 11.875 11.125
-arrow.down.right.and.arrow.up.left 13r 16 15 1.5 1 12.5 12.5
-arrow.down.right.and.arrow.up.left 13m 16 15 1.625 1.125 12.25 12.25
-arrow.down.right.and.arrow.up.left 13s 16 15 1.625 1.125 12.25 12.375
-arrow.down.right.and.arrow.up.left 14r 17 16 1.75 1.25 13.125 13.125
-arrow.down.right.and.arrow.up.left 14m 17 16 1.75 1.25 13.125 13.25
-arrow.down.right.and.arrow.up.left 16m 20 19 2 1.5 15 15.875
-arrow.down.right.and.arrow.up.left 16s 20 19 2 1.5 15.125 16
-arrow.down.right.and.arrow.up.left 17m 20 19 2 1.5 15.25 16
-arrow.down.right.and.arrow.up.left 20r 24 22 2.5 1.625 18.625 17.875
-arrow.down.right.and.arrow.up.left 21m 25 24 2.625 1.875 19.75 19.75
-arrow.down.right.and.arrow.up.left 22r 26 25 2.75 1.875 20.5 20.5
-arrow.down.right.and.arrow.up.left 24m 29 27 3 2.125 22.5 22.625
-arrow.down.to.line d 13 16 1.5 1 10 13.5
-arrow.down.to.line 11s 12 14 1.375 1 8.5 11.625
-arrow.down.to.line 12r 12 15 1.5 1 8.875 12.125
-arrow.down.to.line 12m 13 15 1.5 1 9.125 12.375
-arrow.down.to.line 12.5s 13 16 1.5 1.125 9.625 13.125
-arrow.down.to.line 13r 13 16 1.5 1 10 13.5
-arrow.down.to.line 13m 13 16 1.5 1.125 9.125 13.5
-arrow.down.to.line 13s 13 16 1.5 1.125 9.25 13.625
-arrow.down.to.line 14r 14 17 1.75 1.25 10.375 14.125
-arrow.down.to.line 14m 14 17 1.625 1.25 9.875 14.5
-arrow.down.to.line 16m 17 20 2 1.375 12.125 16.5
-arrow.down.to.line 16s 17 20 2 1.375 12.375 16.875
-arrow.down.to.line 17m 17 21 2 1.5 12.125 17.625
-arrow.down.to.line 20r 20 24 2.5 1.75 14.875 20.25
-arrow.down.to.line 21m 21 26 2.5 1.875 15.125 21.75
-arrow.down.to.line 22r 22 27 2.75 2 16.375 23
-arrow.down.to.line 24m 25 29 3 2 18.125 24
-arrow.left d 15 12 1.5 1 12 10
-arrow.left 11s 14 11 1.375 1 10.375 8.5
-arrow.left 12r 14 11 1.5 1 10.875 8.875
-arrow.left 12m 15 12 1.5 1 11.125 9.125
-arrow.left 12.5s 15 12 1.5 1.125 11.75 9.625
-arrow.left 13r 15 12 1.5 1 12 10
-arrow.left 13m 15 12 1.5 1 11.25 9.125
-arrow.left 13s 16 12 1.625 1 12.25 9.25
-arrow.left 14r 16 13 1.625 1.25 12 10.375
-arrow.left 14m 16 13 1.625 1.125 12.25 9.875
-arrow.left 16m 19 16 2 1.5 14.75 12.875
-arrow.left 16s 19 16 2 1.375 15 12.375
-arrow.left 17m 20 16 2.125 1.5 15.75 12.875
-arrow.left 20r 24 18 2.5 1.625 18.125 14.125
-arrow.left 21m 25 20 2.625 1.875 19.375 15.875
-arrow.left 22r 25 21 2.625 1.875 19.25 16.375
-arrow.left 24m 29 23 3 2.125 22.125 18.25
-arrow.left.and.right.righttriangle.left.righttriangle.right d 18 16 1.5 1 15 13.875
-arrow.left.and.right.righttriangle.left.righttriangle.right 11s 17 15 1.5 1 14 12.25
-arrow.left.and.right.righttriangle.left.righttriangle.right 12r 17 15 1.5 1 13.75 12.75
-arrow.left.and.right.righttriangle.left.righttriangle.right 12m 18 16 1.5 1 14.125 13.125
-arrow.left.and.right.righttriangle.left.righttriangle.right 12.5s 19 17 1.5 1.125 15 13.875
-arrow.left.and.right.righttriangle.left.righttriangle.right 13r 18 16 1.5 1 15 13.875
-arrow.left.and.right.righttriangle.left.righttriangle.right 13m 19 17 1.625 1.125 15.375 14.25
-arrow.left.and.right.righttriangle.left.righttriangle.right 13s 19 17 1.625 1.125 15.625 14.5
-arrow.left.and.right.righttriangle.left.righttriangle.right 14r 20 18 1.75 1.25 16 14.875
-arrow.left.and.right.righttriangle.left.righttriangle.right 14m 20 18 1.75 1.25 16.5 15.25
-arrow.left.and.right.righttriangle.left.righttriangle.right 16m 23 21 2 1.375 18.875 17.5
-arrow.left.and.right.righttriangle.left.righttriangle.right 16s 24 21 2 1.375 19.25 17.875
-arrow.left.and.right.righttriangle.left.righttriangle.right 17m 24 22 2 1.5 19.25 18.625
-arrow.left.and.right.righttriangle.left.righttriangle.right 20r 28 25 2.5 1.75 22.875 21.25
-arrow.left.and.right.righttriangle.left.righttriangle.right 21m 30 28 2.625 2 24.75 23.625
-arrow.left.and.right.righttriangle.left.righttriangle.right 22r 31 28 2.75 1.875 25.25 23.375
-arrow.left.and.right.righttriangle.left.righttriangle.right 24m 35 31 3 2.125 28.25 26.25
-arrow.right d 15 12 1.5 1 12 10
-arrow.right 11s 14 11 1.375 1 10.375 8.5
-arrow.right 12r 14 11 1.5 1 10.875 8.875
-arrow.right 12m 15 12 1.5 1 11.125 9.125
-arrow.right 12.5s 15 12 1.5 1.125 11.75 9.625
-arrow.right 13r 15 12 1.5 1 12 10
-arrow.right 13m 15 12 1.5 1 11.25 9.125
-arrow.right 13s 16 12 1.625 1 12.25 9.25
-arrow.right 14r 16 13 1.625 1.25 12 10.375
-arrow.right 14m 16 13 1.625 1.125 12.25 9.875
-arrow.right 16m 19 16 2 1.5 14.75 12.875
-arrow.right 16s 19 16 2 1.375 15 12.375
-arrow.right 17m 20 16 2.125 1.5 15.75 12.875
-arrow.right 20r 24 18 2.5 1.625 18.125 14.125
-arrow.right 21m 25 20 2.625 1.875 19.375 15.875
-arrow.right 22r 25 21 2.625 1.875 19.25 16.375
-arrow.right 24m 29 23 3 2.125 22.125 18.25
-arrow.triangle.2.circlepath d 16 15 0.125 1 15.75 13
-arrow.triangle.2.circlepath 11s 14 14 0.125 1 13.25 11.25
-arrow.triangle.2.circlepath 12r 15 14 0.125 1 14.375 12
-arrow.triangle.2.circlepath 12m 15 15 0.125 1 14.375 12.125
-arrow.triangle.2.circlepath 12.5s 16 15 0.125 1.125 15.125 12.75
-arrow.triangle.2.circlepath 13r 16 15 0.125 1 15.75 13
-arrow.triangle.2.circlepath 13m 16 16 0.125 1.125 15.625 13.125
-arrow.triangle.2.circlepath 13s 16 16 0.125 1.125 15.75 13.25
-arrow.triangle.2.circlepath 14r 17 16 0.125 1.125 16.75 13.25
-arrow.triangle.2.circlepath 14m 18 17 0.125 1.25 16.875 14.125
-arrow.triangle.2.circlepath 16m 20 20 0.125 1.5 19.25 16.875
-arrow.triangle.2.circlepath 16s 20 20 0.125 1.375 19.375 16.375
-arrow.triangle.2.circlepath 17m 21 21 0.125 1.5 20.5 17.25
-arrow.triangle.2.circlepath 20r 25 23 0.125 1.625 23.875 19.25
-arrow.triangle.2.circlepath 21m 26 26 0.125 2 25.25 22
-arrow.triangle.2.circlepath 22r 27 26 0.125 1.875 26.375 22
-arrow.triangle.2.circlepath 24m 30 29 0.125 2.125 28.875 24.25
-arrow.triangle.merge d 11 15 1.5 1 8 12.5
-arrow.triangle.merge 11s 10 14 1.375 1 6.75 11.125
-arrow.triangle.merge 12r 11 14 1.5 1 7 11.5
-arrow.triangle.merge 12m 11 14 1.5 1 7.25 11.875
-arrow.triangle.merge 12.5s 11 15 1.5 1.125 7.75 12.625
-arrow.triangle.merge 13r 11 15 1.5 1 8 12.5
-arrow.triangle.merge 13m 11 15 1.5 1 7.25 12.125
-arrow.triangle.merge 13s 11 16 1.5 1.125 7.375 13.125
-arrow.triangle.merge 14r 12 16 1.75 1.25 8.25 13.375
-arrow.triangle.merge 14m 12 16 1.75 1.125 8.5 13.125
-arrow.triangle.merge 16m 14 19 2 1.375 9.625 15.875
-arrow.triangle.merge 16s 14 20 2 1.375 9.875 16.25
-arrow.triangle.merge 17m 15 20 2.125 1.5 10.25 16.875
-arrow.triangle.merge 20r 17 23 2.5 1.75 11.75 19.125
-arrow.triangle.merge 21m 18 25 2.625 1.875 12.625 20.75
-arrow.triangle.merge 22r 18 26 2.625 2 12.125 21.75
-arrow.triangle.merge 24m 21 28 3 2 14.5 23
-arrow.up d 13 14 1.5 1 10 12
-arrow.up 11s 12 13 1.375 1 8.5 10.25
-arrow.up 12r 12 14 1.5 1 8.875 11.125
-arrow.up 12m 13 14 1.5 1 9.125 11.125
-arrow.up 12.5s 13 14 1.5 1.125 9.625 11.625
-arrow.up 13r 13 14 1.5 1 10 12
-arrow.up 13m 13 15 1.5 1.125 9.125 12.125
-arrow.up 13s 13 15 1.5 1.125 9.25 12.125
-arrow.up 14r 14 15 1.75 1.125 10.375 12.25
-arrow.up 14m 14 15 1.625 1.125 9.875 12.25
-arrow.up 16m 17 18 2 1.375 12.125 14.875
-arrow.up 16s 17 18 2 1.375 12.375 14.875
-arrow.up 17m 17 19 2 1.5 12.125 15.75
-arrow.up 20r 20 22 2.5 1.75 14.875 18.5
-arrow.up 21m 21 24 2.5 1.875 15.125 19.5
-arrow.up 22r 22 25 2.75 1.875 16.375 20.375
-arrow.up 24m 25 27 3 2.125 18.125 22.25
-arrow.up.forward d 13 12 1.5 1.125 9.5 9.5
-arrow.up.forward 11s 12 11 1.375 1 9.125 8.375
-arrow.up.forward 12r 12 11 1.5 1 8.75 8.75
-arrow.up.forward 12m 12 11 1.375 1 9 9
-arrow.up.forward 12.5s 13 12 1.5 1.125 9.5 9.5
-arrow.up.forward 13r 13 12 1.5 1.125 9.5 9.5
-arrow.up.forward 13m 13 12 1.5 1.125 9.75 9.625
-arrow.up.forward 13s 13 12 1.625 1 9.75 9.125
-arrow.up.forward 14r 14 13 1.625 1.25 10.25 10.25
-arrow.up.forward 14m 14 13 1.625 1.25 10.5 10.375
-arrow.up.forward 16m 16 15 2 1.375 11.875 11.875
-arrow.up.forward 16s 17 16 2.125 1.625 12.75 12.75
-arrow.up.forward 17m 17 16 2.125 1.5 12.5 12.625
-arrow.up.forward 20r 20 18 2.375 1.75 14.625 14.5
-arrow.up.forward 21m 21 20 2.625 2 15.5 15.5
-arrow.up.forward 22r 21 20 2.5 1.875 15.25 16
-arrow.up.forward 24m 24 22 3 2.125 17.75 17
-arrow.up.left d 13 12 1.5 1 9.375 9.5
-arrow.up.left 11s 12 11 1.5 1 9 8.375
-arrow.up.left 12r 12 11 1.5 1 8.75 8.75
-arrow.up.left 12m 12 11 1.5 1 8.875 9
-arrow.up.left 12.5s 13 12 1.5 1.125 9.375 9.5
-arrow.up.left 13r 13 12 1.5 1 9.375 9.5
-arrow.up.left 13m 13 12 1.625 1.125 9.625 9.625
-arrow.up.left 13s 13 12 1.625 1 9.75 9.125
-arrow.up.left 14r 14 13 1.75 1.25 10.125 10.25
-arrow.up.left 14m 14 13 1.75 1.25 10.375 10.375
-arrow.up.left 16m 16 15 2 1.375 11.875 11.875
-arrow.up.left 16s 17 16 2.125 1.625 12.75 12.75
-arrow.up.left 17m 17 16 2.125 1.5 12.5 12.625
-arrow.up.left 20r 20 18 2.5 1.75 14.5 14.5
-arrow.up.left 21m 21 20 2.625 2 15.5 15.5
-arrow.up.left 22r 21 20 2.625 1.875 15.125 16
-arrow.up.left 24m 24 22 3 2.125 17.75 17
-arrow.up.right d 13 12 1.5 1 9.5 9.5
-arrow.up.right 11s 12 11 1.375 1 9.125 8.375
-arrow.up.right 12r 12 11 1.5 1 8.75 8.75
-arrow.up.right 12m 12 11 1.375 1 9 9
-arrow.up.right 12.5s 13 12 1.5 1.125 9.5 9.5
-arrow.up.right 13r 13 12 1.5 1 9.5 9.5
-arrow.up.right 13m 13 12 1.5 1.125 9.75 9.625
-arrow.up.right 13s 13 12 1.625 1 9.75 9.125
-arrow.up.right 14r 14 13 1.625 1.25 10.25 10.25
-arrow.up.right 14m 14 13 1.625 1.25 10.5 10.375
-arrow.up.right 16m 16 15 2 1.375 11.875 11.875
-arrow.up.right 16s 17 16 2.125 1.625 12.75 12.75
-arrow.up.right 17m 17 16 2.125 1.5 12.5 12.625
-arrow.up.right 20r 20 18 2.375 1.75 14.625 14.5
-arrow.up.right 21m 21 20 2.625 2 15.5 15.5
-arrow.up.right 22r 21 20 2.5 1.875 15.25 16
-arrow.up.right 24m 24 22 3 2.125 17.75 17
-arrow.up.to.line d 13 16 1.5 1 10 13.5
-arrow.up.to.line 11s 12 14 1.375 1 8.5 11.625
-arrow.up.to.line 12r 12 15 1.5 1 8.875 12.125
-arrow.up.to.line 12m 13 15 1.5 1 9.125 12.375
-arrow.up.to.line 12.5s 13 16 1.5 1.125 9.625 13.125
-arrow.up.to.line 13r 13 16 1.5 1 10 13.5
-arrow.up.to.line 13m 13 16 1.5 1.125 9.125 13.5
-arrow.up.to.line 13s 13 16 1.5 1.125 9.25 13.625
-arrow.up.to.line 14r 14 17 1.75 1.25 10.375 14.125
-arrow.up.to.line 14m 14 17 1.625 1.25 9.875 14.5
-arrow.up.to.line 16m 17 20 2 1.375 12.125 16.5
-arrow.up.to.line 16s 17 20 2 1.375 12.375 16.875
-arrow.up.to.line 17m 17 21 2 1.5 12.125 17.625
-arrow.up.to.line 20r 20 24 2.5 1.75 14.875 20.25
-arrow.up.to.line 21m 21 26 2.5 1.875 15.125 21.75
-arrow.up.to.line 22r 22 27 2.75 2 16.375 23
-arrow.up.to.line 24m 25 29 3 2 18.125 24.125
-arrow.uturn.backward d 15 14 1.5 1 11.25 11.125
-arrow.uturn.backward 11s 14 13 1.375 1 10.375 10.375
-arrow.uturn.backward 12r 15 13 1.5 1 11.125 11
-arrow.uturn.backward 12m 15 14 1.5 1 11.25 11.25
-arrow.uturn.backward 12.5s 15 14 1.5 1 11.875 11.125
-arrow.uturn.backward 13r 15 14 1.5 1 11.25 11.125
-arrow.uturn.backward 13m 16 15 1.625 1.125 12.25 12.125
-arrow.uturn.backward 13s 16 15 1.625 1.125 12.375 12.375
-arrow.uturn.backward 14r 16 15 1.625 1.125 12.25 12.125
-arrow.uturn.backward 14m 17 16 1.75 1.25 13.125 13
-arrow.uturn.backward 16m 19 18 2 1.375 15 14.875
-arrow.uturn.backward 16s 20 19 2 1.5 15.125 15.875
-arrow.uturn.backward 17m 20 19 2 1.5 15.25 15.875
-arrow.uturn.backward 20r 24 22 2.5 1.75 18.5 18.25
-arrow.uturn.backward 21m 25 24 2.625 1.875 19.625 19.625
-arrow.uturn.backward 22r 26 25 2.75 2 20.375 20.875
-arrow.uturn.backward 24m 29 27 3 2.125 22.5 22.375
-arrow.uturn.forward d 15 14 1.5 1 11.25 11.125
-arrow.uturn.forward 11s 14 13 1.375 1 10.375 10.375
-arrow.uturn.forward 12r 15 13 1.5 1 11.125 11
-arrow.uturn.forward 12m 15 14 1.5 1 11.25 11.25
-arrow.uturn.forward 12.5s 15 14 1.5 1 11.875 11.125
-arrow.uturn.forward 13r 15 14 1.5 1 11.25 11.125
-arrow.uturn.forward 13m 16 15 1.625 1.125 12.25 12.125
-arrow.uturn.forward 13s 16 15 1.625 1.125 12.375 12.375
-arrow.uturn.forward 14r 16 15 1.625 1.125 12.25 12
-arrow.uturn.forward 14m 17 16 1.75 1.25 13.125 13
-arrow.uturn.forward 16m 19 18 2 1.375 15 14.875
-arrow.uturn.forward 16s 20 19 2 1.5 15.125 15.875
-arrow.uturn.forward 17m 20 19 2 1.5 15.125 15.875
-arrow.uturn.forward 20r 24 22 2.5 1.75 18.5 18.25
-arrow.uturn.forward 21m 25 24 2.625 1.875 19.625 19.625
-arrow.uturn.forward 22r 26 25 2.75 2 20.375 20.875
-arrow.uturn.forward 24m 29 27 3 2.125 22.5 22.375
-battery.75 d 22 11 1.5 1.125 18.125 8.625
-battery.75 11s 20 10 1.375 1 16.375 7.75
-battery.75 12r 21 10 1.5 1 17.375 8
-battery.75 12m 21 11 1.5 1 17.625 8.25
-battery.75 12.5s 22 11 1.5 1.125 18.625 8.75
-battery.75 13r 22 11 1.5 1.125 18.125 8.625
-battery.75 13m 23 11 1.625 1 19.125 8.25
-battery.75 13s 23 12 1.625 1.125 19.375 9.125
-battery.75 14r 24 12 1.75 1.25 20.25 9.25
-battery.75 14m 24 12 1.625 1.125 19.875 8.875
-battery.75 16m 28 14 2 1.375 23.5 11
-battery.75 16s 28 15 2 1.5 23.75 12
-battery.75 17m 29 15 2 1.5 24.25 11.625
-battery.75 20r 34 17 2.5 1.75 29 13.25
-battery.75 21m 36 19 2.5 1.875 30.125 14.375
-battery.75 22r 37 19 2.625 1.875 31.125 14.625
-battery.75 24m 42 21 3 2.125 35.25 16.5
-bell d 15 16 1.5 1 12 13.5
-bell 11s 13 14 1 1 10.625 11.375
-bell 12r 14 15 1.25 1 11.125 12.125
-bell 12m 14 15 1.125 1 11.375 12.375
-bell 12.5s 15 15 1.125 1 12.125 12.25
-bell 13r 15 16 1.5 1 12 13.5
-bell 13m 16 16 1.375 1.125 13.125 13.375
-bell 13s 15 16 1.125 1.125 11.875 13.5
-bell 14r 16 17 1.5 1.25 13 14.125
-bell 14m 17 17 1.375 1.25 13.25 14.375
-bell 16m 19 20 1.625 1.375 15.25 16.375
-bell 16s 19 20 1.5 1.375 15.5 16.625
-bell 17m 20 21 1.625 1.5 16.125 17.375
-bell 20r 23 24 2.125 1.75 18.5 20.25
-bell 21m 24 26 2 1.875 19.25 21.5
-bell 22r 26 27 2.375 2 21 23
-bell 24m 28 29 2.375 2.125 22.75 24.625
-checkmark d 14 13 1.5 1 11 11
-checkmark 11s 13 12 1.375 1 9.75 9.5
-checkmark 12r 14 13 1.5 1 10.125 10
-checkmark 12m 14 13 1.5 1 10.375 10.25
-checkmark 12.5s 14 13 1.5 1.125 11 10.75
-checkmark 13r 14 13 1.5 1 11 11
-checkmark 13m 15 14 1.625 1.125 11.25 11
-checkmark 13s 15 14 1.625 1.125 11.5 11.125
-checkmark 14r 15 14 1.625 1.125 11.125 11
-checkmark 14m 16 14 1.75 1.125 12.125 11.125
-checkmark 16m 18 17 2 1.375 13.875 13.625
-checkmark 16s 19 17 2 1.375 14.125 13.75
-checkmark 17m 19 18 2.125 1.5 14.75 14.5
-checkmark 20r 22 20 2.5 1.625 16.875 16
-checkmark 21m 24 22 2.625 1.875 18.125 17.875
-checkmark 22r 24 23 2.625 1.875 17.75 18.375
-checkmark 24m 27 25 3 2.125 20.75 20.375
-checkmark.circle.fill d 15 15 1 1 13 13
-checkmark.circle.fill 11s 14 14 1 1 11.25 11.25
-checkmark.circle.fill 12r 14 14 1 1 12 12
-checkmark.circle.fill 12m 15 15 1 1 12.125 12.125
-checkmark.circle.fill 12.5s 15 15 1.125 1.125 12.75 12.75
-checkmark.circle.fill 13r 15 15 1 1 13 13
-checkmark.circle.fill 13m 16 16 1.125 1.125 13.125 13.125
-checkmark.circle.fill 13s 16 16 1.125 1.125 13.25 13.25
-checkmark.circle.fill 14r 16 16 1.125 1.125 13.25 13.25
-checkmark.circle.fill 14m 17 17 1.25 1.25 14.125 14.125
-checkmark.circle.fill 16m 20 20 1.5 1.5 16.875 16.875
-checkmark.circle.fill 16s 20 20 1.375 1.375 16.375 16.375
-checkmark.circle.fill 17m 21 21 1.5 1.5 17.25 17.25
-checkmark.circle.fill 20r 23 23 1.625 1.625 19.25 19.25
-checkmark.circle.fill 21m 26 26 2 2 22 22
-checkmark.circle.fill 22r 26 26 1.875 1.875 22 22
-checkmark.circle.fill 24m 29 29 2.125 2.125 24.25 24.25
-circle d 15 15 1 1 13 13
-circle 11s 14 14 1 1 11.25 11.25
-circle 12r 14 14 1 1 12 12
-circle 12m 15 15 1 1 12.125 12.125
-circle 12.5s 15 15 1.125 1.125 12.75 12.75
-circle 13r 15 15 1 1 13 13
-circle 13m 16 16 1.125 1.125 13.125 13.125
-circle 13s 16 16 1.125 1.125 13.25 13.25
-circle 14r 16 16 1.125 1.125 13.25 13.25
-circle 14m 17 17 1.25 1.25 14.125 14.125
-circle 16m 20 20 1.5 1.5 16.875 16.875
-circle 16s 20 20 1.375 1.375 16.375 16.375
-circle 17m 21 21 1.5 1.5 17.25 17.25
-circle 20r 23 23 1.625 1.625 19.25 19.25
-circle 21m 26 26 2 2 22 22
-circle 22r 26 26 1.875 1.875 22 22
-circle 24m 29 29 2.125 2.125 24.25 24.25
-circle.dotted d 15 15 1 1 13 13
-circle.dotted 11s 14 14 1 1 11.25 11.125
-circle.dotted 12r 14 14 1 1 12 11.875
-circle.dotted 12m 15 15 1 1 12.125 12.125
-circle.dotted 12.5s 15 15 1.125 1.125 12.75 12.75
-circle.dotted 13r 15 15 1 1 13 13
-circle.dotted 13m 16 16 1.125 1.125 13.125 13.125
-circle.dotted 13s 16 16 1.125 1.125 13.25 13.25
-circle.dotted 14r 16 16 1.125 1.125 13.25 13.125
-circle.dotted 14m 17 17 1.25 1.25 14.125 14.125
-circle.dotted 16m 20 20 1.5 1.5 16.875 16.875
-circle.dotted 16s 20 20 1.375 1.5 16.375 17
-circle.dotted 17m 21 21 1.5 1.5 17.125 17.125
-circle.dotted 20r 23 23 1.625 1.625 19.125 19.125
-circle.dotted 21m 26 26 2 2 21.875 21.875
-circle.dotted 22r 26 26 1.875 1.875 21.875 21.75
-circle.dotted 24m 29 29 2.125 2.125 24.25 24.125
-cloud.bolt.rain d 16 18 1 1 14.5 15.5
-cloud.bolt.rain 11s 15 16 1.125 1 13.5 13.25
-cloud.bolt.rain 12r 15 17 1 1 13.375 14.125
-cloud.bolt.rain 12m 16 17 1 1 13.625 14.375
-cloud.bolt.rain 12.5s 16 18 1.125 1.125 14.375 15.125
-cloud.bolt.rain 13r 16 18 1 1 14.5 15.5
-cloud.bolt.rain 13m 17 18 1.125 1.125 14.75 15.5
-cloud.bolt.rain 13s 17 18 1.125 1.125 14.875 15.75
-cloud.bolt.rain 14r 18 19 1.25 1.25 15.625 16.5
-cloud.bolt.rain 14m 18 19 1.25 1.25 15.875 15.875
-cloud.bolt.rain 16m 21 23 1.375 1.5 18.125 19.875
-cloud.bolt.rain 16s 21 23 1.375 1.375 18.375 19.375
-cloud.bolt.rain 17m 22 24 1.5 1.5 19.25 20.25
-cloud.bolt.rain 20r 25 27 1.75 1.75 22.375 23.5
-cloud.bolt.rain 21m 27 30 1.875 2 23.75 25.75
-cloud.bolt.rain 22r 28 30 1.875 1.875 24.625 25.875
-cloud.bolt.rain 24m 31 33 2.125 2.125 27.125 28.625
-cloud.bolt.rain.fill d 16 18 1 1 14.5 15.5
-cloud.bolt.rain.fill 11s 15 16 1.125 1 13.5 13.25
-cloud.bolt.rain.fill 12r 15 17 1 1 13.375 14.125
-cloud.bolt.rain.fill 12m 16 17 1 1 13.625 14.375
-cloud.bolt.rain.fill 12.5s 16 18 1.125 1.125 14.375 15.125
-cloud.bolt.rain.fill 13r 16 18 1 1 14.5 15.5
-cloud.bolt.rain.fill 13m 17 18 1.125 1.125 14.75 15.5
-cloud.bolt.rain.fill 13s 17 18 1.125 1.125 14.875 15.75
-cloud.bolt.rain.fill 14r 18 19 1.25 1.25 15.625 16.5
-cloud.bolt.rain.fill 14m 18 19 1.25 1.25 15.875 15.875
-cloud.bolt.rain.fill 16m 21 23 1.375 1.5 18.125 19.875
-cloud.bolt.rain.fill 16s 21 23 1.375 1.375 18.375 19.375
-cloud.bolt.rain.fill 17m 22 24 1.5 1.5 19.25 20.25
-cloud.bolt.rain.fill 20r 25 27 1.75 1.75 22.375 23.5
-cloud.bolt.rain.fill 21m 27 30 1.875 2 23.75 25.75
-cloud.bolt.rain.fill 22r 28 30 1.875 1.875 24.625 25.875
-cloud.bolt.rain.fill 24m 31 33 2.125 2.125 27.125 28.625
-cloud.drizzle.fill d 16 17 1 1 14.5 15
-cloud.drizzle.fill 11s 15 15 1.125 1 13.5 12.875
-cloud.drizzle.fill 12r 15 16 1 1 13.375 13.5
-cloud.drizzle.fill 12m 16 16 1 1 13.625 13.875
-cloud.drizzle.fill 12.5s 16 17 1.125 1.125 14.375 14.625
-cloud.drizzle.fill 13r 16 17 1 1 14.5 15
-cloud.drizzle.fill 13m 17 17 1.125 1.125 14.75 14.125
-cloud.drizzle.fill 13s 17 18 1.125 1.125 14.875 15.25
-cloud.drizzle.fill 14r 18 18 1.25 1.125 15.625 15
-cloud.drizzle.fill 14m 18 19 1.25 1.25 15.875 16.125
-cloud.drizzle.fill 16m 21 22 1.375 1.375 18.125 18.375
-cloud.drizzle.fill 16s 21 22 1.375 1.375 18.375 18.625
-cloud.drizzle.fill 17m 22 23 1.5 1.5 19.25 19.5
-cloud.drizzle.fill 20r 25 26 1.75 1.75 22.375 22.5
-cloud.drizzle.fill 21m 27 29 1.875 2 23.75 24.875
-cloud.drizzle.fill 22r 28 29 1.875 1.875 24.625 24.75
-cloud.drizzle.fill 24m 31 32 2.125 2.25 27.125 27.5
-cloud.fill d 18 13 1 1 15.5 10.5
-cloud.fill 11s 15 11 1 1 13.25 8.875
-cloud.fill 12r 16 12 1 1 14 9.375
-cloud.fill 12m 16 12 1 1 14.25 9.5
-cloud.fill 12.5s 18 13 1.25 1.125 15.875 10
-cloud.fill 13r 18 13 1 1 15.5 10.5
-cloud.fill 13m 18 13 1.125 1.125 15.5 10.25
-cloud.fill 13s 18 13 1.125 1.125 15.625 10.5
-cloud.fill 14r 19 13 1.25 1.125 16.375 10.125
-cloud.fill 14m 19 14 1.25 1.25 16.625 11.125
-cloud.fill 16m 22 16 1.375 1.375 19 12.625
-cloud.fill 16s 22 16 1.375 1.375 19.25 12.875
-cloud.fill 17m 23 17 1.5 1.5 20.25 13.5
-cloud.fill 20r 26 19 1.625 1.75 22.625 15.5
-cloud.fill 21m 29 21 1.875 1.875 25 16.625
-cloud.fill 22r 30 21 2 1.875 26.625 17
-cloud.fill 24m 32 23 2 2 27.75 18.25
-cloud.fog.fill d 16 17 1 1 14.5 14.5
-cloud.fog.fill 11s 15 15 1.125 1 13.5 12.25
-cloud.fog.fill 12r 15 15 1 1 13.375 13
-cloud.fog.fill 12m 16 16 1 1 13.625 13.25
-cloud.fog.fill 12.5s 16 16 1.125 1 14.375 13.25
-cloud.fog.fill 13r 16 17 1 1 14.5 14.5
-cloud.fog.fill 13m 17 17 1.125 1.125 14.75 14.375
-cloud.fog.fill 13s 17 17 1.125 1.125 14.875 14.5
-cloud.fog.fill 14r 18 18 1.25 1.25 15.625 15.125
-cloud.fog.fill 14m 18 18 1.25 1.25 15.875 15.375
-cloud.fog.fill 16m 21 21 1.375 1.375 18.125 17.625
-cloud.fog.fill 16s 21 21 1.375 1.375 18.375 17.875
-cloud.fog.fill 17m 22 22 1.5 1.5 19.25 18.75
-cloud.fog.fill 20r 25 25 1.75 1.625 22.375 20.875
-cloud.fog.fill 21m 27 28 1.875 2 23.75 23.875
-cloud.fog.fill 22r 28 28 1.875 1.875 24.625 23.75
-cloud.fog.fill 24m 31 31 2.125 2.125 27.125 26.375
-cloud.hail.fill d 16 17 1 1 14.5 14.875
-cloud.hail.fill 11s 15 15 1.125 1 13.5 12.875
-cloud.hail.fill 12r 15 16 1 1 13.375 13.625
-cloud.hail.fill 12m 16 16 1 1 13.625 13.875
-cloud.hail.fill 12.5s 16 17 1.125 1.125 14.375 14.625
-cloud.hail.fill 13r 16 17 1 1 14.5 14.875
-cloud.hail.fill 13m 17 18 1.125 1.125 14.75 15.125
-cloud.hail.fill 13s 17 18 1.125 1.125 14.875 15.25
-cloud.hail.fill 14r 18 18 1.25 1.125 15.625 15.25
-cloud.hail.fill 14m 18 19 1.25 1.25 15.875 16.25
-cloud.hail.fill 16m 21 22 1.375 1.375 18.125 18.5
-cloud.hail.fill 16s 21 22 1.375 1.375 18.375 18.75
-cloud.hail.fill 17m 22 23 1.5 1.5 19.25 19.625
-cloud.hail.fill 20r 25 26 1.75 1.625 22.375 22
-cloud.hail.fill 21m 27 29 1.875 1.875 23.75 24.25
-cloud.hail.fill 22r 28 29 1.875 1.875 24.625 25
-cloud.hail.fill 24m 31 32 2.125 2.125 27.125 27.75
-cloud.rain d 16 17 1 1 14.5 14.875
-cloud.rain 11s 15 15 1.125 1 13.5 12.875
-cloud.rain 12r 15 16 1 1 13.375 13.5
-cloud.rain 12m 16 16 1 1 13.625 13.875
-cloud.rain 12.5s 16 17 1.125 1.125 14.375 14.625
-cloud.rain 13r 16 17 1 1 14.5 14.875
-cloud.rain 13m 17 17 1.125 1.125 14.75 14.125
-cloud.rain 13s 17 18 1.125 1.125 14.875 15.25
-cloud.rain 14r 18 18 1.25 1.125 15.625 15.125
-cloud.rain 14m 18 19 1.25 1.25 15.875 16.125
-cloud.rain 16m 21 22 1.375 1.375 18.125 18.375
-cloud.rain 16s 21 22 1.375 1.375 18.375 18.75
-cloud.rain 17m 22 23 1.5 1.5 19.25 19.625
-cloud.rain 20r 25 26 1.75 1.625 22.375 21.875
-cloud.rain 21m 27 29 1.875 2 23.75 24.875
-cloud.rain 22r 28 29 1.875 1.875 24.625 24.875
-cloud.rain 24m 31 32 2.125 2.25 27.125 27.5
-cloud.rain.fill d 16 17 1 1 14.5 14.875
-cloud.rain.fill 11s 15 15 1.125 1 13.5 12.875
-cloud.rain.fill 12r 15 16 1 1 13.375 13.5
-cloud.rain.fill 12m 16 16 1 1 13.625 13.875
-cloud.rain.fill 12.5s 16 17 1.125 1.125 14.375 14.625
-cloud.rain.fill 13r 16 17 1 1 14.5 14.875
-cloud.rain.fill 13m 17 17 1.125 1.125 14.75 14.125
-cloud.rain.fill 13s 17 18 1.125 1.125 14.875 15.25
-cloud.rain.fill 14r 18 18 1.25 1.125 15.625 15.125
-cloud.rain.fill 14m 18 19 1.25 1.25 15.875 16.125
-cloud.rain.fill 16m 21 22 1.375 1.375 18.125 18.375
-cloud.rain.fill 16s 21 22 1.375 1.375 18.375 18.75
-cloud.rain.fill 17m 22 23 1.5 1.5 19.25 19.625
-cloud.rain.fill 20r 25 26 1.75 1.625 22.375 21.875
-cloud.rain.fill 21m 27 29 1.875 2 23.75 24.875
-cloud.rain.fill 22r 28 29 1.875 1.875 24.625 24.875
-cloud.rain.fill 24m 31 32 2.125 2.25 27.125 27.5
-cloud.snow.fill d 16 18 1 1 14.5 15.5
-cloud.snow.fill 11s 15 16 1.125 1 13.5 13.25
-cloud.snow.fill 12r 15 16 1 1 13.375 14
-cloud.snow.fill 12m 16 17 1 1 13.625 14.25
-cloud.snow.fill 12.5s 16 18 1.125 1.125 14.375 15.125
-cloud.snow.fill 13r 16 18 1 1 14.5 15.5
-cloud.snow.fill 13m 17 18 1.125 1.125 14.75 15.5
-cloud.snow.fill 13s 17 18 1.125 1.125 14.875 15.625
-cloud.snow.fill 14r 18 19 1.25 1.25 15.625 16.375
-cloud.snow.fill 14m 18 19 1.25 1.25 15.875 15.75
-cloud.snow.fill 16m 21 22 1.375 1.375 18.125 19
-cloud.snow.fill 16s 21 23 1.375 1.5 18.375 20.125
-cloud.snow.fill 17m 22 24 1.5 1.5 19.25 20.25
-cloud.snow.fill 20r 25 27 1.75 1.75 22.375 23.375
-cloud.snow.fill 21m 27 29 1.875 1.875 23.75 25
-cloud.snow.fill 22r 28 30 1.875 1.875 24.625 25.75
-cloud.snow.fill 24m 31 33 2.125 2.125 27.125 28.5
-cloud.sun d 19 16 0.5 1.25 18.5 13.25
-cloud.sun 11s 17 14 0.5 1.125 16.125 11.375
-cloud.sun 12r 18 15 0.5 1.25 17.125 12
-cloud.sun 12m 18 15 0.5 1.25 17.375 12.125
-cloud.sun 12.5s 19 16 0.625 1.375 18.25 12.875
-cloud.sun 13r 19 16 0.5 1.25 18.5 13.25
-cloud.sun 13m 20 16 0.625 1.375 18.75 13.25
-cloud.sun 13s 20 16 0.625 1.375 19 13.375
-cloud.sun 14r 21 17 0.625 1.625 19.875 13.875
-cloud.sun 14m 21 17 0.625 1.5 20.25 14.25
-cloud.sun 16m 24 20 0.75 1.625 23.125 16.25
-cloud.sun 16s 24 20 0.75 1.625 22.375 16.5
-cloud.sun 17m 26 21 0.75 1.875 24.5 17.25
-cloud.sun 20r 30 24 0.875 2.25 28.375 19.875
-cloud.sun 21m 32 26 1 2.25 30.25 21.25
-cloud.sun 22r 33 27 1 2.375 31.25 21.875
-cloud.sun 24m 36 29 1.125 2.625 34.625 24.25
-cloud.sun.rain.fill d 20 20 0.75 1 18.625 18
-cloud.sun.rain.fill 11s 17 18 0.75 1 16 15.625
-cloud.sun.rain.fill 12r 18 19 0.625 1 17.125 16.5
-cloud.sun.rain.fill 12m 19 19 0.75 1 17.25 16.75
-cloud.sun.rain.fill 12.5s 20 20 0.75 1.125 18.375 17.75
-cloud.sun.rain.fill 13r 20 20 0.75 1 18.625 18
-cloud.sun.rain.fill 13m 20 21 0.75 1.125 18.75 18.25
-cloud.sun.rain.fill 13s 20 21 0.875 1.125 19 18.5
-cloud.sun.rain.fill 14r 21 22 0.75 1.25 19.875 19.25
-cloud.sun.rain.fill 14m 22 22 0.875 1.25 20.125 18.75
-cloud.sun.rain.fill 16m 25 26 1 1.375 23 22.375
-cloud.sun.rain.fill 16s 25 26 1 1.375 23.375 22.75
-cloud.sun.rain.fill 17m 26 27 1 1.5 24.5 23.75
-cloud.sun.rain.fill 20r 30 31 1.125 1.75 28.375 27.5
-cloud.sun.rain.fill 21m 32 34 1.25 1.875 30.25 29.375
-cloud.sun.rain.fill 22r 33 35 1.25 1.875 31.125 31.25
-cloud.sun.rain.fill 24m 37 38 1.5 2.25 34.5 33.5
-cup.and.saucer d 20 15 1.5 1 16.5 12.5
-cup.and.saucer 11s 18 13 1.375 1 14.5 10.875
-cup.and.saucer 12r 19 14 1.5 1 15.25 11.375
-cup.and.saucer 12m 19 14 1.5 1 15.5 11.625
-cup.and.saucer 12.5s 20 15 1.5 1.125 16.375 12.375
-cup.and.saucer 13r 20 15 1.5 1 16.5 12.5
-cup.and.saucer 13m 20 15 1.5 1.125 16.125 12.625
-cup.and.saucer 13s 21 15 1.625 1 17.125 12.125
-cup.and.saucer 14r 21 16 1.625 1.25 17 13.25
-cup.and.saucer 14m 22 16 1.75 1.125 18.125 12.875
-cup.and.saucer 16m 25 19 2 1.375 20.75 15.5
-cup.and.saucer 16s 25 19 2 1.375 21 15.75
-cup.and.saucer 17m 26 20 2 1.5 21.25 16.5
-cup.and.saucer 20r 31 22 2.5 1.625 25.375 18.25
-cup.and.saucer 21m 33 25 2.625 1.875 27.125 20.375
-cup.and.saucer 22r 33 25 2.625 1.875 27.25 20.875
-cup.and.saucer 24m 37 28 3 2.125 31 23.25
-dice d 17 16 1.5 1 13.5 13.5
-dice 11s 15 14 1.375 1 11.875 11.75
-dice 12r 16 15 1.5 1 12.5 12.375
-dice 12m 16 15 1.5 1 12.75 12.625
-dice 12.5s 17 16 1.5 1.125 13.5 13.375
-dice 13r 17 16 1.5 1 13.5 13.5
-dice 13m 17 16 1.625 1.125 13.75 13.625
-dice 13s 17 16 1.5 1 13.25 13.125
-dice 14r 18 17 1.75 1.25 14.5 14.375
-dice 14m 18 17 1.625 1.125 14.125 14
-dice 16m 21 20 2 1.375 17 16.75
-dice 16s 22 21 2 1.5 17.25 17.875
-dice 17m 22 21 2 1.5 17.25 17.875
-dice 20r 26 24 2.5 1.75 20.75 20.5
-dice 21m 28 26 2.625 1.875 22.25 22
-dice 22r 28 27 2.625 1.875 22 22.5
-dice 24m 32 30 3 2.125 25.375 25.125
-door.left.hand.closed d 13 16 1.5 1 10 13.5
-door.left.hand.closed 11s 12 14 1.375 1 8.75 11.625
-door.left.hand.closed 12r 12 15 1.5 1 9 12.5
-door.left.hand.closed 12m 13 15 1.5 1 9.375 12.625
-door.left.hand.closed 12.5s 13 16 1.5 1.125 10 13.25
-door.left.hand.closed 13r 13 16 1.5 1 10 13.5
-door.left.hand.closed 13m 14 16 1.625 1.125 10.125 13.625
-door.left.hand.closed 13s 14 16 1.625 1.125 10.375 13.75
-door.left.hand.closed 14r 14 17 1.75 1.125 10.5 13.875
-door.left.hand.closed 14m 14 17 1.625 1.125 10.125 14
-door.left.hand.closed 16m 17 20 2 1.375 12.375 16.875
-door.left.hand.closed 16s 17 20 2 1.375 12.75 17
-door.left.hand.closed 17m 18 21 2.125 1.5 13.25 17.875
-door.left.hand.closed 20r 20 24 2.5 1.625 14.875 20
-door.left.hand.closed 21m 22 27 2.625 2 16.25 22.75
-door.left.hand.closed 22r 22 27 2.75 1.875 16.375 22.875
-door.left.hand.closed 24m 25 30 3 2.125 18.625 25.25
-door.left.hand.open d 13 16 1.5 1 10 13.5
-door.left.hand.open 11s 12 14 1.375 1 8.75 11.625
-door.left.hand.open 12r 12 15 1.5 1 9 12.5
-door.left.hand.open 12m 13 15 1.5 1 9.375 12.625
-door.left.hand.open 12.5s 13 16 1.5 1.125 10 13.25
-door.left.hand.open 13r 13 16 1.5 1 10 13.5
-door.left.hand.open 13m 14 16 1.625 1.125 10.125 13.625
-door.left.hand.open 13s 14 16 1.625 1.125 10.375 13.75
-door.left.hand.open 14r 14 17 1.75 1.125 10.5 13.875
-door.left.hand.open 14m 14 17 1.625 1.125 10.125 14
-door.left.hand.open 16m 17 20 2 1.375 12.375 16.875
-door.left.hand.open 16s 17 20 2 1.375 12.75 17
-door.left.hand.open 17m 18 21 2.125 1.5 13.25 17.875
-door.left.hand.open 20r 20 24 2.5 1.625 14.875 20
-door.left.hand.open 21m 22 27 2.625 2 16.25 22.75
-door.left.hand.open 22r 22 27 2.75 1.875 16.375 22.875
-door.left.hand.open 24m 25 30 3 2.125 18.625 25.25
-ellipsis d 14 5 1 1 12 2.5
-ellipsis 11s 13 5 1 1 10.375 2.375
-ellipsis 12r 13 5 1 1 11 2.25
-ellipsis 12m 14 5 1 1 11.125 2.375
-ellipsis 12.5s 14 5 1.125 1.125 11.75 2.625
-ellipsis 13r 14 5 1 1 12 2.5
-ellipsis 13m 15 5 1.125 1.125 12.125 2.625
-ellipsis 13s 15 5 1.125 1.125 12.25 2.75
-ellipsis 14r 15 5 1.125 1 12 2.25
-ellipsis 14m 15 5 1.125 1 12.25 2.5
-ellipsis 16m 18 7 1.375 1.625 14.875 3.75
-ellipsis 16s 19 7 1.5 1.375 15.875 3.375
-ellipsis 17m 19 7 1.5 1.5 15.75 3.375
-ellipsis 20r 22 7 1.75 1.5 18.25 3.375
-ellipsis 21m 24 9 1.875 2.125 19.5 4.625
-ellipsis 22r 25 9 2 2.125 20.875 4.625
-ellipsis 24m 27 9 2.125 2.125 22.25 4.75
-envelope d 19 13 1.5 1 15.5 11
-envelope 11s 17 12 1.375 1 13.375 9.625
-envelope 12r 18 13 1.5 1 14.125 10.125
-envelope 12m 18 13 1.5 1 14.375 10.375
-envelope 12.5s 19 13 1.5 1 15.125 10.125
-envelope 13r 19 13 1.5 1 15.5 11
-envelope 13m 19 14 1.625 1.125 15.625 11.125
-envelope 13s 19 14 1.625 1.125 15.75 11.375
-envelope 14r 20 14 1.75 1.125 16.5 11.125
-envelope 14m 20 14 1.625 1.125 16 11.25
-envelope 16m 24 17 2 1.375 19.125 13.75
-envelope 16s 24 17 2 1.375 19.375 13.875
-envelope 17m 25 18 2.125 1.5 20.375 14.625
-envelope 20r 29 20 2.5 1.625 23.625 16.125
-envelope 21m 31 22 2.625 1.875 25.125 18
-envelope 22r 31 23 2.625 1.875 25.25 18.5
-envelope 24m 35 25 3 2.125 28.75 20.625
-exclamationmark.circle d 15 15 1 1 13 13
-exclamationmark.circle 11s 14 14 1 1 11.25 11.25
-exclamationmark.circle 12r 14 14 1 1 12 12
-exclamationmark.circle 12m 15 15 1 1 12.125 12.125
-exclamationmark.circle 12.5s 15 15 1.125 1.125 12.75 12.75
-exclamationmark.circle 13r 15 15 1 1 13 13
-exclamationmark.circle 13m 16 16 1.125 1.125 13.125 13.125
-exclamationmark.circle 13s 16 16 1.125 1.125 13.25 13.25
-exclamationmark.circle 14r 16 16 1.125 1.125 13.25 13.25
-exclamationmark.circle 14m 17 17 1.25 1.25 14.125 14.125
-exclamationmark.circle 16m 20 20 1.5 1.5 16.875 16.875
-exclamationmark.circle 16s 20 20 1.375 1.375 16.375 16.375
-exclamationmark.circle 17m 21 21 1.5 1.5 17.25 17.25
-exclamationmark.circle 20r 23 23 1.625 1.625 19.25 19.25
-exclamationmark.circle 21m 26 26 2 2 22 22
-exclamationmark.circle 22r 26 26 1.875 1.875 22 22
-exclamationmark.circle 24m 29 29 2.125 2.125 24.25 24.25
-exclamationmark.triangle d 17 15 1.5 1 13.5 12.5
-exclamationmark.triangle 11s 14 13 1.125 1 11.5 10.375
-exclamationmark.triangle 12r 15 14 1.25 1 12.375 11.125
-exclamationmark.triangle 12m 15 14 1.25 1 12.375 11.25
-exclamationmark.triangle 12.5s 15 14 1.125 1 12.25 11.125
-exclamationmark.triangle 13r 17 15 1.5 1 13.5 12.5
-exclamationmark.triangle 13m 17 15 1.375 1.125 14.25 12.25
-exclamationmark.triangle 13s 17 15 1.375 1.125 14.25 12.375
-exclamationmark.triangle 14r 18 15 1.375 1.125 14.375 12.25
-exclamationmark.triangle 14m 18 16 1.375 1.25 14.5 13.125
-exclamationmark.triangle 16m 20 18 1.625 1.375 16.5 15
-exclamationmark.triangle 16s 20 19 1.625 1.5 16.625 15.875
-exclamationmark.triangle 17m 21 19 1.625 1.5 16.875 16
-exclamationmark.triangle 20r 25 22 2 1.625 20.5 17.875
-exclamationmark.triangle 21m 26 24 2.125 1.875 21.75 19.75
-exclamationmark.triangle 22r 27 25 2.125 1.875 21.875 20.5
-exclamationmark.triangle 24m 30 27 2.375 2.125 24.875 22.5
-eye d 21 13 1.5 1 17.5 10.875
-eye 11s 17 12 1.125 1 14 9.375
-eye 12r 19 13 1.25 1 16 10.125
-eye 12m 19 13 1.25 1 16.125 10.25
-eye 12.5s 19 13 1.25 1.125 16 10.75
-eye 13r 21 13 1.5 1 17.5 10.875
-eye 13m 21 13 1.375 1 18.375 10.25
-eye 13s 21 14 1.25 1.125 17.5 11.125
-eye 14r 22 14 1.375 1.125 18.75 11
-eye 14m 22 14 1.375 1.125 18.875 11.125
-eye 16m 25 17 1.625 1.375 21.5 13.625
-eye 16s 25 17 1.625 1.375 21.625 13.625
-eye 17m 26 18 1.625 1.5 22.125 14.375
-eye 20r 31 20 2 1.625 26.75 16
-eye 21m 33 22 2.125 1.875 28.25 17.75
-eye 22r 34 23 2.25 1.875 29.375 18.5
-eye 24m 38 25 2.5 2.125 33 20.375
-eye.slash d 21 16 1.5 2 17.5 12
-eye.slash 11s 17 14 1.125 1.875 14 10.125
-eye.slash 12r 19 15 1.25 1.875 16 10.75
-eye.slash 12m 19 15 1.25 1.875 16.125 11
-eye.slash 12.5s 19 16 1.25 2.125 16 11.5
-eye.slash 13r 21 16 1.5 2 17.5 12
-eye.slash 13m 21 16 1.375 1.875 18.375 11.25
-eye.slash 13s 21 16 1.25 2 17.5 11.25
-eye.slash 14r 22 17 1.375 2.125 18.75 11.875
-eye.slash 14m 22 17 1.375 2.125 18.875 12.125
-eye.slash 16m 25 21 1.625 2.75 21.5 15.375
-eye.slash 16s 25 21 1.625 2.75 21.625 15.375
-eye.slash 17m 26 22 1.625 2.75 22.125 15.5
-eye.slash 20r 31 24 2 3.125 26.75 17.25
-eye.slash 21m 33 27 2.125 3.5 28.25 19.125
-eye.slash 22r 34 28 2.25 3.75 29.375 20.25
-eye.slash 24m 38 30 2.5 4 33 21.75
-eyes d 17 14 1 1 15 11.375
-eyes 11s 16 13 1 1.125 13 10.625
-eyes 12r 16 13 1 1 13.625 10.5
-eyes 12m 17 13 1.125 1 14.875 10.625
-eyes 12.5s 17 14 1.125 1.125 14 11.25
-eyes 13r 17 14 1 1 15 11.375
-eyes 13m 18 14 1.125 1.125 15.125 11.625
-eyes 13s 18 14 1.125 1.125 15.375 11.625
-eyes 14r 18 15 1.125 1.25 15.125 12.25
-eyes 14m 19 15 1.25 1.25 16.25 12.5
-eyes 16m 22 18 1.375 1.5 18.625 15
-eyes 16s 23 18 1.5 1.375 19.75 14.375
-eyes 17m 23 19 1.5 1.5 19.75 15.125
-eyes 20r 26 21 1.625 1.625 22 16.75
-eyes 21m 29 24 1.875 2 24.5 19.375
-eyes 22r 30 24 2 1.875 25.75 19.25
-eyes 24m 33 26 2.125 2.125 27.875 21.375
-folder d 18 14 1.5 1 14.5 12
-folder 11s 16 13 1.375 1 12.5 10.125
-folder 12r 17 13 1.5 1 13.375 10.75
-folder 12m 17 13 1.5 1 13.5 11
-folder 12.5s 18 14 1.5 1.125 14.125 11.625
-folder 13r 18 14 1.5 1 14.5 12
-folder 13m 18 14 1.625 1 14.625 11.125
-folder 13s 18 14 1.625 1 14.75 11.25
-folder 14r 19 15 1.625 1.125 14.875 11.875
-folder 14m 19 15 1.625 1.125 15 12
-folder 16m 22 18 2 1.375 18 14.625
-folder 16s 23 18 2 1.375 18.125 14.75
-folder 17m 24 19 2.125 1.5 19 15.5
-folder 20r 28 21 2.5 1.625 22.25 17.125
-folder 21m 29 24 2.625 2 23.5 19.875
-folder 22r 30 24 2.75 1.875 24.375 19.75
-folder 24m 33 26 3 2 26.875 21.125
-fork.knife d 12 17 1.5 1 8.875 15
-fork.knife 11s 11 15 1.375 1 7.875 12.875
-fork.knife 12r 12 16 1.5 1 8.125 13.625
-fork.knife 12m 12 16 1.5 1 8.375 13.875
-fork.knife 12.5s 12 17 1.5 1.125 8.875 14.625
-fork.knife 13r 12 17 1.5 1 8.875 15
-fork.knife 13m 13 17 1.625 1.125 9.125 14.125
-fork.knife 13s 13 18 1.625 1.125 9.25 15.25
-fork.knife 14r 13 18 1.75 1.125 9.5 15.125
-fork.knife 14m 13 19 1.625 1.25 9 16.125
-fork.knife 16m 16 22 2 1.375 11.875 18.5
-fork.knife 16s 16 22 1.875 1.375 11.375 18.75
-fork.knife 17m 16 23 2 1.5 11.875 19.625
-fork.knife 20r 19 26 2.375 1.625 13.5 22
-fork.knife 21m 20 29 2.5 2 14.625 25
-fork.knife 22r 20 29 2.5 1.875 14.125 25
-fork.knife 24m 23 32 2.875 2.125 16.75 27.75
-gearshape d 16 16 1 1 14 14
-gearshape 11s 14 14 1 1 11.875 11.875
-gearshape 12r 15 15 1 1 12.625 12.625
-gearshape 12m 15 15 1 1 12.75 12.75
-gearshape 12.5s 16 16 1.125 1.125 13.5 13.375
-gearshape 13r 16 16 1 1 14 14
-gearshape 13m 16 16 1 1 13.125 13.125
-gearshape 13s 16 16 1 1 13.25 13.25
-gearshape 14r 17 17 1.125 1.125 13.875 13.875
-gearshape 14m 17 17 1.125 1.125 14.125 14.125
-gearshape 16m 20 20 1.375 1.375 17 17
-gearshape 16s 21 21 1.5 1.5 18 17.875
-gearshape 17m 22 21 1.5 1.5 18.125 18
-gearshape 20r 24 24 1.625 1.625 20.25 20.125
-gearshape 21m 27 27 1.875 2 22.375 23
-gearshape 22r 27 27 1.875 1.875 23 23
-gearshape 24m 30 30 2.125 2.125 25.5 25.5
-hammer d 20 18 1.625 1.125 16.25 15.375
-hammer 11s 17 16 1.25 1.125 14.125 13.375
-hammer 12r 18 17 1.25 1.125 15 14.125
-hammer 12m 18 17 1.25 1.125 15.25 14.375
-hammer 12.5s 19 18 1.375 1.25 16.125 14.375
-hammer 13r 20 18 1.625 1.125 16.25 15.375
-hammer 13m 20 19 1.375 1.25 16.5 15.625
-hammer 13s 20 19 1.375 1.25 16.75 15.75
-hammer 14r 21 20 1.5 1.375 17.5 16.5
-hammer 14m 21 20 1.5 1.375 17.75 16.75
-hammer 16m 24 23 1.75 1.5 20.375 19.25
-hammer 16s 24 24 1.625 1.625 19.875 20.25
-hammer 17m 26 25 1.75 1.625 21.625 20.375
-hammer 20r 30 28 2.25 2 24.875 23.5
-hammer 21m 31 31 2.25 2.25 25.875 26
-hammer 22r 33 31 2.375 2.125 27.375 25.875
-hammer 24m 36 34 2.625 2.375 30.5 27.875
-hand.draw.fill d 17 17 1 2.25 13.875 12.25
-hand.draw.fill 11s 15 15 1 2.125 12.25 10.5
-hand.draw.fill 12r 16 16 1 2.125 12.75 11
-hand.draw.fill 12m 16 16 1 2.25 13.125 11.125
-hand.draw.fill 12.5s 17 17 1.125 2.375 13.875 11.875
-hand.draw.fill 13r 17 17 1 2.25 13.875 12.25
-hand.draw.fill 13m 17 17 1.125 2.5 14.125 12
-hand.draw.fill 13s 18 17 1.125 2.375 14.5 11.625
-hand.draw.fill 14r 18 18 1.25 2.625 14.875 12.75
-hand.draw.fill 14m 18 18 1.125 2.5 14.5 12.375
-hand.draw.fill 16m 21 21 1.375 3 17.375 14.875
-hand.draw.fill 16s 22 22 1.375 3.25 17.75 15.75
-hand.draw.fill 17m 23 22 1.5 3.25 18.5 15.75
-hand.draw.fill 20r 26 25 1.75 3.5 21.125 17.5
-hand.draw.fill 21m 28 28 1.875 4 22.875 19.5
-hand.draw.fill 22r 28 28 1.875 4 23.25 20
-hand.draw.fill 24m 32 31 2.125 4.375 26.125 21.75
-hand.point.up.left.fill d 13 15 1 1.375 10.875 12
-hand.point.up.left.fill 11s 12 13 0.875 1.25 9.75 10.5
-hand.point.up.left.fill 12r 12 14 1 1.25 10 11
-hand.point.up.left.fill 12m 13 14 1 1.375 10.375 11.125
-hand.point.up.left.fill 12.5s 14 15 1 1.5 11 11.875
-hand.point.up.left.fill 13r 13 15 1 1.375 10.875 12
-hand.point.up.left.fill 13m 14 15 1 1.5 11.125 12.125
-hand.point.up.left.fill 13s 14 15 1 1.375 11.5 11.625
-hand.point.up.left.fill 14r 14 16 1.125 1.625 11.625 12.75
-hand.point.up.left.fill 14m 15 16 1.125 1.625 12 13
-hand.point.up.left.fill 16m 17 19 1.375 1.875 13.625 14.875
-hand.point.up.left.fill 16s 17 19 1.375 1.875 14 15.125
-hand.point.up.left.fill 17m 18 20 1.5 2 14.5 15.75
-hand.point.up.left.fill 20r 20 22 1.75 2.125 16.5 17.5
-hand.point.up.left.fill 21m 22 25 1.75 2.625 17.875 20.25
-hand.point.up.left.fill 22r 23 25 2 2.5 19 20
-hand.point.up.left.fill 24m 25 28 2 2.875 20.5 22.25
-hand.wave d 15 16 1.125 1.5 12.375 12.875
-hand.wave 11s 14 14 1 1.375 11 11.25
-hand.wave 12r 14 15 1 1.5 11.375 11.5
-hand.wave 12m 14 15 1 1.5 11.75 11.875
-hand.wave 12.5s 15 16 1.125 1.625 12.625 12.75
-hand.wave 13r 15 16 1.125 1.5 12.375 12.875
-hand.wave 13m 15 16 1.125 1.625 12.75 12.875
-hand.wave 13s 16 16 1.125 1.5 13.125 12.5
-hand.wave 14r 16 17 1.25 1.75 13.25 13.5
-hand.wave 14m 16 17 1.125 1.625 13 13.25
-hand.wave 16m 19 20 1.375 2 15.625 15.875
-hand.wave 16s 19 21 1.375 2.125 16.125 17
-hand.wave 17m 20 21 1.375 2.125 16.625 16.875
-hand.wave 20r 23 24 1.625 2.5 18.875 19.25
-hand.wave 21m 24 26 1.625 2.75 19.875 20.75
-hand.wave 22r 25 27 1.875 2.875 20.75 21.75
-hand.wave 24m 28 29 2.125 3 23.375 23
-hare d 23 17 1.625 1.125 19.75 14.375
-hare 11s 20 15 1.375 1 17 12.5
-hare 12r 22 16 1.5 1 18.25 13.25
-hare 12m 22 16 1.5 1 18.375 13.5
-hare 12.5s 23 17 1.5 1.125 19.25 14.125
-hare 13r 23 17 1.625 1.125 19.75 14.375
-hare 13m 23 17 1.5 1.125 19.125 14.5
-hare 13s 24 17 1.625 1.125 20 14.75
-hare 14r 25 18 1.75 1.25 21.25 15.375
-hare 14m 25 18 1.75 1.125 21.375 14.875
-hare 16m 29 21 2 1.375 24.5 17.875
-hare 16s 29 22 2 1.5 24.625 18.875
-hare 17m 30 22 2 1.5 25.25 19
-hare 20r 36 25 2.5 1.625 30.25 21.25
-hare 21m 38 28 2.625 1.875 32.125 23.5
-hare 22r 39 29 2.75 2 33.25 25
-hare 24m 43 31 3 2 36.75 26.125
-heart d 16 14 1.5 1 13 12
-heart 11s 14 13 1.375 1 11 10.25
-heart 12r 15 13 1.5 1 11.625 10.75
-heart 12m 15 13 1.5 1 11.875 11
-heart 12.5s 16 14 1.5 1.125 12.5 11.625
-heart 13r 16 14 1.5 1 13 12
-heart 13m 16 14 1.5 1 12.125 11.125
-heart 13s 16 15 1.5 1.125 12.25 12.125
-heart 14r 17 15 1.625 1.125 12.875 11.875
-heart 14m 17 15 1.625 1.125 13.125 12.125
-heart 16m 20 18 2 1.375 15.875 14.625
-heart 16s 20 18 2 1.375 16 14.875
-heart 17m 21 19 2 1.5 16.125 15.625
-heart 20r 25 21 2.5 1.625 19.5 17.25
-heart 21m 26 24 2.625 2 20.75 20
-heart 22r 27 24 2.75 1.875 21.375 19.75
-heart 24m 30 26 3 2 23.75 21.25
-house d 19 16 1.5 1 15.5 13.5
-house 11s 17 14 1.375 1 13.375 11.75
-house 12r 17 15 1.5 1 14 12.375
-house 12m 18 15 1.5 1 14.375 12.625
-house 12.5s 19 16 1.5 1.125 15.25 13.25
-house 13r 19 16 1.5 1 15.5 13.5
-house 13m 19 16 1.625 1.125 15.5 13.625
-house 13s 19 16 1.5 1 15 13.125
-house 14r 20 17 1.75 1.25 16.375 14.375
-house 14m 20 17 1.625 1.125 16 14
-house 16m 24 20 2 1.375 19.125 16.75
-house 16s 24 20 2 1.375 19.5 17
-house 17m 25 21 2.125 1.5 20.375 17.875
-house 20r 29 24 2.5 1.625 23.375 19.875
-house 21m 31 26 2.625 1.875 25.125 22
-house 22r 31 27 2.625 1.875 25 22.625
-house 24m 35 30 3 2.125 28.625 25.125
-info.circle d 15 15 1 1 13 13
-info.circle 11s 14 14 1 1 11.25 11.25
-info.circle 12r 14 14 1 1 12 12
-info.circle 12m 15 15 1 1 12.125 12.125
-info.circle 12.5s 15 15 1.125 1.125 12.75 12.75
-info.circle 13r 15 15 1 1 13 13
-info.circle 13m 16 16 1.125 1.125 13.125 13.125
-info.circle 13s 16 16 1.125 1.125 13.25 13.25
-info.circle 14r 16 16 1.125 1.125 13.25 13.25
-info.circle 14m 17 17 1.25 1.25 14.125 14.125
-info.circle 16m 20 20 1.5 1.5 16.875 16.875
-info.circle 16s 20 20 1.375 1.375 16.375 16.375
-info.circle 17m 21 21 1.5 1.5 17.25 17.25
-info.circle 20r 23 23 1.625 1.625 19.25 19.25
-info.circle 21m 26 26 2 2 22 22
-info.circle 22r 26 26 1.875 1.875 22 22
-info.circle 24m 29 29 2.125 2.125 24.25 24.25
-key d 12 18 1.5 1 8.5 16
-key 11s 11 16 1.375 1 7.375 13.75
-key 12r 11 17 1.5 1 7.875 14.75
-key 12m 11 17 1.5 1 8 14.875
-key 12.5s 12 18 1.5 1.125 8.375 15.5
-key 13r 12 18 1.5 1 8.5 16
-key 13m 12 19 1.625 1.125 8.625 16.125
-key 13s 12 19 1.625 1.125 8.75 16.125
-key 14r 13 20 1.75 1.25 9.25 17.125
-key 14m 13 20 1.75 1.25 9.375 17.25
-key 16m 15 23 2 1.375 10.625 19.75
-key 16s 15 23 2 1.375 10.75 19.875
-key 17m 16 24 2.125 1.5 11.25 21
-key 20r 19 28 2.5 1.875 13.125 24.375
-key 21m 19 30 2.5 2 13.25 25.75
-key 22r 20 31 2.75 2 14.375 26.875
-key 24m 22 34 3 2.25 16 29.5
-ladybug d 18 18 1.5 1 14.375 15.375
-ladybug 11s 16 16 1.375 1 12.625 13
-ladybug 12r 17 16 1.5 1 13.375 13.75
-ladybug 12m 17 17 1.5 1 13.5 14
-ladybug 12.5s 18 17 1.5 1.125 14.25 14
-ladybug 13r 18 18 1.5 1 14.375 15.375
-ladybug 13m 18 18 1.625 1.125 14.625 15.25
-ladybug 13s 18 18 1.5 1.125 14.125 15.375
-ladybug 14r 19 19 1.75 1.25 15.5 16.125
-ladybug 14m 19 19 1.625 1.25 15.125 15.5
-ladybug 16m 23 22 2 1.375 18 18.75
-ladybug 16s 23 23 2 1.5 18.25 19.875
-ladybug 17m 24 24 2.125 1.5 19.125 19.875
-ladybug 20r 28 27 2.5 1.75 22.125 23
-ladybug 21m 29 29 2.625 1.875 23.75 24.5
-ladybug 22r 30 30 2.75 1.875 24.375 25.25
-ladybug 24m 34 33 3 2.125 27.125 28
-ladybug.fill d 18 18 1.5 1 14.375 15.25
-ladybug.fill 11s 16 16 1.375 1 12.625 13.125
-ladybug.fill 12r 17 17 1.5 1 13.375 13.875
-ladybug.fill 12m 17 17 1.5 1 13.5 14.125
-ladybug.fill 12.5s 18 18 1.5 1.125 14.25 14.875
-ladybug.fill 13r 18 18 1.5 1 14.375 15.25
-ladybug.fill 13m 18 18 1.625 1.125 14.625 15.25
-ladybug.fill 13s 18 18 1.5 1.125 14.125 15.5
-ladybug.fill 14r 19 19 1.75 1.25 15.5 16.25
-ladybug.fill 14m 19 19 1.625 1.25 15.125 15.625
-ladybug.fill 16m 23 23 2 1.5 18 19.5
-ladybug.fill 16s 23 23 2 1.375 18.25 19
-ladybug.fill 17m 24 24 2.125 1.5 19.25 20
-ladybug.fill 20r 28 27 2.5 1.75 22.125 23.125
-ladybug.fill 21m 29 29 2.625 1.875 23.75 24.625
-ladybug.fill 22r 30 30 2.75 1.875 24.375 25.375
-ladybug.fill 24m 34 33 3 2.125 27.125 28.25
-laptopcomputer d 22 13 1.5 1 18.5 10.5
-laptopcomputer 11s 20 12 1.5 1 16.875 9.25
-laptopcomputer 12r 20 12 1.5 1 17 9.625
-laptopcomputer 12m 21 12 1.5 1 17.25 9.875
-laptopcomputer 12.5s 22 13 1.5 1.125 18.25 10.5
-laptopcomputer 13r 22 13 1.5 1 18.5 10.5
-laptopcomputer 13m 22 13 1.625 1.125 18.75 10.625
-laptopcomputer 13s 22 13 1.5 1 18.25 10.125
-laptopcomputer 14r 23 14 1.625 1.25 19 11.125
-laptopcomputer 14m 24 14 1.75 1.25 20.125 11.5
-laptopcomputer 16m 27 17 2 1.5 23 13.875
-laptopcomputer 16s 28 17 2 1.375 23.375 13.375
-laptopcomputer 17m 29 17 2.125 1.5 24.5 13.875
-laptopcomputer 20r 34 19 2.5 1.625 28.25 15.25
-laptopcomputer 21m 36 22 2.625 2 30.25 17.875
-laptopcomputer 22r 36 22 2.625 1.875 30.25 17.5
-laptopcomputer 24m 41 24 3 2.125 34.5 19.625
-leaf d 16 14 1 1 13.5 11.875
-leaf 11s 14 13 1 1 11.75 10.25
-leaf 12r 15 14 1 1 12.5 10.875
-leaf 12m 15 14 1 1 12.625 11.125
-leaf 12.5s 16 14 1.125 1 13.25 11
-leaf 13r 16 14 1 1 13.5 11.875
-leaf 13m 16 15 1.125 1.125 13.625 12
-leaf 13s 16 15 1 1.125 13.125 12.125
-leaf 14r 17 15 1.25 1.125 14.5 12
-leaf 14m 17 16 1.125 1.25 14 12.875
-leaf 16m 20 18 1.375 1.375 16.875 14.75
-leaf 16s 20 19 1.375 1.5 17 15.625
-leaf 17m 21 19 1.5 1.5 17.875 15.75
-leaf 20r 24 22 1.625 1.75 20 18.125
-leaf 21m 27 24 2 1.875 22.75 19.375
-leaf 22r 27 25 1.875 2 22.875 20.75
-leaf 24m 30 27 2.125 2.125 25.25 22.125
-leaf.fill d 16 14 1 1 14 11.875
-leaf.fill 11s 14 13 1 1 12 10.125
-leaf.fill 12r 15 13 1 1 12.75 10.75
-leaf.fill 12m 15 14 1 1 12.875 11
-leaf.fill 12.5s 16 14 1.125 1.125 13.625 11.5
-leaf.fill 13r 16 14 1 1 14 11.875
-leaf.fill 13m 16 14 1 1 13.25 11.125
-leaf.fill 13s 17 15 1.125 1.125 14.125 12
-leaf.fill 14r 17 15 1.125 1.125 14 11.875
-leaf.fill 14m 17 15 1.125 1.125 14.25 12
-leaf.fill 16m 21 18 1.5 1.375 17.875 14.625
-leaf.fill 16s 21 18 1.375 1.375 17.375 14.75
-leaf.fill 17m 22 19 1.5 1.5 18.25 15.5
-leaf.fill 20r 25 22 1.75 1.75 21.125 18
-leaf.fill 21m 27 24 1.875 1.875 22.5 19.125
-leaf.fill 22r 28 24 2 1.875 24 19.75
-leaf.fill 24m 30 27 2.125 2.125 25.75 21.875
-link d 17 17 1.375 1.375 13.75 13.625
-link 11s 15 15 1.125 1.25 11.875 11.875
-link 12r 16 16 1.25 1.25 12.625 12.625
-link 12m 16 16 1.375 1.375 12.625 12.625
-link 12.5s 17 17 1.375 1.5 13.375 13.375
-link 13r 17 17 1.375 1.375 13.75 13.625
-link 13m 17 17 1.375 1.5 13.75 13.75
-link 13s 17 17 1.375 1.5 13.875 13.875
-link 14r 18 18 1.5 1.625 14.625 14.625
-link 14m 18 18 1.5 1.5 14.75 14.125
-link 16m 21 21 1.75 1.875 16.875 16.875
-link 16s 21 21 1.75 1.875 17 17
-link 17m 22 22 1.875 2 17.875 17.875
-link 20r 25 25 2.125 2.125 20 20.125
-link 21m 27 28 2.375 2.5 22.125 22.125
-link 22r 29 29 2.5 2.625 23.625 23.625
-link 24m 31 31 2.625 2.75 25.375 25.375
-location d 15 15 0.75 1.25 12.375 12.5
-location 11s 14 14 0.875 1.25 10.75 10.75
-location 12r 14 14 0.875 1.25 11.25 11.125
-location 12m 15 15 0.875 1.25 11.5 11.5
-location 12.5s 15 15 1 1.25 12.125 11.5
-location 13r 15 15 0.75 1.25 12.375 12.5
-location 13m 16 16 1.125 1.5 12.375 12.375
-location 13s 16 16 1 1.5 12.625 12.625
-location 14r 17 16 1.125 1.375 13 12.375
-location 14m 18 17 1.125 1.625 14.25 13.375
-location 16m 20 20 1.375 1.875 16 16
-location 16s 20 20 1.375 1.875 15.5 15.5
-location 17m 21 21 1.375 1.875 16.25 16.25
-location 20r 24 23 1.625 2.25 18.625 18.5
-location 21m 25 26 1.75 2.5 20 20.75
-location 22r 26 26 1.75 2.375 20.5 20.375
-location 24m 29 29 1.875 2.75 22.875 22.75
-magnifyingglass d 16 15 1.5 1 12.5 13
-magnifyingglass 11s 13 13 1.125 1 10 10.875
-magnifyingglass 12r 15 14 1.375 1 11.5 11.625
-magnifyingglass 12m 15 14 1.375 1 11.625 11.75
-magnifyingglass 12.5s 16 15 1.5 1.125 12.875 12.25
-magnifyingglass 13r 16 15 1.5 1 12.5 13
-magnifyingglass 13m 16 15 1.5 1.125 12.625 12.75
-magnifyingglass 13s 16 15 1.5 1.125 12.625 12.75
-magnifyingglass 14r 17 16 1.625 1.25 13.375 13.5
-magnifyingglass 14m 17 16 1.625 1.125 13.5 12.875
-magnifyingglass 16m 20 19 1.875 1.375 16.25 15.625
-magnifyingglass 16s 20 19 1.75 1.375 15.625 15.75
-magnifyingglass 17m 21 20 1.875 1.5 16.375 16.625
-magnifyingglass 20r 24 23 2.25 1.75 19.125 19.25
-magnifyingglass 21m 26 25 2.5 1.875 21 20.5
-magnifyingglass 22r 26 26 2.5 2 21 22
-magnifyingglass 24m 29 28 2.75 2.125 23.125 23.375
-map d 17 15 1.5 1 13.5 13
-map 11s 15 13 1.375 1 11.375 10.875
-map 12r 16 14 1.5 1 12.25 11.625
-map 12m 16 14 1.5 1 12.375 11.75
-map 12.5s 16 15 1.5 1.125 13 12.25
-map 13r 17 15 1.5 1 13.5 13
-map 13m 17 15 1.625 1.125 13.375 12.75
-map 13s 17 15 1.625 1.125 13.5 12.75
-map 14r 18 16 1.75 1.25 14.25 13.5
-map 14m 18 16 1.75 1.125 14.375 12.875
-map 16m 21 19 2 1.375 16.5 15.625
-map 16s 21 19 2 1.375 16.625 15.75
-map 17m 22 20 2.125 1.5 17.5 16.625
-map 20r 26 23 2.5 1.75 20.375 19.25
-map 21m 27 25 2.625 1.875 21.625 20.5
-map 22r 28 26 2.75 2 22.375 22
-map 24m 31 28 3 2.125 24.625 23.375
-map.fill d 17 15 1.5 1 13.5 12.5
-map.fill 11s 15 13 1.375 1 11.5 10.75
-map.fill 12r 16 14 1.5 1 12.25 11.5
-map.fill 12m 16 14 1.5 1 12.375 11.625
-map.fill 12.5s 16 15 1.5 1.125 13 12.125
-map.fill 13r 17 15 1.5 1 13.5 12.5
-map.fill 13m 17 15 1.625 1.125 13.375 12.625
-map.fill 13s 17 15 1.625 1.125 13.5 12.625
-map.fill 14r 18 16 1.75 1.25 14.25 13.375
-map.fill 14m 18 16 1.75 1.125 14.5 12.75
-map.fill 16m 21 19 2 1.375 16.5 15.5
-map.fill 16s 21 19 2 1.375 16.625 15.625
-map.fill 17m 22 20 2.125 1.5 17.5 16.375
-map.fill 20r 26 23 2.5 1.75 20.375 19.125
-map.fill 21m 27 25 2.625 1.875 21.625 20.25
-map.fill 22r 28 26 2.75 2 22.375 21.75
-map.fill 24m 31 28 3 2.125 24.75 23.125
-moon.stars d 15 16 1.5 1 13 13.5
-moon.stars 11s 13 14 1.375 1 11.25 11.875
-moon.stars 12r 14 15 1.5 1 11.75 12.25
-moon.stars 12m 14 15 1.5 1 12.125 12.625
-moon.stars 12.5s 15 16 1.625 1.125 12.75 13.5
-moon.stars 13r 15 16 1.5 1 13 13.5
-moon.stars 13m 15 16 1.625 1.125 13 13.625
-moon.stars 13s 15 16 1.625 1 13.375 13.25
-moon.stars 14r 16 17 1.75 1.25 13.75 14.25
-moon.stars 14m 17 17 1.875 1.125 14.875 14
-moon.stars 16m 19 20 2 1.375 16.125 16.875
-moon.stars 16s 19 21 2 1.5 16.375 18
-moon.stars 17m 20 21 2.125 1.5 17.125 17.875
-moon.stars 20r 23 24 2.5 1.75 19.625 20.375
-moon.stars 21m 24 27 2.625 2 21.125 22.875
-moon.stars 22r 24 27 2.625 1.875 20.625 22.375
-moon.stars 24m 28 30 3 2.125 24.125 25.25
-moon.stars.fill d 15 16 1.5 1 13 13.5
-moon.stars.fill 11s 13 14 1.375 1 11.25 11.875
-moon.stars.fill 12r 14 15 1.5 1 11.75 12.25
-moon.stars.fill 12m 14 15 1.5 1 12.125 12.625
-moon.stars.fill 12.5s 15 16 1.625 1.125 12.75 13.5
-moon.stars.fill 13r 15 16 1.5 1 13 13.5
-moon.stars.fill 13m 15 16 1.625 1.125 13.125 13.625
-moon.stars.fill 13s 15 16 1.625 1 13.375 13.25
-moon.stars.fill 14r 16 17 1.75 1.25 13.75 14.25
-moon.stars.fill 14m 17 17 1.875 1.125 14.875 14
-moon.stars.fill 16m 19 20 2 1.375 16.125 16.75
-moon.stars.fill 16s 19 21 2 1.5 16.375 18
-moon.stars.fill 17m 20 21 2.125 1.5 17.125 17.875
-moon.stars.fill 20r 23 24 2.5 1.75 19.625 20.375
-moon.stars.fill 21m 24 26 2.625 1.875 21.125 22
-moon.stars.fill 22r 24 27 2.625 1.875 20.625 22.375
-moon.stars.fill 24m 28 30 3 2.125 24.125 25.125
-moon.zzz d 15 17 1.5 1 12.5 14.5
-moon.zzz 11s 13 15 1.125 1 11 12.75
-moon.zzz 12r 14 16 1.375 1 11.25 13.375
-moon.zzz 12m 15 16 1.375 1 12.5 13.75
-moon.zzz 12.5s 16 17 1.375 1.125 13.375 14.5
-moon.zzz 13r 15 17 1.5 1 12.5 14.5
-moon.zzz 13m 16 17 1.5 1.125 13.5 14
-moon.zzz 13s 16 18 1.375 1.125 13 15.125
-moon.zzz 14r 16 18 1.5 1.125 13.125 14.875
-moon.zzz 14m 17 18 1.625 1.125 14.5 15.25
-moon.zzz 16m 19 22 1.75 1.5 15.625 19
-moon.zzz 16s 19 22 1.625 1.375 16 18.625
-moon.zzz 17m 20 23 1.875 1.5 16.625 19.375
-moon.zzz 20r 23 26 2.25 1.75 18.75 22.375
-moon.zzz 21m 24 28 2.125 1.875 19.75 24
-moon.zzz 22r 25 29 2.375 1.875 20.625 24.5
-moon.zzz 24m 28 32 2.625 2.125 23.375 27.375
-paintbrush.pointed d 18 17 1.625 1.5 14.25 13.375
-paintbrush.pointed 11s 15 15 1.25 1.375 12.5 11.625
-paintbrush.pointed 12r 16 15 1.25 1.375 13 12.125
-paintbrush.pointed 12m 16 16 1.375 1.375 13.25 12.5
-paintbrush.pointed 12.5s 18 17 1.5 1.625 15 13.125
-paintbrush.pointed 13r 18 17 1.625 1.5 14.25 13.375
-paintbrush.pointed 13m 18 17 1.5 1.625 14.375 13.375
-paintbrush.pointed 13s 18 17 1.375 1.625 14.75 12.875
-paintbrush.pointed 14r 19 18 1.625 1.75 15.125 14.125
-paintbrush.pointed 14m 19 18 1.5 1.625 15.5 13.75
-paintbrush.pointed 16m 22 21 1.75 2 17.75 16.5
-paintbrush.pointed 16s 22 22 1.75 2.125 18.125 17.625
-paintbrush.pointed 17m 23 22 1.875 2.125 18.875 17.625
-paintbrush.pointed 20r 27 25 2.25 2.375 21.625 19.375
-paintbrush.pointed 21m 28 28 2.25 2.625 23.375 21.75
-paintbrush.pointed 22r 29 28 2.375 2.625 23.75 22.125
-paintbrush.pointed 24m 32 31 2.625 3 25.875 24.75
-paintbrush.pointed.fill d 17 16 1.5 1.5 13.875 12.875
-paintbrush.pointed.fill 11s 15 15 1.25 1.375 12.375 11.5
-paintbrush.pointed.fill 12r 16 15 1.25 1.375 12.875 11.875
-paintbrush.pointed.fill 12m 16 16 1.375 1.375 13.125 12.25
-paintbrush.pointed.fill 12.5s 18 16 1.5 1.375 14.875 12.375
-paintbrush.pointed.fill 13r 17 16 1.5 1.5 13.875 12.875
-paintbrush.pointed.fill 13m 18 17 1.5 1.625 14.25 13.25
-paintbrush.pointed.fill 13s 18 17 1.5 1.625 14.625 13.5
-paintbrush.pointed.fill 14r 18 17 1.5 1.625 15 13.125
-paintbrush.pointed.fill 14m 19 18 1.625 1.75 15.375 14.25
-paintbrush.pointed.fill 16m 21 21 1.625 2 16.75 16.25
-paintbrush.pointed.fill 16s 22 21 1.75 2 18 16.625
-paintbrush.pointed.fill 17m 23 22 1.875 2.125 18.625 17.25
-paintbrush.pointed.fill 20r 26 25 2.25 2.5 21.25 19.75
-paintbrush.pointed.fill 21m 28 27 2.25 2.625 23 21.375
-paintbrush.pointed.fill 22r 29 28 2.5 2.625 23.375 21.75
-paintbrush.pointed.fill 24m 32 31 2.75 3 26.25 24.375
-pencil d 14 13 1.5 1 10.5 10.375
-pencil 11s 12 12 1.125 1 9.25 9.25
-pencil 12r 13 12 1.375 1 10.125 9.375
-pencil 12m 13 12 1.25 1 9.875 9.75
-pencil 12.5s 14 13 1.375 1.125 10.625 10.5
-pencil 13r 14 13 1.5 1 10.5 10.375
-pencil 13m 14 13 1.375 1.125 10.625 10.625
-pencil 13s 15 14 1.5 1.125 11.75 11
-pencil 14r 15 13 1.5 1.125 11 10.125
-pencil 14m 15 14 1.5 1.25 11.5 11.375
-pencil 16m 17 17 1.75 1.5 13.125 13.75
-pencil 16s 17 17 1.75 1.375 13.5 13.5
-pencil 17m 18 17 1.875 1.5 13.875 13.875
-pencil 20r 20 19 2 1.625 15 14.875
-pencil 21m 22 22 2.25 2 17.125 17.875
-pencil 22r 23 22 2.5 2 18 17.875
-pencil 24m 25 24 2.75 2.125 19.5 19.5
-person.2 d 22 15 1.5 1.875 18.125 12.125
-person.2 11s 18 13 1.375 1.75 15.125 10.25
-person.2 12r 20 14 1.5 1.75 16.375 11
-person.2 12m 20 14 1.5 1.75 16.5 11.125
-person.2 12.5s 21 15 1.5 2 17.25 11.625
-person.2 13r 22 15 1.5 1.875 18.125 12.125
-person.2 13m 21 15 1.5 1.875 17.125 11.25
-person.2 13s 21 15 1.5 1.875 17.25 11.375
-person.2 14r 23 16 1.75 2 19.125 12
-person.2 14m 23 16 1.75 2 19.25 12.25
-person.2 16m 27 19 2.125 2.5 22.75 14.625
-person.2 16s 27 19 2.125 2.5 22.875 14.75
-person.2 17m 28 20 2.125 2.625 23.25 15.625
-person.2 20r 33 23 2.5 3 27.25 18.25
-person.2 21m 34 25 2.625 3.375 28.75 19.25
-person.2 22r 36 26 2.75 3.25 30 20
-person.2 24m 40 28 3.125 3.75 33.75 22
-photo.badge.plus d 21 16 1.5 1.875 18.125 13
-photo.badge.plus 11s 18 14 1.375 1.75 15 11.125
-photo.badge.plus 12r 19 15 1.5 1.75 16.375 12
-photo.badge.plus 12m 19 15 1.5 1.75 16.375 12.125
-photo.badge.plus 12.5s 20 16 1.5 2 17 12.625
-photo.badge.plus 13r 21 16 1.5 1.875 18.125 13
-photo.badge.plus 13m 21 16 1.625 1.75 17.75 12.5
-photo.badge.plus 13s 21 17 1.625 2 17.75 13.25
-photo.badge.plus 14r 22 17 1.75 2 19.125 13.25
-photo.badge.plus 14m 22 17 1.75 2 19.125 13.375
-photo.badge.plus 16m 25 21 2 2.625 21.75 16.75
-photo.badge.plus 16s 25 21 2 2.5 21.75 16.25
-photo.badge.plus 17m 27 22 2.125 2.625 23.125 17.125
-photo.badge.plus 20r 32 25 2.5 3 27.25 20
-photo.badge.plus 21m 33 27 2.625 3.25 28.625 21.125
-photo.badge.plus 22r 34 28 2.625 3.25 29.125 22
-photo.badge.plus 24m 38 30 3 3.75 32.75 24.125
-photo.fill d 18 14 1.5 1 15 12
-photo.fill 11s 16 13 1.375 1 12.75 10.125
-photo.fill 12r 17 13 1.5 1 13.875 10.875
-photo.fill 12m 17 13 1.5 1 13.875 11
-photo.fill 12.5s 18 14 1.5 1.125 14.5 11.625
-photo.fill 13r 18 14 1.5 1 15 12
-photo.fill 13m 19 14 1.625 1 15.125 11.125
-photo.fill 13s 19 14 1.625 1 15.125 11.25
-photo.fill 14r 20 15 1.75 1.125 16.125 11.875
-photo.fill 14m 20 15 1.75 1.125 16.25 12.125
-photo.fill 16m 23 18 2 1.375 18.5 14.625
-photo.fill 16s 23 18 2 1.375 18.625 14.75
-photo.fill 17m 24 19 2.125 1.5 19.75 15.5
-photo.fill 20r 29 21 2.5 1.625 23.125 17.25
-photo.fill 21m 30 24 2.625 2 24.375 20
-photo.fill 22r 31 24 2.75 1.875 25.375 19.875
-photo.fill 24m 34 26 3 2 27.75 21.125
-play.circle d 15 15 1 1 13 13
-play.circle 11s 14 14 1 1 11.25 11.25
-play.circle 12r 14 14 1 1 12 12
-play.circle 12m 15 15 1 1 12.125 12.125
-play.circle 12.5s 15 15 1.125 1.125 12.75 12.75
-play.circle 13r 15 15 1 1 13 13
-play.circle 13m 16 16 1.125 1.125 13.125 13.125
-play.circle 13s 16 16 1.125 1.125 13.25 13.25
-play.circle 14r 16 16 1.125 1.125 13.25 13.25
-play.circle 14m 17 17 1.25 1.25 14.125 14.125
-play.circle 16m 20 20 1.5 1.5 16.875 16.875
-play.circle 16s 20 20 1.375 1.375 16.375 16.375
-play.circle 17m 21 21 1.5 1.5 17.25 17.25
-play.circle 20r 23 23 1.625 1.625 19.25 19.25
-play.circle 21m 26 26 2 2 22 22
-play.circle 22r 26 26 1.875 1.875 22 22
-play.circle 24m 29 29 2.125 2.125 24.25 24.25
-play.fill d 12 13 1.5 1 9.5 11
-play.fill 11s 11 12 1.375 1 8.625 9.625
-play.fill 12r 11 12 1.5 1 8.75 9.875
-play.fill 12m 11 13 1.5 1 9.125 10.25
-play.fill 12.5s 12 13 1.5 1 9.75 10.125
-play.fill 13r 12 13 1.5 1 9.5 11
-play.fill 13m 12 14 1.625 1.125 9.875 11.125
-play.fill 13s 12 14 1.625 1.125 10.125 11.375
-play.fill 14r 13 14 1.75 1.25 10.25 11.5
-play.fill 14m 13 14 1.75 1.125 10.625 11.125
-play.fill 16m 15 17 2 1.375 12.125 13.625
-play.fill 16s 15 17 2 1.375 12.5 14
-play.fill 17m 16 18 2.125 1.5 12.875 14.5
-play.fill 20r 18 20 2.5 1.75 14.625 16.5
-play.fill 21m 19 22 2.625 1.875 15.875 17.875
-play.fill 22r 20 23 2.75 2 16.125 18.875
-play.fill 24m 22 25 3 2.125 18.125 20.375
-plus.square.fill d 15 14 1.5 1 12 12
-plus.square.fill 11s 14 13 1.5 1 11 10.125
-plus.square.fill 12r 14 13 1.5 1 10.875 10.875
-plus.square.fill 12m 14 13 1.5 1 11 11
-plus.square.fill 12.5s 15 14 1.5 1.125 11.5 11.625
-plus.square.fill 13r 15 14 1.5 1 12 12
-plus.square.fill 13m 15 14 1.5 1 11.125 11.125
-plus.square.fill 13s 15 14 1.5 1 11.25 11.25
-plus.square.fill 14r 16 15 1.625 1.125 11.875 11.875
-plus.square.fill 14m 16 15 1.625 1.125 12 12.125
-plus.square.fill 16m 19 18 2 1.375 14.625 14.625
-plus.square.fill 16s 19 18 2 1.375 14.75 14.75
-plus.square.fill 17m 20 19 2.125 1.5 15.5 15.5
-plus.square.fill 20r 23 21 2.5 1.625 18 17.25
-plus.square.fill 21m 25 24 2.625 2 19.125 20
-plus.square.fill 22r 25 24 2.625 1.875 19.125 19.875
-plus.square.fill 24m 28 26 3 2 21.875 21.125
-plus.square.on.square d 17 16 1.5 1 13.5 13.5
-plus.square.on.square 11s 15 14 1.375 1 11.875 11.75
-plus.square.on.square 12r 16 15 1.5 1 12.5 12.375
-plus.square.on.square 12m 16 15 1.5 1 12.75 12.625
-plus.square.on.square 12.5s 17 16 1.5 1.125 13.5 13.375
-plus.square.on.square 13r 17 16 1.5 1 13.5 13.5
-plus.square.on.square 13m 17 16 1.625 1.125 13.75 13.625
-plus.square.on.square 13s 17 16 1.5 1 13.25 13.125
-plus.square.on.square 14r 18 17 1.75 1.25 14.5 14.375
-plus.square.on.square 14m 18 17 1.625 1.125 14.125 14
-plus.square.on.square 16m 21 20 2 1.375 17 16.75
-plus.square.on.square 16s 22 21 2 1.5 17.25 17.875
-plus.square.on.square 17m 22 21 2 1.5 17.25 17.875
-plus.square.on.square 20r 26 24 2.5 1.75 20.75 20.5
-plus.square.on.square 21m 28 26 2.625 1.875 22.25 22
-plus.square.on.square 22r 28 27 2.625 1.875 22 22.5
-plus.square.on.square 24m 32 30 3 2.125 25.375 25.125
-power d 15 16 1 1 13 13.5
-power 11s 14 14 1 1 11.25 11.625
-power 12r 14 15 1 1 12 12.375
-power 12m 15 15 1 1 12.125 12.5
-power 12.5s 15 16 1.125 1.125 12.75 13.125
-power 13r 15 16 1 1 13 13.5
-power 13m 16 16 1.125 1.125 13.125 13.5
-power 13s 16 16 1.125 1.125 13.25 13.625
-power 14r 16 17 1.125 1.25 13.25 14.375
-power 14m 17 17 1.25 1.125 14.125 13.875
-power 16m 20 20 1.5 1.375 16.875 16.625
-power 16s 20 20 1.375 1.375 16.375 16.875
-power 17m 21 21 1.5 1.5 17.25 17.75
-power 20r 23 24 1.625 1.75 19.25 20.5
-power 21m 26 26 2 1.875 22 21.875
-power 22r 26 27 1.875 1.875 22 22.625
-power 24m 29 29 2.125 2 24.25 24.25
-puzzlepiece.extension d 19 15 1.5 1 16 12.5
-puzzlepiece.extension 11s 16 13 1.375 1 13.375 10.625
-puzzlepiece.extension 12r 17 14 1.5 1 14.375 11.375
-puzzlepiece.extension 12m 17 14 1.5 1 14.5 11.5
-puzzlepiece.extension 12.5s 18 15 1.5 1.125 15.25 12.125
-puzzlepiece.extension 13r 19 15 1.5 1 16 12.5
-puzzlepiece.extension 13m 19 15 1.625 1.125 15.75 12.5
-puzzlepiece.extension 13s 19 15 1.625 1.125 15.875 12.625
-puzzlepiece.extension 14r 20 16 1.75 1.25 16.75 13.25
-puzzlepiece.extension 14m 20 16 1.75 1.25 17 13.5
-puzzlepiece.extension 16m 23 19 2 1.375 19.375 15.375
-puzzlepiece.extension 16s 23 19 2 1.375 19.5 15.5
-puzzlepiece.extension 17m 25 20 2.125 1.5 20.625 16.25
-puzzlepiece.extension 20r 28 22 2.375 1.625 23.25 18.125
-puzzlepiece.extension 21m 30 25 2.625 2 25.375 20.875
-puzzlepiece.extension 22r 31 25 2.75 1.875 26.375 20.75
-puzzlepiece.extension 24m 34 27 2.875 2 28.25 22.25
-questionmark d 10 15 1.5 1 7 12.5
-questionmark 11s 10 13 1.5 1 7 10.25
-questionmark 12r 10 14 1.5 1 6.375 11.25
-questionmark 12m 10 14 1.5 1 6.625 11.25
-questionmark 12.5s 11 14 1.5 1.125 7.125 11.625
-questionmark 13r 10 15 1.5 1 7 12.5
-questionmark 13m 11 15 1.625 1.125 7.25 12.125
-questionmark 13s 11 15 1.625 1.125 7.375 12.125
-questionmark 14r 11 16 1.75 1.25 7.5 13.125
-questionmark 14m 11 16 1.625 1.25 7.125 13.125
-questionmark 16m 13 18 2 1.375 8.875 15
-questionmark 16s 14 18 2 1.375 9.125 15
-questionmark 17m 14 19 2.125 1.5 9.375 15.875
-questionmark 20r 16 22 2.5 1.625 10.625 17.875
-questionmark 21m 17 24 2.625 1.875 11.625 19.625
-questionmark 22r 17 25 2.625 1.875 11.125 20.5
-questionmark 24m 20 27 3 2.125 13.25 22.375
-rectangle.portrait d 14 16 1.5 1 11 14
-rectangle.portrait 11s 13 14 1.375 1 9.375 11.75
-rectangle.portrait 12r 13 15 1.5 1 9.875 12.625
-rectangle.portrait 12m 14 15 1.5 1 10.125 12.75
-rectangle.portrait 12.5s 14 16 1.5 1.125 10.625 13.375
-rectangle.portrait 13r 14 16 1.5 1 11 14
-rectangle.portrait 13m 14 16 1.5 1.125 10.25 13.75
-rectangle.portrait 13s 15 16 1.625 1 11.125 13.125
-rectangle.portrait 14r 15 17 1.75 1.125 11.5 14
-rectangle.portrait 14m 15 17 1.625 1.125 11 14.125
-rectangle.portrait 16m 18 20 2 1.375 13.5 17
-rectangle.portrait 16s 18 21 2 1.5 13.625 17.875
-rectangle.portrait 17m 19 21 2.125 1.5 14.25 18
-rectangle.portrait 20r 22 24 2.5 1.625 16.5 20.25
-rectangle.portrait 21m 23 27 2.625 2 17.625 23
-rectangle.portrait 22r 24 28 2.75 2 18.125 23.875
-rectangle.portrait 24m 27 30 3 2.125 20.125 25.375
-scope d 18 18 1 1 15.5 15.5
-scope 11s 16 16 1 1 13.25 13.25
-scope 12r 17 17 1 1 14.25 14.25
-scope 12m 17 17 1 1 14.375 14.375
-scope 12.5s 17 17 1.125 1.125 14.125 14.125
-scope 13r 18 18 1 1 15.5 15.5
-scope 13m 18 18 1.125 1.125 15.5 15.625
-scope 13s 18 18 1.125 1.125 15.625 15.625
-scope 14r 19 19 1.25 1.25 15.75 15.75
-scope 14m 19 19 1.25 1.25 15.875 15.875
-scope 16m 23 23 1.5 1.5 19.875 19.875
-scope 16s 23 23 1.5 1.5 20.125 20.125
-scope 17m 24 24 1.5 1.5 20.375 20.375
-scope 20r 27 27 1.75 1.75 22.875 22.875
-scope 21m 30 30 2 2 25.875 25.875
-scope 22r 31 31 2 2 26.875 27.125
-scope 24m 33 33 2.125 2.125 28.75 28.75
-scribble d 16 15 1 1.25 13.375 11.875
-scribble 11s 14 14 1 1.25 11.25 10.25
-scribble 12r 15 14 1.125 1.25 12 10.875
-scribble 12m 15 15 1.125 1.25 12.25 11
-scribble 12.5s 15 15 1 1.375 12.125 11.625
-scribble 13r 16 15 1 1.25 13.375 11.875
-scribble 13m 16 16 1.25 1.375 13.25 12
-scribble 13s 16 16 1.25 1.375 13.375 12.125
-scribble 14r 18 16 1.5 1.375 14.75 12
-scribble 14m 18 17 1.5 1.5 15 12.875
-scribble 16m 20 20 1.5 1.875 16.25 15.375
-scribble 16s 20 20 1.5 1.875 16.375 15.625
-scribble 17m 21 21 1.625 1.875 17.25 15.625
-scribble 20r 25 23 2 2 20.75 17.375
-scribble 21m 26 26 2 2.5 21.25 20
-scribble 22r 27 26 2.125 2.375 22 19.875
-scribble 24m 30 29 2.5 2.625 25 22
-scribble.variable d 16 16 1.125 1.25 13.75 12.375
-scribble.variable 11s 14 14 1 1.25 11.625 10.625
-scribble.variable 12r 15 15 1.125 1.125 12.5 11.375
-scribble.variable 12m 15 15 1.125 1.25 12.625 11.5
-scribble.variable 12.5s 16 16 1.125 1.375 13.25 12.125
-scribble.variable 13r 16 16 1.125 1.25 13.75 12.375
-scribble.variable 13m 16 16 1.125 1.375 13 12.375
-scribble.variable 13s 16 16 1.125 1.375 13.125 12.625
-scribble.variable 14r 18 17 1.375 1.5 14.625 13.125
-scribble.variable 14m 18 17 1.375 1.375 14.75 12.75
-scribble.variable 16m 21 20 1.75 1.625 17.5 15.375
-scribble.variable 16s 21 20 1.625 1.625 16.875 15.5
-scribble.variable 17m 22 21 1.75 1.75 17.75 16.25
-scribble.variable 20r 26 24 2.125 2.125 21.5 18.75
-scribble.variable 21m 27 26 2 2.25 22 20.125
-scribble.variable 22r 28 27 2.125 2.25 22.875 20.625
-scribble.variable 24m 30 29 2.25 2.5 25.25 22.125
-shield d 14 15 1.5 1 11 13
-shield 11s 13 13 1.5 1 10 11
-shield 12r 13 14 1.5 1 9.75 11.875
-shield 12m 13 14 1.5 1 10 12
-shield 12.5s 14 15 1.5 1.125 10.5 12.5
-shield 13r 14 15 1.5 1 11 13
-shield 13m 14 15 1.625 1 10.75 12.25
-shield 13s 14 15 1.5 1 10.125 12.25
-shield 14r 15 16 1.75 1.125 11.375 13.125
-shield 14m 15 16 1.625 1.125 10.875 13.25
-shield 16m 18 19 2 1.375 13.25 16
-shield 16s 18 19 2 1.375 13.375 16
-shield 17m 19 20 2.125 1.5 14.125 16.875
-shield 20r 22 23 2.5 1.625 16.25 19
-shield 21m 23 25 2.625 1.875 17.375 20.875
-shield 22r 23 26 2.625 1.875 17.125 21.75
-shield 24m 26 28 3 2 19.875 23.125
-shuffle d 18 14 1.625 1.125 14.625 11.5
-shuffle 11s 17 13 1.5 1 13.875 10.5
-shuffle 12r 17 13 1.5 1 13.5 10.625
-shuffle 12m 17 14 1.5 1 14 11.125
-shuffle 12.5s 18 14 1.5 1 14.875 11.25
-shuffle 13r 18 14 1.625 1.125 14.625 11.5
-shuffle 13m 19 14 1.625 1 15.125 11.25
-shuffle 13s 19 15 1.625 1.125 15.5 12.375
-shuffle 14r 19 15 1.625 1.25 15 12.375
-shuffle 14m 20 15 1.75 1.125 16.25 12.25
-shuffle 16m 23 18 2 1.375 18.625 14.75
-shuffle 16s 24 19 2.125 1.5 19.875 16
-shuffle 17m 24 19 2.125 1.5 19.75 15.75
-shuffle 20r 28 21 2.5 1.625 22.5 17
-shuffle 21m 30 24 2.625 1.875 24.375 19.375
-shuffle 22r 30 24 2.625 1.875 24 19.5
-shuffle 24m 34 27 3 2.125 27.875 22.125
-slider.horizontal.3 d 16 13 1.5 1 13 11
-slider.horizontal.3 11s 15 12 1.375 1 11.25 9.625
-slider.horizontal.3 12r 15 12 1.5 1 11.875 10
-slider.horizontal.3 12m 16 13 1.5 1 12.125 10.25
-slider.horizontal.3 12.5s 16 13 1.5 1 12.875 10.25
-slider.horizontal.3 13r 16 13 1.5 1 13 11
-slider.horizontal.3 13m 17 14 1.625 1.125 13.125 11.125
-slider.horizontal.3 13s 17 14 1.625 1.125 13.375 11.375
-slider.horizontal.3 14r 17 14 1.625 1.125 13.125 10.875
-slider.horizontal.3 14m 18 14 1.75 1.125 14.125 11.25
-slider.horizontal.3 16m 21 17 2 1.375 16.125 13.625
-slider.horizontal.3 16s 21 17 2 1.375 16.375 14
-slider.horizontal.3 17m 22 18 2.125 1.5 17.125 14.5
-slider.horizontal.3 20r 25 20 2.5 1.625 19.75 15.875
-slider.horizontal.3 21m 27 22 2.625 1.875 21.125 17.875
-slider.horizontal.3 22r 27 23 2.625 2 21 19
-slider.horizontal.3 24m 31 25 3 2.125 24.25 20.5
-smallcircle.filled.circle d 15 15 1 1 13 13
-smallcircle.filled.circle 11s 14 14 1 1 11.25 11.25
-smallcircle.filled.circle 12r 14 14 1 1 12 12
-smallcircle.filled.circle 12m 15 15 1 1 12.125 12.125
-smallcircle.filled.circle 12.5s 15 15 1.125 1.125 12.75 12.75
-smallcircle.filled.circle 13r 15 15 1 1 13 13
-smallcircle.filled.circle 13m 16 16 1.125 1.125 13.125 13.125
-smallcircle.filled.circle 13s 16 16 1.125 1.125 13.25 13.25
-smallcircle.filled.circle 14r 16 16 1.125 1.125 13.25 13.25
-smallcircle.filled.circle 14m 17 17 1.25 1.25 14.125 14.125
-smallcircle.filled.circle 16m 20 20 1.5 1.5 16.875 16.875
-smallcircle.filled.circle 16s 20 20 1.375 1.375 16.375 16.375
-smallcircle.filled.circle 17m 21 21 1.5 1.5 17.25 17.25
-smallcircle.filled.circle 20r 23 23 1.625 1.625 19.25 19.25
-smallcircle.filled.circle 21m 26 26 2 2 22 22
-smallcircle.filled.circle 22r 26 26 1.875 1.875 22 22
-smallcircle.filled.circle 24m 29 29 2.125 2.125 24.25 24.25
-sparkles d 15 17 1.5 1 12 14.5
-sparkles 11s 13 15 1.125 1 10.25 12.5
-sparkles 12r 13 16 1.125 1 10.125 13.375
-sparkles 12m 14 16 1.25 1 11 13.5
-sparkles 12.5s 14 17 1.125 1.125 10.875 14.125
-sparkles 13r 15 17 1.5 1 12 14.5
-sparkles 13m 15 17 1.25 1.125 12 14.625
-sparkles 13s 16 17 1.375 1.125 12.875 14.75
-sparkles 14r 16 18 1.375 1.125 12.75 14.875
-sparkles 14m 16 18 1.375 1.125 12.875 15
-sparkles 16m 18 21 1.625 1.375 14.75 18
-sparkles 16s 18 22 1.5 1.5 14.125 18.875
-sparkles 17m 19 23 1.625 1.5 14.875 19.125
-sparkles 20r 23 26 2 1.75 18.125 22.25
-sparkles 21m 24 28 2.125 1.875 19.25 23.625
-sparkles 22r 24 29 2.125 1.875 19.125 24.5
-sparkles 24m 28 31 2.5 2 22.75 26.25
-square.2.layers.3d.bottom.filled d 16 16 1.5 1 13 13.5
-square.2.layers.3d.bottom.filled 11s 15 14 1.5 1 12 11.75
-square.2.layers.3d.bottom.filled 12r 15 15 1.5 1 12 12.25
-square.2.layers.3d.bottom.filled 12m 16 15 1.5 1 12.125 12.5
-square.2.layers.3d.bottom.filled 12.5s 16 16 1.5 1.125 12.75 13.25
-square.2.layers.3d.bottom.filled 13r 16 16 1.5 1 13 13.5
-square.2.layers.3d.bottom.filled 13m 17 16 1.625 1.125 13.125 13.625
-square.2.layers.3d.bottom.filled 13s 17 16 1.625 1 13.25 13.125
-square.2.layers.3d.bottom.filled 14r 17 17 1.625 1.25 13.25 14.25
-square.2.layers.3d.bottom.filled 14m 18 17 1.75 1.125 14.25 13.875
-square.2.layers.3d.bottom.filled 16m 21 20 2 1.375 16.25 16.75
-square.2.layers.3d.bottom.filled 16s 21 20 2 1.375 16.375 17
-square.2.layers.3d.bottom.filled 17m 22 21 2.125 1.5 17.25 17.75
-square.2.layers.3d.bottom.filled 20r 25 24 2.5 1.75 20 20.375
-square.2.layers.3d.bottom.filled 21m 27 26 2.625 1.875 21.25 21.875
-square.2.layers.3d.bottom.filled 22r 27 27 2.625 1.875 21.25 22.5
-square.2.layers.3d.bottom.filled 24m 31 30 3 2.125 24.25 25
-square.2.layers.3d.top.filled d 16 16 1.5 1 13 13.5
-square.2.layers.3d.top.filled 11s 15 14 1.5 1 12 11.75
-square.2.layers.3d.top.filled 12r 15 15 1.5 1 12 12.25
-square.2.layers.3d.top.filled 12m 16 15 1.5 1 12.125 12.5
-square.2.layers.3d.top.filled 12.5s 16 16 1.5 1.125 12.75 13.25
-square.2.layers.3d.top.filled 13r 16 16 1.5 1 13 13.5
-square.2.layers.3d.top.filled 13m 17 16 1.625 1.125 13.125 13.625
-square.2.layers.3d.top.filled 13s 17 16 1.625 1 13.25 13.125
-square.2.layers.3d.top.filled 14r 17 17 1.625 1.25 13.25 14.25
-square.2.layers.3d.top.filled 14m 18 17 1.75 1.125 14.25 13.875
-square.2.layers.3d.top.filled 16m 21 20 2 1.375 16.25 16.75
-square.2.layers.3d.top.filled 16s 21 20 2 1.375 16.375 17
-square.2.layers.3d.top.filled 17m 22 21 2.125 1.5 17.25 17.75
-square.2.layers.3d.top.filled 20r 25 24 2.5 1.75 20 20.375
-square.2.layers.3d.top.filled 21m 27 26 2.625 1.875 21.25 21.875
-square.2.layers.3d.top.filled 22r 27 27 2.625 1.875 21.25 22.5
-square.2.layers.3d.top.filled 24m 31 30 3 2.125 24.25 25
-square.and.arrow.down d 15 17 1.5 1 11.5 13.75
-square.and.arrow.down 11s 13 15 1.375 1 9.875 11.75
-square.and.arrow.down 12r 14 16 1.5 1 10.5 12.625
-square.and.arrow.down 12m 14 16 1.5 1 10.625 12.75
-square.and.arrow.down 12.5s 15 17 1.5 1.125 11.25 13.375
-square.and.arrow.down 13r 15 17 1.5 1 11.5 13.75
-square.and.arrow.down 13m 15 17 1.625 1.125 11.5 13
-square.and.arrow.down 13s 15 18 1.625 1.125 11.625 13.875
-square.and.arrow.down 14r 16 18 1.75 1.125 12.125 14
-square.and.arrow.down 14m 16 19 1.75 1.25 12.375 14.75
-square.and.arrow.down 16m 19 22 2 1.375 14.125 16.875
-square.and.arrow.down 16s 19 22 2 1.375 14.375 17
-square.and.arrow.down 17m 19 23 2 1.5 14.25 18
-square.and.arrow.down 20r 23 26 2.5 1.625 17.375 20.25
-square.and.arrow.down 21m 24 29 2.625 2 18.625 22.875
-square.and.arrow.down 22r 25 29 2.75 1.875 19.125 23
-square.and.arrow.down 24m 28 32 3 2.125 21.25 25.375
-square.and.arrow.up d 15 18 1.5 1 11.5 14.5
-square.and.arrow.up 11s 13 16 1.375 1 9.875 12.5
-square.and.arrow.up 12r 14 17 1.5 1 10.5 13.25
-square.and.arrow.up 12m 14 17 1.5 1 10.625 13.5
-square.and.arrow.up 12.5s 15 18 1.5 1.125 11.25 14.25
-square.and.arrow.up 13r 15 18 1.5 1 11.5 14.5
-square.and.arrow.up 13m 15 18 1.625 1.125 11.5 14.625
-square.and.arrow.up 13s 15 18 1.625 1.125 11.625 14.75
-square.and.arrow.up 14r 16 19 1.75 1.25 12.125 15.375
-square.and.arrow.up 14m 16 19 1.75 1.25 12.375 14.875
-square.and.arrow.up 16m 19 23 2 1.5 14.125 18.625
-square.and.arrow.up 16s 19 23 2 1.375 14.375 18.125
-square.and.arrow.up 17m 19 24 2 1.5 14.25 19
-square.and.arrow.up 20r 23 27 2.5 1.75 17.375 22
-square.and.arrow.up 21m 24 30 2.625 2 18.625 24.25
-square.and.arrow.up 22r 25 30 2.75 1.875 19.125 24.125
-square.and.arrow.up 24m 28 33 3 2.125 21.25 26.875
-square.dashed d 15 14 1.5 1 12 12
-square.dashed 11s 14 13 1.5 1 11 10.125
-square.dashed 12r 14 13 1.5 1 10.875 10.875
-square.dashed 12m 14 13 1.5 1 11 11
-square.dashed 12.5s 15 14 1.5 1.125 11.5 11.625
-square.dashed 13r 15 14 1.5 1 12 12
-square.dashed 13m 15 14 1.5 1 11.125 11.125
-square.dashed 13s 15 14 1.5 1 11.25 11.25
-square.dashed 14r 16 15 1.625 1.125 11.875 11.875
-square.dashed 14m 16 15 1.625 1.125 12 12.125
-square.dashed 16m 19 18 2 1.375 14.625 14.625
-square.dashed 16s 19 18 2 1.375 14.75 14.75
-square.dashed 17m 20 19 2.125 1.5 15.5 15.5
-square.dashed 20r 23 21 2.5 1.625 18 17.25
-square.dashed 21m 25 24 2.625 2 19.125 20
-square.dashed 22r 25 24 2.625 1.875 19.125 19.875
-square.dashed 24m 28 26 3 2 21.875 21.125
-square.grid.3x3.square d 15 14 1.5 1 12 12
-square.grid.3x3.square 11s 14 13 1.5 1 11 10.125
-square.grid.3x3.square 12r 14 13 1.5 1 10.875 10.875
-square.grid.3x3.square 12m 14 13 1.5 1 11 11
-square.grid.3x3.square 12.5s 15 14 1.5 1.125 11.5 11.625
-square.grid.3x3.square 13r 15 14 1.5 1 12 12
-square.grid.3x3.square 13m 15 14 1.5 1 11.125 11.125
-square.grid.3x3.square 13s 15 14 1.5 1 11.25 11.25
-square.grid.3x3.square 14r 16 15 1.625 1.125 11.875 11.875
-square.grid.3x3.square 14m 16 15 1.625 1.125 12 12.125
-square.grid.3x3.square 16m 19 18 2 1.375 14.625 14.625
-square.grid.3x3.square 16s 19 18 2 1.375 14.75 14.75
-square.grid.3x3.square 17m 20 19 2.125 1.5 15.5 15.5
-square.grid.3x3.square 20r 23 21 2.5 1.625 18 17.25
-square.grid.3x3.square 21m 25 24 2.625 2 19.125 20
-square.grid.3x3.square 22r 25 24 2.625 1.875 19.125 19.875
-square.grid.3x3.square 24m 28 26 3 2 21.875 21.125
-square.slash d 15 17 0.875 1.875 13.25 13.25
-square.slash 11s 13 15 0.875 1.75 11.125 11.125
-square.slash 12r 14 16 0.875 1.75 12 12
-square.slash 12m 14 16 0.875 1.75 12.125 12.125
-square.slash 12.5s 15 17 1 2 12.625 12.625
-square.slash 13r 15 17 0.875 1.875 13.25 13.25
-square.slash 13m 15 17 0.875 1.875 12.375 12.375
-square.slash 13s 15 17 1 2 12.25 12.375
-square.slash 14r 16 18 1 2 14 13.25
-square.slash 14m 16 18 1 2 13.25 13.375
-square.slash 16m 19 22 1.25 2.625 16 16.75
-square.slash 16s 19 22 1.25 2.5 16.125 16.125
-square.slash 17m 20 23 1.25 2.625 17.125 17.125
-square.slash 20r 24 26 1.625 3 20.75 19.875
-square.slash 21m 24 28 1.625 3.25 20.125 21.125
-square.slash 22r 26 29 1.625 3.25 21.875 21.875
-square.slash 24m 29 32 2 3.75 24.875 24.125
-square.stack.3d.down.forward d 16 20 1.625 3.375 12.5 14.375
-square.stack.3d.down.forward 11s 15 17 1.5 2.625 11.75 12.5
-square.stack.3d.down.forward 12r 15 19 1.5 3.125 11.625 13.25
-square.stack.3d.down.forward 12m 15 18 1.5 2.875 11.875 13.5
-square.stack.3d.down.forward 12.5s 16 19 1.5 3 12.5 14.125
-square.stack.3d.down.forward 13r 16 20 1.625 3.375 12.5 14.375
-square.stack.3d.down.forward 13m 16 20 1.5 3.125 12.125 14.625
-square.stack.3d.down.forward 13s 17 20 1.625 3 13 14.75
-square.stack.3d.down.forward 14r 17 21 1.75 3.625 13.5 14.75
-square.stack.3d.down.forward 14m 17 21 1.625 3.375 13 15
-square.stack.3d.down.forward 16m 20 25 2 3.875 15.75 18
-square.stack.3d.down.forward 16s 20 25 2 3.875 16 19
-square.stack.3d.down.forward 17m 21 26 2.125 4.25 16.75 19
-square.stack.3d.down.forward 20r 25 30 2.5 5.125 19.25 21.375
-square.stack.3d.down.forward 21m 26 32 2.625 5.25 20.625 23.5
-square.stack.3d.down.forward 22r 27 34 2.75 5.75 21.125 24.375
-square.stack.3d.down.forward 24m 30 36 3 5.875 23.625 26.125
-square.stack.fill d 15 18 1.5 2 11.5 14.875
-square.stack.fill 11s 13 16 1.375 1.875 9.75 13
-square.stack.fill 12r 14 17 1.375 1.875 10.375 13.75
-square.stack.fill 12m 14 17 1.375 1.875 10.625 14
-square.stack.fill 12.5s 15 18 1.5 2.125 11 14.75
-square.stack.fill 13r 15 18 1.5 2 11.5 14.875
-square.stack.fill 13m 15 19 1.625 2.125 11.375 15.125
-square.stack.fill 13s 15 19 1.625 2.125 11.5 15.375
-square.stack.fill 14r 16 19 1.625 2.25 12.125 15.125
-square.stack.fill 14m 16 20 1.75 2.25 12.25 16.375
-square.stack.fill 16m 18 23 2 2.625 14 18.625
-square.stack.fill 16s 18 24 1.875 2.625 13.5 19.75
-square.stack.fill 17m 20 25 2.125 2.75 15.75 19.75
-square.stack.fill 20r 23 28 2.375 3.25 17.25 22.75
-square.stack.fill 21m 24 30 2.625 3.5 18.375 24.375
-square.stack.fill 22r 25 31 2.75 3.5 18.875 25.125
-square.stack.fill 24m 27 34 3 4 21 27.875
-sun.dust.fill d 19 18 1.625 1 15.125 15.5
-sun.dust.fill 11s 15 15 1.375 1 11.625 13
-sun.dust.fill 12r 17 17 1.5 1 13.625 14.125
-sun.dust.fill 12m 17 17 1.5 1 13.625 14.125
-sun.dust.fill 12.5s 17 17 1.375 1.125 13.5 14.75
-sun.dust.fill 13r 19 18 1.625 1 15.125 15.5
-sun.dust.fill 13m 19 18 1.625 1.125 15.625 15.375
-sun.dust.fill 13s 18 18 1.625 1.125 14.75 15.375
-sun.dust.fill 14r 20 19 1.75 1.25 15.875 16.5
-sun.dust.fill 14m 20 19 1.75 1.25 15.875 16.5
-sun.dust.fill 16m 23 22 2 1.375 18.125 18.875
-sun.dust.fill 16s 23 22 2 1.375 18.125 18.875
-sun.dust.fill 17m 24 23 2 1.5 19.25 20
-sun.dust.fill 20r 28 27 2.375 1.75 22.625 23.5
-sun.dust.fill 21m 30 29 2.625 1.875 24.625 24.75
-sun.dust.fill 22r 31 30 2.75 1.875 24.875 25.875
-sun.dust.fill 24m 34 33 3 2.125 27.125 28.25
-sun.max d 16 16 1 1 14 13.875
-sun.max 11s 15 15 1 1 12.25 12.25
-sun.max 12r 15 15 1 1 12.75 12.75
-sun.max 12m 16 16 1 1 13.125 13.125
-sun.max 12.5s 16 16 1 1 13.125 13.125
-sun.max 13r 16 16 1 1 14 13.875
-sun.max 13m 17 17 1.125 1.125 14.125 14.125
-sun.max 13s 17 17 1.125 1.125 14.5 14.5
-sun.max 14r 17 17 1.125 1.125 14.125 14.125
-sun.max 14m 18 18 1.25 1.25 15.25 15.25
-sun.max 16m 21 21 1.375 1.375 17.375 17.5
-sun.max 16s 21 21 1.375 1.375 17.75 17.75
-sun.max 17m 22 22 1.5 1.5 18.5 18.5
-sun.max 20r 25 25 1.75 1.75 21.125 21.25
-sun.max 21m 27 27 1.875 1.875 22.875 22.875
-sun.max 22r 28 28 2 1.875 24 23.375
-sun.max 24m 31 31 2.125 2.125 26.125 26.125
-sun.max.fill d 16 16 1 1 14 13.875
-sun.max.fill 11s 15 15 1 1 12.25 12.25
-sun.max.fill 12r 15 15 1 1 12.75 12.75
-sun.max.fill 12m 16 16 1 1 13.125 13.125
-sun.max.fill 12.5s 16 16 1 1 13.125 13.125
-sun.max.fill 13r 16 16 1 1 14 13.875
-sun.max.fill 13m 17 17 1.125 1.125 14.125 14.125
-sun.max.fill 13s 17 17 1.125 1.125 14.5 14.5
-sun.max.fill 14r 17 17 1.125 1.125 14.125 14.125
-sun.max.fill 14m 18 18 1.25 1.25 15.25 15.25
-sun.max.fill 16m 21 21 1.375 1.375 17.375 17.5
-sun.max.fill 16s 21 21 1.375 1.375 17.75 17.75
-sun.max.fill 17m 22 22 1.5 1.5 18.5 18.5
-sun.max.fill 20r 25 25 1.75 1.75 21.125 21.25
-sun.max.fill 21m 27 27 1.875 1.875 22.875 22.875
-sun.max.fill 22r 28 28 2 1.875 24 23.375
-sun.max.fill 24m 31 31 2.125 2.125 26.125 26.125
-sun.min d 15 15 1 1 13 13
-sun.min 11s 13 13 1 1 11 11
-sun.min 12r 14 14 1 1 11.625 11.625
-sun.min 12m 14 14 1 1 11.875 11.875
-sun.min 12.5s 15 15 1.125 1.125 12.5 12.5
-sun.min 13r 15 15 1 1 13 13
-sun.min 13m 15 15 1 1 12.125 12.125
-sun.min 13s 15 15 1 1 12.25 12.25
-sun.min 14r 16 16 1.125 1.125 12.875 12.875
-sun.min 14m 16 16 1.125 1.125 13 13
-sun.min 16m 19 19 1.375 1.375 15.75 15.75
-sun.min 16s 19 19 1.375 1.375 16 16
-sun.min 17m 20 20 1.5 1.5 16.75 16.75
-sun.min 20r 23 23 1.75 1.75 19.375 19.375
-sun.min 21m 25 25 1.875 1.875 20.625 20.625
-sun.min 22r 26 26 1.875 1.875 21.25 21.25
-sun.min 24m 28 28 2.125 2.125 23.625 23.625
-tennisball d 15 15 1 1 13 13
-tennisball 11s 14 14 1 1 11.25 11.25
-tennisball 12r 14 14 1 1 12 12
-tennisball 12m 15 15 1 1 12.125 12.125
-tennisball 12.5s 15 15 1.125 1.125 12.75 12.75
-tennisball 13r 15 15 1 1 13 13
-tennisball 13m 16 16 1.125 1.125 13.125 13.125
-tennisball 13s 16 16 1.125 1.125 13.25 13.25
-tennisball 14r 16 16 1.125 1.125 13.25 13.25
-tennisball 14m 17 17 1.25 1.25 14.125 14.125
-tennisball 16m 20 20 1.5 1.5 16.875 16.875
-tennisball 16s 20 20 1.375 1.375 16.375 16.375
-tennisball 17m 21 21 1.5 1.5 17.25 17.25
-tennisball 20r 23 23 1.625 1.625 19.25 19.25
-tennisball 21m 26 26 2 2 22 22
-tennisball 22r 26 26 1.875 1.875 22 22
-tennisball 24m 29 29 2.125 2.125 24.25 24.25
-trash d 15 17 1 1 12.5 14.375
-trash 11s 13 15 0.875 1 10.75 12.25
-trash 12r 14 16 0.875 1 11.375 13.125
-trash 12m 14 16 0.875 1 11.625 13.25
-trash 12.5s 15 16 1 1 13.125 13.25
-trash 13r 15 17 1 1 12.5 14.375
-trash 13m 15 17 1 1.125 12.5 14.375
-trash 13s 15 17 1 1.125 12.75 14.5
-trash 14r 16 18 1 1.25 13.25 15.25
-trash 14m 16 18 1 1.25 13.5 15.5
-trash 16m 18 21 1.25 1.375 15.5 17.625
-trash 16s 18 21 1.125 1.375 14.875 17.875
-trash 17m 20 22 1.375 1.5 17.125 18.75
-trash 20r 22 25 1.5 1.625 19 21
-trash 21m 24 28 1.625 2 20.25 23.875
-trash 22r 24 28 1.5 1.875 20.125 24
-trash 24m 28 31 1.875 2.125 23.875 26.5
-tray.and.arrow.down d 18 17 1.5 1 15 15
-tray.and.arrow.down 11s 16 15 1.375 1 12.875 12.75
-tray.and.arrow.down 12r 17 16 1.5 1 13.875 13.5
-tray.and.arrow.down 12m 17 16 1.5 1 14 13.75
-tray.and.arrow.down 12.5s 18 17 1.5 1.125 14.625 14.5
-tray.and.arrow.down 13r 18 17 1.5 1 15 15
-tray.and.arrow.down 13m 19 17 1.625 1.125 15.125 14
-tray.and.arrow.down 13s 19 18 1.625 1.125 15.25 15
-tray.and.arrow.down 14r 20 18 1.75 1.125 16.125 15
-tray.and.arrow.down 14m 20 18 1.75 1.125 16.25 15.25
-tray.and.arrow.down 16m 23 22 2 1.375 18.625 18.25
-tray.and.arrow.down 16s 23 22 2 1.375 18.75 18.5
-tray.and.arrow.down 17m 24 23 2.125 1.5 19.75 19.5
-tray.and.arrow.down 20r 29 26 2.5 1.75 23.125 22.5
-tray.and.arrow.down 21m 30 28 2.625 1.875 24.375 24
-tray.and.arrow.down 22r 31 29 2.75 1.875 25.375 24.75
-tray.and.arrow.down 24m 34 32 3 2.125 27.875 27.375
-wifi d 18 13 1.625 1.125 14.25 10.75
-wifi 11s 15 12 1 1 12.375 9.125
-wifi 12r 17 12 1.5 1 13.75 9.75
-wifi 12m 16 12 1.375 1 13.25 9.875
-wifi 12.5s 17 13 1.375 1.125 13.875 10.375
-wifi 13r 18 13 1.625 1.125 14.25 10.75
-wifi 13m 18 13 1.375 1.125 14.375 10.75
-wifi 13s 17 13 1.25 1 13.75 10.125
-wifi 14r 19 14 1.625 1.375 15.25 11.25
-wifi 14m 19 14 1.5 1.375 15.5 11.375
-wifi 16m 21 17 1.625 1.625 16.875 13.875
-wifi 16s 22 17 1.625 1.5 17.875 13.25
-wifi 17m 23 17 1.875 1.625 18.75 13.875
-wifi 20r 27 20 2.25 1.875 21.875 16.125
-wifi 21m 28 22 2.25 2.125 23.25 17.875
-wifi 22r 30 22 2.5 2 24 17.75
-wifi 24m 32 24 2.5 2.25 26.5 19.625
-wind d 16 14 1.5 1 13.5 11.375
-wind 11s 14 12 1.375 1 11.375 9.875
-wind 12r 15 13 1.5 1 12.125 10.5
-wind 12m 15 13 1.5 1 12.25 10.625
-wind 12.5s 16 14 1.5 1.125 12.875 11.25
-wind 13r 16 14 1.5 1 13.5 11.375
-wind 13m 16 14 1.5 1.125 12.5 11.5
-wind 13s 16 14 1.5 1.125 12.625 11.75
-wind 14r 18 15 1.75 1.25 14.125 12.125
-wind 14m 18 15 1.75 1.25 14.25 12.375
-wind 16m 20 18 1.875 1.5 16.375 14.875
-wind 16s 20 18 1.875 1.375 16.5 14.375
-wind 17m 21 19 2 1.5 17.375 15.125
-wind 20r 25 21 2.375 1.75 20.125 17.375
-wind 21m 26 23 2.5 1.875 21.375 18.625
-wind 22r 27 24 2.625 2 22.125 19.875
-wind 24m 30 26 2.875 2.125 24.5 21.25
-wind.snow d 16 15 1.5 1 13.5 12.5
-wind.snow 11s 14 13 1.375 1 11.375 10.875
-wind.snow 12r 15 14 1.5 1 12.125 11.375
-wind.snow 12m 15 14 1.5 1 12.25 11.625
-wind.snow 12.5s 16 15 1.5 1.125 12.875 12.375
-wind.snow 13r 16 15 1.5 1 13.5 12.5
-wind.snow 13m 16 15 1.5 1.125 12.5 12.625
-wind.snow 13s 16 15 1.5 1 12.625 12.125
-wind.snow 14r 18 16 1.75 1.25 14.125 13.375
-wind.snow 14m 18 16 1.75 1.125 14.25 12.875
-wind.snow 16m 20 19 1.875 1.375 16.375 15.5
-wind.snow 16s 20 19 1.875 1.375 16.5 15.75
-wind.snow 17m 21 20 2 1.5 17.375 16.5
-wind.snow 20r 25 22 2.375 1.625 20.125 18.25
-wind.snow 21m 26 25 2.5 1.875 21.375 20.375
-wind.snow 22r 27 25 2.625 1.875 22.125 20.875
-wind.snow 24m 30 28 2.875 2.125 24.5 23.25
-wrench.and.screwdriver d 19 18 1.625 1.25 15.5 15.375
-wrench.and.screwdriver 11s 16 16 1.25 1.125 13.125 12.875
-wrench.and.screwdriver 12r 17 17 1.375 1.25 14 13.875
-wrench.and.screwdriver 12m 18 17 1.5 1.125 14.875 14
-wrench.and.screwdriver 12.5s 18 18 1.625 1.25 14.75 14.625
-wrench.and.screwdriver 13r 19 18 1.625 1.25 15.5 15.375
-wrench.and.screwdriver 13m 19 18 1.625 1.375 15.25 15
-wrench.and.screwdriver 13s 19 18 1.625 1.25 15.375 15.25
-wrench.and.screwdriver 14r 20 19 1.75 1.5 16.25 15.25
-wrench.and.screwdriver 14m 21 19 1.875 1.5 17.25 15.375
-wrench.and.screwdriver 16m 23 23 2 1.75 18.875 19.375
-wrench.and.screwdriver 16s 23 23 1.875 1.75 19 19.5
-wrench.and.screwdriver 17m 25 24 2 1.75 20 19.75
-wrench.and.screwdriver 20r 29 27 2.375 2.125 23.375 22.25
-wrench.and.screwdriver 21m 30 30 2.625 2.375 24.625 25
-wrench.and.screwdriver 22r 31 31 2.625 2.25 24.875 25.375
-wrench.and.screwdriver 24m 35 33 2.875 2.5 28.25 27
-xmark.circle.fill d 15 15 1 1 13 13
-xmark.circle.fill 11s 14 14 1 1 11.25 11.25
-xmark.circle.fill 12r 14 14 1 1 12 12
-xmark.circle.fill 12m 15 15 1 1 12.125 12.125
-xmark.circle.fill 12.5s 15 15 1.125 1.125 12.75 12.75
-xmark.circle.fill 13r 15 15 1 1 13 13
-xmark.circle.fill 13m 16 16 1.125 1.125 13.125 13.125
-xmark.circle.fill 13s 16 16 1.125 1.125 13.25 13.25
-xmark.circle.fill 14r 16 16 1.125 1.125 13.25 13.25
-xmark.circle.fill 14m 17 17 1.25 1.25 14.125 14.125
-xmark.circle.fill 16m 20 20 1.5 1.5 16.875 16.875
-xmark.circle.fill 16s 20 20 1.375 1.375 16.375 16.375
-xmark.circle.fill 17m 21 21 1.5 1.5 17.25 17.25
-xmark.circle.fill 20r 23 23 1.625 1.625 19.25 19.25
-xmark.circle.fill 21m 26 26 2 2 22 22
-xmark.circle.fill 22r 26 26 1.875 1.875 22 22
-xmark.circle.fill 24m 29 29 2.125 2.125 24.25 24.25
+ant d 14 18 1.5 1 10.875 15.5 0 4 14 9
+ant 11s 13 16 1.25 1 9.5 13.25 0 3.5 13 8
+ant 12r 13 16 1.375 1 9.875 14 0 3.5 13 8.5
+ant 12m 14 17 1.5 1 10.875 14.25 0 3.5 13.5 8.5
+ant 12.5s 14 18 1.5 1.125 10.75 15 0 4 14 9
+ant 13r 14 18 1.5 1 10.875 15.5 0 4 14 9
+ant 13m 15 18 1.5 1.125 11 15.5 0 4 14.5 9
+ant 13s 15 18 1.5 1.125 11.125 15.625 0 4 14.5 9
+ant 14r 15 19 1.625 1.25 11.5 16.375 0 4 15 10
+ant 14m 15 19 1.5 1.25 11.125 15.75 0 4 15 10
+ant 16m 18 22 2 1.375 13.375 19 0 5 18 11.5
+ant 16s 18 23 2 1.5 13.625 20.125 0 5 18 11.5
+ant 17m 19 24 2.125 1.5 14.25 20.25 0 5.5 18.5 12
+ant 20r 22 27 2.5 1.75 16.375 23.375 0 6 22 14
+ant 21m 23 29 2.625 1.875 17.625 25 0 7 23 15
+ant 22r 24 30 2.75 1.875 18 25.75 0 7 23.5 15.5
+ant 24m 27 33 3 2.125 20.875 28.5 0 7.5 26.5 17
+apple.intelligence d 17 17 1.125 1 14.75 14.5 0 3 17 9
+apple.intelligence 11s 15 15 0.875 1 12.625 12.375 0 3 15 8
+apple.intelligence 12r 16 16 1 1 13.5 13.125 0 3 16 8.5
+apple.intelligence 12m 16 16 1 1 13.625 13.375 0 3 16 8.5
+apple.intelligence 12.5s 17 16 1 1 14.375 13.25 0 3.5 17 9
+apple.intelligence 13r 17 17 1.125 1 14.75 14.5 0 3 17 9
+apple.intelligence 13m 18 17 1 1.125 15.75 14.375 0 3.5 17.5 9
+apple.intelligence 13s 18 17 1 1.125 15.875 14.5 0 3.5 17.5 9
+apple.intelligence 14r 18 18 1.125 1.25 15.75 15.375 0 3.5 18 10
+apple.intelligence 14m 19 18 1.125 1.25 15.875 15.5 0 3.5 18.5 10
+apple.intelligence 16m 21 21 1.375 1.375 18 17.75 0 4.5 21 11.5
+apple.intelligence 16s 21 21 1.375 1.375 18.25 17.875 0 4.5 21 11.5
+apple.intelligence 17m 22 22 1.5 1.5 18.375 18.875 0 4.5 22 12
+apple.intelligence 20r 26 25 1.625 1.625 22.375 21.125 0 5 26 14
+apple.intelligence 21m 28 28 1.75 2 23.75 24 0 5.5 27.5 15
+apple.intelligence 22r 29 29 1.875 2 24.625 24.875 0 5.5 28.5 15.5
+apple.intelligence 24m 31 31 2.125 2.125 26.25 26.625 0 6 31 17
+arrow.counterclockwise d 14 16 1 1 11.5 13.875 0 2.5 13.5 9
+arrow.counterclockwise 11s 12 14 1 1 9.75 11.75 0 2.5 12 8
+arrow.counterclockwise 12r 13 15 1 1 10.375 12.625 0 2.5 12.5 8.5
+arrow.counterclockwise 12m 13 15 1 1 10.5 12.75 0 2.5 12.5 8.5
+arrow.counterclockwise 12.5s 13 16 1 1.125 10.25 13.375 0 2.5 13 9
+arrow.counterclockwise 13r 14 16 1 1 11.5 13.875 0 2.5 13.5 9
+arrow.counterclockwise 13m 14 16 1.125 1 11.375 13.125 0 2.5 13.5 9
+arrow.counterclockwise 13s 14 16 1.125 1 11.5 13.25 0 2.5 13.5 9
+arrow.counterclockwise 14r 15 17 1.25 1.125 12.125 14 0 2.5 14.5 10
+arrow.counterclockwise 14m 15 17 1.25 1.125 12.25 14.125 0 2.5 14.5 10
+arrow.counterclockwise 16m 17 20 1.375 1.375 14 17 0 3.5 17 11.5
+arrow.counterclockwise 16s 18 21 1.5 1.5 14.875 17.875 0 3.5 17.5 11.5
+arrow.counterclockwise 17m 18 22 1.5 1.5 14.875 18.125 0 3.5 18 12
+arrow.counterclockwise 20r 21 24 1.75 1.625 17.25 20.25 0 4 20.5 14
+arrow.counterclockwise 21m 23 27 1.875 1.875 18.375 22.25 0 4.5 22.5 15
+arrow.counterclockwise 22r 23 28 1.875 2 19 23.875 0 4.5 23 15.5
+arrow.counterclockwise 24m 25 30 2 2.125 20.25 25.5 0 5 25 17
+arrow.down d 13 14 1.5 1 10 12 0 2.5 13 9
+arrow.down 11s 12 13 1.375 1 8.5 10.25 0 2 11.5 8
+arrow.down 12r 12 14 1.5 1 8.875 11.125 0 2.5 12 8.5
+arrow.down 12m 13 14 1.5 1 9.125 11.125 0 2.5 12.5 8.5
+arrow.down 12.5s 13 14 1.5 1.125 9.625 11.625 0 2.5 13 9
+arrow.down 13r 13 14 1.5 1 10 12 0 2.5 13 9
+arrow.down 13m 13 15 1.5 1.125 9.125 12.125 0 2.5 13 9
+arrow.down 13s 13 15 1.5 1.125 9.25 12.125 0 2.5 13 9
+arrow.down 14r 14 15 1.75 1.125 10.375 12.25 0 2.5 13.5 10
+arrow.down 14m 14 15 1.625 1.125 9.875 12.25 0 2.5 14 10
+arrow.down 16m 17 18 2 1.375 12.125 14.875 0 3.5 16.5 11.5
+arrow.down 16s 17 18 2 1.375 12.375 14.875 0 3.5 16.5 11.5
+arrow.down 17m 17 19 2 1.5 12.125 15.75 0 3.5 17 12
+arrow.down 20r 20 22 2.5 1.75 14.875 18.5 0 3.5 20 14
+arrow.down 21m 21 24 2.5 1.875 15.125 19.5 0 4.5 21 15
+arrow.down 22r 22 25 2.75 1.875 16.375 20.375 0 4.5 21.5 15.5
+arrow.down 24m 25 27 3 2.125 18.125 22.25 0 4.5 24.5 17
+arrow.down.circle d 15 15 1 1 13 13 0 3 15 9
+arrow.down.circle 11s 14 14 1 1 11.25 11.25 0 2.5 13.5 8
+arrow.down.circle 12r 14 14 1 1 12 12 0 2.5 14 8.5
+arrow.down.circle 12m 15 15 1 1 12.125 12.125 0 3 14.5 8.5
+arrow.down.circle 12.5s 15 15 1.125 1.125 12.75 12.75 0 3 15 9
+arrow.down.circle 13r 15 15 1 1 13 13 0 3 15 9
+arrow.down.circle 13m 16 16 1.125 1.125 13.125 13.125 0 3 15.5 9
+arrow.down.circle 13s 16 16 1.125 1.125 13.25 13.25 0 3 15.5 9
+arrow.down.circle 14r 16 16 1.125 1.125 13.25 13.25 0 3 16 10
+arrow.down.circle 14m 17 17 1.25 1.25 14.125 14.125 0 3 16.5 10
+arrow.down.circle 16m 20 20 1.5 1.5 16.875 16.875 0 4 19.5 11.5
+arrow.down.circle 16s 20 20 1.375 1.375 16.375 16.375 0 4 19.5 11.5
+arrow.down.circle 17m 21 21 1.5 1.5 17.25 17.25 0 4 20.5 12
+arrow.down.circle 20r 23 23 1.625 1.625 19.25 19.25 0 4.5 23 14
+arrow.down.circle 21m 26 26 2 2 22 22 0 5 25.5 15
+arrow.down.circle 22r 26 26 1.875 1.875 22 22 0 5 26 15.5
+arrow.down.circle 24m 29 29 2.125 2.125 24.25 24.25 0 5.5 28.5 17
+arrow.down.left d 13 12 1.5 1 9.375 9.375 0 1 12.5 9
+arrow.down.left 11s 12 11 1.5 1 9 8.25 0 1.5 11.5 8
+arrow.down.left 12r 12 11 1.5 1 8.75 8.625 0 1 12 8.5
+arrow.down.left 12m 12 11 1.5 1 8.875 8.875 0 1 12 8.5
+arrow.down.left 12.5s 13 12 1.5 1.125 9.375 9.375 0 1.5 12.5 9
+arrow.down.left 13r 13 12 1.5 1 9.375 9.375 0 1 12.5 9
+arrow.down.left 13m 13 12 1.625 1.125 9.625 9.625 0 1 13 9
+arrow.down.left 13s 13 12 1.625 1 9.75 9 0 1.5 13 9
+arrow.down.left 14r 14 13 1.75 1.25 10.125 10.125 0 1 13.5 10
+arrow.down.left 14m 14 13 1.75 1.25 10.375 10.375 0 1 13.5 10
+arrow.down.left 16m 16 15 2 1.375 11.875 11.75 0 2 16 11.5
+arrow.down.left 16s 17 16 2.125 1.5 12.75 12.75 0 2 16.5 11.5
+arrow.down.left 17m 17 16 2.125 1.5 12.625 12.5 0 2 17 12
+arrow.down.left 20r 20 18 2.5 1.625 14.5 13.75 0 1.5 20 14
+arrow.down.left 21m 21 20 2.625 1.875 15.5 15.5 0 2.5 21 15
+arrow.down.left 22r 21 20 2.625 1.875 15.125 15.875 0 2 21 15.5
+arrow.down.left 24m 24 22 3 2 17.75 17 0 2.5 24 17
+arrow.down.right d 13 12 1.5 1 9.5 9.375 0 1 12.5 9
+arrow.down.right 11s 12 11 1.375 1 9.125 8.25 0 1.5 11.5 8
+arrow.down.right 12r 12 11 1.5 1 8.75 8.625 0 1 12 8.5
+arrow.down.right 12m 12 11 1.375 1 9 8.875 0 1 12 8.5
+arrow.down.right 12.5s 13 12 1.5 1.125 9.5 9.375 0 1.5 12.5 9
+arrow.down.right 13r 13 12 1.5 1 9.5 9.375 0 1 12.5 9
+arrow.down.right 13m 13 12 1.5 1.125 9.75 9.625 0 1 13 9
+arrow.down.right 13s 13 12 1.625 1 9.75 9 0 1.5 13 9
+arrow.down.right 14r 14 13 1.625 1.25 10.25 10.125 0 1 13.5 10
+arrow.down.right 14m 14 13 1.625 1.25 10.5 10.375 0 1 13.5 10
+arrow.down.right 16m 16 15 2 1.375 11.875 11.75 0 2 16 11.5
+arrow.down.right 16s 17 16 2.125 1.5 12.75 12.75 0 2 16.5 11.5
+arrow.down.right 17m 17 16 2.125 1.5 12.5 12.5 0 2 17 12
+arrow.down.right 20r 20 18 2.375 1.625 14.625 13.75 0 1.5 20 14
+arrow.down.right 21m 21 20 2.625 1.875 15.5 15.5 0 2.5 21 15
+arrow.down.right 22r 21 20 2.5 1.875 15.25 15.875 0 2 21 15.5
+arrow.down.right 24m 24 22 3 2 17.75 17 0 2.5 24 17
+arrow.down.right.and.arrow.up.left d 16 15 1.5 1 12.5 12.5 0 2.5 15.5 9
+arrow.down.right.and.arrow.up.left 11s 14 13 1.375 1 10.375 10.5 0 2.5 13.5 8
+arrow.down.right.and.arrow.up.left 12r 15 14 1.5 1 11.25 11.25 0 2.5 14.5 8.5
+arrow.down.right.and.arrow.up.left 12m 15 14 1.5 1 11.25 11.375 0 2.5 14.5 8.5
+arrow.down.right.and.arrow.up.left 12.5s 15 14 1.5 1 11.875 11.125 0 2.5 15 9
+arrow.down.right.and.arrow.up.left 13r 16 15 1.5 1 12.5 12.5 0 2.5 15.5 9
+arrow.down.right.and.arrow.up.left 13m 16 15 1.625 1.125 12.25 12.25 0 2.5 15.5 9
+arrow.down.right.and.arrow.up.left 13s 16 15 1.625 1.125 12.25 12.375 0 2.5 15.5 9
+arrow.down.right.and.arrow.up.left 14r 17 16 1.75 1.25 13.125 13.125 0 2.5 16.5 10
+arrow.down.right.and.arrow.up.left 14m 17 16 1.75 1.25 13.125 13.25 0 2.5 16.5 10
+arrow.down.right.and.arrow.up.left 16m 20 19 2 1.5 15 15.875 0 3.5 19.5 11.5
+arrow.down.right.and.arrow.up.left 16s 20 19 2 1.5 15.125 16 0 3.5 19.5 11.5
+arrow.down.right.and.arrow.up.left 17m 20 19 2 1.5 15.25 16 0 3.5 20 12
+arrow.down.right.and.arrow.up.left 20r 24 22 2.5 1.625 18.625 17.875 0 4 24 14
+arrow.down.right.and.arrow.up.left 21m 25 24 2.625 1.875 19.75 19.75 0 4.5 25 15
+arrow.down.right.and.arrow.up.left 22r 26 25 2.75 1.875 20.5 20.5 0 4.5 25.5 15.5
+arrow.down.right.and.arrow.up.left 24m 29 27 3 2.125 22.5 22.625 0 5 29 17
+arrow.down.to.line d 13 16 1.5 1 10 13.5 0 3 13 9
+arrow.down.to.line 11s 12 14 1.375 1 8.5 11.625 0 3 11.5 8
+arrow.down.to.line 12r 12 15 1.5 1 8.875 12.125 0 3 12 8.5
+arrow.down.to.line 12m 13 15 1.5 1 9.125 12.375 0 3 12.5 8.5
+arrow.down.to.line 12.5s 13 16 1.5 1.125 9.625 13.125 0 3 13 9
+arrow.down.to.line 13r 13 16 1.5 1 10 13.5 0 3 13 9
+arrow.down.to.line 13m 13 16 1.5 1.125 9.125 13.5 0 3 13 9
+arrow.down.to.line 13s 13 16 1.5 1.125 9.25 13.625 0 3 13 9
+arrow.down.to.line 14r 14 17 1.75 1.25 10.375 14.125 0 3 13.5 10
+arrow.down.to.line 14m 14 17 1.625 1.25 9.875 14.5 0 3.5 14 10
+arrow.down.to.line 16m 17 20 2 1.375 12.125 16.5 0 4 16.5 11.5
+arrow.down.to.line 16s 17 20 2 1.375 12.375 16.875 0 4.5 16.5 11.5
+arrow.down.to.line 17m 17 21 2 1.5 12.125 17.625 0 4.5 17 12
+arrow.down.to.line 20r 20 24 2.5 1.75 14.875 20.25 0 4.5 20 14
+arrow.down.to.line 21m 21 26 2.5 1.875 15.125 21.75 0 5.5 21 15
+arrow.down.to.line 22r 22 27 2.75 2 16.375 23 0 5.5 21.5 15.5
+arrow.down.to.line 24m 25 29 3 2 18.125 24 0 6 24.5 17
+arrow.left d 15 12 1.5 1 12 10 0 1 15 9
+arrow.left 11s 14 11 1.375 1 10.375 8.5 0 1.5 13.5 8
+arrow.left 12r 14 11 1.5 1 10.875 8.875 0 1 14 8.5
+arrow.left 12m 15 12 1.5 1 11.125 9.125 0 1.5 14.5 8.5
+arrow.left 12.5s 15 12 1.5 1.125 11.75 9.625 0 1.5 15 9
+arrow.left 13r 15 12 1.5 1 12 10 0 1 15 9
+arrow.left 13m 15 12 1.5 1 11.25 9.125 0 1.5 15 9
+arrow.left 13s 16 12 1.625 1 12.25 9.25 0 1.5 15.5 9
+arrow.left 14r 16 13 1.625 1.25 12 10.375 0 1 16 10
+arrow.left 14m 16 13 1.625 1.125 12.25 9.875 0 1.5 16 10
+arrow.left 16m 19 16 2 1.5 14.75 12.875 0 2 19 11.5
+arrow.left 16s 19 16 2 1.375 15 12.375 0 2 19 11.5
+arrow.left 17m 20 16 2.125 1.5 15.75 12.875 0 2 20 12
+arrow.left 20r 24 18 2.5 1.625 18.125 14.125 0 2 23.5 14
+arrow.left 21m 25 20 2.625 1.875 19.375 15.875 0 2.5 24.5 15
+arrow.left 22r 25 21 2.625 1.875 19.25 16.375 0 2.5 25 15.5
+arrow.left 24m 29 23 3 2.125 22.125 18.25 0 2.5 28.5 17
+arrow.left.and.right.righttriangle.left.righttriangle.right d 18 16 1.5 1 15 13.875 0 2 18 9
+arrow.left.and.right.righttriangle.left.righttriangle.right 11s 17 15 1.5 1 14 12.25 0 2.5 16.5 8
+arrow.left.and.right.righttriangle.left.righttriangle.right 12r 17 15 1.5 1 13.75 12.75 0 2 17 8.5
+arrow.left.and.right.righttriangle.left.righttriangle.right 12m 18 16 1.5 1 14.125 13.125 0 2.5 17.5 8.5
+arrow.left.and.right.righttriangle.left.righttriangle.right 12.5s 19 17 1.5 1.125 15 13.875 0 2.5 18.5 9
+arrow.left.and.right.righttriangle.left.righttriangle.right 13r 18 16 1.5 1 15 13.875 0 2 18 9
+arrow.left.and.right.righttriangle.left.righttriangle.right 13m 19 17 1.625 1.125 15.375 14.25 0 2.5 18.5 9
+arrow.left.and.right.righttriangle.left.righttriangle.right 13s 19 17 1.625 1.125 15.625 14.5 0 2.5 19 9
+arrow.left.and.right.righttriangle.left.righttriangle.right 14r 20 18 1.75 1.25 16 14.875 0 2.5 19.5 10
+arrow.left.and.right.righttriangle.left.righttriangle.right 14m 20 18 1.75 1.25 16.5 15.25 0 2.5 19.5 10
+arrow.left.and.right.righttriangle.left.righttriangle.right 16m 23 21 2 1.375 18.875 17.5 0 3 23 11.5
+arrow.left.and.right.righttriangle.left.righttriangle.right 16s 24 21 2 1.375 19.25 17.875 0 3.5 23.5 11.5
+arrow.left.and.right.righttriangle.left.righttriangle.right 17m 24 22 2 1.5 19.25 18.625 0 3.5 24 12
+arrow.left.and.right.righttriangle.left.righttriangle.right 20r 28 25 2.5 1.75 22.875 21.25 0 3.5 28 14
+arrow.left.and.right.righttriangle.left.righttriangle.right 21m 30 28 2.625 2 24.75 23.625 0 4 30 15
+arrow.left.and.right.righttriangle.left.righttriangle.right 22r 31 28 2.75 1.875 25.25 23.375 0 4 30.5 15.5
+arrow.left.and.right.righttriangle.left.righttriangle.right 24m 35 31 3 2.125 28.25 26.25 0 4.5 34.5 17
+arrow.right d 15 12 1.5 1 12 10 0 1 15 9
+arrow.right 11s 14 11 1.375 1 10.375 8.5 0 1.5 13.5 8
+arrow.right 12r 14 11 1.5 1 10.875 8.875 0 1 14 8.5
+arrow.right 12m 15 12 1.5 1 11.125 9.125 0 1.5 14.5 8.5
+arrow.right 12.5s 15 12 1.5 1.125 11.75 9.625 0 1.5 15 9
+arrow.right 13r 15 12 1.5 1 12 10 0 1 15 9
+arrow.right 13m 15 12 1.5 1 11.25 9.125 0 1.5 15 9
+arrow.right 13s 16 12 1.625 1 12.25 9.25 0 1.5 15.5 9
+arrow.right 14r 16 13 1.625 1.25 12 10.375 0 1 16 10
+arrow.right 14m 16 13 1.625 1.125 12.25 9.875 0 1.5 16 10
+arrow.right 16m 19 16 2 1.5 14.75 12.875 0 2 19 11.5
+arrow.right 16s 19 16 2 1.375 15 12.375 0 2 19 11.5
+arrow.right 17m 20 16 2.125 1.5 15.75 12.875 0 2 20 12
+arrow.right 20r 24 18 2.5 1.625 18.125 14.125 0 2 23.5 14
+arrow.right 21m 25 20 2.625 1.875 19.375 15.875 0 2.5 24.5 15
+arrow.right 22r 25 21 2.625 1.875 19.25 16.375 0 2.5 25 15.5
+arrow.right 24m 29 23 3 2.125 22.125 18.25 0 2.5 28.5 17
+arrow.triangle.2.circlepath d 16 15 0.125 1 15.75 13 0.5 3 15 9
+arrow.triangle.2.circlepath 11s 14 14 0.125 1 13.25 11.25 0 2.5 13.5 8
+arrow.triangle.2.circlepath 12r 15 14 0.125 1 14.375 12 0 2.5 15 8.5
+arrow.triangle.2.circlepath 12m 15 15 0.125 1 14.375 12.125 0 3 15 8.5
+arrow.triangle.2.circlepath 12.5s 16 15 0.125 1.125 15.125 12.75 0 3 15.5 9
+arrow.triangle.2.circlepath 13r 16 15 0.125 1 15.75 13 0.5 3 15 9
+arrow.triangle.2.circlepath 13m 16 16 0.125 1.125 15.625 13.125 0 3 16 9
+arrow.triangle.2.circlepath 13s 16 16 0.125 1.125 15.75 13.25 0 3 16 9
+arrow.triangle.2.circlepath 14r 17 16 0.125 1.125 16.75 13.25 0.5 3 16 10
+arrow.triangle.2.circlepath 14m 18 17 0.125 1.25 16.875 14.125 0 3 17.5 10
+arrow.triangle.2.circlepath 16m 20 20 0.125 1.5 19.25 16.875 0.5 4 18.5 11.5
+arrow.triangle.2.circlepath 16s 20 20 0.125 1.375 19.375 16.375 0 4 20 11.5
+arrow.triangle.2.circlepath 17m 21 21 0.125 1.5 20.5 17.25 0.5 4 20 12
+arrow.triangle.2.circlepath 20r 25 23 0.125 1.625 23.875 19.25 0.5 4.5 23.5 14
+arrow.triangle.2.circlepath 21m 26 26 0.125 2 25.25 22 0.5 5 25 15
+arrow.triangle.2.circlepath 22r 27 26 0.125 1.875 26.375 22 0.5 5 26 15.5
+arrow.triangle.2.circlepath 24m 30 29 0.125 2.125 28.875 24.25 0.5 5.5 28.5 17
+arrow.triangle.merge d 11 15 1.5 1 8 12.5 0 2.5 11 9
+arrow.triangle.merge 11s 10 14 1.375 1 6.75 11.125 0 2.5 10 8
+arrow.triangle.merge 12r 11 14 1.5 1 7 11.5 0 2.5 10.5 8.5
+arrow.triangle.merge 12m 11 14 1.5 1 7.25 11.875 0 2.5 10.5 8.5
+arrow.triangle.merge 12.5s 11 15 1.5 1.125 7.75 12.625 0 3 11 9
+arrow.triangle.merge 13r 11 15 1.5 1 8 12.5 0 2.5 11 9
+arrow.triangle.merge 13m 11 15 1.5 1 7.25 12.125 0 3 11 9
+arrow.triangle.merge 13s 11 16 1.5 1.125 7.375 13.125 0 3 11 9
+arrow.triangle.merge 14r 12 16 1.75 1.25 8.25 13.375 0 2.5 11.5 10
+arrow.triangle.merge 14m 12 16 1.75 1.125 8.5 13.125 0 3 11.5 10
+arrow.triangle.merge 16m 14 19 2 1.375 9.625 15.875 0 3.5 14 11.5
+arrow.triangle.merge 16s 14 20 2 1.375 9.875 16.25 0 4 14 11.5
+arrow.triangle.merge 17m 15 20 2.125 1.5 10.25 16.875 0 4 14.5 12
+arrow.triangle.merge 20r 17 23 2.5 1.75 11.75 19.125 0 4 17 14
+arrow.triangle.merge 21m 18 25 2.625 1.875 12.625 20.75 0 5 18 15
+arrow.triangle.merge 22r 18 26 2.625 2 12.125 21.75 0 4.5 18 15.5
+arrow.triangle.merge 24m 21 28 3 2 14.5 23 0 5.5 20.5 17
+arrow.up d 13 14 1.5 1 10 12 0 2.5 13 9
+arrow.up 11s 12 13 1.375 1 8.5 10.25 0 2 11.5 8
+arrow.up 12r 12 14 1.5 1 8.875 11.125 0 2.5 12 8.5
+arrow.up 12m 13 14 1.5 1 9.125 11.125 0 2.5 12.5 8.5
+arrow.up 12.5s 13 14 1.5 1.125 9.625 11.625 0 2.5 13 9
+arrow.up 13r 13 14 1.5 1 10 12 0 2.5 13 9
+arrow.up 13m 13 15 1.5 1.125 9.125 12.125 0 2.5 13 9
+arrow.up 13s 13 15 1.5 1.125 9.25 12.125 0 2.5 13 9
+arrow.up 14r 14 15 1.75 1.125 10.375 12.25 0 2.5 13.5 10
+arrow.up 14m 14 15 1.625 1.125 9.875 12.25 0 2.5 14 10
+arrow.up 16m 17 18 2 1.375 12.125 14.875 0 3.5 16.5 11.5
+arrow.up 16s 17 18 2 1.375 12.375 14.875 0 3.5 16.5 11.5
+arrow.up 17m 17 19 2 1.5 12.125 15.75 0 3.5 17 12
+arrow.up 20r 20 22 2.5 1.75 14.875 18.5 0 3.5 20 14
+arrow.up 21m 21 24 2.5 1.875 15.125 19.5 0 4.5 21 15
+arrow.up 22r 22 25 2.75 1.875 16.375 20.375 0 4.5 21.5 15.5
+arrow.up 24m 25 27 3 2.125 18.125 22.25 0 4.5 24.5 17
+arrow.up.forward d 13 12 1.5 1.125 9.5 9.5 0 1 12.5 9
+arrow.up.forward 11s 12 11 1.375 1 9.125 8.375 0 1.5 11.5 8
+arrow.up.forward 12r 12 11 1.5 1 8.75 8.75 0 1 12 8.5
+arrow.up.forward 12m 12 11 1.375 1 9 9 0 1.5 12 8.5
+arrow.up.forward 12.5s 13 12 1.5 1.125 9.5 9.5 0 1.5 12.5 9
+arrow.up.forward 13r 13 12 1.5 1.125 9.5 9.5 0 1 12.5 9
+arrow.up.forward 13m 13 12 1.5 1.125 9.75 9.625 0 1.5 13 9
+arrow.up.forward 13s 13 12 1.625 1 9.75 9.125 0 1.5 13 9
+arrow.up.forward 14r 14 13 1.625 1.25 10.25 10.25 0 1 13.5 10
+arrow.up.forward 14m 14 13 1.625 1.25 10.5 10.375 0 1.5 13.5 10
+arrow.up.forward 16m 16 15 2 1.375 11.875 11.875 0 2 16 11.5
+arrow.up.forward 16s 17 16 2.125 1.625 12.75 12.75 0 2 16.5 11.5
+arrow.up.forward 17m 17 16 2.125 1.5 12.5 12.625 0 2 17 12
+arrow.up.forward 20r 20 18 2.375 1.75 14.625 14.5 0 2 20 14
+arrow.up.forward 21m 21 20 2.625 2 15.5 15.5 0 2.5 21 15
+arrow.up.forward 22r 21 20 2.5 1.875 15.25 16 0 2.5 21 15.5
+arrow.up.forward 24m 24 22 3 2.125 17.75 17 0 2.5 24 17
+arrow.up.left d 13 12 1.5 1 9.375 9.5 0 1 12.5 9
+arrow.up.left 11s 12 11 1.5 1 9 8.375 0 1.5 11.5 8
+arrow.up.left 12r 12 11 1.5 1 8.75 8.75 0 1 12 8.5
+arrow.up.left 12m 12 11 1.5 1 8.875 9 0 1.5 12 8.5
+arrow.up.left 12.5s 13 12 1.5 1.125 9.375 9.5 0 1.5 12.5 9
+arrow.up.left 13r 13 12 1.5 1 9.375 9.5 0 1 12.5 9
+arrow.up.left 13m 13 12 1.625 1.125 9.625 9.625 0 1.5 13 9
+arrow.up.left 13s 13 12 1.625 1 9.75 9.125 0 1.5 13 9
+arrow.up.left 14r 14 13 1.75 1.25 10.125 10.25 0 1 13.5 10
+arrow.up.left 14m 14 13 1.75 1.25 10.375 10.375 0 1.5 13.5 10
+arrow.up.left 16m 16 15 2 1.375 11.875 11.875 0 2 16 11.5
+arrow.up.left 16s 17 16 2.125 1.625 12.75 12.75 0 2 16.5 11.5
+arrow.up.left 17m 17 16 2.125 1.5 12.5 12.625 0 2 17 12
+arrow.up.left 20r 20 18 2.5 1.75 14.5 14.5 0 2 20 14
+arrow.up.left 21m 21 20 2.625 2 15.5 15.5 0 2.5 21 15
+arrow.up.left 22r 21 20 2.625 1.875 15.125 16 0 2.5 21 15.5
+arrow.up.left 24m 24 22 3 2.125 17.75 17 0 2.5 24 17
+arrow.up.right d 13 12 1.5 1 9.5 9.5 0 1 12.5 9
+arrow.up.right 11s 12 11 1.375 1 9.125 8.375 0 1.5 11.5 8
+arrow.up.right 12r 12 11 1.5 1 8.75 8.75 0 1 12 8.5
+arrow.up.right 12m 12 11 1.375 1 9 9 0 1.5 12 8.5
+arrow.up.right 12.5s 13 12 1.5 1.125 9.5 9.5 0 1.5 12.5 9
+arrow.up.right 13r 13 12 1.5 1 9.5 9.5 0 1 12.5 9
+arrow.up.right 13m 13 12 1.5 1.125 9.75 9.625 0 1.5 13 9
+arrow.up.right 13s 13 12 1.625 1 9.75 9.125 0 1.5 13 9
+arrow.up.right 14r 14 13 1.625 1.25 10.25 10.25 0 1 13.5 10
+arrow.up.right 14m 14 13 1.625 1.25 10.5 10.375 0 1.5 13.5 10
+arrow.up.right 16m 16 15 2 1.375 11.875 11.875 0 2 16 11.5
+arrow.up.right 16s 17 16 2.125 1.625 12.75 12.75 0 2 16.5 11.5
+arrow.up.right 17m 17 16 2.125 1.5 12.5 12.625 0 2 17 12
+arrow.up.right 20r 20 18 2.375 1.75 14.625 14.5 0 2 20 14
+arrow.up.right 21m 21 20 2.625 2 15.5 15.5 0 2.5 21 15
+arrow.up.right 22r 21 20 2.5 1.875 15.25 16 0 2.5 21 15.5
+arrow.up.right 24m 24 22 3 2.125 17.75 17 0 2.5 24 17
+arrow.up.to.line d 13 16 1.5 1 10 13.5 0 3 13 9
+arrow.up.to.line 11s 12 14 1.375 1 8.5 11.625 0 3 11.5 8
+arrow.up.to.line 12r 12 15 1.5 1 8.875 12.125 0 3 12 8.5
+arrow.up.to.line 12m 13 15 1.5 1 9.125 12.375 0 3 12.5 8.5
+arrow.up.to.line 12.5s 13 16 1.5 1.125 9.625 13.125 0 3 13 9
+arrow.up.to.line 13r 13 16 1.5 1 10 13.5 0 3 13 9
+arrow.up.to.line 13m 13 16 1.5 1.125 9.125 13.5 0 3 13 9
+arrow.up.to.line 13s 13 16 1.5 1.125 9.25 13.625 0 3 13 9
+arrow.up.to.line 14r 14 17 1.75 1.25 10.375 14.125 0 3 13.5 10
+arrow.up.to.line 14m 14 17 1.625 1.25 9.875 14.5 0 3.5 14 10
+arrow.up.to.line 16m 17 20 2 1.375 12.125 16.5 0 4 16.5 11.5
+arrow.up.to.line 16s 17 20 2 1.375 12.375 16.875 0 4.5 16.5 11.5
+arrow.up.to.line 17m 17 21 2 1.5 12.125 17.625 0 4.5 17 12
+arrow.up.to.line 20r 20 24 2.5 1.75 14.875 20.25 0 4.5 20 14
+arrow.up.to.line 21m 21 26 2.5 1.875 15.125 21.75 0 5.5 21 15
+arrow.up.to.line 22r 22 27 2.75 2 16.375 23 0 5.5 21.5 15.5
+arrow.up.to.line 24m 25 29 3 2 18.125 24.125 0 6 24.5 17
+arrow.uturn.backward d 15 14 1.5 1 11.25 11.125 0 2.5 15 9
+arrow.uturn.backward 11s 14 13 1.375 1 10.375 10.375 0 2.5 13.5 8
+arrow.uturn.backward 12r 15 13 1.5 1 11.125 11 0 2 14.5 8.5
+arrow.uturn.backward 12m 15 14 1.5 1 11.25 11.25 0 2.5 14.5 8.5
+arrow.uturn.backward 12.5s 15 14 1.5 1 11.875 11.125 0 2.5 15 9
+arrow.uturn.backward 13r 15 14 1.5 1 11.25 11.125 0 2.5 15 9
+arrow.uturn.backward 13m 16 15 1.625 1.125 12.25 12.125 0 2.5 15.5 9
+arrow.uturn.backward 13s 16 15 1.625 1.125 12.375 12.375 0 2.5 15.5 9
+arrow.uturn.backward 14r 16 15 1.625 1.125 12.25 12.125 0 2.5 16 10
+arrow.uturn.backward 14m 17 16 1.75 1.25 13.125 13 0 2.5 16.5 10
+arrow.uturn.backward 16m 19 18 2 1.375 15 14.875 0 3.5 19 11.5
+arrow.uturn.backward 16s 20 19 2 1.5 15.125 15.875 0 3.5 19.5 11.5
+arrow.uturn.backward 17m 20 19 2 1.5 15.25 15.875 0 3.5 20 12
+arrow.uturn.backward 20r 24 22 2.5 1.75 18.5 18.25 0 3.5 23.5 14
+arrow.uturn.backward 21m 25 24 2.625 1.875 19.625 19.625 0 4.5 25 15
+arrow.uturn.backward 22r 26 25 2.75 2 20.375 20.875 0 4.5 25.5 15.5
+arrow.uturn.backward 24m 29 27 3 2.125 22.5 22.375 0 4.5 28.5 17
+arrow.uturn.forward d 15 14 1.5 1 11.25 11.125 0 2.5 15 9
+arrow.uturn.forward 11s 14 13 1.375 1 10.375 10.375 0 2.5 13.5 8
+arrow.uturn.forward 12r 15 13 1.5 1 11.125 11 0 2 14.5 8.5
+arrow.uturn.forward 12m 15 14 1.5 1 11.25 11.25 0 2.5 14.5 8.5
+arrow.uturn.forward 12.5s 15 14 1.5 1 11.875 11.125 0 2.5 15 9
+arrow.uturn.forward 13r 15 14 1.5 1 11.25 11.125 0 2.5 15 9
+arrow.uturn.forward 13m 16 15 1.625 1.125 12.25 12.125 0 2.5 15.5 9
+arrow.uturn.forward 13s 16 15 1.625 1.125 12.375 12.375 0 2.5 15.5 9
+arrow.uturn.forward 14r 16 15 1.625 1.125 12.25 12 0 2.5 16 10
+arrow.uturn.forward 14m 17 16 1.75 1.25 13.125 13 0 2.5 16.5 10
+arrow.uturn.forward 16m 19 18 2 1.375 15 14.875 0 3.5 19 11.5
+arrow.uturn.forward 16s 20 19 2 1.5 15.125 15.875 0 3.5 19.5 11.5
+arrow.uturn.forward 17m 20 19 2 1.5 15.125 15.875 0 3.5 20 12
+arrow.uturn.forward 20r 24 22 2.5 1.75 18.5 18.25 0 3.5 23.5 14
+arrow.uturn.forward 21m 25 24 2.625 1.875 19.625 19.625 0 4.5 25 15
+arrow.uturn.forward 22r 26 25 2.75 2 20.375 20.875 0 4.5 25.5 15.5
+arrow.uturn.forward 24m 29 27 3 2.125 22.5 22.375 0 4.5 28.5 17
+battery.75 d 22 11 1.5 1.125 18.125 8.625 0 0.5 22 9
+battery.75 11s 20 10 1.375 1 16.375 7.75 0 1 19.5 8
+battery.75 12r 21 10 1.5 1 17.375 8 0 0.5 20.5 8.5
+battery.75 12m 21 11 1.5 1 17.625 8.25 0 1 21 8.5
+battery.75 12.5s 22 11 1.5 1.125 18.625 8.75 0 1 22 9
+battery.75 13r 22 11 1.5 1.125 18.125 8.625 0 0.5 22 9
+battery.75 13m 23 11 1.625 1 19.125 8.25 0 1 22.5 9
+battery.75 13s 23 12 1.625 1.125 19.375 9.125 0 1 22.5 9
+battery.75 14r 24 12 1.75 1.25 20.25 9.25 0 0.5 23.5 10
+battery.75 14m 24 12 1.625 1.125 19.875 8.875 0 1 24 10
+battery.75 16m 28 14 2 1.375 23.5 11 0 1.5 27.5 11.5
+battery.75 16s 28 15 2 1.5 23.75 12 0 1.5 28 11.5
+battery.75 17m 29 15 2 1.5 24.25 11.625 0 1.5 29 12
+battery.75 20r 34 17 2.5 1.75 29 13.25 0 1 34 14
+battery.75 21m 36 19 2.5 1.875 30.125 14.375 0 2 36 15
+battery.75 22r 37 19 2.625 1.875 31.125 14.625 0 1.5 37 15.5
+battery.75 24m 42 21 3 2.125 35.25 16.5 0 1.5 41.5 17
+bell d 15 16 1.5 1 12 13.5 0 3 15 9
+bell 11s 13 14 1 1 10.625 11.375 0 3 13 8
+bell 12r 14 15 1.25 1 11.125 12.125 0 3 13.5 8.5
+bell 12m 14 15 1.125 1 11.375 12.375 0 3 13.5 8.5
+bell 12.5s 15 15 1.125 1 12.125 12.25 0 3 14.5 9
+bell 13r 15 16 1.5 1 12 13.5 0 3 15 9
+bell 13m 16 16 1.375 1.125 13.125 13.375 0 3 15.5 9
+bell 13s 15 16 1.125 1.125 11.875 13.5 0 3 15 9
+bell 14r 16 17 1.5 1.25 13 14.125 0 3 16 10
+bell 14m 17 17 1.375 1.25 13.25 14.375 0 3 16.5 10
+bell 16m 19 20 1.625 1.375 15.25 16.375 0 4 18.5 11.5
+bell 16s 19 20 1.5 1.375 15.5 16.625 0 4 18.5 11.5
+bell 17m 20 21 1.625 1.5 16.125 17.375 0 4 19.5 12
+bell 20r 23 24 2.125 1.75 18.5 20.25 0 4.5 22.5 14
+bell 21m 24 26 2 1.875 19.25 21.5 0 5.5 24 15
+bell 22r 26 27 2.375 2 21 23 0 5.5 25.5 15.5
+bell 24m 28 29 2.375 2.125 22.75 24.625 0 6 28 17
+checkmark d 14 13 1.5 1 11 11 0 2 14 9
+checkmark 11s 13 12 1.375 1 9.75 9.5 0 2 13 8
+checkmark 12r 14 13 1.5 1 10.125 10 0 2 13.5 8.5
+checkmark 12m 14 13 1.5 1 10.375 10.25 0 2 13.5 8.5
+checkmark 12.5s 14 13 1.5 1.125 11 10.75 0 2 14 9
+checkmark 13r 14 13 1.5 1 11 11 0 2 14 9
+checkmark 13m 15 14 1.625 1.125 11.25 11 0 2 14.5 9
+checkmark 13s 15 14 1.625 1.125 11.5 11.125 0 2 14.5 9
+checkmark 14r 15 14 1.625 1.125 11.125 11 0 2 15 10
+checkmark 14m 16 14 1.75 1.125 12.125 11.125 0 2 15.5 10
+checkmark 16m 18 17 2 1.375 13.875 13.625 0 3 18 11.5
+checkmark 16s 19 17 2 1.375 14.125 13.75 0 3 18.5 11.5
+checkmark 17m 19 18 2.125 1.5 14.75 14.5 0 3 19 12
+checkmark 20r 22 20 2.5 1.625 16.875 16 0 3 22 14
+checkmark 21m 24 22 2.625 1.875 18.125 17.875 0 3.5 23.5 15
+checkmark 22r 24 23 2.625 1.875 17.75 18.375 0 3.5 24 15.5
+checkmark 24m 27 25 3 2.125 20.75 20.375 0 4 27 17
+checkmark.circle.fill d 15 15 1 1 13 13 0 3 15 9
+checkmark.circle.fill 11s 14 14 1 1 11.25 11.25 0 2.5 13.5 8
+checkmark.circle.fill 12r 14 14 1 1 12 12 0 2.5 14 8.5
+checkmark.circle.fill 12m 15 15 1 1 12.125 12.125 0 3 14.5 8.5
+checkmark.circle.fill 12.5s 15 15 1.125 1.125 12.75 12.75 0 3 15 9
+checkmark.circle.fill 13r 15 15 1 1 13 13 0 3 15 9
+checkmark.circle.fill 13m 16 16 1.125 1.125 13.125 13.125 0 3 15.5 9
+checkmark.circle.fill 13s 16 16 1.125 1.125 13.25 13.25 0 3 15.5 9
+checkmark.circle.fill 14r 16 16 1.125 1.125 13.25 13.25 0 3 16 10
+checkmark.circle.fill 14m 17 17 1.25 1.25 14.125 14.125 0 3 16.5 10
+checkmark.circle.fill 16m 20 20 1.5 1.5 16.875 16.875 0 4 19.5 11.5
+checkmark.circle.fill 16s 20 20 1.375 1.375 16.375 16.375 0 4 19.5 11.5
+checkmark.circle.fill 17m 21 21 1.5 1.5 17.25 17.25 0 4 20.5 12
+checkmark.circle.fill 20r 23 23 1.625 1.625 19.25 19.25 0 4.5 23 14
+checkmark.circle.fill 21m 26 26 2 2 22 22 0 5 25.5 15
+checkmark.circle.fill 22r 26 26 1.875 1.875 22 22 0 5 26 15.5
+checkmark.circle.fill 24m 29 29 2.125 2.125 24.25 24.25 0 5.5 28.5 17
+circle d 15 15 1 1 13 13 0 3 15 9
+circle 11s 14 14 1 1 11.25 11.25 0 2.5 13.5 8
+circle 12r 14 14 1 1 12 12 0 2.5 14 8.5
+circle 12m 15 15 1 1 12.125 12.125 0 3 14.5 8.5
+circle 12.5s 15 15 1.125 1.125 12.75 12.75 0 3 15 9
+circle 13r 15 15 1 1 13 13 0 3 15 9
+circle 13m 16 16 1.125 1.125 13.125 13.125 0 3 15.5 9
+circle 13s 16 16 1.125 1.125 13.25 13.25 0 3 15.5 9
+circle 14r 16 16 1.125 1.125 13.25 13.25 0 3 16 10
+circle 14m 17 17 1.25 1.25 14.125 14.125 0 3 16.5 10
+circle 16m 20 20 1.5 1.5 16.875 16.875 0 4 19.5 11.5
+circle 16s 20 20 1.375 1.375 16.375 16.375 0 4 19.5 11.5
+circle 17m 21 21 1.5 1.5 17.25 17.25 0 4 20.5 12
+circle 20r 23 23 1.625 1.625 19.25 19.25 0 4.5 23 14
+circle 21m 26 26 2 2 22 22 0 5 25.5 15
+circle 22r 26 26 1.875 1.875 22 22 0 5 26 15.5
+circle 24m 29 29 2.125 2.125 24.25 24.25 0 5.5 28.5 17
+circle.dotted d 15 15 1 1 13 13 0 3 15 9
+circle.dotted 11s 14 14 1 1 11.25 11.125 0 2.5 13.5 8
+circle.dotted 12r 14 14 1 1 12 11.875 0 2.5 14 8.5
+circle.dotted 12m 15 15 1 1 12.125 12.125 0 3 14.5 8.5
+circle.dotted 12.5s 15 15 1.125 1.125 12.75 12.75 0 3 15 9
+circle.dotted 13r 15 15 1 1 13 13 0 3 15 9
+circle.dotted 13m 16 16 1.125 1.125 13.125 13.125 0 3 15.5 9
+circle.dotted 13s 16 16 1.125 1.125 13.25 13.25 0 3 15.5 9
+circle.dotted 14r 16 16 1.125 1.125 13.25 13.125 0 3 16 10
+circle.dotted 14m 17 17 1.25 1.25 14.125 14.125 0 3 16.5 10
+circle.dotted 16m 20 20 1.5 1.5 16.875 16.875 0 4 19.5 11.5
+circle.dotted 16s 20 20 1.375 1.5 16.375 17 0 4 19.5 11.5
+circle.dotted 17m 21 21 1.5 1.5 17.125 17.125 0 4 20.5 12
+circle.dotted 20r 23 23 1.625 1.625 19.125 19.125 0 4.5 23 14
+circle.dotted 21m 26 26 2 2 21.875 21.875 0 5 25.5 15
+circle.dotted 22r 26 26 1.875 1.875 21.875 21.75 0 5 26 15.5
+circle.dotted 24m 29 29 2.125 2.125 24.25 24.125 0 5.5 28.5 17
+cloud.bolt.rain d 16 18 1 1 14.5 15.5 0 4.5 16 9
+cloud.bolt.rain 11s 15 16 1.125 1 13.5 13.25 0 4 14.5 8
+cloud.bolt.rain 12r 15 17 1 1 13.375 14.125 0 4 15 8.5
+cloud.bolt.rain 12m 16 17 1 1 13.625 14.375 0 4.5 15.5 8.5
+cloud.bolt.rain 12.5s 16 18 1.125 1.125 14.375 15.125 0 4.5 16 9
+cloud.bolt.rain 13r 16 18 1 1 14.5 15.5 0 4.5 16 9
+cloud.bolt.rain 13m 17 18 1.125 1.125 14.75 15.5 0 4.5 16.5 9
+cloud.bolt.rain 13s 17 18 1.125 1.125 14.875 15.75 0 4.5 16.5 9
+cloud.bolt.rain 14r 18 19 1.25 1.25 15.625 16.5 0 4.5 17.5 10
+cloud.bolt.rain 14m 18 19 1.25 1.25 15.875 15.875 0 5 17.5 10
+cloud.bolt.rain 16m 21 23 1.375 1.5 18.125 19.875 0 6 20.5 11.5
+cloud.bolt.rain 16s 21 23 1.375 1.375 18.375 19.375 0 6 20.5 11.5
+cloud.bolt.rain 17m 22 24 1.5 1.5 19.25 20.25 0 6 21.5 12
+cloud.bolt.rain 20r 25 27 1.75 1.75 22.375 23.5 0 6.5 24.5 14
+cloud.bolt.rain 21m 27 30 1.875 2 23.75 25.75 0 7.5 27 15
+cloud.bolt.rain 22r 28 30 1.875 1.875 24.625 25.875 0 8 28 15.5
+cloud.bolt.rain 24m 31 33 2.125 2.125 27.125 28.625 0 8.5 30.5 17
+cloud.bolt.rain.fill d 16 18 1 1 14.5 15.5 0 4.5 16 9
+cloud.bolt.rain.fill 11s 15 16 1.125 1 13.5 13.25 0 4 14.5 8
+cloud.bolt.rain.fill 12r 15 17 1 1 13.375 14.125 0 4 15 8.5
+cloud.bolt.rain.fill 12m 16 17 1 1 13.625 14.375 0 4.5 15.5 8.5
+cloud.bolt.rain.fill 12.5s 16 18 1.125 1.125 14.375 15.125 0 4.5 16 9
+cloud.bolt.rain.fill 13r 16 18 1 1 14.5 15.5 0 4.5 16 9
+cloud.bolt.rain.fill 13m 17 18 1.125 1.125 14.75 15.5 0 4.5 16.5 9
+cloud.bolt.rain.fill 13s 17 18 1.125 1.125 14.875 15.75 0 4.5 16.5 9
+cloud.bolt.rain.fill 14r 18 19 1.25 1.25 15.625 16.5 0 4.5 17.5 10
+cloud.bolt.rain.fill 14m 18 19 1.25 1.25 15.875 15.875 0 5 17.5 10
+cloud.bolt.rain.fill 16m 21 23 1.375 1.5 18.125 19.875 0 6 20.5 11.5
+cloud.bolt.rain.fill 16s 21 23 1.375 1.375 18.375 19.375 0 6 20.5 11.5
+cloud.bolt.rain.fill 17m 22 24 1.5 1.5 19.25 20.25 0 6 21.5 12
+cloud.bolt.rain.fill 20r 25 27 1.75 1.75 22.375 23.5 0 6.5 24.5 14
+cloud.bolt.rain.fill 21m 27 30 1.875 2 23.75 25.75 0 7.5 27 15
+cloud.bolt.rain.fill 22r 28 30 1.875 1.875 24.625 25.875 0 8 28 15.5
+cloud.bolt.rain.fill 24m 31 33 2.125 2.125 27.125 28.625 0 8.5 30.5 17
+cloud.drizzle.fill d 16 17 1 1 14.5 15 0 4 16 9
+cloud.drizzle.fill 11s 15 15 1.125 1 13.5 12.875 0 3.5 14.5 8
+cloud.drizzle.fill 12r 15 16 1 1 13.375 13.5 0 3.5 15 8.5
+cloud.drizzle.fill 12m 16 16 1 1 13.625 13.875 0 3.5 15.5 8.5
+cloud.drizzle.fill 12.5s 16 17 1.125 1.125 14.375 14.625 0 4 16 9
+cloud.drizzle.fill 13r 16 17 1 1 14.5 15 0 4 16 9
+cloud.drizzle.fill 13m 17 17 1.125 1.125 14.75 14.125 0 4 16.5 9
+cloud.drizzle.fill 13s 17 18 1.125 1.125 14.875 15.25 0 4 16.5 9
+cloud.drizzle.fill 14r 18 18 1.25 1.125 15.625 15 0 4 17.5 10
+cloud.drizzle.fill 14m 18 19 1.25 1.25 15.875 16.125 0 4 17.5 10
+cloud.drizzle.fill 16m 21 22 1.375 1.375 18.125 18.375 0 5 20.5 11.5
+cloud.drizzle.fill 16s 21 22 1.375 1.375 18.375 18.625 0 5.5 20.5 11.5
+cloud.drizzle.fill 17m 22 23 1.5 1.5 19.25 19.5 0 5.5 21.5 12
+cloud.drizzle.fill 20r 25 26 1.75 1.75 22.375 22.5 0 6 24.5 14
+cloud.drizzle.fill 21m 27 29 1.875 2 23.75 24.875 0 7 27 15
+cloud.drizzle.fill 22r 28 29 1.875 1.875 24.625 24.75 0 6.5 28 15.5
+cloud.drizzle.fill 24m 31 32 2.125 2.25 27.125 27.5 0 7.5 30.5 17
+cloud.fill d 18 13 1 1 15.5 10.5 0 1.5 17.5 9
+cloud.fill 11s 15 11 1 1 13.25 8.875 0 1.5 15 8
+cloud.fill 12r 16 12 1 1 14 9.375 0 1.5 16 8.5
+cloud.fill 12m 16 12 1 1 14.25 9.5 0 1.5 16 8.5
+cloud.fill 12.5s 18 13 1.25 1.125 15.875 10 0 1.5 17.5 9
+cloud.fill 13r 18 13 1 1 15.5 10.5 0 1.5 17.5 9
+cloud.fill 13m 18 13 1.125 1.125 15.5 10.25 0 1.5 17.5 9
+cloud.fill 13s 18 13 1.125 1.125 15.625 10.5 0 1.5 18 9
+cloud.fill 14r 19 13 1.25 1.125 16.375 10.125 0 1.5 18.5 10
+cloud.fill 14m 19 14 1.25 1.25 16.625 11.125 0 1.5 19 10
+cloud.fill 16m 22 16 1.375 1.375 19 12.625 0 2 21.5 11.5
+cloud.fill 16s 22 16 1.375 1.375 19.25 12.875 0 2 22 11.5
+cloud.fill 17m 23 17 1.5 1.5 20.25 13.5 0 2 23 12
+cloud.fill 20r 26 19 1.625 1.75 22.625 15.5 0 2 26 14
+cloud.fill 21m 29 21 1.875 1.875 25 16.625 0 2.5 28.5 15
+cloud.fill 22r 30 21 2 1.875 26.625 17 0 2.5 29.5 15.5
+cloud.fill 24m 32 23 2 2 27.75 18.25 0 3 32 17
+cloud.fog.fill d 16 17 1 1 14.5 14.5 0 3 16 9
+cloud.fog.fill 11s 15 15 1.125 1 13.5 12.25 0 3 14.5 8
+cloud.fog.fill 12r 15 15 1 1 13.375 13 0 3 15 8.5
+cloud.fog.fill 12m 16 16 1 1 13.625 13.25 0 3 15.5 8.5
+cloud.fog.fill 12.5s 16 16 1.125 1 14.375 13.25 0 3.5 16 9
+cloud.fog.fill 13r 16 17 1 1 14.5 14.5 0 3 16 9
+cloud.fog.fill 13m 17 17 1.125 1.125 14.75 14.375 0 3.5 16.5 9
+cloud.fog.fill 13s 17 17 1.125 1.125 14.875 14.5 0 3.5 16.5 9
+cloud.fog.fill 14r 18 18 1.25 1.25 15.625 15.125 0 3.5 17.5 10
+cloud.fog.fill 14m 18 18 1.25 1.25 15.875 15.375 0 3.5 17.5 10
+cloud.fog.fill 16m 21 21 1.375 1.375 18.125 17.625 0 4.5 20.5 11.5
+cloud.fog.fill 16s 21 21 1.375 1.375 18.375 17.875 0 4.5 20.5 11.5
+cloud.fog.fill 17m 22 22 1.5 1.5 19.25 18.75 0 4.5 21.5 12
+cloud.fog.fill 20r 25 25 1.75 1.625 22.375 20.875 0 5 24.5 14
+cloud.fog.fill 21m 27 28 1.875 2 23.75 23.875 0 6 27 15
+cloud.fog.fill 22r 28 28 1.875 1.875 24.625 23.75 0 5.5 28 15.5
+cloud.fog.fill 24m 31 31 2.125 2.125 27.125 26.375 0 6.5 30.5 17
+cloud.hail.fill d 16 17 1 1 14.5 14.875 0 4 16 9
+cloud.hail.fill 11s 15 15 1.125 1 13.5 12.875 0 3.5 14.5 8
+cloud.hail.fill 12r 15 16 1 1 13.375 13.625 0 3.5 15 8.5
+cloud.hail.fill 12m 16 16 1 1 13.625 13.875 0 4 15.5 8.5
+cloud.hail.fill 12.5s 16 17 1.125 1.125 14.375 14.625 0 4 16 9
+cloud.hail.fill 13r 16 17 1 1 14.5 14.875 0 4 16 9
+cloud.hail.fill 13m 17 18 1.125 1.125 14.75 15.125 0 4 16.5 9
+cloud.hail.fill 13s 17 18 1.125 1.125 14.875 15.25 0 4 16.5 9
+cloud.hail.fill 14r 18 18 1.25 1.125 15.625 15.25 0 4 17.5 10
+cloud.hail.fill 14m 18 19 1.25 1.25 15.875 16.25 0 4.5 17.5 10
+cloud.hail.fill 16m 21 22 1.375 1.375 18.125 18.5 0 5.5 20.5 11.5
+cloud.hail.fill 16s 21 22 1.375 1.375 18.375 18.75 0 5.5 20.5 11.5
+cloud.hail.fill 17m 22 23 1.5 1.5 19.25 19.625 0 5.5 21.5 12
+cloud.hail.fill 20r 25 26 1.75 1.625 22.375 22 0 6 24.5 14
+cloud.hail.fill 21m 27 29 1.875 1.875 23.75 24.25 0 7 27 15
+cloud.hail.fill 22r 28 29 1.875 1.875 24.625 25 0 7 28 15.5
+cloud.hail.fill 24m 31 32 2.125 2.125 27.125 27.75 0 7.5 30.5 17
+cloud.rain d 16 17 1 1 14.5 14.875 0 4 16 9
+cloud.rain 11s 15 15 1.125 1 13.5 12.875 0 3.5 14.5 8
+cloud.rain 12r 15 16 1 1 13.375 13.5 0 3.5 15 8.5
+cloud.rain 12m 16 16 1 1 13.625 13.875 0 4 15.5 8.5
+cloud.rain 12.5s 16 17 1.125 1.125 14.375 14.625 0 4 16 9
+cloud.rain 13r 16 17 1 1 14.5 14.875 0 4 16 9
+cloud.rain 13m 17 17 1.125 1.125 14.75 14.125 0 4 16.5 9
+cloud.rain 13s 17 18 1.125 1.125 14.875 15.25 0 4 16.5 9
+cloud.rain 14r 18 18 1.25 1.125 15.625 15.125 0 4 17.5 10
+cloud.rain 14m 18 19 1.25 1.25 15.875 16.125 0 4 17.5 10
+cloud.rain 16m 21 22 1.375 1.375 18.125 18.375 0 5 20.5 11.5
+cloud.rain 16s 21 22 1.375 1.375 18.375 18.75 0 5.5 20.5 11.5
+cloud.rain 17m 22 23 1.5 1.5 19.25 19.625 0 5.5 21.5 12
+cloud.rain 20r 25 26 1.75 1.625 22.375 21.875 0 6 24.5 14
+cloud.rain 21m 27 29 1.875 2 23.75 24.875 0 7 27 15
+cloud.rain 22r 28 29 1.875 1.875 24.625 24.875 0 6.5 28 15.5
+cloud.rain 24m 31 32 2.125 2.25 27.125 27.5 0 7.5 30.5 17
+cloud.rain.fill d 16 17 1 1 14.5 14.875 0 4 16 9
+cloud.rain.fill 11s 15 15 1.125 1 13.5 12.875 0 3.5 14.5 8
+cloud.rain.fill 12r 15 16 1 1 13.375 13.5 0 3.5 15 8.5
+cloud.rain.fill 12m 16 16 1 1 13.625 13.875 0 4 15.5 8.5
+cloud.rain.fill 12.5s 16 17 1.125 1.125 14.375 14.625 0 4 16 9
+cloud.rain.fill 13r 16 17 1 1 14.5 14.875 0 4 16 9
+cloud.rain.fill 13m 17 17 1.125 1.125 14.75 14.125 0 4 16.5 9
+cloud.rain.fill 13s 17 18 1.125 1.125 14.875 15.25 0 4 16.5 9
+cloud.rain.fill 14r 18 18 1.25 1.125 15.625 15.125 0 4 17.5 10
+cloud.rain.fill 14m 18 19 1.25 1.25 15.875 16.125 0 4 17.5 10
+cloud.rain.fill 16m 21 22 1.375 1.375 18.125 18.375 0 5 20.5 11.5
+cloud.rain.fill 16s 21 22 1.375 1.375 18.375 18.75 0 5.5 20.5 11.5
+cloud.rain.fill 17m 22 23 1.5 1.5 19.25 19.625 0 5.5 21.5 12
+cloud.rain.fill 20r 25 26 1.75 1.625 22.375 21.875 0 6 24.5 14
+cloud.rain.fill 21m 27 29 1.875 2 23.75 24.875 0 7 27 15
+cloud.rain.fill 22r 28 29 1.875 1.875 24.625 24.875 0 6.5 28 15.5
+cloud.rain.fill 24m 31 32 2.125 2.25 27.125 27.5 0 7.5 30.5 17
+cloud.snow.fill d 16 18 1 1 14.5 15.5 0 4.5 16 9
+cloud.snow.fill 11s 15 16 1.125 1 13.5 13.25 0 4 14.5 8
+cloud.snow.fill 12r 15 16 1 1 13.375 14 0 4 15 8.5
+cloud.snow.fill 12m 16 17 1 1 13.625 14.25 0 4 15.5 8.5
+cloud.snow.fill 12.5s 16 18 1.125 1.125 14.375 15.125 0 4.5 16 9
+cloud.snow.fill 13r 16 18 1 1 14.5 15.5 0 4.5 16 9
+cloud.snow.fill 13m 17 18 1.125 1.125 14.75 15.5 0 4.5 16.5 9
+cloud.snow.fill 13s 17 18 1.125 1.125 14.875 15.625 0 4.5 16.5 9
+cloud.snow.fill 14r 18 19 1.25 1.25 15.625 16.375 0 4.5 17.5 10
+cloud.snow.fill 14m 18 19 1.25 1.25 15.875 15.75 0 5 17.5 10
+cloud.snow.fill 16m 21 22 1.375 1.375 18.125 19 0 6 20.5 11.5
+cloud.snow.fill 16s 21 23 1.375 1.5 18.375 20.125 0 6 20.5 11.5
+cloud.snow.fill 17m 22 24 1.5 1.5 19.25 20.25 0 6 21.5 12
+cloud.snow.fill 20r 25 27 1.75 1.75 22.375 23.375 0 6.5 24.5 14
+cloud.snow.fill 21m 27 29 1.875 1.875 23.75 25 0 7.5 27 15
+cloud.snow.fill 22r 28 30 1.875 1.875 24.625 25.75 0 7.5 28 15.5
+cloud.snow.fill 24m 31 33 2.125 2.125 27.125 28.5 0 8.5 30.5 17
+cloud.sun d 19 16 0.5 1.25 18.5 13.25 0 3 18.5 9
+cloud.sun 11s 17 14 0.5 1.125 16.125 11.375 0 2.5 16.5 8
+cloud.sun 12r 18 15 0.5 1.25 17.125 12 0 2.5 17.5 8.5
+cloud.sun 12m 18 15 0.5 1.25 17.375 12.125 0 3 17.5 8.5
+cloud.sun 12.5s 19 16 0.625 1.375 18.25 12.875 0 3 18.5 9
+cloud.sun 13r 19 16 0.5 1.25 18.5 13.25 0 3 18.5 9
+cloud.sun 13m 20 16 0.625 1.375 18.75 13.25 0 3 19 9
+cloud.sun 13s 20 16 0.625 1.375 19 13.375 0 3 19 9
+cloud.sun 14r 21 17 0.625 1.625 19.875 13.875 0 3 20 10
+cloud.sun 14m 21 17 0.625 1.5 20.25 14.25 0 3 20.5 10
+cloud.sun 16m 24 20 0.75 1.625 23.125 16.25 0 4 23.5 11.5
+cloud.sun 16s 24 20 0.75 1.625 22.375 16.5 0 4 23.5 11.5
+cloud.sun 17m 26 21 0.75 1.875 24.5 17.25 0 4 24.5 12
+cloud.sun 20r 30 24 0.875 2.25 28.375 19.875 0 4.5 28.5 14
+cloud.sun 21m 32 26 1 2.25 30.25 21.25 0 5 30.5 15
+cloud.sun 22r 33 27 1 2.375 31.25 21.875 0 5 31.5 15.5
+cloud.sun 24m 36 29 1.125 2.625 34.625 24.25 0 5.5 35 17
+cloud.sun.rain.fill d 20 20 0.75 1 18.625 18 0 5.5 19 9
+cloud.sun.rain.fill 11s 17 18 0.75 1 16 15.625 0 5 16.5 8
+cloud.sun.rain.fill 12r 18 19 0.625 1 17.125 16.5 0 5 17.5 8.5
+cloud.sun.rain.fill 12m 19 19 0.75 1 17.25 16.75 0 5 18 8.5
+cloud.sun.rain.fill 12.5s 20 20 0.75 1.125 18.375 17.75 0 5.5 19 9
+cloud.sun.rain.fill 13r 20 20 0.75 1 18.625 18 0 5.5 19 9
+cloud.sun.rain.fill 13m 20 21 0.75 1.125 18.75 18.25 0 5.5 19.5 9
+cloud.sun.rain.fill 13s 20 21 0.875 1.125 19 18.5 0.5 5.5 19 9
+cloud.sun.rain.fill 14r 21 22 0.75 1.25 19.875 19.25 0 5.5 20.5 10
+cloud.sun.rain.fill 14m 22 22 0.875 1.25 20.125 18.75 0 6 21 10
+cloud.sun.rain.fill 16m 25 26 1 1.375 23 22.375 0 7 24 11.5
+cloud.sun.rain.fill 16s 25 26 1 1.375 23.375 22.75 0.5 7 23.5 11.5
+cloud.sun.rain.fill 17m 26 27 1 1.5 24.5 23.75 0 7.5 25 12
+cloud.sun.rain.fill 20r 30 31 1.125 1.75 28.375 27.5 0 8 28.5 14
+cloud.sun.rain.fill 21m 32 34 1.25 1.875 30.25 29.375 0.5 9.5 30.5 15
+cloud.sun.rain.fill 22r 33 35 1.25 1.875 31.125 31.25 0 9.5 31.5 15.5
+cloud.sun.rain.fill 24m 37 38 1.5 2.25 34.5 33.5 0.5 10.5 35 17
+cup.and.saucer d 20 15 1.5 1 16.5 12.5 0 2.5 19.5 9
+cup.and.saucer 11s 18 13 1.375 1 14.5 10.875 0 2.5 17.5 8
+cup.and.saucer 12r 19 14 1.5 1 15.25 11.375 0 2.5 18.5 8.5
+cup.and.saucer 12m 19 14 1.5 1 15.5 11.625 0 2.5 18.5 8.5
+cup.and.saucer 12.5s 20 15 1.5 1.125 16.375 12.375 0 2.5 19.5 9
+cup.and.saucer 13r 20 15 1.5 1 16.5 12.5 0 2.5 19.5 9
+cup.and.saucer 13m 20 15 1.5 1.125 16.125 12.625 0 2.5 20 9
+cup.and.saucer 13s 21 15 1.625 1 17.125 12.125 0 3 20.5 9
+cup.and.saucer 14r 21 16 1.625 1.25 17 13.25 0 2.5 21 10
+cup.and.saucer 14m 22 16 1.75 1.125 18.125 12.875 0 3 21.5 10
+cup.and.saucer 16m 25 19 2 1.375 20.75 15.5 0 3.5 25 11.5
+cup.and.saucer 16s 25 19 2 1.375 21 15.75 0 3.5 25 11.5
+cup.and.saucer 17m 26 20 2 1.5 21.25 16.5 0 3.5 26 12
+cup.and.saucer 20r 31 22 2.5 1.625 25.375 18.25 0 4 30.5 14
+cup.and.saucer 21m 33 25 2.625 1.875 27.125 20.375 0 5 32.5 15
+cup.and.saucer 22r 33 25 2.625 1.875 27.25 20.875 0 4.5 33 15.5
+cup.and.saucer 24m 37 28 3 2.125 31 23.25 0 5 37 17
+dice d 17 16 1.5 1 13.5 13.5 0 3 16.5 9
+dice 11s 15 14 1.375 1 11.875 11.75 0 3 15 8
+dice 12r 16 15 1.5 1 12.5 12.375 0 3 15.5 8.5
+dice 12m 16 15 1.5 1 12.75 12.625 0 3 16 8.5
+dice 12.5s 17 16 1.5 1.125 13.5 13.375 0 3.5 16.5 9
+dice 13r 17 16 1.5 1 13.5 13.5 0 3 16.5 9
+dice 13m 17 16 1.625 1.125 13.75 13.625 0 3 17 9
+dice 13s 17 16 1.5 1 13.25 13.125 0 3.5 17 9
+dice 14r 18 17 1.75 1.25 14.5 14.375 0 3 17.5 10
+dice 14m 18 17 1.625 1.125 14.125 14 0 3.5 18 10
+dice 16m 21 20 2 1.375 17 16.75 0 4 21 11.5
+dice 16s 22 21 2 1.5 17.25 17.875 0 4.5 21.5 11.5
+dice 17m 22 21 2 1.5 17.25 17.875 0 4.5 22 12
+dice 20r 26 24 2.5 1.75 20.75 20.5 0 4.5 26 14
+dice 21m 28 26 2.625 1.875 22.25 22 0 5.5 27.5 15
+dice 22r 28 27 2.625 1.875 22 22.5 0 5.5 28 15.5
+dice 24m 32 30 3 2.125 25.375 25.125 0 6 31.5 17
+door.left.hand.closed d 13 16 1.5 1 10 13.5 0 3 13 9
+door.left.hand.closed 11s 12 14 1.375 1 8.75 11.625 0 3 12 8
+door.left.hand.closed 12r 12 15 1.5 1 9 12.5 0 3 12 8.5
+door.left.hand.closed 12m 13 15 1.5 1 9.375 12.625 0 3 12.5 8.5
+door.left.hand.closed 12.5s 13 16 1.5 1.125 10 13.25 0 3 13 9
+door.left.hand.closed 13r 13 16 1.5 1 10 13.5 0 3 13 9
+door.left.hand.closed 13m 14 16 1.625 1.125 10.125 13.625 0 3 13.5 9
+door.left.hand.closed 13s 14 16 1.625 1.125 10.375 13.75 0 3.5 13.5 9
+door.left.hand.closed 14r 14 17 1.75 1.125 10.5 13.875 0 3.5 13.5 10
+door.left.hand.closed 14m 14 17 1.625 1.125 10.125 14 0 3.5 14 10
+door.left.hand.closed 16m 17 20 2 1.375 12.375 16.875 0 4 16.5 11.5
+door.left.hand.closed 16s 17 20 2 1.375 12.75 17 0 4.5 17 11.5
+door.left.hand.closed 17m 18 21 2.125 1.5 13.25 17.875 0 4.5 17.5 12
+door.left.hand.closed 20r 20 24 2.5 1.625 14.875 20 0 5 20 14
+door.left.hand.closed 21m 22 27 2.625 2 16.25 22.75 0 5.5 21.5 15
+door.left.hand.closed 22r 22 27 2.75 1.875 16.375 22.875 0 5.5 21.5 15.5
+door.left.hand.closed 24m 25 30 3 2.125 18.625 25.25 0 6 25 17
+door.left.hand.open d 13 16 1.5 1 10 13.5 0 3 13 9
+door.left.hand.open 11s 12 14 1.375 1 8.75 11.625 0 3 12 8
+door.left.hand.open 12r 12 15 1.5 1 9 12.5 0 3 12 8.5
+door.left.hand.open 12m 13 15 1.5 1 9.375 12.625 0 3 12.5 8.5
+door.left.hand.open 12.5s 13 16 1.5 1.125 10 13.25 0 3 13 9
+door.left.hand.open 13r 13 16 1.5 1 10 13.5 0 3 13 9
+door.left.hand.open 13m 14 16 1.625 1.125 10.125 13.625 0 3 13.5 9
+door.left.hand.open 13s 14 16 1.625 1.125 10.375 13.75 0 3.5 13.5 9
+door.left.hand.open 14r 14 17 1.75 1.125 10.5 13.875 0 3.5 13.5 10
+door.left.hand.open 14m 14 17 1.625 1.125 10.125 14 0 3.5 14 10
+door.left.hand.open 16m 17 20 2 1.375 12.375 16.875 0 4 16.5 11.5
+door.left.hand.open 16s 17 20 2 1.375 12.75 17 0 4.5 17 11.5
+door.left.hand.open 17m 18 21 2.125 1.5 13.25 17.875 0 4.5 17.5 12
+door.left.hand.open 20r 20 24 2.5 1.625 14.875 20 0 5 20 14
+door.left.hand.open 21m 22 27 2.625 2 16.25 22.75 0 5.5 21.5 15
+door.left.hand.open 22r 22 27 2.75 1.875 16.375 22.875 0 5.5 21.5 15.5
+door.left.hand.open 24m 25 30 3 2.125 18.625 25.25 0 6 25 17
+ellipsis d 14 5 1 1 12 2.5 0 -2.5 14 9
+ellipsis 11s 13 5 1 1 10.375 2.375 0 -1.5 12.5 8
+ellipsis 12r 13 5 1 1 11 2.25 0 -2 13 8.5
+ellipsis 12m 14 5 1 1 11.125 2.375 0 -2 13.5 8.5
+ellipsis 12.5s 14 5 1.125 1.125 11.75 2.625 0 -2 14 9
+ellipsis 13r 14 5 1 1 12 2.5 0 -2.5 14 9
+ellipsis 13m 15 5 1.125 1.125 12.125 2.625 0 -2.5 14.5 9
+ellipsis 13s 15 5 1.125 1.125 12.25 2.75 0 -2 14.5 9
+ellipsis 14r 15 5 1.125 1 12 2.25 0 -2.5 15 10
+ellipsis 14m 15 5 1.125 1 12.25 2.5 0 -2.5 15 10
+ellipsis 16m 18 7 1.375 1.625 14.875 3.75 0 -2.5 18 11.5
+ellipsis 16s 19 7 1.5 1.375 15.875 3.375 0 -2.5 18.5 11.5
+ellipsis 17m 19 7 1.5 1.5 15.75 3.375 0 -3 19 12
+ellipsis 20r 22 7 1.75 1.5 18.25 3.375 0 -3.5 21.5 14
+ellipsis 21m 24 9 1.875 2.125 19.5 4.625 0 -3.5 23.5 15
+ellipsis 22r 25 9 2 2.125 20.875 4.625 0 -3.5 24.5 15.5
+ellipsis 24m 27 9 2.125 2.125 22.25 4.75 0 -4 26.5 17
+envelope d 19 13 1.5 1 15.5 11 0 2 18.5 9
+envelope 11s 17 12 1.375 1 13.375 9.625 0 2 16.5 8
+envelope 12r 18 13 1.5 1 14.125 10.125 0 2 17.5 8.5
+envelope 12m 18 13 1.5 1 14.375 10.375 0 2 17.5 8.5
+envelope 12.5s 19 13 1.5 1 15.125 10.125 0 2 18.5 9
+envelope 13r 19 13 1.5 1 15.5 11 0 2 18.5 9
+envelope 13m 19 14 1.625 1.125 15.625 11.125 0 2 19 9
+envelope 13s 19 14 1.625 1.125 15.75 11.375 0 2 19 9
+envelope 14r 20 14 1.75 1.125 16.5 11.125 0 2 19.5 10
+envelope 14m 20 14 1.625 1.125 16 11.25 0 2 20 10
+envelope 16m 24 17 2 1.375 19.125 13.75 0 2.5 23.5 11.5
+envelope 16s 24 17 2 1.375 19.375 13.875 0 3 23.5 11.5
+envelope 17m 25 18 2.125 1.5 20.375 14.625 0 3 24.5 12
+envelope 20r 29 20 2.5 1.625 23.625 16.125 0 3 29 14
+envelope 21m 31 22 2.625 1.875 25.125 18 0 3.5 30.5 15
+envelope 22r 31 23 2.625 1.875 25.25 18.5 0 3.5 31 15.5
+envelope 24m 35 25 3 2.125 28.75 20.625 0 4 35 17
+exclamationmark.circle d 15 15 1 1 13 13 0 3 15 9
+exclamationmark.circle 11s 14 14 1 1 11.25 11.25 0 2.5 13.5 8
+exclamationmark.circle 12r 14 14 1 1 12 12 0 2.5 14 8.5
+exclamationmark.circle 12m 15 15 1 1 12.125 12.125 0 3 14.5 8.5
+exclamationmark.circle 12.5s 15 15 1.125 1.125 12.75 12.75 0 3 15 9
+exclamationmark.circle 13r 15 15 1 1 13 13 0 3 15 9
+exclamationmark.circle 13m 16 16 1.125 1.125 13.125 13.125 0 3 15.5 9
+exclamationmark.circle 13s 16 16 1.125 1.125 13.25 13.25 0 3 15.5 9
+exclamationmark.circle 14r 16 16 1.125 1.125 13.25 13.25 0 3 16 10
+exclamationmark.circle 14m 17 17 1.25 1.25 14.125 14.125 0 3 16.5 10
+exclamationmark.circle 16m 20 20 1.5 1.5 16.875 16.875 0 4 19.5 11.5
+exclamationmark.circle 16s 20 20 1.375 1.375 16.375 16.375 0 4 19.5 11.5
+exclamationmark.circle 17m 21 21 1.5 1.5 17.25 17.25 0 4 20.5 12
+exclamationmark.circle 20r 23 23 1.625 1.625 19.25 19.25 0 4.5 23 14
+exclamationmark.circle 21m 26 26 2 2 22 22 0 5 25.5 15
+exclamationmark.circle 22r 26 26 1.875 1.875 22 22 0 5 26 15.5
+exclamationmark.circle 24m 29 29 2.125 2.125 24.25 24.25 0 5.5 28.5 17
+exclamationmark.triangle d 17 15 1.5 1 13.5 12.5 0 2.5 16.5 9
+exclamationmark.triangle 11s 14 13 1.125 1 11.5 10.375 0 2.5 13.5 8
+exclamationmark.triangle 12r 15 14 1.25 1 12.375 11.125 0 2.5 14.5 8.5
+exclamationmark.triangle 12m 15 14 1.25 1 12.375 11.25 0 2.5 14.5 8.5
+exclamationmark.triangle 12.5s 15 14 1.125 1 12.25 11.125 0 2.5 15 9
+exclamationmark.triangle 13r 17 15 1.5 1 13.5 12.5 0 2.5 16.5 9
+exclamationmark.triangle 13m 17 15 1.375 1.125 14.25 12.25 0 2.5 16.5 9
+exclamationmark.triangle 13s 17 15 1.375 1.125 14.25 12.375 0 2.5 16.5 9
+exclamationmark.triangle 14r 18 15 1.375 1.125 14.375 12.25 0 2.5 17.5 10
+exclamationmark.triangle 14m 18 16 1.375 1.25 14.5 13.125 0 2.5 17.5 10
+exclamationmark.triangle 16m 20 18 1.625 1.375 16.5 15 0 3.5 20 11.5
+exclamationmark.triangle 16s 20 19 1.625 1.5 16.625 15.875 0 3.5 20 11.5
+exclamationmark.triangle 17m 21 19 1.625 1.5 16.875 16 0 3.5 21 12
+exclamationmark.triangle 20r 25 22 2 1.625 20.5 17.875 0 3.5 24.5 14
+exclamationmark.triangle 21m 26 24 2.125 1.875 21.75 19.75 0 4.5 26 15
+exclamationmark.triangle 22r 27 25 2.125 1.875 21.875 20.5 0 4.5 27 15.5
+exclamationmark.triangle 24m 30 27 2.375 2.125 24.875 22.5 0 5 30 17
+eye d 21 13 1.5 1 17.5 10.875 0 2 20.5 9
+eye 11s 17 12 1.125 1 14 9.375 0 2 17 8
+eye 12r 19 13 1.25 1 16 10.125 0 2 18.5 8.5
+eye 12m 19 13 1.25 1 16.125 10.25 0 2 18.5 8.5
+eye 12.5s 19 13 1.25 1.125 16 10.75 0 2 19 9
+eye 13r 21 13 1.5 1 17.5 10.875 0 2 20.5 9
+eye 13m 21 13 1.375 1 18.375 10.25 0 2 20.5 9
+eye 13s 21 14 1.25 1.125 17.5 11.125 0 2 21 9
+eye 14r 22 14 1.375 1.125 18.75 11 0 2 22 10
+eye 14m 22 14 1.375 1.125 18.875 11.125 0 2 22 10
+eye 16m 25 17 1.625 1.375 21.5 13.625 0 2.5 24.5 11.5
+eye 16s 25 17 1.625 1.375 21.625 13.625 0 2.5 25 11.5
+eye 17m 26 18 1.625 1.5 22.125 14.375 0 2.5 26 12
+eye 20r 31 20 2 1.625 26.75 16 0 3 31 14
+eye 21m 33 22 2.125 1.875 28.25 17.75 0 3.5 32.5 15
+eye 22r 34 23 2.25 1.875 29.375 18.5 0 3.5 33.5 15.5
+eye 24m 38 25 2.5 2.125 33 20.375 0 3.5 37.5 17
+eye.slash d 21 16 1.5 2 17.5 12 0 3 20.5 9
+eye.slash 11s 17 14 1.125 1.875 14 10.125 0 3 17 8
+eye.slash 12r 19 15 1.25 1.875 16 10.75 0 3 18.5 8.5
+eye.slash 12m 19 15 1.25 1.875 16.125 11 0 3 18.5 8.5
+eye.slash 12.5s 19 16 1.25 2.125 16 11.5 0 3 19 9
+eye.slash 13r 21 16 1.5 2 17.5 12 0 3 20.5 9
+eye.slash 13m 21 16 1.375 1.875 18.375 11.25 0 3 20.5 9
+eye.slash 13s 21 16 1.25 2 17.5 11.25 0 3.5 21 9
+eye.slash 14r 22 17 1.375 2.125 18.75 11.875 0 3 22 10
+eye.slash 14m 22 17 1.375 2.125 18.875 12.125 0 3.5 22 10
+eye.slash 16m 25 21 1.625 2.75 21.5 15.375 0 4 24.5 11.5
+eye.slash 16s 25 21 1.625 2.75 21.625 15.375 0 4.5 25 11.5
+eye.slash 17m 26 22 1.625 2.75 22.125 15.5 0 4.5 26 12
+eye.slash 20r 31 24 2 3.125 26.75 17.25 0 4.5 31 14
+eye.slash 21m 33 27 2.125 3.5 28.25 19.125 0 5.5 32.5 15
+eye.slash 22r 34 28 2.25 3.75 29.375 20.25 0 5.5 33.5 15.5
+eye.slash 24m 38 30 2.5 4 33 21.75 0 6 37.5 17
+eyes d 17 14 1 1 15 11.375 0 2 17 9
+eyes 11s 16 13 1 1.125 13 10.625 0 2 15.5 8
+eyes 12r 16 13 1 1 13.625 10.5 0 2 16 8.5
+eyes 12m 17 13 1.125 1 14.875 10.625 0 2 16.5 8.5
+eyes 12.5s 17 14 1.125 1.125 14 11.25 0 2.5 17 9
+eyes 13r 17 14 1 1 15 11.375 0 2 17 9
+eyes 13m 18 14 1.125 1.125 15.125 11.625 0 2.5 17.5 9
+eyes 13s 18 14 1.125 1.125 15.375 11.625 0 2.5 18 9
+eyes 14r 18 15 1.125 1.25 15.125 12.25 0 2.5 18 10
+eyes 14m 19 15 1.25 1.25 16.25 12.5 0 2.5 18.5 10
+eyes 16m 22 18 1.375 1.5 18.625 15 0 3 22 11.5
+eyes 16s 23 18 1.5 1.375 19.75 14.375 0 3 22.5 11.5
+eyes 17m 23 19 1.5 1.5 19.75 15.125 0 3 23 12
+eyes 20r 26 21 1.625 1.625 22 16.75 0 3.5 26 14
+eyes 21m 29 24 1.875 2 24.5 19.375 0 4 29 15
+eyes 22r 30 24 2 1.875 25.75 19.25 0 4 29.5 15.5
+eyes 24m 33 26 2.125 2.125 27.875 21.375 0 4.5 32.5 17
+folder d 18 14 1.5 1 14.5 12 0 2 17.5 9
+folder 11s 16 13 1.375 1 12.5 10.125 0 2 15.5 8
+folder 12r 17 13 1.5 1 13.375 10.75 0 2 16.5 8.5
+folder 12m 17 13 1.5 1 13.5 11 0 2 16.5 8.5
+folder 12.5s 18 14 1.5 1.125 14.125 11.625 0 2.5 17.5 9
+folder 13r 18 14 1.5 1 14.5 12 0 2 17.5 9
+folder 13m 18 14 1.625 1 14.625 11.125 0 2.5 18 9
+folder 13s 18 14 1.625 1 14.75 11.25 0 2.5 18 9
+folder 14r 19 15 1.625 1.125 14.875 11.875 0 2.5 19 10
+folder 14m 19 15 1.625 1.125 15 12 0 2.5 19 10
+folder 16m 22 18 2 1.375 18 14.625 0 3 22 11.5
+folder 16s 23 18 2 1.375 18.125 14.75 0 3 22.5 11.5
+folder 17m 24 19 2.125 1.5 19 15.5 0 3 23.5 12
+folder 20r 28 21 2.5 1.625 22.25 17.125 0 3.5 27.5 14
+folder 21m 29 24 2.625 2 23.5 19.875 0 4 28.5 15
+folder 22r 30 24 2.75 1.875 24.375 19.75 0 4 29.5 15.5
+folder 24m 33 26 3 2 26.875 21.125 0 4.5 33 17
+fork.knife d 12 17 1.5 1 8.875 15 0 3.5 12 9
+fork.knife 11s 11 15 1.375 1 7.875 12.875 0 3 11 8
+fork.knife 12r 12 16 1.5 1 8.125 13.625 0 3 11.5 8.5
+fork.knife 12m 12 16 1.5 1 8.375 13.875 0 3.5 11.5 8.5
+fork.knife 12.5s 12 17 1.5 1.125 8.875 14.625 0 3.5 12 9
+fork.knife 13r 12 17 1.5 1 8.875 15 0 3.5 12 9
+fork.knife 13m 13 17 1.625 1.125 9.125 14.125 0 3.5 12.5 9
+fork.knife 13s 13 18 1.625 1.125 9.25 15.25 0 3.5 12.5 9
+fork.knife 14r 13 18 1.75 1.125 9.5 15.125 0 3.5 12.5 10
+fork.knife 14m 13 19 1.625 1.25 9 16.125 0 3.5 13 10
+fork.knife 16m 16 22 2 1.375 11.875 18.5 0 4.5 15.5 11.5
+fork.knife 16s 16 22 1.875 1.375 11.375 18.75 0 4.5 15.5 11.5
+fork.knife 17m 16 23 2 1.5 11.875 19.625 0 4.5 16 12
+fork.knife 20r 19 26 2.375 1.625 13.5 22 0 5 18.5 14
+fork.knife 21m 20 29 2.5 2 14.625 25 0 6 20 15
+fork.knife 22r 20 29 2.5 1.875 14.125 25 0 6 20 15.5
+fork.knife 24m 23 32 2.875 2.125 16.75 27.75 0 6.5 23 17
+gearshape d 16 16 1 1 14 14 0 3 16 9
+gearshape 11s 14 14 1 1 11.875 11.875 0 3 14 8
+gearshape 12r 15 15 1 1 12.625 12.625 0 3 15 8.5
+gearshape 12m 15 15 1 1 12.75 12.75 0 3 15 8.5
+gearshape 12.5s 16 16 1.125 1.125 13.5 13.375 0 3.5 15.5 9
+gearshape 13r 16 16 1 1 14 14 0 3 16 9
+gearshape 13m 16 16 1 1 13.125 13.125 0 3.5 16 9
+gearshape 13s 16 16 1 1 13.25 13.25 0 3.5 16 9
+gearshape 14r 17 17 1.125 1.125 13.875 13.875 0 3.5 17 10
+gearshape 14m 17 17 1.125 1.125 14.125 14.125 0 3.5 17 10
+gearshape 16m 20 20 1.375 1.375 17 17 0 4.5 20 11.5
+gearshape 16s 21 21 1.5 1.5 18 17.875 0 4.5 20.5 11.5
+gearshape 17m 22 21 1.5 1.5 18.125 18 0 4.5 21.5 12
+gearshape 20r 24 24 1.625 1.625 20.25 20.125 0 5 24 14
+gearshape 21m 27 27 1.875 2 22.375 23 0 5.5 26.5 15
+gearshape 22r 27 27 1.875 1.875 23 23 0 5.5 27 15.5
+gearshape 24m 30 30 2.125 2.125 25.5 25.5 0 6 29.5 17
+hammer d 20 18 1.625 1.125 16.25 15.375 0 4.5 19.5 9
+hammer 11s 17 16 1.25 1.125 14.125 13.375 0 4 16.5 8
+hammer 12r 18 17 1.25 1.125 15 14.125 0 4 18 8.5
+hammer 12m 18 17 1.25 1.125 15.25 14.375 0 4 18 8.5
+hammer 12.5s 19 18 1.375 1.25 16.125 14.375 0 4.5 19 9
+hammer 13r 20 18 1.625 1.125 16.25 15.375 0 4.5 19.5 9
+hammer 13m 20 19 1.375 1.25 16.5 15.625 0 4.5 20 9
+hammer 13s 20 19 1.375 1.25 16.75 15.75 0 4.5 20 9
+hammer 14r 21 20 1.5 1.375 17.5 16.5 0 4.5 21 10
+hammer 14m 21 20 1.5 1.375 17.75 16.75 0 4.5 21 10
+hammer 16m 24 23 1.75 1.5 20.375 19.25 0 5.5 24 11.5
+hammer 16s 24 24 1.625 1.625 19.875 20.25 0 6 24 11.5
+hammer 17m 26 25 1.75 1.625 21.625 20.375 0 6 25.5 12
+hammer 20r 30 28 2.25 2 24.875 23.5 0 6.5 29.5 14
+hammer 21m 31 31 2.25 2.25 25.875 26 0 7.5 31 15
+hammer 22r 33 31 2.375 2.125 27.375 25.875 0 7.5 32.5 15.5
+hammer 24m 36 34 2.625 2.375 30.5 27.875 0 8.5 36 17
+hand.draw.fill d 17 17 1 2.25 13.875 12.25 0 3.5 16 9
+hand.draw.fill 11s 15 15 1 2.125 12.25 10.5 0 3.5 15 8
+hand.draw.fill 12r 16 16 1 2.125 12.75 11 0 3.5 15 8.5
+hand.draw.fill 12m 16 16 1 2.25 13.125 11.125 0 3.5 15.5 8.5
+hand.draw.fill 12.5s 17 17 1.125 2.375 13.875 11.875 0 4 16.5 9
+hand.draw.fill 13r 17 17 1 2.25 13.875 12.25 0 3.5 16 9
+hand.draw.fill 13m 17 17 1.125 2.5 14.125 12 0 4 16.5 9
+hand.draw.fill 13s 18 17 1.125 2.375 14.5 11.625 0 4 17.5 9
+hand.draw.fill 14r 18 18 1.25 2.625 14.875 12.75 0 4 17 10
+hand.draw.fill 14m 18 18 1.125 2.5 14.5 12.375 0 4 17.5 10
+hand.draw.fill 16m 21 21 1.375 3 17.375 14.875 0 5 20.5 11.5
+hand.draw.fill 16s 22 22 1.375 3.25 17.75 15.75 0 5 21 11.5
+hand.draw.fill 17m 23 22 1.5 3.25 18.5 15.75 0 5 22 12
+hand.draw.fill 20r 26 25 1.75 3.5 21.125 17.5 0 5.5 25 14
+hand.draw.fill 21m 28 28 1.875 4 22.875 19.5 0 6.5 27 15
+hand.draw.fill 22r 28 28 1.875 4 23.25 20 0 6.5 27.5 15.5
+hand.draw.fill 24m 32 31 2.125 4.375 26.125 21.75 0 7 31 17
+hand.point.up.left.fill d 13 15 1 1.375 10.875 12 0 2.5 13 9
+hand.point.up.left.fill 11s 12 13 0.875 1.25 9.75 10.5 0 2.5 12 8
+hand.point.up.left.fill 12r 12 14 1 1.25 10 11 0 2.5 12 8.5
+hand.point.up.left.fill 12m 13 14 1 1.375 10.375 11.125 0 2.5 12.5 8.5
+hand.point.up.left.fill 12.5s 14 15 1 1.5 11 11.875 0 3 13.5 9
+hand.point.up.left.fill 13r 13 15 1 1.375 10.875 12 0 2.5 13 9
+hand.point.up.left.fill 13m 14 15 1 1.5 11.125 12.125 0 3 13.5 9
+hand.point.up.left.fill 13s 14 15 1 1.375 11.5 11.625 0 3 14 9
+hand.point.up.left.fill 14r 14 16 1.125 1.625 11.625 12.75 0 3 14 10
+hand.point.up.left.fill 14m 15 16 1.125 1.625 12 13 0 3 14.5 10
+hand.point.up.left.fill 16m 17 19 1.375 1.875 13.625 14.875 0 4 16.5 11.5
+hand.point.up.left.fill 16s 17 19 1.375 1.875 14 15.125 0 4 17 11.5
+hand.point.up.left.fill 17m 18 20 1.5 2 14.5 15.75 0 4 17.5 12
+hand.point.up.left.fill 20r 20 22 1.75 2.125 16.5 17.5 0 4 20 14
+hand.point.up.left.fill 21m 22 25 1.75 2.625 17.875 20.25 0 5 21.5 15
+hand.point.up.left.fill 22r 23 25 2 2.5 19 20 0 5 22.5 15.5
+hand.point.up.left.fill 24m 25 28 2 2.875 20.5 22.25 0 5.5 25 17
+hand.wave d 15 16 1.125 1.5 12.375 12.875 0 3 14.5 9
+hand.wave 11s 14 14 1 1.375 11 11.25 0 3 13.5 8
+hand.wave 12r 14 15 1 1.5 11.375 11.5 0 3 13.5 8.5
+hand.wave 12m 14 15 1 1.5 11.75 11.875 0 3 14 8.5
+hand.wave 12.5s 15 16 1.125 1.625 12.625 12.75 0 3.5 15 9
+hand.wave 13r 15 16 1.125 1.5 12.375 12.875 0 3 14.5 9
+hand.wave 13m 15 16 1.125 1.625 12.75 12.875 0 3.5 15 9
+hand.wave 13s 16 16 1.125 1.5 13.125 12.5 0 3.5 15.5 9
+hand.wave 14r 16 17 1.25 1.75 13.25 13.5 0 3.5 16 10
+hand.wave 14m 16 17 1.125 1.625 13 13.25 0 3.5 16 10
+hand.wave 16m 19 20 1.375 2 15.625 15.875 0 4.5 18.5 11.5
+hand.wave 16s 19 21 1.375 2.125 16.125 17 0 4.5 19 11.5
+hand.wave 17m 20 21 1.375 2.125 16.625 16.875 0 4.5 20 12
+hand.wave 20r 23 24 1.625 2.5 18.875 19.25 0 5 22.5 14
+hand.wave 21m 24 26 1.625 2.75 19.875 20.75 0 6 24 15
+hand.wave 22r 25 27 1.875 2.875 20.75 21.75 0 5.5 24.5 15.5
+hand.wave 24m 28 29 2.125 3 23.375 23 0 6.5 28 17
+hare d 23 17 1.625 1.125 19.75 14.375 0 3 23 9
+hare 11s 20 15 1.375 1 17 12.5 0 3 20 8
+hare 12r 22 16 1.5 1 18.25 13.25 0 3 21.5 8.5
+hare 12m 22 16 1.5 1 18.375 13.5 0 3 21.5 8.5
+hare 12.5s 23 17 1.5 1.125 19.25 14.125 0 3.5 22.5 9
+hare 13r 23 17 1.625 1.125 19.75 14.375 0 3 23 9
+hare 13m 23 17 1.5 1.125 19.125 14.5 0 3.5 23 9
+hare 13s 24 17 1.625 1.125 20 14.75 0 3.5 23.5 9
+hare 14r 25 18 1.75 1.25 21.25 15.375 0 3.5 24.5 10
+hare 14m 25 18 1.75 1.125 21.375 14.875 0 3.5 24.5 10
+hare 16m 29 21 2 1.375 24.5 17.875 0 4.5 28.5 11.5
+hare 16s 29 22 2 1.5 24.625 18.875 0 4.5 29 11.5
+hare 17m 30 22 2 1.5 25.25 19 0 4.5 30 12
+hare 20r 36 25 2.5 1.625 30.25 21.25 0 5 35.5 14
+hare 21m 38 28 2.625 1.875 32.125 23.5 0 6 37.5 15
+hare 22r 39 29 2.75 2 33.25 25 0 5.5 38.5 15.5
+hare 24m 43 31 3 2 36.75 26.125 0 6.5 43 17
+heart d 16 14 1.5 1 13 12 0 2.5 16 9
+heart 11s 14 13 1.375 1 11 10.25 0 2.5 14 8
+heart 12r 15 13 1.5 1 11.625 10.75 0 2.5 15 8.5
+heart 12m 15 13 1.5 1 11.875 11 0 2.5 15 8.5
+heart 12.5s 16 14 1.5 1.125 12.5 11.625 0 2.5 15.5 9
+heart 13r 16 14 1.5 1 13 12 0 2.5 16 9
+heart 13m 16 14 1.5 1 12.125 11.125 0 2.5 16 9
+heart 13s 16 15 1.5 1.125 12.25 12.125 0 2.5 16 9
+heart 14r 17 15 1.625 1.125 12.875 11.875 0 2.5 17 10
+heart 14m 17 15 1.625 1.125 13.125 12.125 0 2.5 17 10
+heart 16m 20 18 2 1.375 15.875 14.625 0 3.5 20 11.5
+heart 16s 20 18 2 1.375 16 14.875 0 3.5 20 11.5
+heart 17m 21 19 2 1.5 16.125 15.625 0 3.5 21 12
+heart 20r 25 21 2.5 1.625 19.5 17.25 0 3.5 24.5 14
+heart 21m 26 24 2.625 2 20.75 20 0 4.5 26 15
+heart 22r 27 24 2.75 1.875 21.375 19.75 0 4.5 26.5 15.5
+heart 24m 30 26 3 2 23.75 21.25 0 5 30 17
+house d 19 16 1.5 1 15.5 13.5 0 3 18.5 9
+house 11s 17 14 1.375 1 13.375 11.75 0 3 16.5 8
+house 12r 17 15 1.5 1 14 12.375 0 3 17 8.5
+house 12m 18 15 1.5 1 14.375 12.625 0 3 17.5 8.5
+house 12.5s 19 16 1.5 1.125 15.25 13.25 0 3 18.5 9
+house 13r 19 16 1.5 1 15.5 13.5 0 3 18.5 9
+house 13m 19 16 1.625 1.125 15.5 13.625 0 3 18.5 9
+house 13s 19 16 1.5 1 15 13.125 0 3.5 19 9
+house 14r 20 17 1.75 1.25 16.375 14.375 0 3.5 19.5 10
+house 14m 20 17 1.625 1.125 16 14 0 3.5 20 10
+house 16m 24 20 2 1.375 19.125 16.75 0 4 23.5 11.5
+house 16s 24 20 2 1.375 19.5 17 0 4.5 23.5 11.5
+house 17m 25 21 2.125 1.5 20.375 17.875 0 4.5 24.5 12
+house 20r 29 24 2.5 1.625 23.375 19.875 0 4.5 28.5 14
+house 21m 31 26 2.625 1.875 25.125 22 0 5.5 30.5 15
+house 22r 31 27 2.625 1.875 25 22.625 0 5.5 31 15.5
+house 24m 35 30 3 2.125 28.625 25.125 0 6 35 17
+info.circle d 15 15 1 1 13 13 0 3 15 9
+info.circle 11s 14 14 1 1 11.25 11.25 0 2.5 13.5 8
+info.circle 12r 14 14 1 1 12 12 0 2.5 14 8.5
+info.circle 12m 15 15 1 1 12.125 12.125 0 3 14.5 8.5
+info.circle 12.5s 15 15 1.125 1.125 12.75 12.75 0 3 15 9
+info.circle 13r 15 15 1 1 13 13 0 3 15 9
+info.circle 13m 16 16 1.125 1.125 13.125 13.125 0 3 15.5 9
+info.circle 13s 16 16 1.125 1.125 13.25 13.25 0 3 15.5 9
+info.circle 14r 16 16 1.125 1.125 13.25 13.25 0 3 16 10
+info.circle 14m 17 17 1.25 1.25 14.125 14.125 0 3 16.5 10
+info.circle 16m 20 20 1.5 1.5 16.875 16.875 0 4 19.5 11.5
+info.circle 16s 20 20 1.375 1.375 16.375 16.375 0 4 19.5 11.5
+info.circle 17m 21 21 1.5 1.5 17.25 17.25 0 4 20.5 12
+info.circle 20r 23 23 1.625 1.625 19.25 19.25 0 4.5 23 14
+info.circle 21m 26 26 2 2 22 22 0 5 25.5 15
+info.circle 22r 26 26 1.875 1.875 22 22 0 5 26 15.5
+info.circle 24m 29 29 2.125 2.125 24.25 24.25 0 5.5 28.5 17
+key d 12 18 1.5 1 8.5 16 0 4.5 11.5 9
+key 11s 11 16 1.375 1 7.375 13.75 0 4 10.5 8
+key 12r 11 17 1.5 1 7.875 14.75 0 4 11 8.5
+key 12m 11 17 1.5 1 8 14.875 0 4 11 8.5
+key 12.5s 12 18 1.5 1.125 8.375 15.5 0 4.5 11.5 9
+key 13r 12 18 1.5 1 8.5 16 0 4.5 11.5 9
+key 13m 12 19 1.625 1.125 8.625 16.125 0 4.5 12 9
+key 13s 12 19 1.625 1.125 8.75 16.125 0 4.5 12 9
+key 14r 13 20 1.75 1.25 9.25 17.125 0 4.5 12.5 10
+key 14m 13 20 1.75 1.25 9.375 17.25 0 4.5 12.5 10
+key 16m 15 23 2 1.375 10.625 19.75 0 5.5 15 11.5
+key 16s 15 23 2 1.375 10.75 19.875 0 6 15 11.5
+key 17m 16 24 2.125 1.5 11.25 21 0 6 15.5 12
+key 20r 19 28 2.5 1.875 13.125 24.375 0 6.5 18.5 14
+key 21m 19 30 2.5 2 13.25 25.75 0 7.5 19 15
+key 22r 20 31 2.75 2 14.375 26.875 0 7.5 19.5 15.5
+key 24m 22 34 3 2.25 16 29.5 0 8.5 22 17
+ladybug d 18 18 1.5 1 14.375 15.375 0 4 17.5 9
+ladybug 11s 16 16 1.375 1 12.625 13 0 3.5 16 8
+ladybug 12r 17 16 1.5 1 13.375 13.75 0 3.5 16.5 8.5
+ladybug 12m 17 17 1.5 1 13.5 14 0 4 17 8.5
+ladybug 12.5s 18 17 1.5 1.125 14.25 14 0 4 17.5 9
+ladybug 13r 18 18 1.5 1 14.375 15.375 0 4 17.5 9
+ladybug 13m 18 18 1.625 1.125 14.625 15.25 0 4 18 9
+ladybug 13s 18 18 1.5 1.125 14.125 15.375 0 4 18 9
+ladybug 14r 19 19 1.75 1.25 15.5 16.125 0 4 18.5 10
+ladybug 14m 19 19 1.625 1.25 15.125 15.5 0 4.5 19 10
+ladybug 16m 23 22 2 1.375 18 18.75 0 5.5 22.5 11.5
+ladybug 16s 23 23 2 1.5 18.25 19.875 0 5.5 22.5 11.5
+ladybug 17m 24 24 2.125 1.5 19.125 19.875 0 5.5 23.5 12
+ladybug 20r 28 27 2.5 1.75 22.125 23 0 6 27.5 14
+ladybug 21m 29 29 2.625 1.875 23.75 24.5 0 7 29 15
+ladybug 22r 30 30 2.75 1.875 24.375 25.25 0 7 29.5 15.5
+ladybug 24m 34 33 3 2.125 27.125 28 0 7.5 33.5 17
+ladybug.fill d 18 18 1.5 1 14.375 15.25 0 4 17.5 9
+ladybug.fill 11s 16 16 1.375 1 12.625 13.125 0 3.5 16 8
+ladybug.fill 12r 17 17 1.5 1 13.375 13.875 0 3.5 16.5 8.5
+ladybug.fill 12m 17 17 1.5 1 13.5 14.125 0 4 17 8.5
+ladybug.fill 12.5s 18 18 1.5 1.125 14.25 14.875 0 4 17.5 9
+ladybug.fill 13r 18 18 1.5 1 14.375 15.25 0 4 17.5 9
+ladybug.fill 13m 18 18 1.625 1.125 14.625 15.25 0 4 18 9
+ladybug.fill 13s 18 18 1.5 1.125 14.125 15.5 0 4 18 9
+ladybug.fill 14r 19 19 1.75 1.25 15.5 16.25 0 4 18.5 10
+ladybug.fill 14m 19 19 1.625 1.25 15.125 15.625 0 4.5 19 10
+ladybug.fill 16m 23 23 2 1.5 18 19.5 0 5 22.5 11.5
+ladybug.fill 16s 23 23 2 1.375 18.25 19 0 5.5 22.5 11.5
+ladybug.fill 17m 24 24 2.125 1.5 19.25 20 0 5.5 23.5 12
+ladybug.fill 20r 28 27 2.5 1.75 22.125 23.125 0 6 27.5 14
+ladybug.fill 21m 29 29 2.625 1.875 23.75 24.625 0 7 29 15
+ladybug.fill 22r 30 30 2.75 1.875 24.375 25.375 0 7 29.5 15.5
+ladybug.fill 24m 34 33 3 2.125 27.125 28.25 0 7.5 33.5 17
+laptopcomputer d 22 13 1.5 1 18.5 10.5 0 1.5 21.5 9
+laptopcomputer 11s 20 12 1.5 1 16.875 9.25 0 1.5 19.5 8
+laptopcomputer 12r 20 12 1.5 1 17 9.625 0 1.5 20 8.5
+laptopcomputer 12m 21 12 1.5 1 17.25 9.875 0 1.5 20.5 8.5
+laptopcomputer 12.5s 22 13 1.5 1.125 18.25 10.5 0 2 21.5 9
+laptopcomputer 13r 22 13 1.5 1 18.5 10.5 0 1.5 21.5 9
+laptopcomputer 13m 22 13 1.625 1.125 18.75 10.625 0 1.5 22 9
+laptopcomputer 13s 22 13 1.5 1 18.25 10.125 0 2 22 9
+laptopcomputer 14r 23 14 1.625 1.25 19 11.125 0 1.5 23 10
+laptopcomputer 14m 24 14 1.75 1.25 20.125 11.5 0 2 23.5 10
+laptopcomputer 16m 27 17 2 1.5 23 13.875 0 2.5 27 11.5
+laptopcomputer 16s 28 17 2 1.375 23.375 13.375 0 2.5 27.5 11.5
+laptopcomputer 17m 29 17 2.125 1.5 24.5 13.875 0 2.5 28.5 12
+laptopcomputer 20r 34 19 2.5 1.625 28.25 15.25 0 2.5 33.5 14
+laptopcomputer 21m 36 22 2.625 2 30.25 17.875 0 3 35.5 15
+laptopcomputer 22r 36 22 2.625 1.875 30.25 17.5 0 3 36 15.5
+laptopcomputer 24m 41 24 3 2.125 34.5 19.625 0 3.5 40.5 17
+leaf d 16 14 1 1 13.5 11.875 0 2.5 15.5 9
+leaf 11s 14 13 1 1 11.75 10.25 0 2.5 14 8
+leaf 12r 15 14 1 1 12.5 10.875 0 2.5 14.5 8.5
+leaf 12m 15 14 1 1 12.625 11.125 0 2.5 15 8.5
+leaf 12.5s 16 14 1.125 1 13.25 11 0 2.5 15.5 9
+leaf 13r 16 14 1 1 13.5 11.875 0 2.5 15.5 9
+leaf 13m 16 15 1.125 1.125 13.625 12 0 2.5 16 9
+leaf 13s 16 15 1 1.125 13.125 12.125 0 2.5 16 9
+leaf 14r 17 15 1.25 1.125 14.5 12 0 2.5 16.5 10
+leaf 14m 17 16 1.125 1.25 14 12.875 0 2.5 17 10
+leaf 16m 20 18 1.375 1.375 16.875 14.75 0 3.5 20 11.5
+leaf 16s 20 19 1.375 1.5 17 15.625 0 3.5 20 11.5
+leaf 17m 21 19 1.5 1.5 17.875 15.75 0 3.5 21 12
+leaf 20r 24 22 1.625 1.75 20 18.125 0 3.5 24 14
+leaf 21m 27 24 2 1.875 22.75 19.375 0 4.5 26.5 15
+leaf 22r 27 25 1.875 2 22.875 20.75 0 4.5 27 15.5
+leaf 24m 30 27 2.125 2.125 25.25 22.125 0 5 29.5 17
+leaf.fill d 16 14 1 1 14 11.875 0 2.5 16 9
+leaf.fill 11s 14 13 1 1 12 10.125 0 2.5 14 8
+leaf.fill 12r 15 13 1 1 12.75 10.75 0 2.5 15 8.5
+leaf.fill 12m 15 14 1 1 12.875 11 0 2.5 15 8.5
+leaf.fill 12.5s 16 14 1.125 1.125 13.625 11.5 0 2.5 16 9
+leaf.fill 13r 16 14 1 1 14 11.875 0 2.5 16 9
+leaf.fill 13m 16 14 1 1 13.25 11.125 0 2.5 16 9
+leaf.fill 13s 17 15 1.125 1.125 14.125 12 0 2.5 16.5 9
+leaf.fill 14r 17 15 1.125 1.125 14 11.875 0 2.5 17 10
+leaf.fill 14m 17 15 1.125 1.125 14.25 12 0 2.5 17 10
+leaf.fill 16m 21 18 1.5 1.375 17.875 14.625 0 3.5 20.5 11.5
+leaf.fill 16s 21 18 1.375 1.375 17.375 14.75 0 3.5 20.5 11.5
+leaf.fill 17m 22 19 1.5 1.5 18.25 15.5 0 3.5 21.5 12
+leaf.fill 20r 25 22 1.75 1.75 21.125 18 0 3.5 24.5 14
+leaf.fill 21m 27 24 1.875 1.875 22.5 19.125 0 4.5 26.5 15
+leaf.fill 22r 28 24 2 1.875 24 19.75 0 4.5 27.5 15.5
+leaf.fill 24m 30 27 2.125 2.125 25.75 21.875 0 5 30 17
+link d 17 17 1.375 1.375 13.75 13.625 0 3.5 16.5 9
+link 11s 15 15 1.125 1.25 11.875 11.875 0 3.5 14.5 8
+link 12r 16 16 1.25 1.25 12.625 12.625 0 3.5 15.5 8.5
+link 12m 16 16 1.375 1.375 12.625 12.625 0 3.5 15.5 8.5
+link 12.5s 17 17 1.375 1.5 13.375 13.375 0 3.5 16.5 9
+link 13r 17 17 1.375 1.375 13.75 13.625 0 3.5 16.5 9
+link 13m 17 17 1.375 1.5 13.75 13.75 0 3.5 16.5 9
+link 13s 17 17 1.375 1.5 13.875 13.875 0 3.5 17 9
+link 14r 18 18 1.5 1.625 14.625 14.625 0 3.5 17.5 10
+link 14m 18 18 1.5 1.5 14.75 14.125 0 4 18 10
+link 16m 21 21 1.75 1.875 16.875 16.875 0 4.5 21 11.5
+link 16s 21 21 1.75 1.875 17 17 0 5 21 11.5
+link 17m 22 22 1.875 2 17.875 17.875 0 5 22 12
+link 20r 25 25 2.125 2.125 20 20.125 0 5.5 25 14
+link 21m 27 28 2.375 2.5 22.125 22.125 0 6 26.5 15
+link 22r 29 29 2.5 2.625 23.625 23.625 0 6 28.5 15.5
+link 24m 31 31 2.625 2.75 25.375 25.375 0 7 31 17
+location d 15 15 0.75 1.25 12.375 12.5 0 2.5 15 9
+location 11s 14 14 0.875 1.25 10.75 10.75 0 3 13.5 8
+location 12r 14 14 0.875 1.25 11.25 11.125 0 2.5 14 8.5
+location 12m 15 15 0.875 1.25 11.5 11.5 0 3 14.5 8.5
+location 12.5s 15 15 1 1.25 12.125 11.5 0 3 15 9
+location 13r 15 15 0.75 1.25 12.375 12.5 0 2.5 15 9
+location 13m 16 16 1.125 1.5 12.375 12.375 0 3 15.5 9
+location 13s 16 16 1 1.5 12.625 12.625 0 3 15.5 9
+location 14r 17 16 1.125 1.375 13 12.375 0 3 17 10
+location 14m 18 17 1.125 1.625 14.25 13.375 0 3 17.5 10
+location 16m 20 20 1.375 1.875 16 16 0 4 19.5 11.5
+location 16s 20 20 1.375 1.875 15.5 15.5 0 4 19.5 11.5
+location 17m 21 21 1.375 1.875 16.25 16.25 0 4 20.5 12
+location 20r 24 23 1.625 2.25 18.625 18.5 0 4 23.5 14
+location 21m 25 26 1.75 2.5 20 20.75 0 5 25 15
+location 22r 26 26 1.75 2.375 20.5 20.375 0 5 25.5 15.5
+location 24m 29 29 1.875 2.75 22.875 22.75 0 5.5 29 17
+magnifyingglass d 16 15 1.5 1 12.5 13 0 2.5 15.5 9
+magnifyingglass 11s 13 13 1.125 1 10 10.875 0 2.5 13 8
+magnifyingglass 12r 15 14 1.375 1 11.5 11.625 0 2.5 14.5 8.5
+magnifyingglass 12m 15 14 1.375 1 11.625 11.75 0 2.5 15 8.5
+magnifyingglass 12.5s 16 15 1.5 1.125 12.875 12.25 0 2.5 15.5 9
+magnifyingglass 13r 16 15 1.5 1 12.5 13 0 2.5 15.5 9
+magnifyingglass 13m 16 15 1.5 1.125 12.625 12.75 0 2.5 16 9
+magnifyingglass 13s 16 15 1.5 1.125 12.625 12.75 0 3 16 9
+magnifyingglass 14r 17 16 1.625 1.25 13.375 13.5 0 3 16.5 10
+magnifyingglass 14m 17 16 1.625 1.125 13.5 12.875 0 3 16.5 10
+magnifyingglass 16m 20 19 1.875 1.375 16.25 15.625 0 3.5 19.5 11.5
+magnifyingglass 16s 20 19 1.75 1.375 15.625 15.75 0 3.5 20 11.5
+magnifyingglass 17m 21 20 1.875 1.5 16.375 16.625 0 4 20.5 12
+magnifyingglass 20r 24 23 2.25 1.75 19.125 19.25 0 4 23.5 14
+magnifyingglass 21m 26 25 2.5 1.875 21 20.5 0 5 25.5 15
+magnifyingglass 22r 26 26 2.5 2 21 22 0 5 26 15.5
+magnifyingglass 24m 29 28 2.75 2.125 23.125 23.375 0 5 28.5 17
+map d 17 15 1.5 1 13.5 13 0 2.5 16.5 9
+map 11s 15 13 1.375 1 11.375 10.875 0 2.5 14.5 8
+map 12r 16 14 1.5 1 12.25 11.625 0 2.5 15.5 8.5
+map 12m 16 14 1.5 1 12.375 11.75 0 2.5 15.5 8.5
+map 12.5s 16 15 1.5 1.125 13 12.25 0 3 16 9
+map 13r 17 15 1.5 1 13.5 13 0 2.5 16.5 9
+map 13m 17 15 1.625 1.125 13.375 12.75 0 3 16.5 9
+map 13s 17 15 1.625 1.125 13.5 12.75 0 3 16.5 9
+map 14r 18 16 1.75 1.25 14.25 13.5 0 3 17.5 10
+map 14m 18 16 1.75 1.125 14.375 12.875 0 3 17.5 10
+map 16m 21 19 2 1.375 16.5 15.625 0 3.5 20.5 11.5
+map 16s 21 19 2 1.375 16.625 15.75 0 4 21 11.5
+map 17m 22 20 2.125 1.5 17.5 16.625 0 4 21.5 12
+map 20r 26 23 2.5 1.75 20.375 19.25 0 4 25.5 14
+map 21m 27 25 2.625 1.875 21.625 20.5 0 5 27 15
+map 22r 28 26 2.75 2 22.375 22 0 5 27.5 15.5
+map 24m 31 28 3 2.125 24.625 23.375 0 5.5 31 17
+map.fill d 17 15 1.5 1 13.5 12.5 0 2.5 16.5 9
+map.fill 11s 15 13 1.375 1 11.5 10.75 0 2.5 14.5 8
+map.fill 12r 16 14 1.5 1 12.25 11.5 0 2.5 15.5 8.5
+map.fill 12m 16 14 1.5 1 12.375 11.625 0 2.5 15.5 8.5
+map.fill 12.5s 16 15 1.5 1.125 13 12.125 0 2.5 16 9
+map.fill 13r 17 15 1.5 1 13.5 12.5 0 2.5 16.5 9
+map.fill 13m 17 15 1.625 1.125 13.375 12.625 0 2.5 16.5 9
+map.fill 13s 17 15 1.625 1.125 13.5 12.625 0 3 16.5 9
+map.fill 14r 18 16 1.75 1.25 14.25 13.375 0 2.5 17.5 10
+map.fill 14m 18 16 1.75 1.125 14.5 12.75 0 3 17.5 10
+map.fill 16m 21 19 2 1.375 16.5 15.5 0 3.5 20.5 11.5
+map.fill 16s 21 19 2 1.375 16.625 15.625 0 3.5 21 11.5
+map.fill 17m 22 20 2.125 1.5 17.5 16.375 0 4 21.5 12
+map.fill 20r 26 23 2.5 1.75 20.375 19.125 0 4 25.5 14
+map.fill 21m 27 25 2.625 1.875 21.625 20.25 0 5 27 15
+map.fill 22r 28 26 2.75 2 22.375 21.75 0 4.5 27.5 15.5
+map.fill 24m 31 28 3 2.125 24.75 23.125 0 5 31 17
+moon.stars d 15 16 1.5 1 13 13.5 0 2.5 14 9
+moon.stars 11s 13 14 1.375 1 11.25 11.875 0 2.5 13 8
+moon.stars 12r 14 15 1.5 1 11.75 12.25 0 2.5 13 8.5
+moon.stars 12m 14 15 1.5 1 12.125 12.625 0 2.5 13.5 8.5
+moon.stars 12.5s 15 16 1.625 1.125 12.75 13.5 0 2.5 14.5 9
+moon.stars 13r 15 16 1.5 1 13 13.5 0 2.5 14 9
+moon.stars 13m 15 16 1.625 1.125 13 13.625 0 2.5 14.5 9
+moon.stars 13s 15 16 1.625 1 13.375 13.25 0 3 15 9
+moon.stars 14r 16 17 1.75 1.25 13.75 14.25 0 2.5 15 10
+moon.stars 14m 17 17 1.875 1.125 14.875 14 0 3 16 10
+moon.stars 16m 19 20 2 1.375 16.125 16.875 0 3.5 18 11.5
+moon.stars 16s 19 21 2 1.5 16.375 18 0 3.5 18 11.5
+moon.stars 17m 20 21 2.125 1.5 17.125 17.875 0 3.5 19 12
+moon.stars 20r 23 24 2.5 1.75 19.625 20.375 0 4 22 14
+moon.stars 21m 24 27 2.625 2 21.125 22.875 0 4.5 23.5 15
+moon.stars 22r 24 27 2.625 1.875 20.625 22.375 0 4.5 23 15.5
+moon.stars 24m 28 30 3 2.125 24.125 25.25 0 5 27 17
+moon.stars.fill d 15 16 1.5 1 13 13.5 0 2.5 14 9
+moon.stars.fill 11s 13 14 1.375 1 11.25 11.875 0 2.5 12.5 8
+moon.stars.fill 12r 14 15 1.5 1 11.75 12.25 0 2.5 13 8.5
+moon.stars.fill 12m 14 15 1.5 1 12.125 12.625 0 2.5 13.5 8.5
+moon.stars.fill 12.5s 15 16 1.625 1.125 12.75 13.5 0 2.5 14 9
+moon.stars.fill 13r 15 16 1.5 1 13 13.5 0 2.5 14 9
+moon.stars.fill 13m 15 16 1.625 1.125 13.125 13.625 0 2.5 14.5 9
+moon.stars.fill 13s 15 16 1.625 1 13.375 13.25 0 3 14.5 9
+moon.stars.fill 14r 16 17 1.75 1.25 13.75 14.25 0 2.5 15 10
+moon.stars.fill 14m 17 17 1.875 1.125 14.875 14 0 3 16 10
+moon.stars.fill 16m 19 20 2 1.375 16.125 16.75 0 3.5 18 11.5
+moon.stars.fill 16s 19 21 2 1.5 16.375 18 0 3.5 18 11.5
+moon.stars.fill 17m 20 21 2.125 1.5 17.125 17.875 0 3.5 19 12
+moon.stars.fill 20r 23 24 2.5 1.75 19.625 20.375 0 4 21.5 14
+moon.stars.fill 21m 24 26 2.625 1.875 21.125 22 0 4.5 23.5 15
+moon.stars.fill 22r 24 27 2.625 1.875 20.625 22.375 0 4.5 23 15.5
+moon.stars.fill 24m 28 30 3 2.125 24.125 25.125 0 5 26.5 17
+moon.zzz d 15 17 1.5 1 12.5 14.5 0 3 15 9
+moon.zzz 11s 13 15 1.125 1 11 12.75 0 3 13 8
+moon.zzz 12r 14 16 1.375 1 11.25 13.375 0 3 14 8.5
+moon.zzz 12m 15 16 1.375 1 12.5 13.75 0 3 14.5 8.5
+moon.zzz 12.5s 16 17 1.375 1.125 13.375 14.5 0 3.5 15.5 9
+moon.zzz 13r 15 17 1.5 1 12.5 14.5 0 3 15 9
+moon.zzz 13m 16 17 1.5 1.125 13.5 14 0 3 15.5 9
+moon.zzz 13s 16 18 1.375 1.125 13 15.125 0 3.5 16 9
+moon.zzz 14r 16 18 1.5 1.125 13.125 14.875 0 3 16 10
+moon.zzz 14m 17 18 1.625 1.125 14.5 15.25 0 3.5 16.5 10
+moon.zzz 16m 19 22 1.75 1.5 15.625 19 0 4 18.5 11.5
+moon.zzz 16s 19 22 1.625 1.375 16 18.625 0 4.5 19 11.5
+moon.zzz 17m 20 23 1.875 1.5 16.625 19.375 0 4.5 20 12
+moon.zzz 20r 23 26 2.25 1.75 18.75 22.375 0 4.5 22.5 14
+moon.zzz 21m 24 28 2.125 1.875 19.75 24 0 5.5 24 15
+moon.zzz 22r 25 29 2.375 1.875 20.625 24.5 0 5.5 25 15.5
+moon.zzz 24m 28 32 2.625 2.125 23.375 27.375 0 6 27.5 17
+paintbrush.pointed d 18 17 1.625 1.5 14.25 13.375 0 3.5 17.5 9
+paintbrush.pointed 11s 15 15 1.25 1.375 12.5 11.625 0 3.5 15 8
+paintbrush.pointed 12r 16 15 1.25 1.375 13 12.125 0 3.5 16 8.5
+paintbrush.pointed 12m 16 16 1.375 1.375 13.25 12.5 0 3.5 16 8.5
+paintbrush.pointed 12.5s 18 17 1.5 1.625 15 13.125 0 3.5 17.5 9
+paintbrush.pointed 13r 18 17 1.625 1.5 14.25 13.375 0 3.5 17.5 9
+paintbrush.pointed 13m 18 17 1.5 1.625 14.375 13.375 0 3.5 18 9
+paintbrush.pointed 13s 18 17 1.375 1.625 14.75 12.875 0 4 18 9
+paintbrush.pointed 14r 19 18 1.625 1.75 15.125 14.125 0 3.5 18.5 10
+paintbrush.pointed 14m 19 18 1.5 1.625 15.5 13.75 0 4 19 10
+paintbrush.pointed 16m 22 21 1.75 2 17.75 16.5 0 5 21.5 11.5
+paintbrush.pointed 16s 22 22 1.75 2.125 18.125 17.625 0 5 22 11.5
+paintbrush.pointed 17m 23 22 1.875 2.125 18.875 17.625 0 5 22.5 12
+paintbrush.pointed 20r 27 25 2.25 2.375 21.625 19.375 0 5.5 26.5 14
+paintbrush.pointed 21m 28 28 2.25 2.625 23.375 21.75 0 6.5 28 15
+paintbrush.pointed 22r 29 28 2.375 2.625 23.75 22.125 0 6 29 15.5
+paintbrush.pointed 24m 32 31 2.625 3 25.875 24.75 0 7 32 17
+paintbrush.pointed.fill d 17 16 1.5 1.5 13.875 12.875 0 3.5 17 9
+paintbrush.pointed.fill 11s 15 15 1.25 1.375 12.375 11.5 0 3.5 14.5 8
+paintbrush.pointed.fill 12r 16 15 1.25 1.375 12.875 11.875 0 3 16 8.5
+paintbrush.pointed.fill 12m 16 16 1.375 1.375 13.125 12.25 0 3.5 16 8.5
+paintbrush.pointed.fill 12.5s 18 16 1.5 1.375 14.875 12.375 0 3.5 17.5 9
+paintbrush.pointed.fill 13r 17 16 1.5 1.5 13.875 12.875 0 3.5 17 9
+paintbrush.pointed.fill 13m 18 17 1.5 1.625 14.25 13.25 0 3.5 17.5 9
+paintbrush.pointed.fill 13s 18 17 1.5 1.625 14.625 13.5 0 3.5 18 9
+paintbrush.pointed.fill 14r 18 17 1.5 1.625 15 13.125 0 3.5 18 10
+paintbrush.pointed.fill 14m 19 18 1.625 1.75 15.375 14.25 0 3.5 19 10
+paintbrush.pointed.fill 16m 21 21 1.625 2 16.75 16.25 0 4.5 21 11.5
+paintbrush.pointed.fill 16s 22 21 1.75 2 18 16.625 0 5 21.5 11.5
+paintbrush.pointed.fill 17m 23 22 1.875 2.125 18.625 17.25 0 5 22.5 12
+paintbrush.pointed.fill 20r 26 25 2.25 2.5 21.25 19.75 0 5 26 14
+paintbrush.pointed.fill 21m 28 27 2.25 2.625 23 21.375 0 6 28 15
+paintbrush.pointed.fill 22r 29 28 2.5 2.625 23.375 21.75 0 6 28.5 15.5
+paintbrush.pointed.fill 24m 32 31 2.75 3 26.25 24.375 0 6.5 31.5 17
+pencil d 14 13 1.5 1 10.5 10.375 0 1.5 13.5 9
+pencil 11s 12 12 1.125 1 9.25 9.25 0 2 11.5 8
+pencil 12r 13 12 1.375 1 10.125 9.375 0 1.5 12.5 8.5
+pencil 12m 13 12 1.25 1 9.875 9.75 0 1.5 13 8.5
+pencil 12.5s 14 13 1.375 1.125 10.625 10.5 0 2 14 9
+pencil 13r 14 13 1.5 1 10.5 10.375 0 1.5 13.5 9
+pencil 13m 14 13 1.375 1.125 10.625 10.625 0 1.5 14 9
+pencil 13s 15 14 1.5 1.125 11.75 11 0 2 14.5 9
+pencil 14r 15 13 1.5 1.125 11 10.125 0 1.5 14.5 10
+pencil 14m 15 14 1.5 1.25 11.5 11.375 0 2 15 10
+pencil 16m 17 17 1.75 1.5 13.125 13.75 0 2.5 16.5 11.5
+pencil 16s 17 17 1.75 1.375 13.5 13.5 0 2.5 17 11.5
+pencil 17m 18 17 1.875 1.5 13.875 13.875 0 2.5 18 12
+pencil 20r 20 19 2 1.625 15 14.875 0 2.5 20 14
+pencil 21m 22 22 2.25 2 17.125 17.875 0 3 22 15
+pencil 22r 23 22 2.5 2 18 17.875 0 3 22.5 15.5
+pencil 24m 25 24 2.75 2.125 19.5 19.5 0 3.5 25 17
+person.2 d 22 15 1.5 1.875 18.125 12.125 0 3 21.5 9
+person.2 11s 18 13 1.375 1.75 15.125 10.25 0 3 18 8
+person.2 12r 20 14 1.5 1.75 16.375 11 0 3 19.5 8.5
+person.2 12m 20 14 1.5 1.75 16.5 11.125 0 3 19.5 8.5
+person.2 12.5s 21 15 1.5 2 17.25 11.625 0 3.5 20.5 9
+person.2 13r 22 15 1.5 1.875 18.125 12.125 0 3 21.5 9
+person.2 13m 21 15 1.5 1.875 17.125 11.25 0 3.5 21 9
+person.2 13s 21 15 1.5 1.875 17.25 11.375 0 3.5 21 9
+person.2 14r 23 16 1.75 2 19.125 12 0 3.5 22.5 10
+person.2 14m 23 16 1.75 2 19.25 12.25 0 3.5 23 10
+person.2 16m 27 19 2.125 2.5 22.75 14.625 0 4.5 26.5 11.5
+person.2 16s 27 19 2.125 2.5 22.875 14.75 0 4.5 26.5 11.5
+person.2 17m 28 20 2.125 2.625 23.25 15.625 0 4.5 27.5 12
+person.2 20r 33 23 2.5 3 27.25 18.25 0 5 32.5 14
+person.2 21m 34 25 2.625 3.375 28.75 19.25 0 5.5 34 15
+person.2 22r 36 26 2.75 3.25 30 20 0 5.5 35.5 15.5
+person.2 24m 40 28 3.125 3.75 33.75 22 0 6 39.5 17
+photo.badge.plus d 21 16 1.5 1.875 18.125 13 0 4.5 18.5 9
+photo.badge.plus 11s 18 14 1.375 1.75 15 11.125 0 4 16 8
+photo.badge.plus 12r 19 15 1.5 1.75 16.375 12 0 4 17 8.5
+photo.badge.plus 12m 19 15 1.5 1.75 16.375 12.125 0 4 17 8.5
+photo.badge.plus 12.5s 20 16 1.5 2 17 12.625 0 4.5 17.5 9
+photo.badge.plus 13r 21 16 1.5 1.875 18.125 13 0 4.5 18.5 9
+photo.badge.plus 13m 21 16 1.625 1.75 17.75 12.5 0 4.5 18.5 9
+photo.badge.plus 13s 21 17 1.625 2 17.75 13.25 0 4.5 18.5 9
+photo.badge.plus 14r 22 17 1.75 2 19.125 13.25 0 4.5 19.5 10
+photo.badge.plus 14m 22 17 1.75 2 19.125 13.375 0 4.5 20 10
+photo.badge.plus 16m 25 21 2 2.625 21.75 16.75 0 5.5 22.5 11.5
+photo.badge.plus 16s 25 21 2 2.5 21.75 16.25 0 6 22.5 11.5
+photo.badge.plus 17m 27 22 2.125 2.625 23.125 17.125 0 6 24 12
+photo.badge.plus 20r 32 25 2.5 3 27.25 20 0 6.5 28.5 14
+photo.badge.plus 21m 33 27 2.625 3.25 28.625 21.125 0 7.5 30 15
+photo.badge.plus 22r 34 28 2.625 3.25 29.125 22 0 7.5 30.5 15.5
+photo.badge.plus 24m 38 30 3 3.75 32.75 24.125 0 8.5 34 17
+photo.fill d 18 14 1.5 1 15 12 0 2.5 18 9
+photo.fill 11s 16 13 1.375 1 12.75 10.125 0 2 16 8
+photo.fill 12r 17 13 1.5 1 13.875 10.875 0 2 17 8.5
+photo.fill 12m 17 13 1.5 1 13.875 11 0 2 17 8.5
+photo.fill 12.5s 18 14 1.5 1.125 14.5 11.625 0 2.5 17.5 9
+photo.fill 13r 18 14 1.5 1 15 12 0 2.5 18 9
+photo.fill 13m 19 14 1.625 1 15.125 11.125 0 2.5 18.5 9
+photo.fill 13s 19 14 1.625 1 15.125 11.25 0 2.5 18.5 9
+photo.fill 14r 20 15 1.75 1.125 16.125 11.875 0 2.5 19.5 10
+photo.fill 14m 20 15 1.75 1.125 16.25 12.125 0 2.5 19.5 10
+photo.fill 16m 23 18 2 1.375 18.5 14.625 0 3 22.5 11.5
+photo.fill 16s 23 18 2 1.375 18.625 14.75 0 3 23 11.5
+photo.fill 17m 24 19 2.125 1.5 19.75 15.5 0 3.5 24 12
+photo.fill 20r 29 21 2.5 1.625 23.125 17.25 0 3.5 28.5 14
+photo.fill 21m 30 24 2.625 2 24.375 20 0 4 29.5 15
+photo.fill 22r 31 24 2.75 1.875 25.375 19.875 0 4 30.5 15.5
+photo.fill 24m 34 26 3 2 27.75 21.125 0 4.5 34 17
+play.circle d 15 15 1 1 13 13 0 3 15 9
+play.circle 11s 14 14 1 1 11.25 11.25 0 2.5 13.5 8
+play.circle 12r 14 14 1 1 12 12 0 2.5 14 8.5
+play.circle 12m 15 15 1 1 12.125 12.125 0 3 14.5 8.5
+play.circle 12.5s 15 15 1.125 1.125 12.75 12.75 0 3 15 9
+play.circle 13r 15 15 1 1 13 13 0 3 15 9
+play.circle 13m 16 16 1.125 1.125 13.125 13.125 0 3 15.5 9
+play.circle 13s 16 16 1.125 1.125 13.25 13.25 0 3 15.5 9
+play.circle 14r 16 16 1.125 1.125 13.25 13.25 0 3 16 10
+play.circle 14m 17 17 1.25 1.25 14.125 14.125 0 3 16.5 10
+play.circle 16m 20 20 1.5 1.5 16.875 16.875 0 4 19.5 11.5
+play.circle 16s 20 20 1.375 1.375 16.375 16.375 0 4 19.5 11.5
+play.circle 17m 21 21 1.5 1.5 17.25 17.25 0 4 20.5 12
+play.circle 20r 23 23 1.625 1.625 19.25 19.25 0 4.5 23 14
+play.circle 21m 26 26 2 2 22 22 0 5 25.5 15
+play.circle 22r 26 26 1.875 1.875 22 22 0 5 26 15.5
+play.circle 24m 29 29 2.125 2.125 24.25 24.25 0 5.5 28.5 17
+play.fill d 12 13 1.5 1 9.5 11 0 1.5 11.5 9
+play.fill 11s 11 12 1.375 1 8.625 9.625 0 2 10.5 8
+play.fill 12r 11 12 1.5 1 8.75 9.875 0 1.5 10.5 8.5
+play.fill 12m 11 13 1.5 1 9.125 10.25 0 2 11 8.5
+play.fill 12.5s 12 13 1.5 1 9.75 10.125 0 2 11.5 9
+play.fill 13r 12 13 1.5 1 9.5 11 0 1.5 11.5 9
+play.fill 13m 12 14 1.625 1.125 9.875 11.125 0 2 11.5 9
+play.fill 13s 12 14 1.625 1.125 10.125 11.375 0 2 12 9
+play.fill 14r 13 14 1.75 1.25 10.25 11.5 0 2 12.5 10
+play.fill 14m 13 14 1.75 1.125 10.625 11.125 0 2 13 10
+play.fill 16m 15 17 2 1.375 12.125 13.625 0 2.5 15 11.5
+play.fill 16s 15 17 2 1.375 12.5 14 0 3 15 11.5
+play.fill 17m 16 18 2.125 1.5 12.875 14.5 0 2.5 15.5 12
+play.fill 20r 18 20 2.5 1.75 14.625 16.5 0 2.5 18 14
+play.fill 21m 19 22 2.625 1.875 15.875 17.875 0 3.5 19 15
+play.fill 22r 20 23 2.75 2 16.125 18.875 0 3.5 19.5 15.5
+play.fill 24m 22 25 3 2.125 18.125 20.375 0 3.5 22 17
+plus.square.fill d 15 14 1.5 1 12 12 0 2.5 15 9
+plus.square.fill 11s 14 13 1.5 1 11 10.125 0 2 13.5 8
+plus.square.fill 12r 14 13 1.5 1 10.875 10.875 0 2 14 8.5
+plus.square.fill 12m 14 13 1.5 1 11 11 0 2 14 8.5
+plus.square.fill 12.5s 15 14 1.5 1.125 11.5 11.625 0 2.5 15 9
+plus.square.fill 13r 15 14 1.5 1 12 12 0 2.5 15 9
+plus.square.fill 13m 15 14 1.5 1 11.125 11.125 0 2.5 15 9
+plus.square.fill 13s 15 14 1.5 1 11.25 11.25 0 2.5 15 9
+plus.square.fill 14r 16 15 1.625 1.125 11.875 11.875 0 2.5 16 10
+plus.square.fill 14m 16 15 1.625 1.125 12 12.125 0 2.5 16 10
+plus.square.fill 16m 19 18 2 1.375 14.625 14.625 0 3 19 11.5
+plus.square.fill 16s 19 18 2 1.375 14.75 14.75 0 3 19 11.5
+plus.square.fill 17m 20 19 2.125 1.5 15.5 15.5 0 3.5 19.5 12
+plus.square.fill 20r 23 21 2.5 1.625 18 17.25 0 3.5 23 14
+plus.square.fill 21m 25 24 2.625 2 19.125 20 0 4 24.5 15
+plus.square.fill 22r 25 24 2.625 1.875 19.125 19.875 0 4 25 15.5
+plus.square.fill 24m 28 26 3 2 21.875 21.125 0 4.5 28 17
+plus.square.on.square d 17 16 1.5 1 13.5 13.5 0 3 16.5 9
+plus.square.on.square 11s 15 14 1.375 1 11.875 11.75 0 3 15 8
+plus.square.on.square 12r 16 15 1.5 1 12.5 12.375 0 3 15.5 8.5
+plus.square.on.square 12m 16 15 1.5 1 12.75 12.625 0 3 16 8.5
+plus.square.on.square 12.5s 17 16 1.5 1.125 13.5 13.375 0 3.5 16.5 9
+plus.square.on.square 13r 17 16 1.5 1 13.5 13.5 0 3 16.5 9
+plus.square.on.square 13m 17 16 1.625 1.125 13.75 13.625 0 3 17 9
+plus.square.on.square 13s 17 16 1.5 1 13.25 13.125 0 3.5 17 9
+plus.square.on.square 14r 18 17 1.75 1.25 14.5 14.375 0 3 17.5 10
+plus.square.on.square 14m 18 17 1.625 1.125 14.125 14 0 3.5 18 10
+plus.square.on.square 16m 21 20 2 1.375 17 16.75 0 4 21 11.5
+plus.square.on.square 16s 22 21 2 1.5 17.25 17.875 0 4.5 21.5 11.5
+plus.square.on.square 17m 22 21 2 1.5 17.25 17.875 0 4.5 22 12
+plus.square.on.square 20r 26 24 2.5 1.75 20.75 20.5 0 4.5 26 14
+plus.square.on.square 21m 28 26 2.625 1.875 22.25 22 0 5.5 27.5 15
+plus.square.on.square 22r 28 27 2.625 1.875 22 22.5 0 5.5 28 15.5
+plus.square.on.square 24m 32 30 3 2.125 25.375 25.125 0 6 31.5 17
+power d 15 16 1 1 13 13.5 0 3 15 9
+power 11s 14 14 1 1 11.25 11.625 0 2.5 13.5 8
+power 12r 14 15 1 1 12 12.375 0 2.5 14 8.5
+power 12m 15 15 1 1 12.125 12.5 0 3 14.5 8.5
+power 12.5s 15 16 1.125 1.125 12.75 13.125 0 3 15 9
+power 13r 15 16 1 1 13 13.5 0 3 15 9
+power 13m 16 16 1.125 1.125 13.125 13.5 0 3 15.5 9
+power 13s 16 16 1.125 1.125 13.25 13.625 0 3 15.5 9
+power 14r 16 17 1.125 1.25 13.25 14.375 0 3 16 10
+power 14m 17 17 1.25 1.125 14.125 13.875 0 3 16.5 10
+power 16m 20 20 1.5 1.375 16.875 16.625 0 4 19.5 11.5
+power 16s 20 20 1.375 1.375 16.375 16.875 0 4 19.5 11.5
+power 17m 21 21 1.5 1.5 17.25 17.75 0 4 20.5 12
+power 20r 23 24 1.625 1.75 19.25 20.5 0 4.5 23 14
+power 21m 26 26 2 1.875 22 21.875 0 5 25.5 15
+power 22r 26 27 1.875 1.875 22 22.625 0 5 26 15.5
+power 24m 29 29 2.125 2 24.25 24.25 0 5.5 28.5 17
+puzzlepiece.extension d 19 15 1.5 1 16 12.5 0 2.5 18.5 9
+puzzlepiece.extension 11s 16 13 1.375 1 13.375 10.625 0 2.5 16 8
+puzzlepiece.extension 12r 17 14 1.5 1 14.375 11.375 0 2.5 17 8.5
+puzzlepiece.extension 12m 17 14 1.5 1 14.5 11.5 0 2.5 17 8.5
+puzzlepiece.extension 12.5s 18 15 1.5 1.125 15.25 12.125 0 2.5 18 9
+puzzlepiece.extension 13r 19 15 1.5 1 16 12.5 0 2.5 18.5 9
+puzzlepiece.extension 13m 19 15 1.625 1.125 15.75 12.5 0 2.5 18.5 9
+puzzlepiece.extension 13s 19 15 1.625 1.125 15.875 12.625 0 2.5 18.5 9
+puzzlepiece.extension 14r 20 16 1.75 1.25 16.75 13.25 0 2.5 19.5 10
+puzzlepiece.extension 14m 20 16 1.75 1.25 17 13.5 0 2.5 19.5 10
+puzzlepiece.extension 16m 23 19 2 1.375 19.375 15.375 0 3.5 23 11.5
+puzzlepiece.extension 16s 23 19 2 1.375 19.5 15.5 0 3.5 23 11.5
+puzzlepiece.extension 17m 25 20 2.125 1.5 20.625 16.25 0 3.5 24.5 12
+puzzlepiece.extension 20r 28 22 2.375 1.625 23.25 18.125 0 4 28 14
+puzzlepiece.extension 21m 30 25 2.625 2 25.375 20.875 0 4.5 30 15
+puzzlepiece.extension 22r 31 25 2.75 1.875 26.375 20.75 0 4.5 31 15.5
+puzzlepiece.extension 24m 34 27 2.875 2 28.25 22.25 0 5 34 17
+questionmark d 10 15 1.5 1 7 12.5 0 2.5 10 9
+questionmark 11s 10 13 1.5 1 7 10.25 0 2.5 9.5 8
+questionmark 12r 10 14 1.5 1 6.375 11.25 0 2.5 9.5 8.5
+questionmark 12m 10 14 1.5 1 6.625 11.25 0 2.5 10 8.5
+questionmark 12.5s 11 14 1.5 1.125 7.125 11.625 0 2.5 10.5 9
+questionmark 13r 10 15 1.5 1 7 12.5 0 2.5 10 9
+questionmark 13m 11 15 1.625 1.125 7.25 12.125 0 2.5 10.5 9
+questionmark 13s 11 15 1.625 1.125 7.375 12.125 0 2.5 10.5 9
+questionmark 14r 11 16 1.75 1.25 7.5 13.125 0 2.5 10.5 10
+questionmark 14m 11 16 1.625 1.25 7.125 13.125 0 2.5 11 10
+questionmark 16m 13 18 2 1.375 8.875 15 0 3.5 13 11.5
+questionmark 16s 14 18 2 1.375 9.125 15 0 3.5 13.5 11.5
+questionmark 17m 14 19 2.125 1.5 9.375 15.875 0 3.5 13.5 12
+questionmark 20r 16 22 2.5 1.625 10.625 17.875 0 4 16 14
+questionmark 21m 17 24 2.625 1.875 11.625 19.625 0 4.5 17 15
+questionmark 22r 17 25 2.625 1.875 11.125 20.5 0 4.5 17 15.5
+questionmark 24m 20 27 3 2.125 13.25 22.375 0 5 19.5 17
+rectangle.portrait d 14 16 1.5 1 11 14 0 3 14 9
+rectangle.portrait 11s 13 14 1.375 1 9.375 11.75 0 3 12.5 8
+rectangle.portrait 12r 13 15 1.5 1 9.875 12.625 0 3 13 8.5
+rectangle.portrait 12m 14 15 1.5 1 10.125 12.75 0 3 13.5 8.5
+rectangle.portrait 12.5s 14 16 1.5 1.125 10.625 13.375 0 3 14 9
+rectangle.portrait 13r 14 16 1.5 1 11 14 0 3 14 9
+rectangle.portrait 13m 14 16 1.5 1.125 10.25 13.75 0 3.5 14 9
+rectangle.portrait 13s 15 16 1.625 1 11.125 13.125 0 3.5 14.5 9
+rectangle.portrait 14r 15 17 1.75 1.125 11.5 14 0 3.5 14.5 10
+rectangle.portrait 14m 15 17 1.625 1.125 11 14.125 0 3.5 15 10
+rectangle.portrait 16m 18 20 2 1.375 13.5 17 0 4.5 17.5 11.5
+rectangle.portrait 16s 18 21 2 1.5 13.625 17.875 0 4.5 18 11.5
+rectangle.portrait 17m 19 21 2.125 1.5 14.25 18 0 4.5 18.5 12
+rectangle.portrait 20r 22 24 2.5 1.625 16.5 20.25 0 5 21.5 14
+rectangle.portrait 21m 23 27 2.625 2 17.625 23 0 5.5 23 15
+rectangle.portrait 22r 24 28 2.75 2 18.125 23.875 0 6 23.5 15.5
+rectangle.portrait 24m 27 30 3 2.125 20.125 25.375 0 6 26.5 17
+scope d 18 18 1 1 15.5 15.5 0 4 17.5 9
+scope 11s 16 16 1 1 13.25 13.25 0 3.5 15.5 8
+scope 12r 17 17 1 1 14.25 14.25 0 4 16.5 8.5
+scope 12m 17 17 1 1 14.375 14.375 0 4 16.5 8.5
+scope 12.5s 17 17 1.125 1.125 14.125 14.125 0 4 17 9
+scope 13r 18 18 1 1 15.5 15.5 0 4 17.5 9
+scope 13m 18 18 1.125 1.125 15.5 15.625 0 4 18 9
+scope 13s 18 18 1.125 1.125 15.625 15.625 0 4 18 9
+scope 14r 19 19 1.25 1.25 15.75 15.75 0 4.5 19 10
+scope 14m 19 19 1.25 1.25 15.875 15.875 0 4.5 19 10
+scope 16m 23 23 1.5 1.5 19.875 19.875 0 5.5 22.5 11.5
+scope 16s 23 23 1.5 1.5 20.125 20.125 0 5.5 22.5 11.5
+scope 17m 24 24 1.5 1.5 20.375 20.375 0 5.5 23.5 12
+scope 20r 27 27 1.75 1.75 22.875 22.875 0 6.5 27 14
+scope 21m 30 30 2 2 25.875 25.875 0 7 29.5 15
+scope 22r 31 31 2 2 26.875 27.125 0 7.5 30.5 15.5
+scope 24m 33 33 2.125 2.125 28.75 28.75 0 8 33 17
+scribble d 16 15 1 1.25 13.375 11.875 0 2.5 15.5 9
+scribble 11s 14 14 1 1.25 11.25 10.25 0 2.5 13.5 8
+scribble 12r 15 14 1.125 1.25 12 10.875 0 2.5 14.5 8.5
+scribble 12m 15 15 1.125 1.25 12.25 11 0 2.5 14.5 8.5
+scribble 12.5s 15 15 1 1.375 12.125 11.625 0 2.5 15 9
+scribble 13r 16 15 1 1.25 13.375 11.875 0 2.5 15.5 9
+scribble 13m 16 16 1.25 1.375 13.25 12 0 2.5 15.5 9
+scribble 13s 16 16 1.25 1.375 13.375 12.125 0 2.5 15.5 9
+scribble 14r 18 16 1.5 1.375 14.75 12 0 2.5 17.5 10
+scribble 14m 18 17 1.5 1.5 15 12.875 0 2.5 17.5 10
+scribble 16m 20 20 1.5 1.875 16.25 15.375 0 3.5 19.5 11.5
+scribble 16s 20 20 1.5 1.875 16.375 15.625 0 3.5 19.5 11.5
+scribble 17m 21 21 1.625 1.875 17.25 15.625 0 3.5 20.5 12
+scribble 20r 25 23 2 2 20.75 17.375 0 3.5 24.5 14
+scribble 21m 26 26 2 2.5 21.25 20 0 4.5 25.5 15
+scribble 22r 27 26 2.125 2.375 22 19.875 0 4.5 26.5 15.5
+scribble 24m 30 29 2.5 2.625 25 22 0 5 29.5 17
+scribble.variable d 16 16 1.125 1.25 13.75 12.375 0 2.5 16 9
+scribble.variable 11s 14 14 1 1.25 11.625 10.625 0 2.5 14 8
+scribble.variable 12r 15 15 1.125 1.125 12.5 11.375 0 2.5 15 8.5
+scribble.variable 12m 15 15 1.125 1.25 12.625 11.5 0 2.5 15 8.5
+scribble.variable 12.5s 16 16 1.125 1.375 13.25 12.125 0 2.5 15.5 9
+scribble.variable 13r 16 16 1.125 1.25 13.75 12.375 0 2.5 16 9
+scribble.variable 13m 16 16 1.125 1.375 13 12.375 0 2.5 16 9
+scribble.variable 13s 16 16 1.125 1.375 13.125 12.625 0 2.5 16 9
+scribble.variable 14r 18 17 1.375 1.5 14.625 13.125 0 2.5 17.5 10
+scribble.variable 14m 18 17 1.375 1.375 14.75 12.75 0 2.5 17.5 10
+scribble.variable 16m 21 20 1.75 1.625 17.5 15.375 0 3.5 20.5 11.5
+scribble.variable 16s 21 20 1.625 1.625 16.875 15.5 0 3.5 20.5 11.5
+scribble.variable 17m 22 21 1.75 1.75 17.75 16.25 0 3.5 21.5 12
+scribble.variable 20r 26 24 2.125 2.125 21.5 18.75 0 3.5 25.5 14
+scribble.variable 21m 27 26 2 2.25 22 20.125 0 4.5 26.5 15
+scribble.variable 22r 28 27 2.125 2.25 22.875 20.625 0 4.5 27.5 15.5
+scribble.variable 24m 30 29 2.25 2.5 25.25 22.125 0 4.5 30 17
+shield d 14 15 1.5 1 11 13 0 3 14 9
+shield 11s 13 13 1.5 1 10 11 0 2.5 12.5 8
+shield 12r 13 14 1.5 1 9.75 11.875 0 3 13 8.5
+shield 12m 13 14 1.5 1 10 12 0 3 13 8.5
+shield 12.5s 14 15 1.5 1.125 10.5 12.5 0 3 13.5 9
+shield 13r 14 15 1.5 1 11 13 0 3 14 9
+shield 13m 14 15 1.625 1 10.75 12.25 0 3 14 9
+shield 13s 14 15 1.5 1 10.125 12.25 0 3 14 9
+shield 14r 15 16 1.75 1.125 11.375 13.125 0 3 14.5 10
+shield 14m 15 16 1.625 1.125 10.875 13.25 0 3 15 10
+shield 16m 18 19 2 1.375 13.25 16 0 4 17.5 11.5
+shield 16s 18 19 2 1.375 13.375 16 0 4 17.5 11.5
+shield 17m 19 20 2.125 1.5 14.125 16.875 0 4 18.5 12
+shield 20r 22 23 2.5 1.625 16.25 19 0 4.5 21.5 14
+shield 21m 23 25 2.625 1.875 17.375 20.875 0 5.5 22.5 15
+shield 22r 23 26 2.625 1.875 17.125 21.75 0 5.5 23 15.5
+shield 24m 26 28 3 2 19.875 23.125 0 5.5 26 17
+shuffle d 18 14 1.625 1.125 14.625 11.5 0 2 18 9
+shuffle 11s 17 13 1.5 1 13.875 10.5 0 2.5 16.5 8
+shuffle 12r 17 13 1.5 1 13.5 10.625 0 2 17 8.5
+shuffle 12m 17 14 1.5 1 14 11.125 0 2.5 17 8.5
+shuffle 12.5s 18 14 1.5 1 14.875 11.25 0 2.5 18 9
+shuffle 13r 18 14 1.625 1.125 14.625 11.5 0 2 18 9
+shuffle 13m 19 14 1.625 1 15.125 11.25 0 2.5 18.5 9
+shuffle 13s 19 15 1.625 1.125 15.5 12.375 0 2.5 19 9
+shuffle 14r 19 15 1.625 1.25 15 12.375 0 2.5 19 10
+shuffle 14m 20 15 1.75 1.125 16.25 12.25 0 2.5 19.5 10
+shuffle 16m 23 18 2 1.375 18.625 14.75 0 3.5 23 11.5
+shuffle 16s 24 19 2.125 1.5 19.875 16 0 3.5 23.5 11.5
+shuffle 17m 24 19 2.125 1.5 19.75 15.75 0 3.5 24 12
+shuffle 20r 28 21 2.5 1.625 22.5 17 0 3.5 28 14
+shuffle 21m 30 24 2.625 1.875 24.375 19.375 0 4.5 29.5 15
+shuffle 22r 30 24 2.625 1.875 24 19.5 0 4 30 15.5
+shuffle 24m 34 27 3 2.125 27.875 22.125 0 4.5 34 17
+slider.horizontal.3 d 16 13 1.5 1 13 11 0 2 16 9
+slider.horizontal.3 11s 15 12 1.375 1 11.25 9.625 0 2 14.5 8
+slider.horizontal.3 12r 15 12 1.5 1 11.875 10 0 1.5 15 8.5
+slider.horizontal.3 12m 16 13 1.5 1 12.125 10.25 0 2 15.5 8.5
+slider.horizontal.3 12.5s 16 13 1.5 1 12.875 10.25 0 2 16 9
+slider.horizontal.3 13r 16 13 1.5 1 13 11 0 2 16 9
+slider.horizontal.3 13m 17 14 1.625 1.125 13.125 11.125 0 2 16.5 9
+slider.horizontal.3 13s 17 14 1.625 1.125 13.375 11.375 0 2 16.5 9
+slider.horizontal.3 14r 17 14 1.625 1.125 13.125 10.875 0 2 17 10
+slider.horizontal.3 14m 18 14 1.75 1.125 14.125 11.25 0 2 17.5 10
+slider.horizontal.3 16m 21 17 2 1.375 16.125 13.625 0 2.5 20.5 11.5
+slider.horizontal.3 16s 21 17 2 1.375 16.375 14 0 3 20.5 11.5
+slider.horizontal.3 17m 22 18 2.125 1.5 17.125 14.5 0 2.5 21.5 12
+slider.horizontal.3 20r 25 20 2.5 1.625 19.75 15.875 0 2.5 25 14
+slider.horizontal.3 21m 27 22 2.625 1.875 21.125 17.875 0 3.5 26.5 15
+slider.horizontal.3 22r 27 23 2.625 2 21 19 0 3.5 27 15.5
+slider.horizontal.3 24m 31 25 3 2.125 24.25 20.5 0 3.5 30.5 17
+smallcircle.filled.circle d 15 15 1 1 13 13 0 3 15 9
+smallcircle.filled.circle 11s 14 14 1 1 11.25 11.25 0 2.5 13.5 8
+smallcircle.filled.circle 12r 14 14 1 1 12 12 0 2.5 14 8.5
+smallcircle.filled.circle 12m 15 15 1 1 12.125 12.125 0 3 14.5 8.5
+smallcircle.filled.circle 12.5s 15 15 1.125 1.125 12.75 12.75 0 3 15 9
+smallcircle.filled.circle 13r 15 15 1 1 13 13 0 3 15 9
+smallcircle.filled.circle 13m 16 16 1.125 1.125 13.125 13.125 0 3 15.5 9
+smallcircle.filled.circle 13s 16 16 1.125 1.125 13.25 13.25 0 3 15.5 9
+smallcircle.filled.circle 14r 16 16 1.125 1.125 13.25 13.25 0 3 16 10
+smallcircle.filled.circle 14m 17 17 1.25 1.25 14.125 14.125 0 3 16.5 10
+smallcircle.filled.circle 16m 20 20 1.5 1.5 16.875 16.875 0 4 19.5 11.5
+smallcircle.filled.circle 16s 20 20 1.375 1.375 16.375 16.375 0 4 19.5 11.5
+smallcircle.filled.circle 17m 21 21 1.5 1.5 17.25 17.25 0 4 20.5 12
+smallcircle.filled.circle 20r 23 23 1.625 1.625 19.25 19.25 0 4.5 23 14
+smallcircle.filled.circle 21m 26 26 2 2 22 22 0 5 25.5 15
+smallcircle.filled.circle 22r 26 26 1.875 1.875 22 22 0 5 26 15.5
+smallcircle.filled.circle 24m 29 29 2.125 2.125 24.25 24.25 0 5.5 28.5 17
+sparkles d 15 17 1.5 1 12 14.5 0 3 15 9
+sparkles 11s 13 15 1.125 1 10.25 12.5 0 3 12.5 8
+sparkles 12r 13 16 1.125 1 10.125 13.375 0 3 13 8.5
+sparkles 12m 14 16 1.25 1 11 13.5 0 3 13.5 8.5
+sparkles 12.5s 14 17 1.125 1.125 10.875 14.125 0 3 14 9
+sparkles 13r 15 17 1.5 1 12 14.5 0 3 15 9
+sparkles 13m 15 17 1.25 1.125 12 14.625 0 3 15 9
+sparkles 13s 16 17 1.375 1.125 12.875 14.75 0 3 15.5 9
+sparkles 14r 16 18 1.375 1.125 12.75 14.875 0 3 16 10
+sparkles 14m 16 18 1.375 1.125 12.875 15 0 3.5 16 10
+sparkles 16m 18 21 1.625 1.375 14.75 18 0 4 18 11.5
+sparkles 16s 18 22 1.5 1.5 14.125 18.875 0 4.5 18 11.5
+sparkles 17m 19 23 1.625 1.5 14.875 19.125 0 4.5 19 12
+sparkles 20r 23 26 2 1.75 18.125 22.25 0 4.5 22.5 14
+sparkles 21m 24 28 2.125 1.875 19.25 23.625 0 5.5 23.5 15
+sparkles 22r 24 29 2.125 1.875 19.125 24.5 0 5.5 24 15.5
+sparkles 24m 28 31 2.5 2 22.75 26.25 0 6 27.5 17
+square.2.layers.3d.bottom.filled d 16 16 1.5 1 13 13.5 0 3 16 9
+square.2.layers.3d.bottom.filled 11s 15 14 1.5 1 12 11.75 0 3 14.5 8
+square.2.layers.3d.bottom.filled 12r 15 15 1.5 1 12 12.25 0 3 15 8.5
+square.2.layers.3d.bottom.filled 12m 16 15 1.5 1 12.125 12.5 0 3 15.5 8.5
+square.2.layers.3d.bottom.filled 12.5s 16 16 1.5 1.125 12.75 13.25 0 3.5 16 9
+square.2.layers.3d.bottom.filled 13r 16 16 1.5 1 13 13.5 0 3 16 9
+square.2.layers.3d.bottom.filled 13m 17 16 1.625 1.125 13.125 13.625 0 3.5 16.5 9
+square.2.layers.3d.bottom.filled 13s 17 16 1.625 1 13.25 13.125 0 3.5 16.5 9
+square.2.layers.3d.bottom.filled 14r 17 17 1.625 1.25 13.25 14.25 0 3.5 17 10
+square.2.layers.3d.bottom.filled 14m 18 17 1.75 1.125 14.25 13.875 0 3.5 17.5 10
+square.2.layers.3d.bottom.filled 16m 21 20 2 1.375 16.25 16.75 0 4.5 20.5 11.5
+square.2.layers.3d.bottom.filled 16s 21 20 2 1.375 16.375 17 0 4.5 20.5 11.5
+square.2.layers.3d.bottom.filled 17m 22 21 2.125 1.5 17.25 17.75 0 4.5 21.5 12
+square.2.layers.3d.bottom.filled 20r 25 24 2.5 1.75 20 20.375 0 5 25 14
+square.2.layers.3d.bottom.filled 21m 27 26 2.625 1.875 21.25 21.875 0 5.5 26.5 15
+square.2.layers.3d.bottom.filled 22r 27 27 2.625 1.875 21.25 22.5 0 5.5 27 15.5
+square.2.layers.3d.bottom.filled 24m 31 30 3 2.125 24.25 25 0 6.5 30.5 17
+square.2.layers.3d.top.filled d 16 16 1.5 1 13 13.5 0 3 16 9
+square.2.layers.3d.top.filled 11s 15 14 1.5 1 12 11.75 0 3 14.5 8
+square.2.layers.3d.top.filled 12r 15 15 1.5 1 12 12.25 0 3 15 8.5
+square.2.layers.3d.top.filled 12m 16 15 1.5 1 12.125 12.5 0 3 15.5 8.5
+square.2.layers.3d.top.filled 12.5s 16 16 1.5 1.125 12.75 13.25 0 3.5 16 9
+square.2.layers.3d.top.filled 13r 16 16 1.5 1 13 13.5 0 3 16 9
+square.2.layers.3d.top.filled 13m 17 16 1.625 1.125 13.125 13.625 0 3.5 16.5 9
+square.2.layers.3d.top.filled 13s 17 16 1.625 1 13.25 13.125 0 3.5 16.5 9
+square.2.layers.3d.top.filled 14r 17 17 1.625 1.25 13.25 14.25 0 3.5 17 10
+square.2.layers.3d.top.filled 14m 18 17 1.75 1.125 14.25 13.875 0 3.5 17.5 10
+square.2.layers.3d.top.filled 16m 21 20 2 1.375 16.25 16.75 0 4.5 20.5 11.5
+square.2.layers.3d.top.filled 16s 21 20 2 1.375 16.375 17 0 4.5 20.5 11.5
+square.2.layers.3d.top.filled 17m 22 21 2.125 1.5 17.25 17.75 0 4.5 21.5 12
+square.2.layers.3d.top.filled 20r 25 24 2.5 1.75 20 20.375 0 5 25 14
+square.2.layers.3d.top.filled 21m 27 26 2.625 1.875 21.25 21.875 0 5.5 26.5 15
+square.2.layers.3d.top.filled 22r 27 27 2.625 1.875 21.25 22.5 0 5.5 27 15.5
+square.2.layers.3d.top.filled 24m 31 30 3 2.125 24.25 25 0 6.5 30.5 17
+square.and.arrow.down d 15 17 1.5 1 11.5 13.75 0 3 14.5 9
+square.and.arrow.down 11s 13 15 1.375 1 9.875 11.75 0 3 13 8
+square.and.arrow.down 12r 14 16 1.5 1 10.5 12.625 0 3 13.5 8.5
+square.and.arrow.down 12m 14 16 1.5 1 10.625 12.75 0 3 14 8.5
+square.and.arrow.down 12.5s 15 17 1.5 1.125 11.25 13.375 0 3 14.5 9
+square.and.arrow.down 13r 15 17 1.5 1 11.5 13.75 0 3 14.5 9
+square.and.arrow.down 13m 15 17 1.625 1.125 11.5 13 0 3 14.5 9
+square.and.arrow.down 13s 15 18 1.625 1.125 11.625 13.875 0 3 15 9
+square.and.arrow.down 14r 16 18 1.75 1.125 12.125 14 0 3 15.5 10
+square.and.arrow.down 14m 16 19 1.75 1.25 12.375 14.75 0 3.5 15.5 10
+square.and.arrow.down 16m 19 22 2 1.375 14.125 16.875 0 4 18.5 11.5
+square.and.arrow.down 16s 19 22 2 1.375 14.375 17 0 4.5 18.5 11.5
+square.and.arrow.down 17m 19 23 2 1.5 14.25 18 0 4.5 19 12
+square.and.arrow.down 20r 23 26 2.5 1.625 17.375 20.25 0 4.5 22.5 14
+square.and.arrow.down 21m 24 29 2.625 2 18.625 22.875 0 5.5 24 15
+square.and.arrow.down 22r 25 29 2.75 1.875 19.125 23 0 5.5 24.5 15.5
+square.and.arrow.down 24m 28 32 3 2.125 21.25 25.375 0 6 27.5 17
+square.and.arrow.up d 15 18 1.5 1 11.5 14.5 0 3 14.5 9
+square.and.arrow.up 11s 13 16 1.375 1 9.875 12.5 0 3 13 8
+square.and.arrow.up 12r 14 17 1.5 1 10.5 13.25 0 3 13.5 8.5
+square.and.arrow.up 12m 14 17 1.5 1 10.625 13.5 0 3 14 8.5
+square.and.arrow.up 12.5s 15 18 1.5 1.125 11.25 14.25 0 3 14.5 9
+square.and.arrow.up 13r 15 18 1.5 1 11.5 14.5 0 3 14.5 9
+square.and.arrow.up 13m 15 18 1.625 1.125 11.5 14.625 0 3 14.5 9
+square.and.arrow.up 13s 15 18 1.625 1.125 11.625 14.75 0 3 15 9
+square.and.arrow.up 14r 16 19 1.75 1.25 12.125 15.375 0 3 15.5 10
+square.and.arrow.up 14m 16 19 1.75 1.25 12.375 14.875 0 3.5 15.5 10
+square.and.arrow.up 16m 19 23 2 1.5 14.125 18.625 0 4 18.5 11.5
+square.and.arrow.up 16s 19 23 2 1.375 14.375 18.125 0 4.5 18.5 11.5
+square.and.arrow.up 17m 19 24 2 1.5 14.25 19 0 4.5 19 12
+square.and.arrow.up 20r 23 27 2.5 1.75 17.375 22 0 4.5 22.5 14
+square.and.arrow.up 21m 24 30 2.625 2 18.625 24.25 0 5.5 24 15
+square.and.arrow.up 22r 25 30 2.75 1.875 19.125 24.125 0 5.5 24.5 15.5
+square.and.arrow.up 24m 28 33 3 2.125 21.25 26.875 0 6 27.5 17
+square.dashed d 15 14 1.5 1 12 12 0 2.5 15 9
+square.dashed 11s 14 13 1.5 1 11 10.125 0 2 13.5 8
+square.dashed 12r 14 13 1.5 1 10.875 10.875 0 2 14 8.5
+square.dashed 12m 14 13 1.5 1 11 11 0 2 14 8.5
+square.dashed 12.5s 15 14 1.5 1.125 11.5 11.625 0 2.5 15 9
+square.dashed 13r 15 14 1.5 1 12 12 0 2.5 15 9
+square.dashed 13m 15 14 1.5 1 11.125 11.125 0 2.5 15 9
+square.dashed 13s 15 14 1.5 1 11.25 11.25 0 2.5 15 9
+square.dashed 14r 16 15 1.625 1.125 11.875 11.875 0 2.5 16 10
+square.dashed 14m 16 15 1.625 1.125 12 12.125 0 2.5 16 10
+square.dashed 16m 19 18 2 1.375 14.625 14.625 0 3 19 11.5
+square.dashed 16s 19 18 2 1.375 14.75 14.75 0 3 19 11.5
+square.dashed 17m 20 19 2.125 1.5 15.5 15.5 0 3.5 19.5 12
+square.dashed 20r 23 21 2.5 1.625 18 17.25 0 3.5 23 14
+square.dashed 21m 25 24 2.625 2 19.125 20 0 4 24.5 15
+square.dashed 22r 25 24 2.625 1.875 19.125 19.875 0 4 25 15.5
+square.dashed 24m 28 26 3 2 21.875 21.125 0 4.5 28 17
+square.grid.3x3.square d 15 14 1.5 1 12 12 0 2.5 15 9
+square.grid.3x3.square 11s 14 13 1.5 1 11 10.125 0 2 13.5 8
+square.grid.3x3.square 12r 14 13 1.5 1 10.875 10.875 0 2 14 8.5
+square.grid.3x3.square 12m 14 13 1.5 1 11 11 0 2 14 8.5
+square.grid.3x3.square 12.5s 15 14 1.5 1.125 11.5 11.625 0 2.5 15 9
+square.grid.3x3.square 13r 15 14 1.5 1 12 12 0 2.5 15 9
+square.grid.3x3.square 13m 15 14 1.5 1 11.125 11.125 0 2.5 15 9
+square.grid.3x3.square 13s 15 14 1.5 1 11.25 11.25 0 2.5 15 9
+square.grid.3x3.square 14r 16 15 1.625 1.125 11.875 11.875 0 2.5 16 10
+square.grid.3x3.square 14m 16 15 1.625 1.125 12 12.125 0 2.5 16 10
+square.grid.3x3.square 16m 19 18 2 1.375 14.625 14.625 0 3 19 11.5
+square.grid.3x3.square 16s 19 18 2 1.375 14.75 14.75 0 3 19 11.5
+square.grid.3x3.square 17m 20 19 2.125 1.5 15.5 15.5 0 3.5 19.5 12
+square.grid.3x3.square 20r 23 21 2.5 1.625 18 17.25 0 3.5 23 14
+square.grid.3x3.square 21m 25 24 2.625 2 19.125 20 0 4 24.5 15
+square.grid.3x3.square 22r 25 24 2.625 1.875 19.125 19.875 0 4 25 15.5
+square.grid.3x3.square 24m 28 26 3 2 21.875 21.125 0 4.5 28 17
+square.slash d 15 17 0.875 1.875 13.25 13.25 0 3.5 15 9
+square.slash 11s 13 15 0.875 1.75 11.125 11.125 0 3.5 13 8
+square.slash 12r 14 16 0.875 1.75 12 12 0 3.5 13.5 8.5
+square.slash 12m 14 16 0.875 1.75 12.125 12.125 0 3.5 14 8.5
+square.slash 12.5s 15 17 1 2 12.625 12.625 0 4 14.5 9
+square.slash 13r 15 17 0.875 1.875 13.25 13.25 0 3.5 15 9
+square.slash 13m 15 17 0.875 1.875 12.375 12.375 0 4 15 9
+square.slash 13s 15 17 1 2 12.25 12.375 0 4 15 9
+square.slash 14r 16 18 1 2 14 13.25 0 4 16 10
+square.slash 14m 16 18 1 2 13.25 13.375 0 4 16 10
+square.slash 16m 19 22 1.25 2.625 16 16.75 0 5 18.5 11.5
+square.slash 16s 19 22 1.25 2.5 16.125 16.125 0 5 18.5 11.5
+square.slash 17m 20 23 1.25 2.625 17.125 17.125 0 5 19.5 12
+square.slash 20r 24 26 1.625 3 20.75 19.875 0 5.5 23.5 14
+square.slash 21m 24 28 1.625 3.25 20.125 21.125 0 6.5 24 15
+square.slash 22r 26 29 1.625 3.25 21.875 21.875 0 6.5 26 15.5
+square.slash 24m 29 32 2 3.75 24.875 24.125 0 7 28.5 17
+square.stack.3d.down.forward d 16 20 1.625 3.375 12.5 14.375 0 6 16 9
+square.stack.3d.down.forward 11s 15 17 1.5 2.625 11.75 12.5 0 5 14.5 8
+square.stack.3d.down.forward 12r 15 19 1.5 3.125 11.625 13.25 0 5.5 14.5 8.5
+square.stack.3d.down.forward 12m 15 18 1.5 2.875 11.875 13.5 0 5.5 15 8.5
+square.stack.3d.down.forward 12.5s 16 19 1.5 3 12.5 14.125 0 5.5 16 9
+square.stack.3d.down.forward 13r 16 20 1.625 3.375 12.5 14.375 0 6 16 9
+square.stack.3d.down.forward 13m 16 20 1.5 3.125 12.125 14.625 0 6 16 9
+square.stack.3d.down.forward 13s 17 20 1.625 3 13 14.75 0 6 16.5 9
+square.stack.3d.down.forward 14r 17 21 1.75 3.625 13.5 14.75 0 6.5 17 10
+square.stack.3d.down.forward 14m 17 21 1.625 3.375 13 15 0 6 17 10
+square.stack.3d.down.forward 16m 20 25 2 3.875 15.75 18 0 7.5 20 11.5
+square.stack.3d.down.forward 16s 20 25 2 3.875 16 19 0 7.5 20 11.5
+square.stack.3d.down.forward 17m 21 26 2.125 4.25 16.75 19 0 8 21 12
+square.stack.3d.down.forward 20r 25 30 2.5 5.125 19.25 21.375 0 9 24.5 14
+square.stack.3d.down.forward 21m 26 32 2.625 5.25 20.625 23.5 0 10 26 15
+square.stack.3d.down.forward 22r 27 34 2.75 5.75 21.125 24.375 0 10.5 26.5 15.5
+square.stack.3d.down.forward 24m 30 36 3 5.875 23.625 26.125 0 11 30 17
+square.stack.fill d 15 18 1.5 2 11.5 14.875 0 5 14.5 9
+square.stack.fill 11s 13 16 1.375 1.875 9.75 13 0 4.5 12.5 8
+square.stack.fill 12r 14 17 1.375 1.875 10.375 13.75 0 4.5 13.5 8.5
+square.stack.fill 12m 14 17 1.375 1.875 10.625 14 0 4.5 13.5 8.5
+square.stack.fill 12.5s 15 18 1.5 2.125 11 14.75 0 5 14.5 9
+square.stack.fill 13r 15 18 1.5 2 11.5 14.875 0 5 14.5 9
+square.stack.fill 13m 15 19 1.625 2.125 11.375 15.125 0 5 14.5 9
+square.stack.fill 13s 15 19 1.625 2.125 11.5 15.375 0 5 15 9
+square.stack.fill 14r 16 19 1.625 2.25 12.125 15.125 0 5 15.5 10
+square.stack.fill 14m 16 20 1.75 2.25 12.25 16.375 0 5.5 15.5 10
+square.stack.fill 16m 18 23 2 2.625 14 18.625 0 6.5 17.5 11.5
+square.stack.fill 16s 18 24 1.875 2.625 13.5 19.75 0 6.5 18 11.5
+square.stack.fill 17m 20 25 2.125 2.75 15.75 19.75 0 6.5 19.5 12
+square.stack.fill 20r 23 28 2.375 3.25 17.25 22.75 0 7.5 22.5 14
+square.stack.fill 21m 24 30 2.625 3.5 18.375 24.375 0 8.5 24 15
+square.stack.fill 22r 25 31 2.75 3.5 18.875 25.125 0 8.5 24.5 15.5
+square.stack.fill 24m 27 34 3 4 21 27.875 0 9.5 27 17
+sun.dust.fill d 19 18 1.625 1 15.125 15.5 0 4 18.5 9
+sun.dust.fill 11s 15 15 1.375 1 11.625 13 0 3.5 15 8
+sun.dust.fill 12r 17 17 1.5 1 13.625 14.125 0 4 17 8.5
+sun.dust.fill 12m 17 17 1.5 1 13.625 14.125 0 4 16.5 8.5
+sun.dust.fill 12.5s 17 17 1.375 1.125 13.5 14.75 0 4 17 9
+sun.dust.fill 13r 19 18 1.625 1 15.125 15.5 0 4 18.5 9
+sun.dust.fill 13m 19 18 1.625 1.125 15.625 15.375 0 4 18.5 9
+sun.dust.fill 13s 18 18 1.625 1.125 14.75 15.375 0 4 17.5 9
+sun.dust.fill 14r 20 19 1.75 1.25 15.875 16.5 0 4.5 19.5 10
+sun.dust.fill 14m 20 19 1.75 1.25 15.875 16.5 0 4.5 20 10
+sun.dust.fill 16m 23 22 2 1.375 18.125 18.875 0 5.5 22.5 11.5
+sun.dust.fill 16s 23 22 2 1.375 18.125 18.875 0 5.5 22.5 11.5
+sun.dust.fill 17m 24 23 2 1.5 19.25 20 0 5.5 23.5 12
+sun.dust.fill 20r 28 27 2.375 1.75 22.625 23.5 0 6 28 14
+sun.dust.fill 21m 30 29 2.625 1.875 24.625 24.75 0 7 29.5 15
+sun.dust.fill 22r 31 30 2.75 1.875 24.875 25.875 0 7 30.5 15.5
+sun.dust.fill 24m 34 33 3 2.125 27.125 28.25 0 7.5 33.5 17
+sun.max d 16 16 1 1 14 13.875 0 3.5 16 9
+sun.max 11s 15 15 1 1 12.25 12.25 0 3 14.5 8
+sun.max 12r 15 15 1 1 12.75 12.75 0 3 15 8.5
+sun.max 12m 16 16 1 1 13.125 13.125 0 3.5 15.5 8.5
+sun.max 12.5s 16 16 1 1 13.125 13.125 0 3.5 16 9
+sun.max 13r 16 16 1 1 14 13.875 0 3.5 16 9
+sun.max 13m 17 17 1.125 1.125 14.125 14.125 0 3.5 16.5 9
+sun.max 13s 17 17 1.125 1.125 14.5 14.5 0 3.5 16.5 9
+sun.max 14r 17 17 1.125 1.125 14.125 14.125 0 3.5 17 10
+sun.max 14m 18 18 1.25 1.25 15.25 15.25 0 3.5 17.5 10
+sun.max 16m 21 21 1.375 1.375 17.375 17.5 0 4.5 20.5 11.5
+sun.max 16s 21 21 1.375 1.375 17.75 17.75 0 4.5 21 11.5
+sun.max 17m 22 22 1.5 1.5 18.5 18.5 0 4.5 21.5 12
+sun.max 20r 25 25 1.75 1.75 21.125 21.25 0 5 24.5 14
+sun.max 21m 27 27 1.875 1.875 22.875 22.875 0 6 27 15
+sun.max 22r 28 28 2 1.875 24 23.375 0 6 27.5 15.5
+sun.max 24m 31 31 2.125 2.125 26.125 26.125 0 6.5 30.5 17
+sun.max.fill d 16 16 1 1 14 13.875 0 3.5 16 9
+sun.max.fill 11s 15 15 1 1 12.25 12.25 0 3 14.5 8
+sun.max.fill 12r 15 15 1 1 12.75 12.75 0 3 15 8.5
+sun.max.fill 12m 16 16 1 1 13.125 13.125 0 3.5 15.5 8.5
+sun.max.fill 12.5s 16 16 1 1 13.125 13.125 0 3.5 16 9
+sun.max.fill 13r 16 16 1 1 14 13.875 0 3.5 16 9
+sun.max.fill 13m 17 17 1.125 1.125 14.125 14.125 0 3.5 16.5 9
+sun.max.fill 13s 17 17 1.125 1.125 14.5 14.5 0 3.5 16.5 9
+sun.max.fill 14r 17 17 1.125 1.125 14.125 14.125 0 3.5 17 10
+sun.max.fill 14m 18 18 1.25 1.25 15.25 15.25 0 3.5 17.5 10
+sun.max.fill 16m 21 21 1.375 1.375 17.375 17.5 0 4.5 20.5 11.5
+sun.max.fill 16s 21 21 1.375 1.375 17.75 17.75 0 4.5 21 11.5
+sun.max.fill 17m 22 22 1.5 1.5 18.5 18.5 0 4.5 21.5 12
+sun.max.fill 20r 25 25 1.75 1.75 21.125 21.25 0 5 24.5 14
+sun.max.fill 21m 27 27 1.875 1.875 22.875 22.875 0 6 27 15
+sun.max.fill 22r 28 28 2 1.875 24 23.375 0 6 27.5 15.5
+sun.max.fill 24m 31 31 2.125 2.125 26.125 26.125 0 6.5 30.5 17
+sun.min d 15 15 1 1 13 13 0 2.5 15 9
+sun.min 11s 13 13 1 1 11 11 0 2.5 13 8
+sun.min 12r 14 14 1 1 11.625 11.625 0 2.5 14 8.5
+sun.min 12m 14 14 1 1 11.875 11.875 0 2.5 14 8.5
+sun.min 12.5s 15 15 1.125 1.125 12.5 12.5 0 3 14.5 9
+sun.min 13r 15 15 1 1 13 13 0 2.5 15 9
+sun.min 13m 15 15 1 1 12.125 12.125 0 3 15 9
+sun.min 13s 15 15 1 1 12.25 12.25 0 3 15 9
+sun.min 14r 16 16 1.125 1.125 12.875 12.875 0 3 16 10
+sun.min 14m 16 16 1.125 1.125 13 13 0 3 16 10
+sun.min 16m 19 19 1.375 1.375 15.75 15.75 0 3.5 19 11.5
+sun.min 16s 19 19 1.375 1.375 16 16 0 4 19 11.5
+sun.min 17m 20 20 1.5 1.5 16.75 16.75 0 4 20 12
+sun.min 20r 23 23 1.75 1.75 19.375 19.375 0 4 22.5 14
+sun.min 21m 25 25 1.875 1.875 20.625 20.625 0 5 25 15
+sun.min 22r 26 26 1.875 1.875 21.25 21.25 0 5 25.5 15.5
+sun.min 24m 28 28 2.125 2.125 23.625 23.625 0 5.5 28 17
+tennisball d 15 15 1 1 13 13 0 3 15 9
+tennisball 11s 14 14 1 1 11.25 11.25 0 2.5 13.5 8
+tennisball 12r 14 14 1 1 12 12 0 2.5 14 8.5
+tennisball 12m 15 15 1 1 12.125 12.125 0 3 14.5 8.5
+tennisball 12.5s 15 15 1.125 1.125 12.75 12.75 0 3 15 9
+tennisball 13r 15 15 1 1 13 13 0 3 15 9
+tennisball 13m 16 16 1.125 1.125 13.125 13.125 0 3 15.5 9
+tennisball 13s 16 16 1.125 1.125 13.25 13.25 0 3 15.5 9
+tennisball 14r 16 16 1.125 1.125 13.25 13.25 0 3 16 10
+tennisball 14m 17 17 1.25 1.25 14.125 14.125 0 3 16.5 10
+tennisball 16m 20 20 1.5 1.5 16.875 16.875 0 4 19.5 11.5
+tennisball 16s 20 20 1.375 1.375 16.375 16.375 0 4 19.5 11.5
+tennisball 17m 21 21 1.5 1.5 17.25 17.25 0 4 20.5 12
+tennisball 20r 23 23 1.625 1.625 19.25 19.25 0 4.5 23 14
+tennisball 21m 26 26 2 2 22 22 0 5 25.5 15
+tennisball 22r 26 26 1.875 1.875 22 22 0 5 26 15.5
+tennisball 24m 29 29 2.125 2.125 24.25 24.25 0 5.5 28.5 17
+trash d 15 17 1 1 12.5 14.375 0 3 14.5 9
+trash 11s 13 15 0.875 1 10.75 12.25 0 2.5 13 8
+trash 12r 14 16 0.875 1 11.375 13.125 0 3 13.5 8.5
+trash 12m 14 16 0.875 1 11.625 13.25 0 3 14 8.5
+trash 12.5s 15 16 1 1 13.125 13.25 0 3 14.5 9
+trash 13r 15 17 1 1 12.5 14.375 0 3 14.5 9
+trash 13m 15 17 1 1.125 12.5 14.375 0 3 15 9
+trash 13s 15 17 1 1.125 12.75 14.5 0 3 15 9
+trash 14r 16 18 1 1.25 13.25 15.25 0 3 15.5 10
+trash 14m 16 18 1 1.25 13.5 15.5 0 3 15.5 10
+trash 16m 18 21 1.25 1.375 15.5 17.625 0 4 17.5 11.5
+trash 16s 18 21 1.125 1.375 14.875 17.875 0 4 18 11.5
+trash 17m 20 22 1.375 1.5 17.125 18.75 0 4 19.5 12
+trash 20r 22 25 1.5 1.625 19 21 0 4.5 22 14
+trash 21m 24 28 1.625 2 20.25 23.875 0 5 23.5 15
+trash 22r 24 28 1.5 1.875 20.125 24 0 5 24 15.5
+trash 24m 28 31 1.875 2.125 23.875 26.5 0 5.5 27.5 17
+tray.and.arrow.down d 18 17 1.5 1 15 15 0 3 18 9
+tray.and.arrow.down 11s 16 15 1.375 1 12.875 12.75 0 3 16 8
+tray.and.arrow.down 12r 17 16 1.5 1 13.875 13.5 0 3 17 8.5
+tray.and.arrow.down 12m 17 16 1.5 1 14 13.75 0 3 17 8.5
+tray.and.arrow.down 12.5s 18 17 1.5 1.125 14.625 14.5 0 3.5 18 9
+tray.and.arrow.down 13r 18 17 1.5 1 15 15 0 3 18 9
+tray.and.arrow.down 13m 19 17 1.625 1.125 15.125 14 0 3.5 18.5 9
+tray.and.arrow.down 13s 19 18 1.625 1.125 15.25 15 0 3.5 18.5 9
+tray.and.arrow.down 14r 20 18 1.75 1.125 16.125 15 0 3.5 19.5 10
+tray.and.arrow.down 14m 20 18 1.75 1.125 16.25 15.25 0 3.5 19.5 10
+tray.and.arrow.down 16m 23 22 2 1.375 18.625 18.25 0 4.5 23 11.5
+tray.and.arrow.down 16s 23 22 2 1.375 18.75 18.5 0 4.5 23 11.5
+tray.and.arrow.down 17m 24 23 2.125 1.5 19.75 19.5 0 4.5 24 12
+tray.and.arrow.down 20r 29 26 2.5 1.75 23.125 22.5 0 4.5 28.5 14
+tray.and.arrow.down 21m 30 28 2.625 1.875 24.375 24 0 5.5 29.5 15
+tray.and.arrow.down 22r 31 29 2.75 1.875 25.375 24.75 0 5.5 30.5 15.5
+tray.and.arrow.down 24m 34 32 3 2.125 27.875 27.375 0 6 34 17
+wifi d 18 13 1.625 1.125 14.25 10.75 0 1.5 17.5 9
+wifi 11s 15 12 1 1 12.375 9.125 0 1.5 14.5 8
+wifi 12r 17 12 1.5 1 13.75 9.75 0 1.5 16.5 8.5
+wifi 12m 16 12 1.375 1 13.25 9.875 0 1.5 15.5 8.5
+wifi 12.5s 17 13 1.375 1.125 13.875 10.375 0 2 16.5 9
+wifi 13r 18 13 1.625 1.125 14.25 10.75 0 1.5 17.5 9
+wifi 13m 18 13 1.375 1.125 14.375 10.75 0 1.5 18 9
+wifi 13s 17 13 1.25 1 13.75 10.125 0 2 17 9
+wifi 14r 19 14 1.625 1.375 15.25 11.25 0 1.5 18.5 10
+wifi 14m 19 14 1.5 1.375 15.5 11.375 0 2 19 10
+wifi 16m 21 17 1.625 1.625 16.875 13.875 0 2.5 21 11.5
+wifi 16s 22 17 1.625 1.5 17.875 13.25 0 2.5 21.5 11.5
+wifi 17m 23 17 1.875 1.625 18.75 13.875 0 2.5 22.5 12
+wifi 20r 27 20 2.25 1.875 21.875 16.125 0 2.5 26.5 14
+wifi 21m 28 22 2.25 2.125 23.25 17.875 0 3 27.5 15
+wifi 22r 30 22 2.5 2 24 17.75 0 3 29.5 15.5
+wifi 24m 32 24 2.5 2.25 26.5 19.625 0 3.5 32 17
+wind d 16 14 1.5 1 13.5 11.375 0 2 16 9
+wind 11s 14 12 1.375 1 11.375 9.875 0 2 14 8
+wind 12r 15 13 1.5 1 12.125 10.5 0 2 15 8.5
+wind 12m 15 13 1.5 1 12.25 10.625 0 2 15 8.5
+wind 12.5s 16 14 1.5 1.125 12.875 11.25 0 2 15.5 9
+wind 13r 16 14 1.5 1 13.5 11.375 0 2 16 9
+wind 13m 16 14 1.5 1.125 12.5 11.5 0 2 16 9
+wind 13s 16 14 1.5 1.125 12.625 11.75 0 2.5 16 9
+wind 14r 18 15 1.75 1.25 14.125 12.125 0 2 17.5 10
+wind 14m 18 15 1.75 1.25 14.25 12.375 0 2.5 17.5 10
+wind 16m 20 18 1.875 1.5 16.375 14.875 0 3 20 11.5
+wind 16s 20 18 1.875 1.375 16.5 14.375 0 3 20 11.5
+wind 17m 21 19 2 1.5 17.375 15.125 0 3 21 12
+wind 20r 25 21 2.375 1.75 20.125 17.375 0 3 25 14
+wind 21m 26 23 2.5 1.875 21.375 18.625 0 4 26 15
+wind 22r 27 24 2.625 2 22.125 19.875 0 4 27 15.5
+wind 24m 30 26 2.875 2.125 24.5 21.25 0 4 29.5 17
+wind.snow d 16 15 1.5 1 13.5 12.5 0 2 16 9
+wind.snow 11s 14 13 1.375 1 11.375 10.875 0 2 14 8
+wind.snow 12r 15 14 1.5 1 12.125 11.375 0 2 15 8.5
+wind.snow 12m 15 14 1.5 1 12.25 11.625 0 2 15 8.5
+wind.snow 12.5s 16 15 1.5 1.125 12.875 12.375 0 2 15.5 9
+wind.snow 13r 16 15 1.5 1 13.5 12.5 0 2 16 9
+wind.snow 13m 16 15 1.5 1.125 12.5 12.625 0 2 16 9
+wind.snow 13s 16 15 1.5 1 12.625 12.125 0 2.5 16 9
+wind.snow 14r 18 16 1.75 1.25 14.125 13.375 0 2 17.5 10
+wind.snow 14m 18 16 1.75 1.125 14.25 12.875 0 2.5 17.5 10
+wind.snow 16m 20 19 1.875 1.375 16.375 15.5 0 3 20 11.5
+wind.snow 16s 20 19 1.875 1.375 16.5 15.75 0 3 20 11.5
+wind.snow 17m 21 20 2 1.5 17.375 16.5 0 3 21 12
+wind.snow 20r 25 22 2.375 1.625 20.125 18.25 0 3 25 14
+wind.snow 21m 26 25 2.5 1.875 21.375 20.375 0 4 26 15
+wind.snow 22r 27 25 2.625 1.875 22.125 20.875 0 4 27 15.5
+wind.snow 24m 30 28 2.875 2.125 24.5 23.25 0 4 29.5 17
+wrench.and.screwdriver d 19 18 1.625 1.25 15.5 15.375 0 4.5 19 9
+wrench.and.screwdriver 11s 16 16 1.25 1.125 13.125 12.875 0 4 15.5 8
+wrench.and.screwdriver 12r 17 17 1.375 1.25 14 13.875 0 4 17 8.5
+wrench.and.screwdriver 12m 18 17 1.5 1.125 14.875 14 0 4 17.5 8.5
+wrench.and.screwdriver 12.5s 18 18 1.625 1.25 14.75 14.625 0 4 18 9
+wrench.and.screwdriver 13r 19 18 1.625 1.25 15.5 15.375 0 4.5 19 9
+wrench.and.screwdriver 13m 19 18 1.625 1.375 15.25 15 0 4.5 19 9
+wrench.and.screwdriver 13s 19 18 1.625 1.25 15.375 15.25 0 4.5 19 9
+wrench.and.screwdriver 14r 20 19 1.75 1.5 16.25 15.25 0 4.5 20 10
+wrench.and.screwdriver 14m 21 19 1.875 1.5 17.25 15.375 0 4.5 20.5 10
+wrench.and.screwdriver 16m 23 23 2 1.75 18.875 19.375 0 5.5 22.5 11.5
+wrench.and.screwdriver 16s 23 23 1.875 1.75 19 19.5 0 5.5 23 11.5
+wrench.and.screwdriver 17m 25 24 2 1.75 20 19.75 0 6 24.5 12
+wrench.and.screwdriver 20r 29 27 2.375 2.125 23.375 22.25 0 6.5 28.5 14
+wrench.and.screwdriver 21m 30 30 2.625 2.375 24.625 25 0 7.5 30 15
+wrench.and.screwdriver 22r 31 31 2.625 2.25 24.875 25.375 0 7.5 31 15.5
+wrench.and.screwdriver 24m 35 33 2.875 2.5 28.25 27 0 8 34.5 17
+xmark.circle.fill d 15 15 1 1 13 13 0 3 15 9
+xmark.circle.fill 11s 14 14 1 1 11.25 11.25 0 2.5 13.5 8
+xmark.circle.fill 12r 14 14 1 1 12 12 0 2.5 14 8.5
+xmark.circle.fill 12m 15 15 1 1 12.125 12.125 0 3 14.5 8.5
+xmark.circle.fill 12.5s 15 15 1.125 1.125 12.75 12.75 0 3 15 9
+xmark.circle.fill 13r 15 15 1 1 13 13 0 3 15 9
+xmark.circle.fill 13m 16 16 1.125 1.125 13.125 13.125 0 3 15.5 9
+xmark.circle.fill 13s 16 16 1.125 1.125 13.25 13.25 0 3 15.5 9
+xmark.circle.fill 14r 16 16 1.125 1.125 13.25 13.25 0 3 16 10
+xmark.circle.fill 14m 17 17 1.25 1.25 14.125 14.125 0 3 16.5 10
+xmark.circle.fill 16m 20 20 1.5 1.5 16.875 16.875 0 4 19.5 11.5
+xmark.circle.fill 16s 20 20 1.375 1.375 16.375 16.375 0 4 19.5 11.5
+xmark.circle.fill 17m 21 21 1.5 1.5 17.25 17.25 0 4 20.5 12
+xmark.circle.fill 20r 23 23 1.625 1.625 19.25 19.25 0 4.5 23 14
+xmark.circle.fill 21m 26 26 2 2 22 22 0 5 25.5 15
+xmark.circle.fill 22r 26 26 1.875 1.875 22 22 0 5 26 15.5
+xmark.circle.fill 24m 29 29 2.125 2.125 24.25 24.25 0 5.5 28.5 17
 """#
 
     /// "sf-name weight outset": how far to thicken the outline, in thousandths of the point size.

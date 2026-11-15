@@ -222,7 +222,14 @@ public final class NSAppearance: NSObject, @unchecked Sendable {
     public init?(named n: Name) { name = n }
     private init(_ n: Name) { name = n }
     public var isDark: Bool { name == .darkAqua || name == .vibrantDark }
-    public func bestMatch(from names: [Name]) -> Name? { names.first { $0 == name } ?? names.first }
+    /// A popover's content is drawn in one of these (AppKit): label colours resolve differently there.
+    public var isVibrant: Bool { name == .vibrantDark || name == .vibrantLight }
+    /// This appearance's vibrant kin, as AppKit gives a popover's content.
+    var vibrantVariant: NSAppearance { NSAppearance(isDark ? .vibrantDark : .vibrantLight) }
+    /// (A vibrant appearance matches the plain one of its kind, as on the Mac.)
+    public func bestMatch(from names: [Name]) -> Name? {
+        names.first { $0 == name } ?? names.first { NSAppearance($0).isDark == isDark && !NSAppearance($0).isVibrant } ?? names.first
+    }
     nonisolated(unsafe) public static var current: NSAppearance? = nil
     public static var currentDrawing: NSAppearance { current ?? system }
     /// Follows Windows' app theme, as the Mac app follows the system's.

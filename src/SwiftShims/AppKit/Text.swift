@@ -107,7 +107,17 @@ public final class NSFont: NSObject, @unchecked Sendable {
     private static let installWidths: Void = {
         guard ProcessInfo.processInfo.environment["SPIDER_FONT_RAW"] != "1" else { return }
         SkiaText.widthScale = { family, weight, size in family == NSFont.systemFamily ? NSFont.widthRatio(weight: weight, size: size) : 1 }
+        SkiaText.inkOutset = NSFont.smoothingOutset
     }()
+    /// macOS's text smoothing, as an outset in device pixels: light text on dark gains about 0.31 px a side, dark
+    /// text about 0.1 (measured from glyph ink on the Mac against the outline's own area: "Spider" at 15 pt
+    /// semibold, 206 square points of outline drawn as 253-266). L is the colour's brightness; its alpha doesn't
+    /// matter (measured: white at 0.25 to 1 all dilate alike).
+    static func smoothingOutset(_ c: CGColor) -> CGFloat {
+        let l = 0.2126 * c.sr + 0.7152 * c.sg + 0.0722 * c.sb
+        let t = max(0, min(1, (l - 0.30) / (0.85 - 0.30)))
+        return 0.10 + 0.21 * t * t * (3 - 2 * t)
+    }
     private var metricsCache: (CGFloat, CGFloat)?
     var metrics: (ascent: CGFloat, descent: CGFloat) {
         if let m = metricsCache { return m }
@@ -248,6 +258,29 @@ enum TextLayout {
         if !cur.isEmpty || lines.isEmpty { flush() }
         return lines
     }
+    /// AppKit's standard line-break strategy for text fields: no word left alone on a paragraph's last line. The line
+    /// before gives up its last word to it (measured: a wrapping label breaks "...or let a / cricket loose." where
+    /// the text would fit "cricket" on the first line; NSString drawing doesn't do this). For one-paragraph text.
+    static func pushOut(_ lines: [TextLine]) -> [TextLine] {
+        guard lines.count >= 2 else { return lines }
+        var prev = lines[lines.count - 2], last = lines[lines.count - 1]
+        let lastText = last.runs.map(\.text).joined().trimmingCharacters(in: .whitespaces)
+        guard !lastText.isEmpty, !lastText.contains(" "), var r = prev.runs.last else { return lines }
+        // The previous line's last word: after its last space, ignoring the space that ends the line.
+        let body = r.text.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression)
+        guard let space = body.lastIndex(of: " ") else { return lines }
+        let moved = String(r.text[r.text.index(after: space)...])
+        r.text = String(r.text[...space])
+        let w = r.font.width(moved)
+        prev.runs[prev.runs.count - 1] = r
+        prev.width -= w
+        var m = r; m.text = moved
+        if let first = last.runs.first, first.font === m.font, first.color == m.color { last.runs[0].text = moved + first.text } else { last.runs.insert(m, at: 0) }
+        last.width += w
+        var out = lines
+        out[out.count - 2] = prev; out[out.count - 1] = last
+        return out
+    }
     static func truncate(_ line: TextLine, width: CGFloat, mode: NSLineBreakMode) -> TextLine {
         guard line.width > width, mode != .byClipping, mode != .byWordWrapping, mode != .byCharWrapping, let r = line.runs.first else { return line }
         let text = line.runs.map(\.text).joined()
@@ -284,7 +317,12 @@ enum TextLayout {
         return c.copy(alpha: 1 - (1 - a) * (1 - a)) ?? c
     }
     /// Draws lines inside `rect` (in the current context's coordinates), top first, keeping text upright in flipped views.
-    static func draw(_ lines: [TextLine], in rect: CGRect, alignment: NSTextAlignment, spacing: CGFloat, ctx: CGContext, flipped: Bool) {
+    /// `boost`: draw translucent colours as macOS draws label text (`macInk`). AppKit does that for text fields and for
+    /// stock buttons given a tint, not for segmented controls, pop-ups or button subclasses that draw themselves (measured).
+    /// `dilate`: thicken glyphs as macOS's text smoothing does. Labels and drawn strings get it; on macOS 27 button
+    /// titles and segment labels don't (measured: their ink matched bare outlines, while labels' was 30% more).
+    static func draw(_ lines: [TextLine], in rect: CGRect, alignment: NSTextAlignment, spacing: CGFloat, ctx: CGContext, flipped: Bool, boost: Bool = true, dilate: Bool = true) {
+
         var y = flipped ? rect.minY : rect.maxY
         for l in lines {
             var x = rect.minX
@@ -297,10 +335,11 @@ enum TextLayout {
             for r in l.runs {
                 let w = r.font.width(r.text)
                 ctx.saveGState()
+                if !dilate { ctx.setDilatesText(false) }
                 ctx.translateBy(x: x, y: base)
                 if flipped { ctx.scaleBy(x: 1, y: -1) }
                 ctx.textPosition = .zero
-                ctx.backend.drawText(r.text, font: r.font.fontKey, size: r.font.pointSize, color: TextLayout.macInk(r.color), at: CGPoint.zero.applying(ctx.ctm), state: ctx.state)
+                ctx.backend.drawText(r.text, font: r.font.fontKey, size: r.font.pointSize, color: boost ? TextLayout.macInk(r.color) : r.color, at: CGPoint.zero.applying(ctx.ctm), state: ctx.state)
                 if r.underline {
                     ctx.setFillColor(r.color)
                     ctx.fill(CGRect(x: 0, y: -2, width: w, height: 0.75))
@@ -330,12 +369,13 @@ extension NSAttributedString {
         let z = TextLayout.size(TextLayout.lines(r, width: s.width > 0 && s.width < 1e6 ? s.width : nil, mode: p?.lineBreakMode ?? .byWordWrapping), spacing: p?.lineSpacing ?? 0)
         return CGRect(origin: .zero, size: z)
     }
+    /// (Drawn plain: a string drawn by a view of its own gets no label boost on the Mac, measured.)
     public func draw(at p: CGPoint) {
         guard let (c, f) = current else { return }
         let (r, st) = TextLayout.runs(self)
         let lines = TextLayout.lines(r, width: nil, mode: .byClipping)
         let z = TextLayout.size(lines, spacing: st?.lineSpacing ?? 0)
-        TextLayout.draw(lines, in: CGRect(origin: p, size: z), alignment: .left, spacing: st?.lineSpacing ?? 0, ctx: c, flipped: f)
+        TextLayout.draw(lines, in: CGRect(origin: p, size: z), alignment: .left, spacing: st?.lineSpacing ?? 0, ctx: c, flipped: f, boost: false)
     }
     public func draw(in rect: CGRect) {
         guard let (c, f) = current else { return }
@@ -343,7 +383,7 @@ extension NSAttributedString {
         let mode = st?.lineBreakMode ?? .byWordWrapping
         var lines = TextLayout.lines(r, width: rect.width, mode: mode)
         lines = lines.map { TextLayout.truncate($0, width: rect.width, mode: mode) }
-        TextLayout.draw(lines, in: rect, alignment: st?.alignment ?? .left, spacing: st?.lineSpacing ?? 0, ctx: c, flipped: f)
+        TextLayout.draw(lines, in: rect, alignment: st?.alignment ?? .left, spacing: st?.lineSpacing ?? 0, ctx: c, flipped: f, boost: false)
     }
     public func draw(with rect: CGRect, options: DrawingOptions = [], context: Any? = nil) { draw(in: rect) }
 }

@@ -378,6 +378,7 @@ open class NSView: NSResponder {
         if before !== v.window { v.notifyWindowChange() }
     }
     func notifyWindowChange() {
+        if window?.isPopoverPanel == true { takeVibrancy() }
         viewDidMoveToWindow()
         for s in subviews { s.notifyWindowChange() }
     }
@@ -390,6 +391,24 @@ open class NSView: NSResponder {
         sup.needsLayout = true
     }
     open func viewDidMoveToWindow() {}
+    /// Whether AppKit would give this view vibrancy compositing in a popover (text or template image in a
+    /// vibrancy-capable colour; overridden by the controls that qualify).
+    open var allowsVibrancy: Bool { false }
+    /// Whether a popover gave this view's layer its vibrancy compositing. AppKit never takes that off, even after the
+    /// view moves out of the popover (measured), so neither does this.
+    var tookVibrancy = false
+    /// This view and those under it, as a popover shows them.
+    func takeVibrancy() {
+        if allowsVibrancy { tookVibrancy = true }
+        for s in subviews { s.takeVibrancy() }
+    }
+    /// The blend this view's own drawing uses: plus-lighter in dark once it has taken vibrancy (also when it becomes
+    /// eligible while already shown in a popover). In light AppKit uses plus-darker, which Skia lacks: drawn normally.
+    var vibrancyBlend: CGBlendMode? {
+        guard allowsVibrancy else { return nil }
+        if !tookVibrancy, window?.isPopoverPanel == true { tookVibrancy = true }
+        return tookVibrancy && effectiveAppearance.isDark ? .plusLighter : nil
+    }
     open func viewDidMoveToSuperview() {}
     open func viewWillMove(toWindow w: NSWindow?) {}
     open func viewDidChangeEffectiveAppearance() {}
@@ -560,7 +579,18 @@ open class NSView: NSResponder {
     }
     public func updateConstraints() {}
     public func updateConstraintsForSubtreeIfNeeded() {}
-    public var alignmentRectInsets: NSEdgeInsets { NSEdgeInsets() }
+    /// How far the rectangle layout lines up sits inside the frame (top measured down from the top, as on the Mac).
+    open var alignmentRectInsets: NSEdgeInsets { NSEdgeInsets() }
+    public func alignmentRect(forFrame f: CGRect) -> CGRect {
+        let i = alignmentRectInsets
+        return CGRect(x: f.minX + i.left, y: f.minY + (isFlippedForInsets ? i.top : i.bottom), width: f.width - i.left - i.right, height: f.height - i.top - i.bottom)
+    }
+    public func frame(forAlignmentRect r: CGRect) -> CGRect {
+        let i = alignmentRectInsets
+        return CGRect(x: r.minX - i.left, y: r.minY - (isFlippedForInsets ? i.top : i.bottom), width: r.width + i.left + i.right, height: r.height + i.top + i.bottom)
+    }
+    /// (Frames are in the superview's coordinates, so its flipping decides which inset is lower.)
+    private var isFlippedForInsets: Bool { superview?.isFlipped ?? false }
     public var firstBaselineOffsetFromTop: CGFloat { firstBaselineFromTop }
     public var lastBaselineOffsetFromBottom: CGFloat { lastBaselineFromBottom }
     public var baselineOffsetFromBottom: CGFloat { lastBaselineFromBottom }

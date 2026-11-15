@@ -9,10 +9,38 @@ import WinSDK
 public final class NSColor: NSObject, @unchecked Sendable {
     private let fixed: CGColor?
     private let dynamic: ((Bool) -> CGColor)?
+    /// The colour in a vibrant appearance (a popover's content), where AppKit gives it another.
+    private var vibrantLight: CGColor?, vibrantDark: CGColor?
+    /// Whether a view showing text or a template image in this colour takes AppKit's vibrancy compositing in a
+    /// popover (measured: the secondary, tertiary, quaternary and disabled label colours; not labelColor, accent or
+    /// system colours, nor anything made from a colour by withAlphaComponent). Such a colour's vibrant value is an
+    /// opaque grey meant to be added plus-lighter, so it is used only while a view that composites so is drawing.
+    public private(set) var vibrancyCapable = false
+    /// Set (on the main thread) while a view composites plus-lighter, as AppKit's vibrant layers do.
+    nonisolated(unsafe) static var compositingVibrantly = false
     /// Resolved for the appearance being drawn in.
     public var cgColor: CGColor {
         if let fixed { return fixed }
-        return dynamic!(NSAppearance.currentDrawing.isDark)
+        let ap = NSAppearance.currentDrawing
+        if ap.isVibrant {
+            if !vibrancyCapable, let v = ap.isDark ? vibrantDark : vibrantLight { return v }
+            if vibrancyCapable, ap.isDark, let v = vibrantDark, Thread.isMainThread, NSColor.compositingVibrantly { return v }
+        }
+        return dynamic!(ap.isDark)
+    }
+    /// Light vibrant greys are left out: they need plus-darker, which Skia doesn't have; the plain colours composited
+    /// normally come closer.
+    private convenience init(light: CGColor, dark: CGColor, vibrantLight: CGColor?, vibrantDark: CGColor, capable: Bool) {
+        self.init(light: light, dark: dark)
+        self.vibrantLight = capable ? nil : vibrantLight; self.vibrantDark = vibrantDark; vibrancyCapable = capable
+    }
+    /// Runs `f` with vibrant greys in effect when `on`.
+    static func vibrantly(_ on: Bool, _ f: () -> Void) {
+        guard on, Thread.isMainThread else { f(); return }
+        let was = compositingVibrantly
+        compositingVibrantly = true
+        f()
+        compositingVibrantly = was
     }
     public init(cgColor c: CGColor) { fixed = c; dynamic = nil }
     public convenience init?(cgColor c: CGColor, _ unused: Void = ()) { self.init(cgColor: c) }
@@ -40,13 +68,15 @@ public final class NSColor: NSObject, @unchecked Sendable {
     public static let red = NSColor(cgColor: rgb(255, 0, 0)), green = NSColor(cgColor: rgb(0, 255, 0)), blue = NSColor(cgColor: rgb(0, 0, 255)), gray = NSColor(cgColor: rgb(128, 128, 128)), orange = NSColor(cgColor: rgb(255, 128, 0)), yellow = NSColor(cgColor: rgb(255, 255, 0))
     public static let darkGray = NSColor(cgColor: rgb(85, 85, 85)), lightGray = NSColor(cgColor: rgb(170, 170, 170))
     // macOS's semantic colors, in both appearances.
-    public static let labelColor = NSColor(light: rgb(0, 0, 0, 0.847), dark: rgb(255, 255, 255, 0.847))
-    public static let secondaryLabelColor = NSColor(light: rgb(0, 0, 0, 0.498), dark: rgb(255, 255, 255, 0.549))
-    public static let tertiaryLabelColor = NSColor(light: rgb(0, 0, 0, 0.259), dark: rgb(255, 255, 255, 0.247))
-    public static let quaternaryLabelColor = NSColor(light: rgb(0, 0, 0, 0.098), dark: rgb(255, 255, 255, 0.098))
+    // (In a popover, measured: label is a little stronger; the others are opaque greys that AppKit composites
+    // plus-lighter in dark and plus-darker in light.)
+    public static let labelColor = NSColor(light: rgb(0, 0, 0, 0.847), dark: rgb(255, 255, 255, 0.847), vibrantLight: rgb(0, 0, 0, 0.698), vibrantDark: rgb(255, 255, 255, 0.898), capable: false)
+    public static let secondaryLabelColor = NSColor(light: rgb(0, 0, 0, 0.498), dark: rgb(255, 255, 255, 0.549), vibrantLight: rgb(128, 128, 128), vibrantDark: rgb(124, 124, 124), capable: true)
+    public static let tertiaryLabelColor = NSColor(light: rgb(0, 0, 0, 0.259), dark: rgb(255, 255, 255, 0.247), vibrantLight: rgb(191, 191, 191), vibrantDark: rgb(65, 65, 65), capable: true)
+    public static let quaternaryLabelColor = NSColor(light: rgb(0, 0, 0, 0.098), dark: rgb(255, 255, 255, 0.098), vibrantLight: rgb(230, 230, 230), vibrantDark: rgb(35, 35, 35), capable: true)
     public static let textColor = NSColor(light: rgb(0, 0, 0), dark: rgb(255, 255, 255))
     public static let placeholderTextColor = NSColor(light: rgb(0, 0, 0, 0.498), dark: rgb(255, 255, 255, 0.549))
-    public static let disabledControlTextColor = NSColor(light: rgb(0, 0, 0, 0.247), dark: rgb(255, 255, 255, 0.247))
+    public static let disabledControlTextColor = NSColor(light: rgb(0, 0, 0, 0.247), dark: rgb(255, 255, 255, 0.247), vibrantLight: rgb(198, 198, 198), vibrantDark: rgb(65, 65, 65), capable: true)
     public static let controlTextColor = NSColor(light: rgb(0, 0, 0, 0.847), dark: rgb(255, 255, 255, 0.847))
     public static let controlAccentColor = NSColor(light: rgb(0, 122, 255), dark: rgb(0, 122, 255))
     public static let selectedContentBackgroundColor = NSColor(light: rgb(0, 100, 225), dark: rgb(0, 89, 209))
@@ -163,7 +193,13 @@ public final class NSImage: NSObject, @unchecked Sendable {
     public var size: CGSize
     public var isTemplate = false
     public var accessibilityDescription: String?
-    public var alignmentRect = CGRect.zero
+    /// The part of the image layout lines up. Symbols carry AppKit's (baseline to cap height);
+    /// any other image's is its whole box until set.
+    public var alignmentRect: CGRect {
+        get { storedAlignment ?? CGRect(origin: .zero, size: size) }
+        set { storedAlignment = newValue }
+    }
+    private var storedAlignment: CGRect?
     public private(set) var bitmap: CGImage?
     let symbol: String?
     var symbolConfig: SymbolConfiguration?
@@ -178,12 +214,14 @@ public final class NSImage: NSObject, @unchecked Sendable {
     }
     public init?(systemSymbolName n: String, accessibilityDescription d: String?) {
         if !Symbols.known(n) { Symbols.warnOnce(n) }
-        size = Symbols.look(n, nil).size; handler = nil; symbol = n; accessibilityDescription = d
-        isTemplate = true
+        let l = Symbols.look(n, nil)
+        size = l.size; handler = nil; symbol = n; accessibilityDescription = d
+        isTemplate = true; storedAlignment = l.align
     }
     private init(symbol n: String, config: SymbolConfiguration, description d: String?) {
-        symbol = n; symbolConfig = config; handler = nil; size = Symbols.look(n, config).size; accessibilityDescription = d
-        isTemplate = true
+        let l = Symbols.look(n, config)
+        symbol = n; symbolConfig = config; handler = nil; size = l.size; accessibilityDescription = d
+        isTemplate = true; storedAlignment = l.align
     }
     public func withSymbolConfiguration(_ c: SymbolConfiguration) -> NSImage? {
         guard let symbol else { return self }
@@ -212,21 +250,60 @@ public final class NSImage: NSObject, @unchecked Sendable {
         return c.makeImage()
     }
     public func tiffRepresentation() -> Data? { nil }
-    public func lockFocus() {}
-    public func unlockFocus() {}
-    public func lockFocusFlipped(_ f: Bool) {}
+    /// Drawing into the image: until unlockFocus, the current context is a bitmap of this image (at the screen's
+    /// scale) holding what it already shows; afterwards the image is that bitmap.
+    public func lockFocus() { lockFocusFlipped(false) }
+    public func lockFocusFlipped(_ flipped: Bool) {
+        let k = NSScreen.primaryScale
+        let w = max(Int((size.width * k).rounded(.up)), 1), h = max(Int((size.height * k).rounded(.up)), 1)
+        guard let c = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+        c.scaleBy(x: k, y: k)
+        if bitmap != nil || handler != nil || symbol != nil { render(in: c) }
+        if flipped { c.translateBy(x: 0, y: size.height); c.scaleBy(x: 1, y: -1) }
+        focus.append((c, NSGraphicsContext.current))
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: c, flipped: flipped)
+    }
+    public func unlockFocus() {
+        guard let (c, prior) = focus.popLast() else { return }
+        NSGraphicsContext.current = prior
+        if let im = c.makeImage() { bitmap = im; drawnBitmap = true }
+    }
+    private var focus: [(CGContext, NSGraphicsContext?)] = []
+    /// Set once lockFocus has drawn: the bitmap now stands for the image, not its symbol or handler.
+    private var drawnBitmap = false
 
     /// Draws into `c` at this image's own size, origin at (0, 0).
     public func render(in c: CGContext, tint: NSColor? = nil) {
-        if let symbol {
+        if let symbol, !drawnBitmap {
             Symbols.draw(symbol, config: symbolConfig, in: CGRect(origin: .zero, size: size), ctx: c, color: tint?.cgColor ?? NSColor.labelColor.cgColor)
             return
         }
-        if let bitmap { c.draw(bitmap, in: CGRect(origin: .zero, size: size)); return }
-        let prior = NSGraphicsContext.current
-        NSGraphicsContext.current = NSGraphicsContext(cgContext: c, flipped: false)
-        _ = handler?(CGRect(origin: .zero, size: size))
-        NSGraphicsContext.current = prior
+        // A template image drawn with a tint is a mask: its alpha, filled with the tint (AppKit, measured). Without a
+        // tint (drawn by hand, outside a control) it is drawn as it is.
+        let box = CGRect(origin: .zero, size: size)
+        let masked = isTemplate && tint != nil
+        if masked { c.saveGState(); c.beginTransparencyLayer(auxiliaryInfo: nil) }
+        if let bitmap { c.draw(bitmap, in: box) } else {
+            // (A handler may leave the context transformed: AppKit saves and restores around it.)
+            c.saveGState()
+            let prior = NSGraphicsContext.current
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: c, flipped: false)
+            _ = handler?(box)
+            NSGraphicsContext.current = prior
+            c.restoreGState()
+        }
+        if masked, let tint {
+            c.setBlendMode(.sourceIn)
+            c.setFillColor(tint.cgColor)
+            c.fill(box)
+            c.endTransparencyLayer()
+            c.restoreGState()
+        }
+    }
+    /// How far the alignment rectangle sits inside the image, top measured down from the top.
+    var alignmentInsets: NSEdgeInsets {
+        let a = alignmentRect
+        return NSEdgeInsets(top: size.height - a.maxY, left: a.minX, bottom: a.minY, right: size.width - a.maxX)
     }
     public func draw(in r: CGRect) { draw(in: r, from: .zero, operation: .sourceOver, fraction: 1) }
     public func draw(at p: CGPoint, from: CGRect, operation: NSCompositingOperation, fraction: CGFloat) {
@@ -366,7 +443,7 @@ enum ImageFile {
 /// Each is drawn into the box the Mac's SF Symbol takes, its ink where the SF Symbol's ink is,
 /// thickened per weight to carry as much ink. All of that is measured on a Mac: tools/symbols.
 enum Symbols {
-    struct Look { let size: CGSize; let ink: CGRect }
+    struct Look { let size: CGSize; let ink: CGRect; let align: CGRect }
     /// SF name to Fluent key.
     static let fluent: [String: String] = {
         var d: [String: String] = [:]
@@ -391,9 +468,10 @@ enum Symbols {
         var d: [String: [String: Look]] = [:]
         for l in SymbolData.sizes.split(separator: "\n") {
             let t = l.split(separator: " ")
-            guard t.count == 8 else { continue }
+            guard t.count == 12 else { continue }
             let v = t[2...].map { CGFloat(Double($0) ?? 0) }
-            d[String(t[0]), default: [:]][String(t[1])] = Look(size: CGSize(width: v[0], height: v[1]), ink: CGRect(x: v[2], y: v[3], width: v[4], height: v[5]))
+            d[String(t[0]), default: [:]][String(t[1])] = Look(size: CGSize(width: v[0], height: v[1]), ink: CGRect(x: v[2], y: v[3], width: v[4], height: v[5]),
+                                                              align: CGRect(x: v[6], y: v[7], width: v[8], height: v[9]))
         }
         return d
     }()
@@ -451,14 +529,25 @@ enum Symbols {
     static func look(_ name: String, _ config: NSImage.SymbolConfiguration?) -> Look {
         let table = looks[name] ?? looks["circle"]!
         let k = scaleFactor[config?.scale ?? .medium] ?? 1
+        // A scale other than medium changes the image, not the cap height: AppKit keeps the alignment rectangle's
+        // height and its centre's place (measured: info.circle at 12 pt, align height 8.5 at every scale).
+        func scaledForScale(_ l: Look) -> Look {
+            if k == 1 { return l }
+            let s = scaled(l, k)
+            let midY = (l.align.minY + l.align.height / 2) * k
+            return Look(size: s.size, ink: s.ink, align: CGRect(x: s.align.minX, y: ((midY - l.align.height / 2) * 2).rounded() / 2, width: s.align.width, height: l.align.height))
+        }
         func scaled(_ l: Look, _ f: CGFloat) -> Look {
             if f == 1 { return l }
+            // AppKit rounds image sizes to points and alignment rectangles to half points.
+            func half(_ v: CGFloat) -> CGFloat { (v * f * 2).rounded() / 2 }
             return Look(size: CGSize(width: (l.size.width * f).rounded(), height: (l.size.height * f).rounded()),
-                        ink: CGRect(x: l.ink.minX * f, y: l.ink.minY * f, width: l.ink.width * f, height: l.ink.height * f))
+                        ink: CGRect(x: l.ink.minX * f, y: l.ink.minY * f, width: l.ink.width * f, height: l.ink.height * f),
+                        align: CGRect(x: half(l.align.minX), y: half(l.align.minY), width: half(l.align.width), height: half(l.align.height)))
         }
-        guard let c = config, c.hasSize else { return scaled(table["d"]!, k) }
+        guard let c = config, c.hasSize else { return scaledForScale(table["d"]!) }
         let w = weightKey(c.weight)
-        if let l = table[number(c.size) + w] { return scaled(l, k) }
+        if let l = table[number(c.size) + w] { return scaledForScale(l) }
         // The nearest measured size of this weight.
         var best: (CGFloat, Look)?
         for (key, l) in table where key.hasSuffix(w) {
@@ -466,8 +555,8 @@ enum Symbols {
             let d = abs(CGFloat(p) - c.size)
             if best == nil || d < abs(best!.0 - c.size) { best = (CGFloat(p), l) }
         }
-        guard let (p, l) = best else { return scaled(table["d"]!, k * c.size / 13) }
-        return scaled(l, k * c.size / p)
+        guard let (p, l) = best else { return scaledForScale(scaled(table["d"]!, c.size / 13)) }
+        return scaledForScale(scaled(l, c.size / p))
     }
 
     static func draw(_ name: String, config: NSImage.SymbolConfiguration?, in r: CGRect, ctx: CGContext, color: CGColor) {
@@ -500,16 +589,23 @@ enum Symbols {
         // Palette and hierarchical symbols are one colour here: Fluent's outlines have no layers.
         let ink0 = config?.paletteColors?.first?.cgColor ?? config?.hierarchicalColor?.cgColor ?? color
         ctx.saveGState()
-        ctx.setFillColor(ink0)
+        // Fill and thickening stroke overlap: with a translucent colour they go down opaque in a layer that is then
+        // composited once at the colour's alpha, as one shape (else the overlap shows twice as dense).
+        // (Also under a blend other than plain source-over, which would otherwise add the overlap twice.)
+        let layered = t > 0.01 && (ink0.alpha < 1 || ctx.state.blend != .normal)
+        let paintColor = layered ? (ink0.copy(alpha: 1) ?? ink0) : ink0
+        if layered { ctx.setAlpha(ctx.state.alpha * ink0.alpha); ctx.beginTransparencyLayer(auxiliaryInfo: nil) }
+        ctx.setFillColor(paintColor)
         ctx.addPath(placed)
         ctx.fillPath()
         if t > 0.01 {
-            ctx.setStrokeColor(ink0)
+            ctx.setStrokeColor(paintColor)
             ctx.setLineWidth(2 * t)
             ctx.setLineJoin(.round)
             ctx.addPath(placed)
             ctx.strokePath()
         }
+        if layered { ctx.endTransparencyLayer() }
         ctx.restoreGState()
     }
 }
