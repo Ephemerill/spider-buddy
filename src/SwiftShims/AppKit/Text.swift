@@ -36,7 +36,10 @@ public final class NSFont: NSObject, @unchecked Sendable {
     public var familyName: String? { family }
     public var displayName: String? { family }
     var fontKey: String { "\(family)|\(weightCSS)|\(italic ? 1 : 0)" }
-    init(family: String, weight: Int, italic: Bool = false, size: CGFloat) { self.family = family; weightCSS = weight; self.italic = italic; pointSize = size }
+    init(family: String, weight: Int, italic: Bool = false, size: CGFloat) {
+        _ = NSFont.installWidths
+        self.family = family; weightCSS = weight; self.italic = italic; pointSize = size
+    }
     public convenience init?(name: String, size: CGFloat) {
         let bold = name.contains("Bold"), medium = name.contains("Medium")
         let mono = name.hasPrefix("Menlo") || name.hasPrefix("Monaco") || name.hasPrefix("SFMono")
@@ -79,6 +82,32 @@ public final class NSFont: NSObject, @unchecked Sendable {
     // and everything around it lands in the same place. Measured on the Mac (tools: see the work log, 2026-11-15):
     // ascender 0.96680 and descender 0.21094 of the size at every weight, no leading.
     var isSystem: Bool { family == NSFont.systemFamily }
+
+    // Text widths. Segoe UI is narrower than SF Pro at text sizes and wider at title sizes, which moves every wrap
+    // point. Measured over 400 of the app's own strings (tools/fontwidth), the ratio SF Pro / Segoe UI for each weight
+    // at these sizes; the system font is drawn and measured stretched by it. SPIDER_FONT_RAW=1 turns it off.
+    private static let widthSizes: [CGFloat] = [8, 9, 10, 11, 12, 13, 14, 15, 17, 20, 24, 30, 34, 40]
+    private static let widthRatios: [Int32: [CGFloat]] = [
+        400: [1.1149, 1.1010, 1.0866, 1.0744, 1.0624, 1.0496, 1.0396, 1.0295, 1.0085, 0.9848, 0.9656, 0.9651, 0.9610, 0.9569],
+        500: [1.1052, 1.0918, 1.0783, 1.0664, 1.0545, 1.0425, 1.0321, 1.0222, 1.0021, 0.9804, 0.9644, 0.9646, 0.9608, 0.9569],
+        600: [1.1233, 1.1099, 1.0964, 1.0846, 1.0727, 1.0606, 1.0503, 1.0404, 1.0203, 0.9994, 0.9853, 0.9862, 0.9823, 0.9784],
+        700: [1.1071, 1.0937, 1.0805, 1.0689, 1.0578, 1.0460, 1.0364, 1.0268, 1.0073, 0.9882, 0.9773, 0.9788, 0.9750, 0.9713],
+    ]
+    static func widthRatio(weight: Int32, size: CGFloat) -> CGFloat {
+        let key: Int32 = weight <= 450 ? 400 : weight <= 550 ? 500 : weight <= 650 ? 600 : 700
+        guard let r = widthRatios[key] else { return 1 }
+        let s = widthSizes
+        if size <= s[0] { return r[0] }
+        if size >= s[s.count - 1] { return r[r.count - 1] }
+        var i = 0
+        while s[i + 1] < size { i += 1 }
+        let t = (size - s[i]) / (s[i + 1] - s[i])
+        return r[i] + (r[i + 1] - r[i]) * t
+    }
+    private static let installWidths: Void = {
+        guard ProcessInfo.processInfo.environment["SPIDER_FONT_RAW"] != "1" else { return }
+        SkiaText.widthScale = { family, weight, size in family == NSFont.systemFamily ? NSFont.widthRatio(weight: weight, size: size) : 1 }
+    }()
     private var metricsCache: (CGFloat, CGFloat)?
     var metrics: (ascent: CGFloat, descent: CGFloat) {
         if let m = metricsCache { return m }
@@ -246,6 +275,14 @@ enum TextLayout {
         for (i, l) in lines.enumerated() { w = max(w, l.width); h += l.lineHeight + (i > 0 ? spacing : 0) }
         return CGSize(width: w.rounded(.up), height: h.rounded(.up))
     }
+    /// macOS draws text heavier than its colour's alpha says: a translucent label colour comes out as if drawn twice,
+    /// 1 - (1 - a)^2 (measured on the Mac at 13 and 15 points: label 0.847 -> 0.977, secondary 0.549 -> 0.797 in dark,
+    /// 0.498 -> 0.75 in light). Opaque colours are unchanged.
+    static func macInk(_ c: CGColor) -> CGColor {
+        let a = c.a
+        guard a > 0, a < 1 else { return c }
+        return c.copy(alpha: 1 - (1 - a) * (1 - a)) ?? c
+    }
     /// Draws lines inside `rect` (in the current context's coordinates), top first, keeping text upright in flipped views.
     static func draw(_ lines: [TextLine], in rect: CGRect, alignment: NSTextAlignment, spacing: CGFloat, ctx: CGContext, flipped: Bool) {
         var y = flipped ? rect.minY : rect.maxY
@@ -263,7 +300,7 @@ enum TextLayout {
                 ctx.translateBy(x: x, y: base)
                 if flipped { ctx.scaleBy(x: 1, y: -1) }
                 ctx.textPosition = .zero
-                ctx.backend.drawText(r.text, font: r.font.fontKey, size: r.font.pointSize, color: r.color, at: CGPoint.zero.applying(ctx.ctm), state: ctx.state)
+                ctx.backend.drawText(r.text, font: r.font.fontKey, size: r.font.pointSize, color: TextLayout.macInk(r.color), at: CGPoint.zero.applying(ctx.ctm), state: ctx.state)
                 if r.underline {
                     ctx.setFillColor(r.color)
                     ctx.fill(CGRect(x: 0, y: -2, width: w, height: 0.75))

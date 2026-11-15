@@ -4,13 +4,21 @@ import QuartzCore
 
 extension NSControl {
     public enum ControlSize: UInt, Sendable { case regular, small, mini, large
-        var height: CGFloat { switch self { case .regular: return 22; case .small: return 19; case .mini: return 16; case .large: return 28 } }
+        /// Push buttons, segmented controls and pop-ups, as macOS 27 makes them (measured: tools/controls).
+        var height: CGFloat { switch self { case .regular: return 24; case .small: return 20; case .mini: return 16; case .large: return 28 } }
+        /// What a bordered button, a segment or a pop-up adds around its title, per side pair (measured as above).
+        var bezelPadding: CGFloat { switch self { case .regular: return 24.2; case .small: return 21; case .mini: return 17; case .large: return 28.2 } }
         var fontSize: CGFloat { switch self { case .regular: return 13; case .small: return 11; case .mini: return 9; case .large: return 13 } }
     }
     public enum StateValue: Int, Sendable { case off = 0, on = 1, mixed = -1 }
     public typealias TextAlignment = NSTextAlignment
 }
 public typealias NSButtonStateValue = NSControl.StateValue
+extension NSControl {
+    /// The accent as macOS 27 draws it on controls (default buttons, switches that are on), measured: not quite the
+    /// accent colour itself.
+    static let glassAccent = NSColor(srgbRed: 54 / 255, green: 121 / 255, blue: 247 / 255, alpha: 1)
+}
 
 open class NSCell: NSObject {
     public override init() { super.init() }
@@ -182,23 +190,25 @@ open class NSTextField: NSControl, NSTextInputClient {
     open override var intrinsicContentSize: CGSize {
         let wrapW: CGFloat? = wraps ? (preferredMaxLayoutWidth > 0 ? preferredMaxLayoutWidth - padX * 2 : (lastMeasuredWidth > 0 ? lastMeasuredWidth - padX * 2 : nil)) : nil
         let z = TextLayout.size(layoutLines(width: wrapW), spacing: 0)
-        let vPad: CGFloat = isBezeled || isBordered ? 6 : 0
+        let vPad: CGFloat = isBezeled || isBordered ? 8 : 0
         // A wrapping label still wants its whole text on one line, as AppKit's do (a set preferredMaxLayoutWidth caps
         // that): its lowered compression resistance lets constraints narrow it, and its height follows the width it
         // was last laid out at. Reporting no width at all let a label in a stack collapse to nothing.
         var width = z.width + padX * 2
-        if wraps {
+        // An editable field has no width of its own in AppKit: its frame or constraints give it one.
+        if isEditable, isBezeled || isBordered { width = NSViewNoIntrinsicMetric }
+        else if wraps {
             let natural = TextLayout.size(layoutLines(width: nil), spacing: 0).width + padX * 2
             width = preferredMaxLayoutWidth > 0 ? min(natural, preferredMaxLayoutWidth) : natural
         }
         // (Whole points, rounded up, as AppKit reports them: rounding a frame down by a fraction truncates the text.)
-        return CGSize(width: ceil(width), height: ceil(z.height + vPad))
+        return CGSize(width: width < 0 ? width : ceil(width), height: ceil(z.height + vPad))
     }
     /// The text laid out to `size`'s width (wrapping if the field wraps), as tall as it comes out.
     open override func sizeThatFits(_ size: CGSize) -> CGSize {
         let w: CGFloat? = wraps && size.width > 0 ? size.width - padX * 2 : nil
         let z = TextLayout.size(layoutLines(width: w), spacing: 0)
-        let vPad: CGFloat = isBezeled || isBordered ? 6 : 0
+        let vPad: CGFloat = isBezeled || isBordered ? 8 : 0
         return CGSize(width: min(z.width + padX * 2, size.width > 0 ? size.width : .greatestFiniteMagnitude), height: z.height + vPad)
     }
     override func widthChangedIntrinsic() -> Bool {
@@ -215,9 +225,11 @@ open class NSTextField: NSControl, NSTextInputClient {
             let b = bounds
             if isBezeled || isBordered {
                 let r = b.insetBy(dx: 0.5, dy: 0.5)
+                // macOS 27 (measured: tools/controls): darker than the window in dark, white in light, a faint
+                // one-point border.
                 c.addPath(CGPath(roundedRect: r, cornerWidth: 5, cornerHeight: 5, transform: nil))
-                c.setFillColor(drawsBackground ? (backgroundColor ?? (dark ? NSColor(white: 1, alpha: 0.05) : .white)).cgColor : NSColor.clear.cgColor)
-                c.setStrokeColor((editing ? NSColor.controlAccentColor : NSColor(white: dark ? 1 : 0, alpha: 0.18)).cgColor)
+                c.setFillColor(drawsBackground ? (backgroundColor ?? (dark ? NSColor(white: 0, alpha: 0.27) : .white)).cgColor : NSColor.clear.cgColor)
+                c.setStrokeColor((editing ? NSControl.glassAccent : NSColor(white: dark ? 1 : 0, alpha: dark ? 0.093 : 0.15)).cgColor)
                 c.setLineWidth(editing ? 2 : 1)
                 c.drawPath(using: .fillStroke)
             } else if drawsBackground, let bg = backgroundColor {
@@ -476,33 +488,38 @@ open class NSButton: NSControl {
     private var buttonSize: CGSize {
         let f = effectiveFont
         let t = title.isEmpty ? 0 : f.width(title)
-        if isCheck { return CGSize(width: t + 20, height: max(16, controlSize.height - 4)) }
+        // (Checkboxes and radios: the box and its gap, measured.)
+        if isCheck {
+            let pad: CGFloat = [.regular: 22.2, .large: 24.2, .small: 18.9, .mini: 17.6][controlSize] ?? 22.2
+            let h: CGFloat = [.regular: 16, .large: 18, .small: 14, .mini: 12][controlSize] ?? 16
+            return CGSize(width: t + pad, height: h)
+        }
         let iw = image?.size.width ?? 0, ih = image?.size.height ?? 0
         if !isBordered {
             if imagePosition == .imageAbove || imagePosition == .imageBelow { return CGSize(width: max(iw, t), height: ih + f.lineHeight + 2) }
-            return CGSize(width: t + iw + (t > 0 && iw > 0 ? 4 : 0), height: max(ih, f.lineHeight))
+            // (A borderless button keeps a little room either side of its title: 4.8 points, measured.)
+            return CGSize(width: t + iw + (t > 0 && iw > 0 ? 4 : 0) + (t > 0 ? 4.8 : 0), height: max(ih, f.lineHeight))
         }
-        let w = t + iw + (t > 0 && iw > 0 ? 4 : 0) + (bezelStyle == .rounded ? 22 : 12)
-        return CGSize(width: max(w, bezelStyle == .rounded && t > 0 ? 48 : 0), height: bezelStyle == .inline ? 16 : controlSize.height)
+        if bezelStyle == .inline { return CGSize(width: t + iw + (t > 0 && iw > 0 ? 4 : 0) + 6, height: 18) }
+        let w = t + iw + (t > 0 && iw > 0 ? 4 : 0) + (bezelStyle == .rounded ? controlSize.bezelPadding : 12)
+        return CGSize(width: w, height: controlSize.height)
     }
     func drawButton() {
         guard let c = ctx else { return }
         let b = bounds
         if isCheck {
+            // (macOS 27: a 14-point box or circle, a 10% fill when off, the accent when on.)
             let on = state == .on
             let box = CGRect(x: 1, y: b.midY - 7, width: 14, height: 14)
+            let offFill = NSColor(white: dark ? 1 : 0, alpha: 0.1)
             if type == .radio {
-                c.setFillColor((on ? NSColor.controlAccentColor : NSColor(white: dark ? 1 : 0, alpha: dark ? 0.12 : 0.06)).cgColor)
+                c.setFillColor((on ? NSControl.glassAccent : offFill).cgColor)
                 c.fillEllipse(in: box)
                 if on { c.setFillColor(NSColor.white.cgColor); c.fillEllipse(in: box.insetBy(dx: 4.5, dy: 4.5)) }
             } else {
-                c.addPath(CGPath(roundedRect: box, cornerWidth: 3.5, cornerHeight: 3.5, transform: nil))
-                c.setFillColor((on ? NSColor.controlAccentColor : NSColor(white: dark ? 1 : 1, alpha: dark ? 0.12 : 1)).cgColor)
+                c.addPath(CGPath(roundedRect: box, cornerWidth: 4, cornerHeight: 4, transform: nil))
+                c.setFillColor((on ? NSControl.glassAccent : offFill).cgColor)
                 c.fillPath()
-                if !on {
-                    c.addPath(CGPath(roundedRect: box.insetBy(dx: 0.5, dy: 0.5), cornerWidth: 3, cornerHeight: 3, transform: nil))
-                    c.setStrokeColor(NSColor(white: dark ? 1 : 0, alpha: 0.25).cgColor); c.setLineWidth(1); c.strokePath()
-                }
                 if on {
                     c.setStrokeColor(NSColor.white.cgColor); c.setLineWidth(1.8); c.setLineCap(.round); c.setLineJoin(.round)
                     let flip = isFlipped
@@ -516,23 +533,23 @@ open class NSButton: NSControl {
         let on = state == .on && (type == .pushOnPushOff || type == .toggle || type == .onOff)
         let isDefault = keyEquivalent == "\r"
         if isBordered {
-            let r = b.insetBy(dx: bezelStyle == .rounded ? 1 : 0.5, dy: bezelStyle == .rounded ? 1 : 0.5)
-            let radius: CGFloat = bezelStyle == .inline || bezelStyle == .recessed ? r.height / 2 : bezelStyle == .circular ? r.height / 2 : 5.5
+            // macOS 27's push buttons (measured: tools/controls): a translucent fill, no border or shadow, corners by
+            // control size and a capsule at large; the default button in the system's glass blue.
+            let rounded = bezelStyle == .rounded
+            let r = rounded ? b : b.insetBy(dx: 0.5, dy: 0.5)
+            let radius: CGFloat
+            if bezelStyle == .inline || bezelStyle == .recessed || bezelStyle == .circular || (rounded && controlSize == .large) { radius = r.height / 2 }
+            else if rounded { radius = [.mini: 3.5, .small: 4.5, .regular: 5][controlSize] ?? 5 }
+            else { radius = 5.5 }
             let fill: NSColor
-            if isDefault { fill = isHighlighted ? NSColor(srgbRed: 0, green: 0.38, blue: 0.85, alpha: 1) : .controlAccentColor }
+            if isDefault { fill = isHighlighted ? NSColor(srgbRed: 40 / 255, green: 100 / 255, blue: 215 / 255, alpha: 1) : NSControl.glassAccent }
+            else if !isEnabled { fill = NSColor(white: dark ? 1 : 0, alpha: dark ? 0.036 : 0.039) }
             else if on { fill = NSColor(white: dark ? 1 : 0, alpha: 0.2) }
-            else if isHighlighted { fill = NSColor(white: dark ? 1 : 0, alpha: dark ? 0.32 : 0.12) }
-            else if bezelStyle == .recessed || bezelStyle == .inline { fill = NSColor(white: dark ? 1 : 0, alpha: 0.08) }
-            else { fill = dark ? NSColor(white: 1, alpha: 0.2) : .white }
-            let path = CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil)
-            if !dark, !isDefault, bezelStyle == .rounded {
-                c.saveGState()
-                c.setShadow(offset: CGSize(width: 0, height: -0.5 * NSScreen.primaryScale), blur: 1 * NSScreen.primaryScale, color: NSColor(white: 0, alpha: 0.25).cgColor)
-                c.addPath(path); c.setFillColor(fill.cgColor); c.fillPath()
-                c.restoreGState()
-            } else {
-                c.addPath(path); c.setFillColor(fill.cgColor); c.fillPath()
-            }
+            else if isHighlighted { fill = NSColor(white: dark ? 1 : 0, alpha: dark ? 0.16 : 0.14) }
+            else { fill = NSColor(white: dark ? 1 : 0, alpha: dark ? 0.08 : 0.078) }
+            c.addPath(CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil))
+            c.setFillColor(fill.cgColor)
+            c.fillPath()
         } else if isHighlighted {
             c.setAlpha(0.6)
         }
@@ -577,7 +594,7 @@ open class NSButton: NSControl {
             }
         } else if showTitle {
             // (A borderless button is only as wide as its title: no inset.)
-            drawString(t, in: isBordered ? b.insetBy(dx: 4, dy: 0) : b, color: tint, alignment: alignment == .natural ? .center : alignment, font: f)
+            drawString(t, in: isBordered ? b.insetBy(dx: bezelStyle == .inline ? 2 : 4, dy: 0) : b, color: tint, alignment: alignment == .natural ? .center : alignment, font: f)
         }
     }
     private var pressedInside = false
@@ -614,23 +631,32 @@ open class NSSwitch: NSControl {
     open var state = NSControl.StateValue.off { didSet { needsDisplay = true } }
     public override init(frame r: CGRect) { super.init(frame: r); isContinuous = false }
     public required init?(coder: NSCoder) { super.init(coder: coder) }
-    open override var intrinsicContentSize: CGSize { controlSize == .small ? CGSize(width: 32, height: 18) : controlSize == .mini ? CGSize(width: 26, height: 15) : CGSize(width: 38, height: 22) }
+    /// As macOS 27 makes them (measured under constraints on the Mac): mini 36x16, small 44x20, regular 54x24, large 64x28.
+    open override var intrinsicContentSize: CGSize {
+        switch controlSize { case .mini: return CGSize(width: 36, height: 16); case .small: return CGSize(width: 44, height: 20)
+        case .large: return CGSize(width: 64, height: 28); default: return CGSize(width: 54, height: 24) }
+    }
     open override func draw(_ d: CGRect) {
         guard let c = ctx else { return }
         withAppearance {
+            // macOS 27's switch (measured: tools/controls and the welcome): the whole frame a capsule track, a pill
+            // knob 59% of its width inset 2 points; off, a 14% track and a light knob; on, the glass blue and a
+            // knob tinted to match.
             let z = intrinsicContentSize
             let r = CGRect(x: bounds.midX - z.width / 2, y: bounds.midY - z.height / 2, width: z.width, height: z.height)
             let on = state == .on
-            c.addPath(CGPath(roundedRect: r, cornerWidth: z.height / 2, cornerHeight: z.height / 2, transform: nil))
-            c.setFillColor((on ? NSColor.controlAccentColor : NSColor(white: dark ? 1 : 0, alpha: dark ? 0.15 : 0.09)).cgColor)
             c.setAlpha(isEnabled ? 1 : 0.5)
+            c.addPath(CGPath(roundedRect: r, cornerWidth: r.height / 2, cornerHeight: r.height / 2, transform: nil))
+            c.setFillColor((on ? NSControl.glassAccent : NSColor(white: dark ? 1 : 0, alpha: 0.14)).cgColor)
             c.fillPath()
-            let d = z.height - 2
-            let knob = CGRect(x: on ? r.maxX - d - 1 : r.minX + 1, y: r.minY + 1, width: d, height: d)
+            let kh = r.height - 4, kw = (r.width * 0.59).rounded()
+            let knob = CGRect(x: on ? r.maxX - 2 - kw : r.minX + 2, y: r.minY + 2, width: kw, height: kh)
             c.saveGState()
-            c.setShadow(offset: CGSize(width: 0, height: -0.5 * NSScreen.primaryScale), blur: 1.5 * NSScreen.primaryScale, color: NSColor(white: 0, alpha: 0.3).cgColor)
-            c.setFillColor(NSColor.white.cgColor)
-            c.fillEllipse(in: knob)
+            if !dark { c.setShadow(offset: CGSize(width: 0, height: -0.5 * NSScreen.primaryScale), blur: 1.5 * NSScreen.primaryScale, color: NSColor(white: 0, alpha: 0.2).cgColor) }
+            let knobColour: NSColor = on ? (dark ? NSColor(srgbRed: 225 / 255, green: 235 / 255, blue: 254 / 255, alpha: 1) : .white) : (dark ? NSColor(white: 225 / 255, alpha: 1) : .white)
+            c.addPath(CGPath(roundedRect: knob, cornerWidth: kh / 2, cornerHeight: kh / 2, transform: nil))
+            c.setFillColor(knobColour.cgColor)
+            c.fillPath()
             c.restoreGState()
         }
     }
@@ -657,33 +683,38 @@ open class NSSlider: NSControl {
         minValue = a; maxValue = b; doubleValue = value; self.target = target; self.action = action
         isContinuous = true
     }
-    open override var intrinsicContentSize: CGSize { CGSize(width: NSViewNoIntrinsicMetric, height: controlSize == .small ? 15 : controlSize == .mini ? 12 : 20) }
+    /// 16 high, as macOS 27's are (measured: tools/controls); smaller sizes scaled as before.
+    open override var intrinsicContentSize: CGSize { CGSize(width: NSViewNoIntrinsicMetric, height: controlSize == .small ? 14 : controlSize == .mini ? 12 : 16) }
     private var knobD: CGFloat { controlSize == .small ? 12 : controlSize == .mini ? 10 : 16 }
     private var frac: CGFloat { maxValue > minValue ? CGFloat((doubleValue - minValue) / (maxValue - minValue)) : 0 }
     open override func draw(_ d: CGRect) {
         guard let c = ctx else { return }
         withAppearance {
+            // macOS 27 (measured: tools/controls): a 6-point track, 10% where it is not filled, and a pill knob
+            // 20 by 16.
             let b = bounds
-            let h: CGFloat = 4
-            let track = CGRect(x: b.minX + 1, y: b.midY - h / 2, width: b.width - 2, height: h)
-            c.addPath(CGPath(roundedRect: track, cornerWidth: 2, cornerHeight: 2, transform: nil))
-            c.setFillColor(NSColor(white: dark ? 1 : 0, alpha: dark ? 0.2 : 0.12).cgColor)
+            let h: CGFloat = 6
+            let kw = knobD * 1.25, kh = knobD
+            let track = CGRect(x: b.minX, y: b.midY - h / 2, width: b.width, height: h)
+            c.addPath(CGPath(roundedRect: track, cornerWidth: h / 2, cornerHeight: h / 2, transform: nil))
+            c.setFillColor(NSColor(white: dark ? 1 : 0, alpha: 0.1).cgColor)
             c.fillPath()
-            let x = b.minX + knobD / 2 + (b.width - knobD) * frac
+            let x = b.minX + kw / 2 + (b.width - kw) * frac
             let done = CGRect(x: track.minX, y: track.minY, width: max(0, x - track.minX), height: h)
-            c.addPath(CGPath(roundedRect: done, cornerWidth: 2, cornerHeight: 2, transform: nil))
-            c.setFillColor((isEnabled ? (trackFillColor ?? .controlAccentColor) : .disabledControlTextColor).cgColor)
+            c.addPath(CGPath(roundedRect: done, cornerWidth: h / 2, cornerHeight: h / 2, transform: nil))
+            c.setFillColor((isEnabled ? (trackFillColor ?? NSControl.glassAccent) : .disabledControlTextColor).cgColor)
             c.fillPath()
             c.saveGState()
-            c.setShadow(offset: CGSize(width: 0, height: -0.5 * NSScreen.primaryScale), blur: 1.5 * NSScreen.primaryScale, color: NSColor(white: 0, alpha: 0.35).cgColor)
-            c.setFillColor(NSColor.white.cgColor)
-            c.fillEllipse(in: CGRect(x: x - knobD / 2, y: b.midY - knobD / 2, width: knobD, height: knobD))
+            if !dark { c.setShadow(offset: CGSize(width: 0, height: -0.5 * NSScreen.primaryScale), blur: 1.5 * NSScreen.primaryScale, color: NSColor(white: 0, alpha: 0.25).cgColor) }
+            c.setFillColor(NSColor(white: dark ? 221 / 255 : 1, alpha: 1).cgColor)
+            c.addPath(CGPath(roundedRect: CGRect(x: x - kw / 2, y: b.midY - kh / 2, width: kw, height: kh), cornerWidth: kh / 2, cornerHeight: kh / 2, transform: nil))
+            c.fillPath()
             c.restoreGState()
         }
     }
     private func track(_ e: NSEvent) {
         let p = convert(e.locationInWindow, from: nil)
-        let u = max(0, min(1, (p.x - knobD / 2) / max(bounds.width - knobD, 1)))
+        let u = max(0, min(1, (p.x - knobD * 0.625) / max(bounds.width - knobD * 1.25, 1)))
         var v = minValue + Double(u) * (maxValue - minValue)
         if allowsTickMarkValuesOnly, numberOfTickMarks > 1 {
             let step = (maxValue - minValue) / Double(numberOfTickMarks - 1)
@@ -755,14 +786,17 @@ open class NSSegmentedControl: NSControl {
         } else {
             for i in 0..<segmentCount { w += natural(i) }
         }
-        return CGSize(width: w + 2, height: controlSize.height)
+        return CGSize(width: ceil(w), height: controlSize.height)
     }
     private func natural(_ i: Int) -> CGFloat {
         guard labels.indices.contains(i) else { return 16 }
         if widths[i] > 0 { return widths[i] }
-        let tw = labels[i].isEmpty ? 0 : effectiveFont.width(labels[i])
+        let tw = labels[i].isEmpty ? 0 : segmentFont.width(labels[i])
         let iw = images[i]?.size.width ?? 0
-        return tw + iw + (tw > 0 && iw > 0 ? 4 : 0) + 16
+        return tw + iw + (tw > 0 && iw > 0 ? 4 : 0) + controlSize.bezelPadding - 0.2
+    }
+    /// Segments keep 13-point titles at every control size, as AppKit's do.
+    var segmentFont: NSFont { font ?? .systemFont(ofSize: 13)
     }
     private func rects() -> [CGRect] {
         let b = bounds
@@ -785,16 +819,19 @@ open class NSSegmentedControl: NSControl {
     open override func draw(_ d: CGRect) {
         guard let c = ctx else { return }
         withAppearance {
-            let b = bounds.insetBy(dx: 0.5, dy: 1)
-            c.addPath(CGPath(roundedRect: b, cornerWidth: 6, cornerHeight: 6, transform: nil))
-            c.setFillColor(NSColor(white: dark ? 1 : 0, alpha: dark ? 0.1 : 0.06).cgColor)
+            // macOS 27 (measured: tools/controls): the push button's fill and corners, and the selected segment a
+            // further 12.7% over it.
+            let b = bounds
+            let radius: CGFloat = controlSize == .large ? b.height / 2 : ([.mini: 3.5, .small: 4.5, .regular: 5][controlSize] ?? 5)
+            c.addPath(CGPath(roundedRect: b, cornerWidth: radius, cornerHeight: radius, transform: nil))
+            c.setFillColor(NSColor(white: dark ? 1 : 0, alpha: dark ? 0.08 : 0.078).cgColor)
             c.fillPath()
             let rs = rects()
             for i in 0..<segmentCount {
                 let r = rs[i]
                 if selected.contains(i) || pressed == i {
-                    c.addPath(CGPath(roundedRect: r.insetBy(dx: 1, dy: 2), cornerWidth: 5, cornerHeight: 5, transform: nil))
-                    c.setFillColor((selectedSegmentBezelColor ?? (dark ? NSColor(white: 1, alpha: 0.25) : .white)).cgColor)
+                    c.addPath(CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil))
+                    c.setFillColor((selectedSegmentBezelColor ?? NSColor(white: dark ? 1 : 0, alpha: 0.127)).cgColor)
                     c.fillPath()
                 } else if i > 0, !selected.contains(i - 1) {
                     c.setFillColor(NSColor(white: dark ? 1 : 0, alpha: 0.12).cgColor)
@@ -803,15 +840,15 @@ open class NSSegmentedControl: NSControl {
                 let color: NSColor = enabled[i] && isEnabled ? .labelColor : .disabledControlTextColor
                 if let img = images[i] {
                     let z = img.size
-                    let tw = labels[i].isEmpty ? 0 : effectiveFont.width(labels[i]) + 4
+                    let tw = labels[i].isEmpty ? 0 : segmentFont.width(labels[i]) + 4
                     let x0 = r.midX - (z.width + tw) / 2
                     c.saveGState()
                     if isFlipped { c.translateBy(x: x0, y: r.midY + z.height / 2); c.scaleBy(x: 1, y: -1) } else { c.translateBy(x: x0, y: r.midY - z.height / 2) }
                     img.render(in: c, tint: color)
                     c.restoreGState()
-                    if tw > 0 { drawString(labels[i], in: CGRect(x: x0 + z.width + 4, y: r.minY, width: tw, height: r.height), color: color, alignment: .left, font: effectiveFont) }
+                    if tw > 0 { drawString(labels[i], in: CGRect(x: x0 + z.width + 4, y: r.minY, width: tw, height: r.height), color: color, alignment: .left, font: segmentFont) }
                 } else {
-                    drawString(labels[i], in: r, color: color, alignment: .center, font: effectiveFont)
+                    drawString(labels[i], in: r, color: color, alignment: .center, font: segmentFont)
                 }
             }
         }
@@ -870,26 +907,32 @@ open class NSPopUpButton: NSButton {
     public func setTitle(_ t: String) { title = t }
     private func changed() { invalidateIntrinsicContentSize(); needsDisplay = true }
     open override var intrinsicContentSize: CGSize {
-        let w = menuItems.items.map { effectiveFont.width($0.title) }.max() ?? 40
-        return CGSize(width: w + 34, height: controlSize.height)
+        // Pop-ups keep 13-point titles; the arrows and padding measured per control size.
+        let f = font ?? .systemFont(ofSize: 13)
+        let w = menuItems.items.map { f.width($0.title) }.max() ?? 40
+        let pad: CGFloat = [.regular: 47.6, .large: 55.6, .small: 39.6, .mini: 31.6][controlSize] ?? 47.6
+        return CGSize(width: ceil(w + pad), height: controlSize.height)
     }
     open override func draw(_ d: CGRect) {
         guard let c = ctx else { return }
         withAppearance {
-            let r = bounds.insetBy(dx: 1, dy: 1)
-            c.addPath(CGPath(roundedRect: r, cornerWidth: 5.5, cornerHeight: 5.5, transform: nil))
-            c.setFillColor((dark ? NSColor(white: 1, alpha: isHighlighted ? 0.3 : 0.2) : NSColor(white: isHighlighted ? 0.92 : 1, alpha: 1)).cgColor)
+            // macOS 27 (measured: tools/controls): a push button's fill and corners, the title, and plain up-and-down
+            // chevrons at the right in the label colour.
+            let r = bounds
+            let radius: CGFloat = controlSize == .large ? r.height / 2 : ([.mini: 3.5, .small: 4.5, .regular: 5][controlSize] ?? 5)
+            c.addPath(CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil))
+            c.setFillColor(NSColor(white: dark ? 1 : 0, alpha: isHighlighted ? (dark ? 0.16 : 0.14) : (dark ? 0.08 : 0.078)).cgColor)
             c.fillPath()
             let text = pullsDown ? (menuItems.items.first?.title ?? "") : (selectedItem?.title ?? "")
-            drawString(text, in: CGRect(x: 9, y: r.minY, width: r.width - 30, height: r.height), color: isEnabled ? .labelColor : .disabledControlTextColor, alignment: .left, font: effectiveFont)
-            let ax = r.maxX - 16
-            let chip = CGRect(x: ax - 1, y: r.midY - 8, width: 15, height: 16)
-            c.addPath(CGPath(roundedRect: chip, cornerWidth: 4, cornerHeight: 4, transform: nil))
-            c.setFillColor(NSColor.controlAccentColor.cgColor)
-            c.fillPath()
-            c.setStrokeColor(NSColor.white.cgColor); c.setLineWidth(1.4); c.setLineCap(.round); c.setLineJoin(.round)
-            c.move(to: CGPoint(x: ax + 3, y: r.midY - 2)); c.addLine(to: CGPoint(x: ax + 6.5, y: r.midY - 5)); c.addLine(to: CGPoint(x: ax + 10, y: r.midY - 2)); c.strokePath()
-            c.move(to: CGPoint(x: ax + 3, y: r.midY + 2)); c.addLine(to: CGPoint(x: ax + 6.5, y: r.midY + 5)); c.addLine(to: CGPoint(x: ax + 10, y: r.midY + 2)); c.strokePath()
+            let f = font ?? .systemFont(ofSize: 13)
+            let fg: NSColor = isEnabled ? .labelColor : .disabledControlTextColor
+            drawString(text, in: CGRect(x: 10, y: r.minY, width: r.width - 34, height: r.height), color: fg, alignment: .left, font: f)
+            let ax = r.maxX - 18
+            c.setStrokeColor(fg.cgColor); c.setLineWidth(1.5); c.setLineCap(.round); c.setLineJoin(.round)
+            let flip = isFlipped
+            func Y(_ dy: CGFloat) -> CGFloat { flip ? r.midY - dy : r.midY + dy }
+            c.move(to: CGPoint(x: ax, y: Y(1.5))); c.addLine(to: CGPoint(x: ax + 3.5, y: Y(5))); c.addLine(to: CGPoint(x: ax + 7, y: Y(1.5))); c.strokePath()
+            c.move(to: CGPoint(x: ax, y: Y(-1.5))); c.addLine(to: CGPoint(x: ax + 3.5, y: Y(-5))); c.addLine(to: CGPoint(x: ax + 7, y: Y(-1.5))); c.strokePath()
         }
     }
     open override func mouseDown(with e: NSEvent) { guard isEnabled else { return }; isHighlighted = true }
@@ -1201,9 +1244,25 @@ open class NSProgressIndicator: NSView {
     public func startAnimation(_ s: Any?) { running = true; needsDisplay = true }
     public func stopAnimation(_ s: Any?) { running = false; needsDisplay = true }
     public func sizeToFit() { frame.size = style == .spinning ? CGSize(width: 16, height: 16) : CGSize(width: frame.width, height: 6) }
-    open override var intrinsicContentSize: CGSize { style == .spinning ? CGSize(width: controlSize == .small ? 16 : 32, height: controlSize == .small ? 16 : 32) : CGSize(width: NSViewNoIntrinsicMetric, height: 6) }
+    open override var intrinsicContentSize: CGSize { style == .spinning ? CGSize(width: controlSize == .small ? 16 : 32, height: controlSize == .small ? 16 : 32) : CGSize(width: NSViewNoIntrinsicMetric, height: 20) }
     open override func draw(_ d: CGRect) {
         guard running || isDisplayedWhenStopped, let c = NSGraphicsContext.current?.cgContext else { return }
+        if style == .bar {
+            // macOS 27 (measured: tools/controls): an 8-point bar, 6-8% where not filled.
+            let b = bounds, h: CGFloat = 8
+            let bar = CGRect(x: b.minX, y: b.midY - h / 2, width: b.width, height: h)
+            let dark = effectiveAppearance.isDark
+            c.addPath(CGPath(roundedRect: bar, cornerWidth: h / 2, cornerHeight: h / 2, transform: nil))
+            c.setFillColor(NSColor(white: dark ? 1 : 0, alpha: dark ? 0.08 : 0.06).cgColor)
+            c.fillPath()
+            if !isIndeterminate, maxValue > minValue {
+                let u = CGFloat(max(0, min(1, (doubleValue - minValue) / (maxValue - minValue))))
+                c.addPath(CGPath(roundedRect: CGRect(x: bar.minX, y: bar.minY, width: max(h, bar.width * u), height: h), cornerWidth: h / 2, cornerHeight: h / 2, transform: nil))
+                c.setFillColor(NSControl.glassAccent.cgColor)
+                c.fillPath()
+            }
+            return
+        }
         c.setStrokeColor(NSColor(white: 0.5, alpha: 1).cgColor)
         c.setLineWidth(2)
         c.strokeEllipse(in: bounds.insetBy(dx: 3, dy: 3))

@@ -68,22 +68,10 @@ public final class NSColor: NSObject, @unchecked Sendable {
     public static let systemPink = NSColor(light: rgb(255, 45, 85), dark: rgb(255, 55, 95))
     public static let systemPurple = NSColor(light: rgb(203, 48, 224), dark: rgb(219, 52, 242))
     public static let systemTeal = NSColor(light: rgb(0, 195, 208), dark: rgb(0, 210, 224))
-    // Vibrancy. AppKit draws its controls' label colours inside a visual effect view much stronger than their alpha says.
-    // Measured on the Mac over .windowBackground (cacheDisplay of 40-point text): label, secondary, tertiary and
-    // quaternary come out as if their alpha were 0.99, 0.88, 0.57, 0.28 in dark, and 0.99, 0.76, 0.46, 0.18 in light.
-    private static let vibrantLabel = NSColor(light: rgb(0, 0, 0, 0.99), dark: rgb(255, 255, 255, 0.99))
-    private static let vibrantSecondary = NSColor(light: rgb(0, 0, 0, 0.76), dark: rgb(255, 255, 255, 0.88))
-    private static let vibrantTertiary = NSColor(light: rgb(0, 0, 0, 0.46), dark: rgb(255, 255, 255, 0.57))
-    private static let vibrantQuaternary = NSColor(light: rgb(0, 0, 0, 0.18), dark: rgb(255, 255, 255, 0.28))
-    /// This colour as a control draws it in `view`: a label colour inside a visual effect view becomes vibrant.
-    public func vibrant(in view: NSView?) -> NSColor {
-        guard let view, view.isInVibrantView else { return self }
-        if self === NSColor.labelColor || self === NSColor.controlTextColor { return NSColor.vibrantLabel }
-        if self === NSColor.secondaryLabelColor || self === NSColor.placeholderTextColor { return NSColor.vibrantSecondary }
-        if self === NSColor.tertiaryLabelColor { return NSColor.vibrantTertiary }
-        if self === NSColor.quaternaryLabelColor { return NSColor.vibrantQuaternary }
-        return self
-    }
+    /// This colour as a control draws it in `view`. (Kept as a hook: measurements showed AppKit's label colours come
+    /// out the same inside a visual effect view as outside it at text sizes; the difference was text rendering, which
+    /// TextLayout.draw makes up for.)
+    public func vibrant(in view: NSView?) -> NSColor { self }
     public var redComponent: CGFloat { cgColor.r }
     public var greenComponent: CGFloat { cgColor.g }
     public var blueComponent: CGFloat { cgColor.b }

@@ -257,7 +257,8 @@ open class NSView: NSResponder {
     open var needsUpdateConstraints = false
     open var identifier: NSUserInterfaceItemIdentifier?
     open var userInterfaceLayoutDirection = NSUserInterfaceLayoutDirection.leftToRight
-    open var effectiveAppearance: NSAppearance { appearance ?? superview?.effectiveAppearance ?? NSApp.effectiveAppearance }
+    /// Its own, else its superview's, else its window's, else the app's: as AppKit inherits it.
+    open var effectiveAppearance: NSAppearance { appearance ?? superview?.effectiveAppearance ?? window?.effectiveAppearance ?? NSApp.effectiveAppearance }
     open var appearance: NSAppearance? { didSet { needsDisplay = true } }
     open var enclosingScrollView: NSScrollView? { (superview as? NSScrollView) ?? superview?.enclosingScrollView }
     open var visibleRect: CGRect { bounds }
@@ -325,7 +326,8 @@ open class NSView: NSResponder {
         }
         if bounds.origin != .zero { ctx.saveGState(); ctx.translateBy(x: -bounds.minX, y: -bounds.minY) }
         if let s = shadow { s.set() }
-        draw(bounds)
+        // Drawn in its own appearance, as AppKit does: dynamic colours in draw(_:) resolve to it.
+        effectiveAppearance.performAsCurrentDrawingAppearance { draw(bounds) }
         if bounds.origin != .zero { ctx.restoreGState() }
         if flip { ctx.restoreGState() }
         NSGraphicsContext.current = prior

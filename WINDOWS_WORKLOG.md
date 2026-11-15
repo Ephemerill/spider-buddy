@@ -128,3 +128,51 @@ bridge did not start.
 4. Known gaps found while porting, each visible in the UI: `NSWindow.nextEvent(matching:)` returns nil (drag loops in
    the habitat), `segmentDistribution` is not used by layout, emitters have no particles, field editors are a stub,
    drops are not wired to `WM_DROPFILES`, the Windows updater is a stub.
+
+## 2026-11-15: The Mac app runs on Windows; the welcome window matches the Mac
+
+**The launch "crash" in debug builds** was the build: `/DEBUG` turns on incremental linking, which pads Swift's
+metadata sections, and the runtime then reads garbage on its first conformance lookup. `-Debug` builds link with
+`/INCREMENTAL:NO`. The release build's own crash was real: `NSSegmentedControl` sized its arrays in `didSet`, which does
+not run in a class's own initializers.
+
+**Then a hang: Auto Layout.** The panel is 340 views and 3,330 constraints. The stand-in's solver pivoted on the most
+negative coefficient (which cycles on these degenerate systems), kept positions window-wide (so a long stack's rows filled
+in with every view before it), and hashed every cell. Now: positions relative to the superview with constraints written
+over each item's path to the root (shared ancestors cancel), sorted-array rows with an id-indexed tableau and column
+index, Dantzig pivots with Bland's rule during degenerate runs, and a per-root cache of recent answers. A fresh solve of
+the panel went from minutes to 0.13-0.4 s, and an unchanged one takes 10 ms.
+
+**Comparing with the Mac.** `tools/oracle-app.sh` builds the Mac app from this clone with its own bundle id
+(`com.gabriel.desktopspider.oracle`) and the Windows stand-in `Updater.swift` in place of Sparkle, so it cannot touch the
+owner's spider. `tools/windows/swift/welcome-diff` runs the Mac's own `SPIDER_WELCOME_SHOT` hook on both and puts the
+pages side by side. `tools/controls` is a control gallery compiled against real AppKit on the Mac and against the
+stand-in on Windows. Every change below was measured from real AppKit on the Mac (probes kept under `tools/`), not taken
+from memory:
+- `NSStackView`'s own constraints and priorities, read from AppKit's `constraints`: hugging 249.99998, first edge 750,
+  spacing 749.99, far edge at the hugging priority, alignment 260, cross-axis edges hugging each view. Wrapping labels
+  want their whole text on one line. (Before: labels collapsed to zero width, and spare room stretched rows.)
+- System colours for macOS 27 (`tools/windows/swift/probe-colors`); window background is now 30 in dark and white in
+  light.
+- Text: Segoe UI drawn with SF Pro's metrics (ascender 0.96680, descender 0.21094) and AppKit's label line heights
+  (measured table), and stretched per size and weight to SF Pro's widths, measured over 400 of the app's strings
+  (`tools/fontwidth`): widths now match within 0.1% at every size, so wrap points and line counts match the Mac.
+  Translucent text colours drawn as macOS renders them (1 - (1 - a)^2, measured).
+- Controls as macOS 27 draws them: sizes and padding per control size, translucent fills, capsule large and default
+  buttons in the system's glass blue, pill switches and slider knobs, fields, pop-ups, progress bars, segmented controls.
+- A view's appearance follows its window's; `draw(_:)` runs in the view's appearance.
+
+**Evidence:** welcome pages 1-3 side by side (`welcome-diff`): same layout, wrap points, colours and controls. Control
+gallery: every control's height matches; widths differ only where the Mac's `fittingSize` adds room. Traces 183/183 (worst
+1.12e-6) and images 768/770 after all of it: no regression. Titled windows get Windows' dark title bar when their
+appearance is dark, as Mac title bars follow it.
+
+**Not done, and why:**
+- **SF Symbols** (about 70 in the app) cannot ship on Windows: Apple licenses them for Apple platforms only. The
+  stand-in's hand-drawn substitutes are wrong for many. Needs the owner's choice of a replacement set.
+- The Mac's control gallery runs inactive (a process started from a shell cannot become the active app), so active
+  colours were taken from the oracle's welcome pages instead.
+- Glyph shapes are Segoe's (accepted difference); only their metrics follow SF Pro.
+
+**Next:** symbols (after the owner decides); the taskbar shows a generic icon, not the app's; then the Panel itself, side by side, and the tray menu; then the spider on
+the desktop with the real app's windows.

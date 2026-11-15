@@ -178,7 +178,7 @@ open class NSWindow: NSResponder, CALayerHost {
     open var canHide = true
     open var animationBehavior = AnimationBehavior.default
     open var colorSpace: NSColorSpace? = nil
-    open var appearance: NSAppearance? = nil
+    open var appearance: NSAppearance? = nil { didSet { applyTitleBarAppearance() } }
     open var representedURL: URL?
     open var sharingType = 1
     open var preventsApplicationTerminationWhenModal = true
@@ -264,7 +264,18 @@ open class NSWindow: NSResponder, CALayerHost {
             CreateWindowExW(ex, b.baseAddress, nil, st, 0, 0, 10, 10, nil, nil, GetModuleHandleW(nil), nil)
         }
         if let hwnd { windowsByHandle[hwnd] = self }
+        applyTitleBarAppearance()
     }
+    /// A titled window's title bar in its appearance, as the Mac's follows it: Windows' dark title bar when dark.
+    func applyTitleBarAppearance() {
+        guard let hwnd, !layered else { return }
+        var on: Int32 = effectiveAppearance.isDark ? 1 : 0
+        _ = NSWindow.setDwmAttribute(hwnd, 20, &on, 4)   // DWMWA_USE_IMMERSIVE_DARK_MODE
+    }
+    private static let setDwmAttribute: @convention(c) (HWND?, DWORD, UnsafeMutableRawPointer?, DWORD) -> Int32 = {
+        let dwm = "dwmapi.dll".withCString(encodedAs: UTF16.self) { LoadLibraryW($0) }
+        return unsafeBitCast(GetProcAddress(dwm, "DwmSetWindowAttribute"), to: (@convention(c) (HWND?, DWORD, UnsafeMutableRawPointer?, DWORD) -> Int32).self)
+    }()
     private func applyStyle() {
         guard let hwnd else { return }
         let (st, ex) = nativeStyle()

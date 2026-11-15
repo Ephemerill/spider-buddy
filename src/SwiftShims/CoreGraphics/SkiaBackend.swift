@@ -88,7 +88,9 @@ private func flt(_ v: CGFloat) -> Float { Float(v) }
 
 /// Font lookup: Mac face names become the closest Windows face. Skia's faces are cached.
 public enum SkiaText {
-    nonisolated(unsafe) private static var faces: [String: P] = [:]
+    nonisolated(unsafe) private static var faces: [String: (face: P, family: String, weight: Int32)] = [:]
+    /// Horizontal scale for a face at a size: set by AppKit so the system font takes the width SF Pro takes on the Mac.
+    nonisolated(unsafe) public static var widthScale: ((_ family: String, _ weight: Int32, _ size: CGFloat) -> CGFloat)?
     private static let lock = NSLock()
     nonisolated(unsafe) private static let mgr: P = Sk.fontMgrNew()
 
@@ -104,16 +106,17 @@ public enum SkiaText {
     }
     fileprivate static func font(_ name: String, _ size: CGFloat) -> P {
         lock.lock(); defer { lock.unlock() }
-        let face: P
-        if let known = faces[name] {
-            face = known
+        let known: (face: P, family: String, weight: Int32)
+        if let k = faces[name] {
+            known = k
         } else {
             let (family, weight, slant) = windowsFace(name)
             let style = Sk.fontStyleNew(weight, 5, slant)
-            face = family.withCString { Sk.fontMatch(mgr, $0, style) }
-            faces[name] = face
+            known = (family.withCString { Sk.fontMatch(mgr, $0, style) }, family, weight)
+            faces[name] = known
         }
-        let f = Sk.fontNew(face, flt(size), 1, 0)
+        let scaleX = widthScale?(known.family, known.weight, size) ?? 1
+        let f = Sk.fontNew(known.face, flt(size), flt(scaleX), 0)
         Sk.fontEdging(f, 1)
         Sk.fontSubpixel(f, true)
         return f

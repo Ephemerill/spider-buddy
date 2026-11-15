@@ -62,6 +62,8 @@ public final class NSApplication: NSResponder, @unchecked Sendable {
     public override init?(coder: NSCoder) { fatalError() }
     func register(_ w: NSWindow) { if !windows.contains(where: { $0 === w }) { windows.append(w) } }
     private var policy = ActivationPolicy.regular
+    /// What run() does before its loop; here only for programs that drive their own loop.
+    public func finishLaunching() {}
     public func activationPolicy() -> ActivationPolicy { policy }
     @discardableResult public func setActivationPolicy(_ p: ActivationPolicy) -> Bool { policy = p; return true }
     public func activate(ignoringOtherApps: Bool) {}

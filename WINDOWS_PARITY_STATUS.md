@@ -4,7 +4,7 @@ Evidence levels are defined in section 8 of [WINDOWS_DEV_WORKFLOW.md](WINDOWS_DE
 **E0** missing or fallback · **E1** works, never compared · **E2** compared, differences listed · **E3** measured equal ·
 **E4** live on both and looked at. Only E3 and E4 count as parity.
 
-**Oracle:** Mac v1.0.1, `Sources` tree `7c878d73`. **Last reviewed:** 2026-11-14.
+**Oracle:** Mac v1.0.1, `Sources` tree `7c878d73`. **Last reviewed:** 2026-11-15.
 
 Two codebases are in this branch. **Swift** is the Mac's unchanged source compiled for Windows (`Sources/`, `src/SwiftShims`, `src/SwiftHost`). **C#** is the earlier port from the spec (`src/Core`, `Renderer`, `App`, `Tools`). The levels below are for the Swift path where it covers a feature, and otherwise the C# app's level, taken from `docs/windows/WINDOWS_PORT_AUDIT.md`. **The Swift path is the plan (owner's decision, 2026-11-06);** the C# is retired part by part as it is replaced.
 
@@ -46,6 +46,9 @@ Evidence: 768 of 770 images pass (work log).
 | Body, faces, legs, coats, gradients, living coats, markings, hats, extras | E3 | Every Studio option at 2 sizes |
 | Poses, emotes, thought icons, weather coats | E3 | |
 | Name tag and bubble text | E2 | Shapes match. The font is too light: needs a decision on what to bundle. |
+| Controls (buttons, switches, segments, fields, pop-ups, sliders) | E2 | Control gallery: sizes and styling measured from AppKit on macOS 27. Active colours from the welcome; gallery on the Mac renders inactive. |
+| System font | E2 | Segoe UI with SF Pro's metrics and widths (measured): text takes the same room as on the Mac. Glyph shapes differ (accepted). |
+| SF Symbols | E0 | Cannot ship on Windows (Apple's licence). Substitutes are wrong for many. Owner to choose a replacement set. |
 | Creatures, toys | E1 | Same code, not diffed |
 | Habitat items, scenery, weather | E0 | Art compiles later with the tank; needs a `CALayer` compositor |
 
@@ -67,16 +70,16 @@ Evidence: 768 of 770 images pass (work log).
 
 ## UI
 
-The whole Mac app (`Sources/`, every UI file) now builds and links for Windows on the Swift path. It crashes at
-launch, so no screen is running yet. The C# forms exist at E1 and have never been compared.
+The whole Mac app runs on Windows on the Swift path (`Sources/` unchanged). Comparisons use the oracle Mac app
+(`tools/oracle-app.sh`), `welcome-diff` and the control gallery (`tools/controls`).
 
 | Screen | Level | Notes |
 |---|---|---|
 | Tray icon and menus | E0 | Right-click has only Quit |
-| Panel, 7 pages | E0 | |
+| Panel, 7 pages | E1 | Runs; its picture in the welcome matches the Mac's layout. Not compared as a live panel. |
 | Studio, 12 tabs | E0 | |
 | My Spiders | E0 | |
-| Welcome tour, first entrance | E0 | |
+| Welcome tour, first entrance | E2 | Pages 1-3 side by side: layout, wrap points, colours, controls match. Symbols differ (owner's decision pending). Studio step and entrance not compared. |
 | Chat, bug report | E0 | |
 | Habitat window and controls | E0 | |
 

@@ -124,6 +124,21 @@ tools/windows/dev/paritytraces.py capture/traces <work-dir>                   # 
 ID_NO_TEXT=1 tools/windows/swift/imgrun capture-quick/images-notext <work-dir>   # every image against the Mac (768/770)
 ```
 
+```bash
+tools/windows/swift/ba -Opt:-O -Debug -Out 'build\swift-app'    # the whole app with a PDB and map (6 min). Write -Opt:-O, not -Opt -O
+tools/windows/swift/arun                         # build that, run it headless for 15 s, show the first crash, symbolized
+lap run --log app --env SPIDER_HANG_STACK=1 'build\swift-app\SpiderBuddy.exe'   # on the desktop; main-thread samples if it hangs
+tools/windows/swift/symstack                     # the last crash or hang stack, symbolized against the PDB
+tools/oracle-app.sh                              # the Mac app with its own bundle id (never the owner's settings)
+tools/windows/swift/welcome-diff <dir>           # the welcome's pages, Mac and Windows side by side
+tools/windows/swift/controls <dir>               # the control gallery, Mac and Windows side by side
+tools/windows/swift/probe-colors                 # AppKit's system colours on this Mac, in the stand-in's form
+```
+
+Developer switches in the stand-in: `SPIDER_CRASH_STACK=1` and `SPIDER_HANG_STACK=1` (stacks to `%TEMP%\spider-crash.txt`),
+`SPIDER_LAYOUT_LOG=1` (each Auto Layout solve), `SPIDER_VIEW_DUMP=1` (the view tree at each `cacheDisplay`, to the same
+file), `SPIDER_FONT_RAW=1` (system font without its width matching).
+
 The stand-in modules in `src/SwiftShims` carry Apple's names, so `Sources/` compiles unchanged. Anything needed from AppKit
 or Core Graphics goes there, not into the Mac sources. The two text swaps the trace build makes (seeded `Bool.random`,
 pinned hour) are the same ones `tools/trace.sh` makes on the Mac; the host build makes none.
@@ -325,6 +340,13 @@ in `tests/golden/mac/MANIFEST.json`.
 | Tools listing their Swift files explicitly | A new Swift file must be added to each tool's list |
 | PowerShell splats a one-item list as characters: `@files` | Wrap it: `@(Get-ChildItem ...)` |
 | Swift's `CGColor(red:...)` looks like sRGB and is not | It is Generic RGB at gamma 1.8. See `Color.swift`. Bodies look subtly wrong if this is skipped. |
+| Incremental linking (on with `/DEBUG`) | Pads Swift's metadata sections: the app crashes on its first conformance lookup. `-Debug` links `/INCREMENTAL:NO`. |
+| `-Opt -O` to `ba` | PowerShell reads `-O` as an ambiguous parameter and the build silently does not run: write `-Opt:-O` |
+| Swift's backtracer and our PDBs | It crashes reading them: use `SPIDER_CRASH_STACK` and `symstack`; lldb cannot unwind our frames either |
+| Windows listed from SSH | `EnumWindows` in session 0 sees no desktop windows: run `tools/windows/dev/wins.ps1` through `lap run` |
+| Output through the bridge | stdout and stderr lines can arrive out of order: write anything multi-line to a file in one go |
+| `didSet` in a class's own initializers | Does not run: anything sized in `didSet` must also be set up in the initializer |
+| AppKit probes on the Mac from a shell | The process cannot become active: controls draw inactive (grey). Take active colours from the oracle app's own captures. |
 | Swift sees `TrackPopupMenu`'s result as a `BOOL` | The chosen command cannot be read back; give it a window message instead when a menu has several items |
 
 ---
@@ -335,7 +357,8 @@ Only things that cannot be the same, or that the owner has agreed. Anything else
 
 | Mac | Windows | Why |
 |---|---|---|
-| SF Pro | Segoe UI Variable, sizes and weights matched | SF Pro cannot be shipped on Windows |
+| SF Pro | Segoe UI, laid out with SF Pro's metrics and widths (measured) | SF Pro cannot be shipped on Windows |
+| SF Symbols | To be decided by the owner | Apple licenses them for Apple platforms only |
 | Menu bar and its icon | System tray icon, same menu | No menu bar |
 | Menu bar height, notch, Dock | Work area and taskbar | Platform (spec section 2.8) |
 | Desktop widgets as furniture | None | No equivalent |
