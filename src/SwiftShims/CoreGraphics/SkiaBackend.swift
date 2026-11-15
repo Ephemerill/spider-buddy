@@ -469,7 +469,7 @@ public final class SkiaBackend: CGBackend {
         defer { Sk.fontDelete(f) }
         // Fill, or fill and a round-joined stroke when the outline is thickened. The stroke is in text space, which
         // the canvas scales by the transform: 2 * outset / k there is 2 * outset device pixels. Advances don't change.
-        let outset = s.dilatesText ? SkiaText.inkOutset?(color) ?? 0 : 0
+        let outset = (SkiaText.inkOutset?(color) ?? 0) * s.textDilation
         let pt = paint(color, s, style: outset > 0 ? 2 : 0)
         defer { Sk.paintDelete(pt) }
         if outset > 0 {

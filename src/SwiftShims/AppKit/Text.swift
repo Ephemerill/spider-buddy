@@ -260,9 +260,10 @@ enum TextLayout {
     }
     /// AppKit's standard line-break strategy for text fields: no word left alone on a paragraph's last line. The line
     /// before gives up its last word to it (measured: a wrapping label breaks "...or let a / cricket loose." where
-    /// the text would fit "cricket" on the first line; NSString drawing doesn't do this). For one-paragraph text.
+    /// the text would fit "cricket" on the first line; NSString drawing doesn't do this). For one-paragraph text, and only
+    /// two lines of it: from three lines on AppKit leaves the orphan (measured, 2 to 6 lines).
     static func pushOut(_ lines: [TextLine]) -> [TextLine] {
-        guard lines.count >= 2 else { return lines }
+        guard lines.count == 2 else { return lines }
         var prev = lines[lines.count - 2], last = lines[lines.count - 1]
         let lastText = last.runs.map(\.text).joined().trimmingCharacters(in: .whitespaces)
         guard !lastText.isEmpty, !lastText.contains(" "), var r = prev.runs.last else { return lines }
@@ -319,9 +320,10 @@ enum TextLayout {
     /// Draws lines inside `rect` (in the current context's coordinates), top first, keeping text upright in flipped views.
     /// `boost`: draw translucent colours as macOS draws label text (`macInk`). AppKit does that for text fields and for
     /// stock buttons given a tint, not for segmented controls, pop-ups or button subclasses that draw themselves (measured).
-    /// `dilate`: thicken glyphs as macOS's text smoothing does. Labels and drawn strings get it; on macOS 27 button
-    /// titles and segment labels don't (measured: their ink matched bare outlines, while labels' was 30% more).
-    static func draw(_ lines: [TextLine], in rect: CGRect, alignment: NSTextAlignment, spacing: CGFloat, ctx: CGContext, flipped: Bool, boost: Bool = true, dilate: Bool = true) {
+    /// `dilate`: how much of macOS's text-smoothing dilation the glyphs get (measured as ink against the Mac): all for
+    /// labels, drawn strings and stock buttons; half for segment labels; a third for text composited plus-lighter (a
+    /// vibrant layer is drawn without an opaque backdrop); none for button subclasses that draw themselves.
+    static func draw(_ lines: [TextLine], in rect: CGRect, alignment: NSTextAlignment, spacing: CGFloat, ctx: CGContext, flipped: Bool, boost: Bool = true, dilate: CGFloat = 1) {
 
         var y = flipped ? rect.minY : rect.maxY
         for l in lines {
@@ -335,7 +337,7 @@ enum TextLayout {
             for r in l.runs {
                 let w = r.font.width(r.text)
                 ctx.saveGState()
-                if !dilate { ctx.setDilatesText(false) }
+                if dilate != 1 { ctx.setTextDilation(ctx.state.textDilation * dilate) }
                 ctx.translateBy(x: x, y: base)
                 if flipped { ctx.scaleBy(x: 1, y: -1) }
                 ctx.textPosition = .zero

@@ -237,3 +237,13 @@ solves still 0.3 s at most. Traces 183/183 (worst 1.12e-6), images 768/770: unch
 
 **Not done:** the "Dance to Music" row is off and disabled because the audio service is still the Windows stub (sensors
 phase). Live popover colours are modelled from AppKit's values but not compared live on screen.
+
+**Second inventory (55 agents over the three welcome pages and seven Panel pages):** 37 smaller differences, of which:
+- **The Mac's captures are Display P3**; Windows' are sRGB. Saturated colours read off them were off: the glass accent
+  is sRGB (7, 123, 255), not (54, 121, 247). `shot-diff` now converts the Mac's pictures to sRGB before pairing them.
+- **Glyph dilation by context** (ink measured against the Mac): full for labels, drawn strings and stock buttons, half
+  for segment labels, a third for text composited plus-lighter, none for button subclasses that draw themselves. Ink
+  per element is now within 0.89-1.09 of the Mac's, most within 6%.
+- **No-orphan line breaks apply to two-line paragraphs only** (measured, 2 to 6 lines): longer ones keep the orphan.
+- **Switch:** the off track in dark is white at 9.5% over its background, and the knob casts a faint shadow.
+- Fluent's people and laptop icons are narrower than SF's in the same box (shape, accepted).

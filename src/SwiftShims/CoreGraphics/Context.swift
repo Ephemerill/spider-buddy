@@ -30,9 +30,9 @@ public struct CGState {
     public var dashPhase: CGFloat = 0
     public var alpha: CGFloat = 1
     public var blend = CGBlendMode.normal
-    /// Whether text drawn now gets the text-smoothing dilation (SkiaText.inkOutset). Carried with the state, so
-    /// other threads drawing at the same time are unaffected.
-    public var dilatesText = true
+    /// How much of the text-smoothing dilation (SkiaText.inkOutset) text drawn now gets, 0 to 1. Carried with the
+    /// state, so other threads drawing at the same time are unaffected.
+    public var textDilation: CGFloat = 1
     public var shadowOffset = CGSize.zero
     public var shadowBlur: CGFloat = 0
     public var shadowColor: CGColor? = nil
@@ -88,8 +88,8 @@ public enum CGBackendFactory {
 
 public final class CGContext {
     public private(set) var state = CGState()
-    /// (Stand-in only: see CGState.dilatesText.)
-    public func setDilatesText(_ on: Bool) { state.dilatesText = on }
+    /// (Stand-in only: see CGState.textDilation.)
+    public func setTextDilation(_ k: CGFloat) { state.textDilation = k }
     private var stack: [CGState] = []
     private var path = CGMutablePath()
     public let backend: CGBackend

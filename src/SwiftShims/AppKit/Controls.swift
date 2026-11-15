@@ -15,9 +15,9 @@ extension NSControl {
 }
 public typealias NSButtonStateValue = NSControl.StateValue
 extension NSControl {
-    /// The accent as macOS 27 draws it on controls (default buttons, switches that are on), measured: not quite the
-    /// accent colour itself.
-    static let glassAccent = NSColor(srgbRed: 54 / 255, green: 121 / 255, blue: 247 / 255, alpha: 1)
+    /// The accent as macOS 27 draws it on controls (default buttons, switches that are on), measured from the Mac's
+    /// captures, which are Display P3: (54, 121, 247) there is sRGB (7, 123, 255), next to the accent colour itself.
+    static let glassAccent = NSColor(srgbRed: 7 / 255, green: 123 / 255, blue: 255 / 255, alpha: 1)
 }
 
 open class NSCell: NSObject {
@@ -96,7 +96,7 @@ open class NSControl: NSView {
     var effectiveFont: NSFont { font ?? .systemFont(ofSize: controlSize.fontSize) }
     var dark: Bool { effectiveAppearance.isDark }
     var ctx: CGContext? { NSGraphicsContext.current?.cgContext }
-    func drawString(_ s: String, in r: CGRect, color: NSColor, alignment a: NSTextAlignment, font f: NSFont, mode: NSLineBreakMode = .byTruncatingTail, boost: Bool = true, dilate: Bool = true) {
+    func drawString(_ s: String, in r: CGRect, color: NSColor, alignment a: NSTextAlignment, font f: NSFont, mode: NSLineBreakMode = .byTruncatingTail, boost: Bool = true, dilate: CGFloat = 1) {
         guard let g = NSGraphicsContext.current else { return }
         let run = [TextRun(text: s, font: f, color: color.cgColor, underline: false)]
         var lines = TextLayout.lines(run, width: nil, mode: .byClipping)
@@ -252,7 +252,7 @@ open class NSTextField: NSControl, NSTextInputClient {
             // (Text in a vibrancy-capable colour shown in a popover is composited plus-lighter, as AppKit's layer is.)
             c.saveGState()
             let blend = vibrancyBlend
-            if let blend { c.setBlendMode(blend) }
+            if let blend { c.setBlendMode(blend); c.setTextDilation(c.state.textDilation * 0.33) }
             NSColor.vibrantly(blend != nil) { drawField(c, g, b) }
             c.restoreGState()
         }
@@ -617,7 +617,7 @@ open class NSButton: NSControl {
             else if rounded { radius = [.mini: 3.5, .small: 4.5, .regular: 5][controlSize] ?? 5 }
             else { radius = 5.5 }
             let fill: NSColor
-            if isDefault { fill = isHighlighted ? NSColor(srgbRed: 40 / 255, green: 100 / 255, blue: 215 / 255, alpha: 1) : NSControl.glassAccent }
+            if isDefault { fill = isHighlighted ? NSColor(srgbRed: 0 / 255, green: 102 / 255, blue: 223 / 255, alpha: 1) : NSControl.glassAccent }
             else if !isEnabled { fill = NSColor(white: dark ? 1 : 0, alpha: dark ? 0.036 : 0.039) }
             else if on { fill = NSColor(white: dark ? 1 : 0, alpha: 0.2) }
             else if isHighlighted { fill = NSColor(white: dark ? 1 : 0, alpha: dark ? 0.16 : 0.14) }
@@ -643,7 +643,10 @@ open class NSButton: NSControl {
             c.restoreGState()
         }
         func drawTitle(_ t: String, in r: CGRect, alignment a: NSTextAlignment, font f: NSFont, boost: Bool) {
-            blended(titleBase.vibrancyCapable) { drawString(t, in: r, color: resolved(titleBase), alignment: a, font: f, boost: boost, dilate: false) }
+            // (Stock buttons' titles are dilated as labels are; subclasses that draw themselves get none, measured.)
+            let own: CGFloat = Swift.type(of: self) == NSButton.self ? 1 : 0
+            let vib = titleBase.vibrancyCapable && blend != nil
+            blended(titleBase.vibrancyCapable) { drawString(t, in: r, color: resolved(titleBase), alignment: a, font: f, boost: boost, dilate: own * (vib ? 0.33 : 1)) }
         }
         // Titles get the label boost only on a stock borderless button with a tint. Every NSButton subclass in the app
         // draws itself (overrides draw), and AppKit draws those plain, as it does bordered ones (measured).
@@ -745,18 +748,19 @@ open class NSSwitch: NSControl {
             let z = intrinsicContentSize
             let r = CGRect(x: bounds.midX - z.width / 2, y: bounds.midY - z.height / 2, width: z.width, height: z.height)
             let on = state == .on
-            // The off track in dark is grey 90 at 52%: 61.5 on the window's 30, 72 on a card's 52 (measured; white at
-            // 14% fitted only the first). Disabled halves the track's alpha and leaves the knob as it is (measured:
-            // 62 on 52, knob 226).
-            let track: NSColor = on ? NSControl.glassAccent : dark ? NSColor(white: 90 / 255, alpha: 0.523) : NSColor(white: 0, alpha: 0.14)
+            // The off track in dark is white at 9.5% (measured on the Panel's and the welcome's cards: 72 on 52, 61 on
+            // 41; the control gallery's 14% came from a Mac window drawn inactive). Disabled halves the track's alpha
+            // and leaves the knob as it is (measured: 62 on 52, knob 226).
+            let track: NSColor = on ? NSControl.glassAccent : dark ? NSColor(white: 1, alpha: 0.095) : NSColor(white: 0, alpha: 0.14)
             c.addPath(CGPath(roundedRect: r, cornerWidth: r.height / 2, cornerHeight: r.height / 2, transform: nil))
             c.setFillColor((isEnabled ? track : track.withAlphaComponent(track.alphaComponent * 0.5)).cgColor)
             c.fillPath()
             let kh = r.height - 4, kw = (r.width * 0.59).rounded()
             let knob = CGRect(x: on ? r.maxX - 2 - kw : r.minX + 2, y: r.minY + 2, width: kw, height: kh)
             c.saveGState()
-            if !dark { c.setShadow(offset: CGSize(width: 0, height: -0.5 * NSScreen.primaryScale), blur: 1.5 * NSScreen.primaryScale, color: NSColor(white: 0, alpha: 0.2).cgColor) }
-            let knobColour: NSColor = on ? (dark ? NSColor(srgbRed: 225 / 255, green: 235 / 255, blue: 254 / 255, alpha: 1) : .white) : (dark ? NSColor(white: 225 / 255, alpha: 1) : .white)
+            // (A faint shadow under the knob in dark too: the track darkens a few levels next to it, measured.)
+            c.setShadow(offset: CGSize(width: 0, height: -0.5 * NSScreen.primaryScale), blur: 1.5 * NSScreen.primaryScale, color: NSColor(white: 0, alpha: dark ? 0.15 : 0.2).cgColor)
+            let knobColour: NSColor = on ? (dark ? NSColor(srgbRed: 223 / 255, green: 235 / 255, blue: 255 / 255, alpha: 1) : .white) : (dark ? NSColor(white: 225 / 255, alpha: 1) : .white)
             c.addPath(CGPath(roundedRect: knob, cornerWidth: kh / 2, cornerHeight: kh / 2, transform: nil))
             c.setFillColor(knobColour.cgColor)
             c.fillPath()
@@ -989,9 +993,9 @@ open class NSSegmentedControl: NSControl {
                     if isFlipped { c.translateBy(x: x0, y: r.midY + z.height / 2); c.scaleBy(x: 1, y: -1) } else { c.translateBy(x: x0, y: r.midY - z.height / 2) }
                     img.render(in: c, tint: color)
                     c.restoreGState()
-                    if tw > 0 { drawString(labels[i], in: CGRect(x: x0 + z.width + 4, y: r.minY, width: tw, height: r.height), color: color, alignment: .left, font: segmentFont, boost: false, dilate: false) }
+                    if tw > 0 { drawString(labels[i], in: CGRect(x: x0 + z.width + 4, y: r.minY, width: tw, height: r.height), color: color, alignment: .left, font: segmentFont, boost: false, dilate: 0.5) }
                 } else {
-                    drawString(labels[i], in: r, color: color, alignment: .center, font: segmentFont, boost: false, dilate: false)
+                    drawString(labels[i], in: r, color: color, alignment: .center, font: segmentFont, boost: false, dilate: 0.5)
                 }
             }
         }

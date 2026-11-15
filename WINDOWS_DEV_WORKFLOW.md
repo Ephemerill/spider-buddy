@@ -355,6 +355,7 @@ in `tests/golden/mac/MANIFEST.json`.
 | Weighing close priorities as numbers | AppKit ranks priority levels strictly: one constraint at 250 beats any number at 249.99998. The solver keeps one objective row per level |
 | A snapshot of a view that was in a popover | AppKit keeps the plus-lighter vibrancy filter on it, so secondary text comes out brighter than in a never-shown view |
 | `rm -rf "$VAR/..."` in a scratch script | Refused by the safety check: write into a fresh folder instead |
+| Reading colours off the Mac's captures | They are Display P3 (cacheDisplay on this Mac): convert to sRGB first (`shot-diff` does), or saturated colours come out wrong. Greys are the same in both |
 
 ---
 

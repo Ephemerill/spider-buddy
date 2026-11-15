@@ -30,9 +30,19 @@ python3 - "$D" <<'PY'
 import sys, os
 from PIL import Image
 D=sys.argv[1]
+from PIL import ImageCms
+import io
+srgb = ImageCms.createProfile("sRGB")
+def open_srgb(path):
+    # The Mac's pictures are Display P3; Windows' are sRGB. Compare in sRGB, or every saturated colour looks off.
+    im = Image.open(path)
+    icc = im.info.get("icc_profile")
+    im = im.convert("RGB")
+    if icc: im = ImageCms.profileToProfile(im, ImageCms.ImageCmsProfile(io.BytesIO(icc)), srgb, outputMode="RGB")
+    return im
 for n in sorted(os.listdir(f"{D}/mac")):
     if not n.endswith(".png") or not os.path.exists(f"{D}/win/{n}"): continue
-    m=Image.open(f"{D}/mac/{n}").convert("RGB"); w=Image.open(f"{D}/win/{n}").convert("RGB").resize(m.size)
+    m=open_srgb(f"{D}/mac/{n}"); w=Image.open(f"{D}/win/{n}").convert("RGB").resize(m.size)
     c=Image.new("RGB",(m.width*2+10,m.height),"white"); c.paste(m,(0,0)); c.paste(w,(m.width+10,0)); c.save(f"{D}/side-{n}")
     print(f"{D}/side-{n}")
 PY
