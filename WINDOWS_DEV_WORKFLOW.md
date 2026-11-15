@@ -100,7 +100,7 @@ export PATH="$PWD/tools/windows/dev:$PATH"
 | Command | Does |
 |---|---|
 | `lap sync` | Push the current commit to the laptop checkout |
-| `lap sync-wip` / `lap revert-wip` | Copy uncommitted changes over / throw those copies away |
+| `lap sync-wip` / `lap revert-wip` | Copy uncommitted changes over / throw those copies away, new files included (sync-wip lists them in `.git/lap-wip-new`; nothing else untracked is touched) |
 | `lap status` | Laptop git state and session info |
 | `lap build [Release\|Debug]` | Build tools and app on the laptop |
 | `lap tools <args>` | Run the headless harness (`all`, `stage4`, ...) |

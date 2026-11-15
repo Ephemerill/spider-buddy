@@ -39,9 +39,26 @@ case "$cmd" in
           [ -z "$files" ] && { echo "nothing to copy"; exit 0; }
           existing=$(for f in $files; do [ -f "$f" ] && echo "$f"; done)
           printf '%s\n' "$existing" | COPYFILE_DISABLE=1 tar --no-mac-metadata -cf - -T - | "${SSH[@]}" "tar -xf - -C $WIN_REPO_FWD" || die "copy failed"
+          # New files are listed in .git/lap-wip-new, so revert-wip removes exactly those and nothing else untracked.
+          git ls-files --others --exclude-standard | "${SSH[@]}" "cd /d $WIN_REPO && more >> .git\\lap-wip-new" || die "could not record new files"
           echo "copied $(printf '%s\n' "$existing" | wc -l | tr -d ' ') file(s)" ;;
   revert-wip) # throw away sync-wip copies so the next real sync applies cleanly
-          "${SSH[@]}" "cd /d $WIN_REPO && git checkout -q -- . && git clean -fdq src tools/windows tests/parity 2>nul" ; echo reverted ;;
+          "${SSH[@]}" "cd /d $WIN_REPO && git checkout -q -- . && git clean -fdq src tools/windows tests/parity 2>nul"
+          # Then the new files sync-wip recorded (only those, and only if still untracked), and folders left empty.
+          ps_run /dev/stdin <<'PS' >/dev/null
+Set-Location C:\Users\User\Documents\Projects\spider-buddy
+if (Test-Path .git\lap-wip-new) {
+    foreach ($f in (Get-Content .git\lap-wip-new | Where-Object { $_ } | Sort-Object -Unique)) {
+        if ((Test-Path -LiteralPath $f) -and -not (git ls-files -- $f)) {
+            Remove-Item -Force -LiteralPath $f
+            $d = Split-Path $f
+            while ($d -and (Test-Path -LiteralPath $d) -and -not (Get-ChildItem -Force -LiteralPath $d)) { Remove-Item -LiteralPath $d; $d = Split-Path $d }
+        }
+    }
+    Remove-Item .git\lap-wip-new
+}
+PS
+          echo reverted ;;
   status) "${SSH[@]}" "cd /d $WIN_REPO && git status --short --branch && git log --oneline -1 && query user" ;;
   build)  # lap build [Debug|Release] : builds tools and app
           c=${1:-Release}
