@@ -52,6 +52,7 @@ public final class NSApplication: NSResponder, @unchecked Sendable {
 
     override init() {
         super.init()
+        CrashStack.install()
         _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT(bitPattern: -4))
         ScreenList.refresh()
         WindowListBridge.install()

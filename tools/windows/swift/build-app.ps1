@@ -2,7 +2,9 @@
 # mechanical rewrites Objective-C's absence calls for (see below), and a file in src/SwiftWin replaces the Mac file of
 # the same name where the Mac file is about a macOS service (Sparkle, CoreAudio, IOKit...).
 #   -Check   typecheck only        -Opt -Onone   faster builds while working on the stand-ins
-param([switch]$Check, [string]$Opt = '-O')
+#   -Debug   CodeView debug info, a .pdb and a linker map, so crashes can be read
+#   -Out dir build somewhere other than build\swift (the trace tools build there too)
+param([switch]$Check, [string]$Opt = '-O', [switch]$Debug, [string]$Out = 'build\swift')
 $ErrorActionPreference = 'Continue'
 $repo = (Resolve-Path "$PSScriptRoot\..\..\..").Path
 Set-Location $repo
@@ -12,15 +14,17 @@ if (-not $env:SDKROOT) { $env:SDKROOT = "$env:LOCALAPPDATA\Programs\Swift\Platfo
 $vcvars = 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
 cmd /c "`"$vcvars`" >nul && set" | ForEach-Object { $k, $v = $_ -split '=', 2; if ($k -and $k -notmatch '^(PROMPT|PWD)$') { Set-Item -Path "env:$k" -Value $v } }
 $env:PATH = "$swiftBin;$rtBin;$env:PATH"
-$out = Join-Path $repo 'build\swift'
+$out = Join-Path $repo $Out
 New-Item -ItemType Directory -Force -Path $out | Out-Null
+$dbg = @()
+if ($Debug) { $dbg = @('-g', '-debug-info-format=codeview') }
 $sdkModules = 'CoreGraphics','QuartzCore','Accelerate','UniformTypeIdentifiers','AppKit','Carbon','ServiceManagement','Network'
 
 function Build-Shim([string]$name) {
     $files = @(Get-ChildItem "src\SwiftShims\$name\*.swift" | ForEach-Object { $_.FullName })
     $stamp = "$out\$name.lib"
     $newest = ($files | ForEach-Object { (Get-Item $_).LastWriteTimeUtc } | Sort-Object -Descending | Select-Object -First 1)
-    & swiftc $Opt -swift-version 5 -parse-as-library -static -emit-library -emit-module -module-name $name -I $out -L $out `
+    & swiftc $Opt @dbg -swift-version 5 -parse-as-library -static -emit-library -emit-module -module-name $name -I $out -L $out `
         -o $stamp -emit-module-path "$out\$name.swiftmodule" @files 2>&1 | ForEach-Object { "$_" }
     if ($LASTEXITCODE -ne 0) { "shim $name failed"; exit 1 }
     "built $name"
@@ -53,5 +57,7 @@ if ($Check) {
     "swiftc exit $LASTEXITCODE"
     return
 }
-& swiftc $Opt -swift-version 5 -DSHAPED -I $out -L $out @link -o "$out\SpiderBuddy.exe" @inputs 2>&1 | ForEach-Object { "$_" }
+$linkDbg = @()
+if ($Debug) { $linkDbg = @('-Xlinker', '/DEBUG', '-Xlinker', "/MAP:$out\SpiderBuddy.map") }
+& swiftc $Opt @dbg @linkDbg -swift-version 5 -DSHAPED -I $out -L $out @link -o "$out\SpiderBuddy.exe" @inputs 2>&1 | ForEach-Object { "$_" }
 "swiftc exit $LASTEXITCODE (app)"

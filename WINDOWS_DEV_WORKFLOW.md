@@ -121,7 +121,7 @@ tools/windows/swift/bt -NoTrace -ImageDump   # ImageDump.exe
 tools/windows/swift/bt -NoTrace -SpiderHost  # the desktop host
 lap run --log host --env SPIDER_HOST_LOG=1 'build\swift\SpiderHost.exe' 25    # 25 s on the real desktop, then quits
 tools/windows/dev/paritytraces.py capture/traces <work-dir>                   # every trace against the Mac
-tools/windows/swift/imgrun capture/images <work-dir>                          # every image against the Mac
+ID_NO_TEXT=1 tools/windows/swift/imgrun capture-quick/images-notext <work-dir>   # every image against the Mac (768/770)
 ```
 
 The stand-in modules in `src/SwiftShims` carry Apple's names, so `Sources/` compiles unchanged. Anything needed from AppKit

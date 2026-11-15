@@ -375,3 +375,50 @@ enum MachineInfo {
     }
 }
 private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }
+
+// MARK: Crash reports (developer aid)
+
+/// SPIDER_CRASH_STACK=1: on a fatal exception, prints the stack as offsets into each module
+/// ("SpiderBuddy.exe+0x1234"), for llvm-symbolizer and the .pdb. Swift's own backtracer cannot read our PDBs.
+enum CrashStack {
+    static func install() {
+        guard ProcessInfo.processInfo.environment["SPIDER_CRASH_STACK"] == "1" else { return }
+        CrashStack.write("crash stacks on\n", fresh: true)
+        _ = AddVectoredExceptionHandler(1) { info in
+            guard let rec = info?.pointee.ExceptionRecord?.pointee else { return EXCEPTION_CONTINUE_SEARCH }
+            let code = UInt32(bitPattern: Int32(truncatingIfNeeded: rec.ExceptionCode))
+            // Only the fatal ones: access violation, illegal instruction (Swift's traps), stack overflow, breakpoint.
+            guard [0xC0000005, 0xC000001D, 0xC00000FD, 0x80000003].contains(code) else { return EXCEPTION_CONTINUE_SEARCH }
+            var frames = [UnsafeMutableRawPointer?](repeating: nil, count: 62)
+            let n = Int(RtlCaptureStackBackTrace(0, 62, &frames, nil))
+            var out = "*** crash 0x\(String(code, radix: 16)) at \(CrashStack.describe(rec.ExceptionAddress))\n"
+            for i in 0..<n { out += "  #\(i) \(CrashStack.describe(frames[i]))\n" }
+            CrashStack.write(out, fresh: false)
+            return EXCEPTION_CONTINUE_SEARCH
+        }
+    }
+    /// To %TEMP%\\spider-crash.txt, straight through the file system: nothing buffered is lost when the process dies.
+    static func write(_ s: String, fresh: Bool) {
+        let path = (ProcessInfo.processInfo.environment["TEMP"] ?? ".") + "\\spider-crash.txt"
+        let h = path.withCString(encodedAs: UTF16.self) {
+            CreateFileW($0, DWORD(FILE_APPEND_DATA), DWORD(FILE_SHARE_READ), nil, DWORD(fresh ? CREATE_ALWAYS : OPEN_ALWAYS), DWORD(FILE_ATTRIBUTE_NORMAL), nil)
+        }
+        guard let h, h != INVALID_HANDLE_VALUE else { return }
+        var bytes = Array(s.utf8)
+        var n: DWORD = 0
+        _ = WriteFile(h, &bytes, DWORD(bytes.count), &n, nil)
+        CloseHandle(h)
+    }
+    static func describe(_ p: UnsafeMutableRawPointer?) -> String {
+        guard let p else { return "?" }
+        var module: HMODULE?
+        guard GetModuleHandleExW(DWORD(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT),
+                                 p.assumingMemoryBound(to: WCHAR.self), &module), let module else { return "\(p)" }
+        var buf = [WCHAR](repeating: 0, count: 260)
+        let len = GetModuleFileNameW(module, &buf, 260)
+        let path = String(decoding: buf[0..<Int(len)], as: UTF16.self)
+        let name = path.split(separator: "\\").last.map(String.init) ?? path
+        let off = UInt(bitPattern: p) - UInt(bitPattern: UnsafeRawPointer(module))
+        return "\(name)+0x\(String(off, radix: 16))"
+    }
+}

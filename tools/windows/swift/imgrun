@@ -3,13 +3,14 @@
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"; export PATH="$HERE/../dev:$PATH"
 MAC="$1"; W="$2"; mkdir -p "$W"
-lap ps <<'PS' | tr -d '\000\r' | tail -2
+# ID_NO_TEXT=1 leaves the name tag out, to compare with the Mac's images-notext (fonts differ by design).
+lap ps <<PS | tr -d '\000\r' | tail -2
 Set-Location C:\Users\User\Documents\Projects\spider-buddy
-$env:PATH = "$env:LOCALAPPDATA\Programs\Swift\Runtimes\6.4.2\usr\bin;$env:PATH"
-$env:SWIFT_DETERMINISTIC_HASHING='1'; $env:LC_SEED='1'
-$ErrorActionPreference='Continue'
+\$env:PATH = "\$env:LOCALAPPDATA\Programs\Swift\Runtimes\6.4.2\usr\bin;\$env:PATH"
+\$env:SWIFT_DETERMINISTIC_HASHING='1'; \$env:LC_SEED='1'; \$env:ID_NO_TEXT='${ID_NO_TEXT:-}'
+\$ErrorActionPreference='Continue'
 Remove-Item -Recurse -Force out\swift\images -ErrorAction SilentlyContinue
-& build\swift\ImageDump.exe out\swift\images 2>&1 | ForEach-Object { "$_" }
+& build\swift\ImageDump.exe out\swift\images 2>&1 | ForEach-Object { "\$_" }
 Set-Location out\swift; tar -czf images.tgz images
 PS
 rm -rf "$W/win"; mkdir -p "$W/win"

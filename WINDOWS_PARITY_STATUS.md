@@ -4,7 +4,7 @@ Evidence levels are defined in section 8 of [WINDOWS_DEV_WORKFLOW.md](WINDOWS_DE
 **E0** missing or fallback · **E1** works, never compared · **E2** compared, differences listed · **E3** measured equal ·
 **E4** live on both and looked at. Only E3 and E4 count as parity.
 
-**Oracle:** Mac v1.0.1, `Sources` tree `7c878d73`. **Last reviewed:** 2026-11-06.
+**Oracle:** Mac v1.0.1, `Sources` tree `7c878d73`. **Last reviewed:** 2026-11-14.
 
 Two codebases are in this branch. **Swift** is the Mac's unchanged source compiled for Windows (`Sources/`, `src/SwiftShims`, `src/SwiftHost`). **C#** is the earlier port from the spec (`src/Core`, `Renderer`, `App`, `Tools`). The levels below are for the Swift path where it covers a feature, and otherwise the C# app's level, taken from `docs/windows/WINDOWS_PORT_AUDIT.md`. **The Swift path is the plan (owner's decision, 2026-11-06);** the C# is retired part by part as it is replaced.
 
@@ -67,7 +67,8 @@ Evidence: 768 of 770 images pass (work log).
 
 ## UI
 
-Nothing is on the Swift path yet. The C# forms exist at E1 and have never been compared.
+The whole Mac app (`Sources/`, every UI file) now builds and links for Windows on the Swift path. It crashes at
+launch, so no screen is running yet. The C# forms exist at E1 and have never been compared.
 
 | Screen | Level | Notes |
 |---|---|---|
@@ -83,7 +84,8 @@ Nothing is on the Swift path yet. The C# forms exist at E1 and have never been c
 
 | Sensor | Level |
 |---|---|
-| Battery saver, charger, lock/unlock, weather, volume, brightness, banners, music and beat | E0 |
+| Lock/unlock, sleep/wake, display sleep, idle time | E0 (written, not yet run) |
+| Battery saver, charger, weather, volume, brightness, banners, music and beat | E0 |
 
 ## Later
 

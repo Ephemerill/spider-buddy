@@ -90,3 +90,41 @@ The owner chose the Swift route. `Sources/` compiled against stand-in modules re
 2. Rerun `paritytraces.py` and `imgrun` after the shim changes: they must stay at 183/183, 8/8 and 768/770. The new `CGColor`, `CGContext` and `NSColor` paths are all shared with them.
 3. Run the real app: `main.swift` and `AppDelegate` on the desktop, with silk, prey, traces and hammock through the Mac's own code.
 4. Panel first, side by side with the Mac.
+
+## 2026-11-14: The whole app builds; first launch crashes at start
+
+**Done**
+- Fixed the `EnumWindows` capture error, then worked through the rest: **the whole Mac app now typechecks and links
+  for Windows** (`SpiderBuddy.exe`, `553e669`). `-continue-building-after-errors` in `build-app.ps1 -Check` lists every
+  file's errors in one pass (134 at the start of the round, 0 at the end).
+- Windows equivalents written for the macOS services the app calls: Carbon hot keys on `RegisterHotKey`; lock, unlock,
+  sleep, wake and display sleep from WTS session and power notices; idle time from `GetLastInputInfo`; window pictures
+  through GDI (`BitBlt` without `CAPTUREBLT` gives what is under our layered windows) and `PrintWindow`; the desktop
+  picture and its placement; CPU clocks; machine facts for the bug report; run-loop observers for `Perf.swift`.
+- Quartz: layer timing (`speed`, `timeOffset`, `beginTime`, `convertTime`; a stopped layer no longer forces redraws),
+  animation phase (`timeOffset`), motion along a keyframe `path`, additive transforms, `NSValue(caTransform3D:)`.
+- AppKit: KVO for a window's first responder, real `UTType` conformance table, `NSText` delegates as AppKit has them,
+  `sizeThatFits`, `NSRect.fill()` with copy compositing, `NSBezierPath.reversed`, drag-destination hooks, and more.
+- `makeImage()` on a little-endian premultiplied-first context now returns RGBA (it returned BGRA labelled RGBA).
+- `build-app.ps1 -Debug -Out build\swift-app`: CodeView debug info, PDB and linker map, in a folder apart from the
+  trace tools. `SPIDER_CRASH_STACK=1` writes the faulting stack as module offsets to `%TEMP%\spider-crash.txt`.
+
+**Evidence:** traces still 183/183 (worst 1.12e-6). Images still 768/770 against `capture-quick/images-notext` with
+`ID_NO_TEXT=1`. (`capture/images` is empty on the Mac; the workflow doc and `imgrun` were pointing at it.)
+
+**Open: the app crashes at launch,** before `NSApplication.shared` finishes initializing (the crash-stack marker is
+never written). Release build: "Index out of range"; debug build: access violation in swiftCore. Swift's own
+backtracer cannot read our PDBs and crashes itself; `SWIFT_BACKTRACE=enable=no` is not honored. lldb through the
+bridge did not start.
+
+**Stopped:** the laptop went offline mid-build (no ping, SSH timed out).
+
+**Next:**
+1. Rebuild `-Debug -Out build\swift-app`, run with `SPIDER_CRASH_STACK=1`, read `%TEMP%\spider-crash.txt`. If the
+   marker is missing, the fault is before `CrashStack.install()`: move the install to the first line of the shim's
+   static init, or symbolize the raw swiftCore offset against the map with `llvm-symbolizer`.
+2. Get to a running app on the desktop: spider, tray icon, menu.
+3. Panel first, side by side with the Mac.
+4. Known gaps found while porting, each visible in the UI: `NSWindow.nextEvent(matching:)` returns nil (drag loops in
+   the habitat), `segmentDistribution` is not used by layout, emitters have no particles, field editors are a stub,
+   drops are not wired to `WM_DROPFILES`, the Windows updater is a stub.
