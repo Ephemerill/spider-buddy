@@ -263,7 +263,14 @@ public final class CGContext {
     public func makeImage() -> CGImage? {
         guard let data else { return nil }
         backend.flush()
-        return CGImage(copying: data, width: width, height: height, bytesPerRow: bytesPerRow)
+        let img = CGImage(copying: data, width: width, height: height, bytesPerRow: bytesPerRow)
+        // Images are RGBA; a little-endian premultiplied-first context is BGRA in memory.
+        guard bitmapInfoRaw & (2 << 12) != 0 else { return img }
+        var px = img.pixels
+        px.withUnsafeMutableBufferPointer { b in
+            for row in 0..<height { var i = row * bytesPerRow; for _ in 0..<width { b.swapAt(i, i + 2); i += 4 } }
+        }
+        return CGImage(pixels: px, width: width, height: height, bytesPerRow: bytesPerRow)
     }
 }
 
@@ -300,3 +307,58 @@ public final class CGImage: @unchecked Sendable {
 public func CGRectMake(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> CGRect { CGRect(x: x, y: y, width: w, height: h) }
 public func CGPointMake(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x, y: y) }
 public func CGSizeMake(_ w: CGFloat, _ h: CGFloat) -> CGSize { CGSize(width: w, height: h) }
+
+// MARK: What a picture says about itself
+
+extension CGBitmapInfo {
+    public static let alphaInfoMask = CGBitmapInfo(rawValue: 0x1F)
+    public static let byteOrderMask = CGBitmapInfo(rawValue: 0x7000)
+    public static let byteOrder16Little = CGBitmapInfo(rawValue: 1 << 12)
+    public static let byteOrder16Big = CGBitmapInfo(rawValue: 3 << 12)
+    public static let floatComponents = CGBitmapInfo(rawValue: 1 << 8)
+}
+
+public enum CGColorSpaceModel: Int32, Sendable { case unknown = -1, monochrome, rgb, cmyk, lab, deviceN, indexed, pattern, XYZ }
+extension CGColorSpace {
+    public var model: CGColorSpaceModel { .rgb }
+}
+
+/// Bytes, as CFData holds them: a copy that stays put while it is alive.
+public final class CFData: @unchecked Sendable {
+    let bytes: UnsafeMutableBufferPointer<UInt8>
+    init(_ a: [UInt8]) {
+        bytes = .allocate(capacity: max(a.count, 1))
+        _ = bytes.initialize(from: a)
+    }
+    deinit { bytes.deallocate() }
+}
+public func CFDataGetBytePtr(_ d: CFData) -> UnsafePointer<UInt8>? { UnsafePointer(d.bytes.baseAddress) }
+public func CFDataGetLength(_ d: CFData) -> Int { d.bytes.count }
+
+public final class CGDataProvider: @unchecked Sendable {
+    public let data: CFData?
+    init(_ a: [UInt8]) { data = CFData(a) }
+}
+
+/// Every CGImage here is 8-bit premultiplied RGBA in byte order.
+extension CGImage {
+    public var alphaInfo: CGImageAlphaInfo { .premultipliedLast }
+    public var bitmapInfo: CGBitmapInfo { CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue) }
+    public var colorSpace: CGColorSpace? { CGColorSpaceCreateDeviceRGB() }
+    public var dataProvider: CGDataProvider? { CGDataProvider(pixels) }
+    public var isMask: Bool { false }
+    public static var typeID: CFTypeID { CFTypeID(1) }
+}
+
+// MARK: Type ids, as the Mac checks what a layer's contents are
+
+public typealias CFTypeID = UInt
+public func CFGetTypeID(_ x: CFTypeRef?) -> CFTypeID {
+    switch x {
+    case is CGImage: return CGImage.typeID
+    case is CGColor: return 2
+    case is CGPath: return 3
+    case is CGColorSpace: return 4
+    default: return 0
+    }
+}

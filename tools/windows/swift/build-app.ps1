@@ -14,7 +14,7 @@ cmd /c "`"$vcvars`" >nul && set" | ForEach-Object { $k, $v = $_ -split '=', 2; i
 $env:PATH = "$swiftBin;$rtBin;$env:PATH"
 $out = Join-Path $repo 'build\swift'
 New-Item -ItemType Directory -Force -Path $out | Out-Null
-$sdkModules = 'CoreGraphics','QuartzCore','Accelerate','AppKit','Carbon','ServiceManagement','UniformTypeIdentifiers','Network'
+$sdkModules = 'CoreGraphics','QuartzCore','Accelerate','UniformTypeIdentifiers','AppKit','Carbon','ServiceManagement','Network'
 
 function Build-Shim([string]$name) {
     $files = @(Get-ChildItem "src\SwiftShims\$name\*.swift" | ForEach-Object { $_.FullName })
@@ -49,7 +49,7 @@ foreach ($f in Get-ChildItem 'Sources\DesktopSpider\*.swift') {
 $inputs = @(Get-ChildItem "$tmp\*.swift" | ForEach-Object { $_.FullName }) + @(Get-ChildItem 'src\SwiftWin\*.swift' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
 $link = @($sdkModules | ForEach-Object { "-l$_" })
 if ($Check) {
-    & swiftc -typecheck -swift-version 5 -DSHAPED -I $out @inputs 2>&1 | ForEach-Object { "$_" }
+    & swiftc -typecheck -continue-building-after-errors -swift-version 5 -DSHAPED -I $out @inputs 2>&1 | ForEach-Object { "$_" }
     "swiftc exit $LASTEXITCODE"
     return
 }

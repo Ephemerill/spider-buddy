@@ -18,7 +18,7 @@ $env:PATH = "$swiftBin;$rtBin;$env:PATH"
 $out = Join-Path $repo 'build\swift'
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 $env:SWIFT_DETERMINISTIC_HASHING = '1'
-$link = @('-lCoreGraphics', '-lQuartzCore', '-lAccelerate', '-lAppKit')
+$link = @('-lCoreGraphics', '-lQuartzCore', '-lAccelerate', '-lUniformTypeIdentifiers', '-lAppKit')
 $common = @('-swift-version', '5', '-DSHAPED', '-I', $out, '-L', $out)
 
 function Build-Shim([string]$name) {
@@ -28,7 +28,7 @@ function Build-Shim([string]$name) {
     if ($LASTEXITCODE -ne 0) { "shim $name failed"; exit 1 }
     "built $name"
 }
-foreach ($m in 'CoreGraphics','QuartzCore','Accelerate','AppKit') { Build-Shim $m }
+foreach ($m in 'CoreGraphics','QuartzCore','Accelerate','UniformTypeIdentifiers','AppKit') { Build-Shim $m }
 if ($ShimsOnly) { return }
 
 # Skia, from the NuGet cache the C# build fills.

@@ -79,7 +79,7 @@ public struct CAMediaTimingFillMode: Equatable, Sendable { public let rawValue: 
 }
 public struct CAAnimationCalculationMode: Equatable, Sendable { public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
-    public static let linear = Self(rawValue: "linear"), discrete = Self(rawValue: "discrete"), paced = Self(rawValue: "paced"), cubic = Self(rawValue: "cubic")
+    public static let linear = Self(rawValue: "linear"), discrete = Self(rawValue: "discrete"), paced = Self(rawValue: "paced"), cubic = Self(rawValue: "cubic"), cubicPaced = Self(rawValue: "cubicPaced")
 }
 public struct CATransitionType: Equatable, Sendable { public let rawValue: String
     public init(rawValue: String) { self.rawValue = rawValue }
@@ -175,6 +175,35 @@ open class CALayer: NSObject {
     open var rasterizationScale: CGFloat = 1
     open var allowsEdgeAntialiasing = false
     open var compositingFilter: Any? = nil { didSet { touch() } }
+
+    // CAMediaTiming, for the layer: its local time is (parent's - beginTime) x speed + timeOffset.
+    open var speed: Float = 1 { didSet { touch() } }
+    open var timeOffset: CFTimeInterval = 0 { didSet { touch() } }
+    open var beginTime: CFTimeInterval = 0 { didSet { touch() } }
+    open var duration: CFTimeInterval = 0
+    open var repeatCount: Float = 0
+    open var autoreverses = false
+    open var fillMode = CAMediaTimingFillMode.removed
+    func localTime(fromParent t: CFTimeInterval) -> CFTimeInterval {
+        speed == 1 && beginTime == 0 && timeOffset == 0 ? t : (t - beginTime) * Double(speed) + timeOffset
+    }
+    func parentTime(fromLocal t: CFTimeInterval) -> CFTimeInterval {
+        speed == 0 ? beginTime : (t - timeOffset) / Double(speed) + beginTime
+    }
+    func timeFromGlobal(_ g: CFTimeInterval) -> CFTimeInterval {
+        localTime(fromParent: superlayer?.timeFromGlobal(g) ?? g)
+    }
+    func timeToGlobal(_ t: CFTimeInterval) -> CFTimeInterval {
+        let p = parentTime(fromLocal: t)
+        return superlayer?.timeToGlobal(p) ?? p
+    }
+    /// `t` in `l`'s time (nil: the global clock, CACurrentMediaTime) as this layer's time.
+    open func convertTime(_ t: CFTimeInterval, from l: CALayer?) -> CFTimeInterval { timeFromGlobal(l?.timeToGlobal(t) ?? t) }
+    /// This layer's time `t` in `l`'s time (nil: the global clock).
+    open func convertTime(_ t: CFTimeInterval, to l: CALayer?) -> CFTimeInterval {
+        let g = timeToGlobal(t)
+        return l?.timeFromGlobal(g) ?? g
+    }
     /// Set by AppKit for a view's backing layer: draws the view's own content.
     public var drawContent: ((CGContext) -> Void)?
 
@@ -257,7 +286,8 @@ open class CALayer: NSObject {
         animSerial += 1
         let k = key ?? "anim\(animSerial)"
         animations.removeAll { $0.key == k }
-        let now = CACurrentMediaTime()
+        // Both in the layer's own time, as Core Animation keeps them.
+        let now = convertTime(CACurrentMediaTime(), from: nil)
         animations.append((k, anim, anim.beginTime > 0 ? anim.beginTime : now))
         touch()
     }
@@ -269,6 +299,8 @@ open class CALayer: NSObject {
     open func model() -> Self { self }
 
     public var isAnimating: Bool {
+        // A stopped clock: nothing under it moves.
+        if speed == 0 { return false }
         if !animations.isEmpty { return true }
         return sublayers?.contains { $0.isAnimating } ?? false
     }
@@ -311,7 +343,8 @@ open class CALayer: NSObject {
     // MARK: Drawing
 
     /// Draws this layer and what is under it. `ctx`'s transform maps the superlayer's space.
-    open func render(in ctx: CGContext, now: CFTimeInterval) {
+    open func render(in ctx: CGContext, now parentNow: CFTimeInterval) {
+        let now = localTime(fromParent: parentNow)
         expireAnimations(now: now)
         guard !isHidden else { return }
         let alpha = animated("opacity", CGFloat(opacity), now: now)
@@ -562,16 +595,18 @@ open class CAAnimation: NSObject {
         if autoreverses { d *= 2 }
         return d
     }
-    func isFinished(at t: CFTimeInterval) -> Bool { t >= totalTime }
+    func isFinished(at t: CFTimeInterval) -> Bool { t * Double(speed) >= totalTime }
     func delegateFinished() { onFinish?(); onFinish = nil }
     /// Progress 0...1 through one run, or nil when not active.
-    func progress(at t: CFTimeInterval) -> CGFloat? {
-        if t < 0 {
+    func progress(at parentT: CFTimeInterval) -> CGFloat? {
+        // Active time, then the phase (timeOffset) within it: the animation still runs its whole length.
+        let active = parentT * Double(speed)
+        if active < 0 {
             return fillMode == .backwards || fillMode == .both ? 0 : nil
         }
         let total = totalTime
-        var local = t
-        if t >= total {
+        var local = active + timeOffset
+        if active >= total {
             guard !isRemovedOnCompletion, fillMode == .forwards || fillMode == .both else { return nil }
             local = total - 1e-6
         }
@@ -595,6 +630,29 @@ open class CAAnimation: NSObject {
 /// NSValue(point:) is a Foundation class here; animations read it through this.
 public protocol CGPointBox { var point: CGPoint { get } }
 
+private let transformEncoding = "{CATransform3D=dddddddddddddddd}"
+extension NSValue {
+    public convenience init(caTransform3D t: CATransform3D) {
+        var t = t
+        self.init(bytes: &t, objCType: transformEncoding)
+    }
+    public var caTransform3DValue: CATransform3D {
+        var t = CATransform3DIdentity
+        if String(cString: objCType) == transformEncoding { withUnsafeMutableBytes(of: &t) { getValue($0.baseAddress!) } }
+        return t
+    }
+}
+/// Values as animations hold them, out of their boxes.
+func unboxed(_ v: Any?) -> Any? {
+    guard let n = v as? NSValue, !(v is NSNumber) else { return v }
+    let type = String(cString: n.objCType)
+    if type == transformEncoding { return n.caTransform3DValue }
+    if type.contains("Point") { return n.pointValue }
+    if type.contains("Size") { return n.sizeValue }
+    if type.contains("Rect") { return n.rectValue }
+    return v
+}
+
 open class CAPropertyAnimation: CAAnimation {
     open var keyPath: String?
     open var isAdditive = false
@@ -602,6 +660,8 @@ open class CAPropertyAnimation: CAAnimation {
     public init(keyPath: String?) { self.keyPath = keyPath; super.init() }
     public override init() { super.init() }
     func sample(at t: CFTimeInterval) -> Any? { nil }
+    /// The sample, unboxed.
+    func value(at t: CFTimeInterval) -> Any? { unboxed(sample(at: t)) }
 
     private func num(_ v: Any?) -> CGFloat? {
         if let c = v as? CGFloat { return c }
@@ -612,23 +672,23 @@ open class CAPropertyAnimation: CAAnimation {
         return nil
     }
     override func scalar(for name: String, at t: CFTimeInterval, base: CGFloat) -> CGFloat? {
-        guard keyPath == name, let v = num(sample(at: t)) else { return nil }
+        guard keyPath == name, let v = num(value(at: t)) else { return nil }
         return isAdditive ? base + v : v
     }
     override func point(for name: String, at t: CFTimeInterval, base: CGPoint) -> CGPoint? {
         guard keyPath == name else { return nil }
-        let s = sample(at: t)
+        let s = value(at: t)
         if let p = s as? CGPoint { return isAdditive ? CGPoint(x: base.x + p.x, y: base.y + p.y) : p }
         if let p = (s as? CGPointBox)?.point { return p }
         return nil
     }
     override func color(for name: String, at t: CFTimeInterval) -> CGColor? {
         guard keyPath == name else { return nil }
-        return sample(at: t) as? CGColor
+        return value(at: t) as? CGColor
     }
     override func applyTransform(_ v: CGAffineTransform, at t: CFTimeInterval) -> CGAffineTransform {
-        guard let k = keyPath, k.hasPrefix("transform"), let s = sample(at: t) else { return v }
-        if let m = s as? CATransform3D { return m.affine }
+        guard let k = keyPath, k.hasPrefix("transform"), let s = value(at: t) else { return v }
+        if let m = s as? CATransform3D { return isAdditive ? m.affine.concatenating(v) : m.affine }
         guard let n = num(s) else { return v }
         switch k {
         case "transform.scale": return CGAffineTransform(scaleX: n, y: n).concatenating(v)
@@ -640,7 +700,8 @@ open class CAPropertyAnimation: CAAnimation {
         default: return v
         }
     }
-    func interpolate(_ a: Any?, _ b: Any?, _ u: CGFloat) -> Any? {
+    func interpolate(_ a0: Any?, _ b0: Any?, _ u: CGFloat) -> Any? {
+        let a = unboxed(a0), b = unboxed(b0)
         if let x = num(a), let y = num(b) { return x + (y - x) * u }
         if let x = a as? CGPoint, let y = b as? CGPoint { return CGPoint(x: x.x + (y.x - x.x) * u, y: x.y + (y.y - x.y) * u) }
         if let x = a as? CATransform3D, let y = b as? CATransform3D {
@@ -696,7 +757,44 @@ open class CAKeyframeAnimation: CAPropertyAnimation {
     open var timingFunctions: [CAMediaTimingFunction]?
     open var calculationMode = CAAnimationCalculationMode.linear
     open var path: CGPath?
+    /// The path flattened, with the distance along it at each point.
+    private var flat: (path: CGPath, points: [CGPoint], along: [CGFloat])?
+    private func pointOnPath(_ p: CGPath, _ u: CGFloat) -> CGPoint? {
+        if flat?.path !== p {
+            var pts: [CGPoint] = []
+            var start = CGPoint.zero, cur = CGPoint.zero
+            for e in p.elements {
+                switch e {
+                case .move(let a): start = a; cur = a; pts.append(a)
+                case .line(let a): pts.append(a); cur = a
+                case .quad(let c, let a):
+                    for i in 1...16 { let t = CGFloat(i) / 16, m = 1 - t
+                        pts.append(CGPoint(x: m * m * cur.x + 2 * m * t * c.x + t * t * a.x, y: m * m * cur.y + 2 * m * t * c.y + t * t * a.y)) }
+                    cur = a
+                case .cubic(let c1, let c2, let a):
+                    for i in 1...24 { let t = CGFloat(i) / 24, m = 1 - t
+                        let x = m * m * m * cur.x + 3 * m * m * t * c1.x + 3 * m * t * t * c2.x + t * t * t * a.x
+                        let y = m * m * m * cur.y + 3 * m * m * t * c1.y + 3 * m * t * t * c2.y + t * t * t * a.y
+                        pts.append(CGPoint(x: x, y: y)) }
+                    cur = a
+                case .close: pts.append(start); cur = start
+                }
+            }
+            var along: [CGFloat] = [0]
+            for i in pts.indices.dropFirst() { along.append(along[i - 1] + hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y)) }
+            flat = (p, pts, along)
+        }
+        guard let f = flat, let total = f.along.last, f.points.count > 1, total > 0 else { return flat?.points.first }
+        // Paced (and cubic-paced): an even speed along the whole path.
+        let d = max(0, min(1, u)) * total
+        var i = 1
+        while i < f.along.count - 1, f.along[i] < d { i += 1 }
+        let a = f.along[i - 1], b = f.along[i]
+        let k = b > a ? (d - a) / (b - a) : 0
+        return CGPoint(x: f.points[i - 1].x + (f.points[i].x - f.points[i - 1].x) * k, y: f.points[i - 1].y + (f.points[i].y - f.points[i - 1].y) * k)
+    }
     override func sample(at t: CFTimeInterval) -> Any? {
+        if let p = path { return progress(at: t).flatMap { pointOnPath(p, $0) } }
         guard let u = progress(at: t), let v = values, !v.isEmpty else { return nil }
         if v.count == 1 { return v[0] }
         let times = keyTimes?.map { CGFloat($0.doubleValue) } ?? (0..<v.count).map { CGFloat($0) / CGFloat(v.count - 1) }
@@ -828,8 +926,6 @@ open class CAEmitterLayer: CALayer {
     open var scale: Float = 1
     open var spin: Float = 1
     open var seed: UInt32 = 0
-    open var beginTime: CFTimeInterval = 0
-    open var timeOffset: CFTimeInterval = 0
     open var preservesDepth = false
     open override func setValue(_ v: Any?, forKeyPath key: String) {
         // "emitterCells.<name>.<property>"
@@ -876,5 +972,60 @@ public final class CADisplayLink: NSObject, @unchecked Sendable {
         targetTimestamp = now + duration
         last = now
         fire()
+    }
+}
+
+// MARK: Run loop observers. The main thread's loop is AppKit's frame loop here: it reports waking for each frame and
+// going back to wait after it, which is what the Mac's observers (Perf.swift) time.
+
+public struct CFRunLoopActivity: OptionSet, Sendable {
+    public let rawValue: CFOptionFlags
+    public init(rawValue: CFOptionFlags) { self.rawValue = rawValue }
+    public static let entry = Self(rawValue: 1), beforeTimers = Self(rawValue: 2), beforeSources = Self(rawValue: 4),
+                       beforeWaiting = Self(rawValue: 32), afterWaiting = Self(rawValue: 64), exit = Self(rawValue: 128),
+                       allActivities = Self(rawValue: 0x0FFFFFFF)
+}
+public typealias CFOptionFlags = UInt
+public typealias CFIndex = Int
+public final class CFRunLoop: @unchecked Sendable { fileprivate init() {} }
+public struct CFRunLoopMode: RawRepresentable, Hashable, Sendable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static let commonModes = CFRunLoopMode(rawValue: "kCFRunLoopCommonModes")
+    public static let defaultMode = CFRunLoopMode(rawValue: "kCFRunLoopDefaultMode")
+}
+public final class CFRunLoopObserver: @unchecked Sendable {
+    let activities: CFOptionFlags
+    let repeats: Bool
+    let handler: (CFRunLoopObserver?, CFRunLoopActivity) -> Void
+    var valid = true
+    init(_ a: CFOptionFlags, _ r: Bool, _ h: @escaping (CFRunLoopObserver?, CFRunLoopActivity) -> Void) { activities = a; repeats = r; handler = h }
+}
+private let mainLoop = CFRunLoop()
+public func CFRunLoopGetMain() -> CFRunLoop { mainLoop }
+public func CFRunLoopGetCurrent() -> CFRunLoop { mainLoop }
+public func CFRunLoopObserverCreateWithHandler(_ allocator: Any?, _ activities: CFOptionFlags, _ repeats: Bool, _ order: CFIndex,
+                                               _ block: @escaping (CFRunLoopObserver?, CFRunLoopActivity) -> Void) -> CFRunLoopObserver? {
+    CFRunLoopObserver(activities, repeats, block)
+}
+public func CFRunLoopAddObserver(_ rl: CFRunLoop?, _ o: CFRunLoopObserver?, _ mode: CFRunLoopMode?) {
+    guard let o else { return }
+    CFRunLoopObservers.all.append(o)
+}
+public func CFRunLoopRemoveObserver(_ rl: CFRunLoop?, _ o: CFRunLoopObserver?, _ mode: CFRunLoopMode?) {
+    CFRunLoopObservers.all.removeAll { $0 === o }
+}
+public func CFRunLoopObserverInvalidate(_ o: CFRunLoopObserver?) { o?.valid = false; CFRunLoopObservers.all.removeAll { $0 === o } }
+
+public enum CFRunLoopObservers {
+    nonisolated(unsafe) static var all: [CFRunLoopObserver] = []
+    /// Called by the frame loop.
+    public static func report(_ a: CFRunLoopActivity) {
+        guard !all.isEmpty else { return }
+        for o in all where o.valid && o.activities & a.rawValue != 0 {
+            o.handler(o, a)
+            if !o.repeats { o.valid = false }
+        }
+        all.removeAll { !$0.valid }
     }
 }

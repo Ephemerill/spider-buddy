@@ -99,6 +99,11 @@ public final class NSGraphicsContext: NSObject, @unchecked Sendable {
     public var imageInterpolation = NSImageInterpolation.default
     public var shouldAntialias = true { didSet { cgContext.setAllowsAntialiasing(shouldAntialias) } }
     public init(cgContext c: CGContext, flipped: Bool) { cgContext = c; isFlipped = flipped }
+    /// Drawing into `rep`: what is drawn is in it once the context is done with (the next read of its image).
+    public convenience init?(bitmapImageRep rep: NSBitmapImageRep) {
+        guard let c = rep.contextForDrawing() else { return nil }
+        self.init(cgContext: c, flipped: false)
+    }
     nonisolated(unsafe) public static var current: NSGraphicsContext? = nil
     nonisolated(unsafe) private static var stack: [NSGraphicsContext?] = []
     public static func saveGraphicsState() { stack.append(current); current?.cgContext.saveGState() }
@@ -132,9 +137,21 @@ public final class NSImage: NSObject, @unchecked Sendable {
         public var scale: SymbolScale = .medium
         public init(pointSize: CGFloat, weight: NSFont.Weight) { size = pointSize; self.weight = weight }
         public init(pointSize: CGFloat, weight: NSFont.Weight, scale: SymbolScale) { size = pointSize; self.weight = weight; self.scale = scale }
-        public init(scale: SymbolScale) { self.scale = scale }
-        public init(paletteColors: [NSColor]) {}
-        public init(hierarchicalColor: NSColor) {}
+        public init(scale: SymbolScale) { self.scale = scale; hasSize = false }
+        public var paletteColors: [NSColor]?
+        public var hierarchicalColor: NSColor?
+        public init(paletteColors: [NSColor]) { self.paletteColors = paletteColors; hasSize = false; hasScale = false }
+        public init(hierarchicalColor: NSColor) { self.hierarchicalColor = hierarchicalColor; hasSize = false; hasScale = false }
+        /// This configuration with `other`'s settings over it.
+        public func applying(_ other: SymbolConfiguration) -> SymbolConfiguration {
+            var c = self
+            if other.paletteColors != nil { c.paletteColors = other.paletteColors }
+            if other.hierarchicalColor != nil { c.hierarchicalColor = other.hierarchicalColor }
+            if other.hasSize { c.size = other.size; c.weight = other.weight }
+            if other.hasScale { c.scale = other.scale }
+            return c
+        }
+        var hasSize = true, hasScale = true
     }
     public enum SymbolScale: Int, Sendable { case small, medium, large }
     public struct Name: Hashable, Sendable { public let rawValue: String; public init(_ s: String) { rawValue = s } }
@@ -148,6 +165,7 @@ public final class NSImage: NSObject, @unchecked Sendable {
     private let handler: ((CGRect) -> Bool)?
     public init(size: CGSize, flipped: Bool, drawingHandler: @escaping (CGRect) -> Bool) { self.size = size; handler = drawingHandler; symbol = nil }
     public init(size: CGSize) { self.size = size; handler = nil; symbol = nil }
+    public convenience override init() { self.init(size: .zero) }
     public init(cgImage: CGImage, size: CGSize) {
         bitmap = cgImage
         self.size = size == .zero ? CGSize(width: cgImage.width, height: cgImage.height) : size
@@ -174,7 +192,7 @@ public final class NSImage: NSObject, @unchecked Sendable {
     public func addRepresentation(_ r: NSBitmapImageRep) { bitmap = r.cgImage }
     public var representations: [NSBitmapImageRep] { bitmap.map { [NSBitmapImageRep(cgImage: $0)] } ?? [] }
     public var isValid: Bool { true }
-    public func cgImage(forProposedRect r: UnsafeMutablePointer<CGRect>?, context: NSGraphicsContext?, hints: [String: Any]?) -> CGImage? {
+    public func cgImage(forProposedRect r: UnsafeMutablePointer<CGRect>?, context: NSGraphicsContext?, hints: [NSImageRep.HintKey: Any]?) -> CGImage? {
         if let bitmap { return bitmap }
         let k = NSScreen.primaryScale
         let w = max(Int((size.width * k).rounded(.up)), 1), h = max(Int((size.height * k).rounded(.up)), 1)
@@ -205,7 +223,7 @@ public final class NSImage: NSObject, @unchecked Sendable {
         draw(in: CGRect(origin: p, size: size), from: from, operation: operation, fraction: fraction)
     }
     public func draw(in r: CGRect, from: CGRect, operation: NSCompositingOperation, fraction: CGFloat) { draw(in: r, from: from, operation: operation, fraction: fraction, respectFlipped: true, hints: nil) }
-    public func draw(in r: CGRect, from: CGRect, operation: NSCompositingOperation, fraction: CGFloat, respectFlipped: Bool, hints: [String: Any]?) {
+    public func draw(in r: CGRect, from: CGRect, operation: NSCompositingOperation, fraction: CGFloat, respectFlipped: Bool, hints: [NSImageRep.HintKey: Any]?) {
         guard let g = NSGraphicsContext.current else { return }
         let c = g.cgContext
         c.saveGState()
@@ -229,6 +247,15 @@ extension CGImage {
     public var dataBytes: [UInt8] { pixels }
 }
 
+open class NSImageRep: NSObject {
+    public struct HintKey: Hashable, RawRepresentable, @unchecked Sendable {
+        public let rawValue: String
+        public init(rawValue: String) { self.rawValue = rawValue }
+        public static let interpolation = Self(rawValue: "NSImageHintInterpolation")
+        public static let ctm = Self(rawValue: "NSImageHintCTM")
+    }
+}
+
 public final class NSBitmapImageRep: NSObject, @unchecked Sendable {
     public enum FileType { case png, jpeg, tiff, bmp, gif }
     public struct PropertyKey: Hashable { public let rawValue: String; public static let compressionFactor = PropertyKey(rawValue: "compression") }
@@ -249,7 +276,19 @@ public final class NSBitmapImageRep: NSObject, @unchecked Sendable {
         return ctx
     }
     func capture() { cgImage = ctx?.makeImage() }
+    /// A context in points onto this rep's pixels, kept so later reads see what was drawn.
+    func contextForDrawing() -> CGContext? {
+        if ctx == nil {
+            guard let c = makeContext() else { return nil }
+            if let im = cgImage { c.draw(im, in: CGRect(x: 0, y: 0, width: im.width, height: im.height)) }
+            c.scaleBy(x: scale, y: scale)
+        }
+        drawnInto = true
+        return ctx
+    }
+    var drawnInto = false
     public func representation(using t: FileType, properties: [PropertyKey: Any]) -> Data? {
+        if drawnInto { capture() }
         guard let cgImage else { return nil }
         return PNGWriter.encode(cgImage)
     }
@@ -357,6 +396,42 @@ public final class NSBezierPath: NSObject, @unchecked Sendable {
     private var dashPhase: CGFloat = 0
     public override init() { super.init() }
     public convenience init(rect r: CGRect) { self.init(); path.addRect(r) }
+    /// The same outline traced the other way: each subpath backwards, so with the non-zero rule it cuts a hole.
+    public var reversed: NSBezierPath {
+        let out = NSBezierPath()
+        out.lineWidth = lineWidth; out.windingRule = windingRule
+        var subpaths: [[PathElement]] = []
+        for e in path.elements {
+            if case .move = e { subpaths.append([e]) } else if subpaths.isEmpty { subpaths.append([.move(.zero), e]) } else { subpaths[subpaths.count - 1].append(e) }
+        }
+        for sp in subpaths {
+            guard case .move(let start) = sp[0] else { continue }
+            let closed = sp.last == .close
+            // Each segment from its start point to its end point.
+            var segs: [(from: CGPoint, el: PathElement)] = []
+            var cur = start
+            for e in sp.dropFirst() {
+                switch e {
+                case .line(let p): segs.append((cur, e)); cur = p
+                case .quad(_, let p): segs.append((cur, e)); cur = p
+                case .cubic(_, _, let p): segs.append((cur, e)); cur = p
+                case .close: if cur != start { segs.append((cur, .line(start))); cur = start }
+                case .move: break
+                }
+            }
+            out.path.move(to: cur)
+            for (from, e) in segs.reversed() {
+                switch e {
+                case .line: out.path.addLine(to: from)
+                case .quad(let c, _): out.path.addQuadCurve(to: from, control: c)
+                case .cubic(let c1, let c2, _): out.path.addCurve(to: from, control1: c2, control2: c1)
+                default: break
+                }
+            }
+            if closed { out.path.closeSubpath() }
+        }
+        return out
+    }
     public convenience init(ovalIn r: CGRect) { self.init(); path.addEllipse(in: r) }
     public convenience init(roundedRect r: CGRect, xRadius x: CGFloat, yRadius y: CGFloat) { self.init(); path.addRoundedRect(in: r, cornerWidth: x, cornerHeight: y) }
     public var cgPath: CGPath { path }
@@ -488,5 +563,25 @@ public final class NSCursor: NSObject, @unchecked Sendable {
         guard let c = currentCursor else { return false }
         _ = SetCursor(LoadCursorW(nil, UnsafePointer<WCHAR>(bitPattern: c.id)))
         return true
+    }
+}
+
+// NSRectFill and friends: a plain fill with the current colour, replacing what is there (AppKit fills with copy).
+extension CGRect {
+    public func fill() { fill(using: .copy) }
+    public func fill(using op: NSCompositingOperation) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        ctx.saveGState()
+        ctx.setBlendMode(op.blend)
+        ctx.fill(self)
+        ctx.restoreGState()
+    }
+    public func frame(withWidth w: CGFloat = 1, using op: NSCompositingOperation = .sourceOver) {
+        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
+        ctx.saveGState()
+        ctx.setBlendMode(op.blend)
+        ctx.fill(CGRect(x: minX, y: minY, width: width, height: w)); ctx.fill(CGRect(x: minX, y: maxY - w, width: width, height: w))
+        ctx.fill(CGRect(x: minX, y: minY, width: w, height: height)); ctx.fill(CGRect(x: maxX - w, y: minY, width: w, height: height))
+        ctx.restoreGState()
     }
 }

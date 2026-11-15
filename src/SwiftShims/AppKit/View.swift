@@ -27,7 +27,12 @@ public final class NSEvent: NSObject, @unchecked Sendable {
         public static let capsLock = Self(rawValue: 1 << 16), shift = Self(rawValue: 1 << 17), control = Self(rawValue: 1 << 18), option = Self(rawValue: 1 << 19), command = Self(rawValue: 1 << 20), numericPad = Self(rawValue: 1 << 21), function = Self(rawValue: 1 << 23)
         public static let deviceIndependentFlagsMask = Self(rawValue: 0xffff0000)
     }
-    public enum Phase: Sendable { case none, began, stationary, changed, ended, cancelled, mayBegin }
+    public struct Phase: OptionSet, Sendable {
+        public let rawValue: UInt
+        public init(rawValue: UInt) { self.rawValue = rawValue }
+        public static let began = Phase(rawValue: 1), stationary = Phase(rawValue: 2), changed = Phase(rawValue: 4),
+                           ended = Phase(rawValue: 8), cancelled = Phase(rawValue: 16), mayBegin = Phase(rawValue: 32)
+    }
     public var type: EventType = .mouseMoved
     public var locationInWindow = CGPoint.zero
     public var clickCount = 1
@@ -39,8 +44,8 @@ public final class NSEvent: NSObject, @unchecked Sendable {
     public var scrollingDeltaY: CGFloat = 0
     public var hasPreciseScrollingDeltas = false
     public var isDirectionInvertedFromDevice = false
-    public var phase = Phase.none
-    public var momentumPhase = Phase.none
+    public var phase: Phase = []
+    public var momentumPhase: Phase = []
     public var timestamp: TimeInterval = 0
     public var keyCode: UInt16 = 0
     public var characters: String? = nil
@@ -112,7 +117,7 @@ public final class NSTrackingArea: NSObject {
     public weak var owner: AnyObject?
     public let userInfo: [AnyHashable: Any]?
     var inside = false
-    public init(rect: CGRect, options: Options, owner: Any?, userInfo: [AnyHashable: Any]?) {
+    public init(rect: CGRect, options: Options, owner: Any?, userInfo: [AnyHashable: Any]? = nil) {
         self.rect = rect; self.options = options; self.owner = owner as AnyObject?; self.userInfo = userInfo
     }
 }
@@ -121,7 +126,7 @@ public final class NSTrackingArea: NSObject {
 
 open class NSResponder: NSObject {
     public override init() { super.init() }
-    public required init?(coder: NSCoder) { super.init() }
+    public init?(coder: NSCoder) { super.init() }
     open var nextResponder: NSResponder? = nil
     open var acceptsFirstResponder: Bool { false }
     open func becomeFirstResponder() -> Bool { true }
@@ -169,7 +174,6 @@ public let NSZeroPoint = CGPoint.zero
 public func NSMakeRect(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> CGRect { CGRect(x: x, y: y, width: w, height: h) }
 public func NSMakeSize(_ w: CGFloat, _ h: CGFloat) -> CGSize { CGSize(width: w, height: h) }
 public func NSMakePoint(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x, y: y) }
-public func NSStringFromRect(_ r: CGRect) -> String { "{{\(r.minX), \(r.minY)}, {\(r.width), \(r.height)}}" }
 
 // MARK: Views
 
@@ -274,8 +278,27 @@ open class NSView: NSResponder {
         super.init()
         setupBacking()
     }
-    public required init?(coder: NSCoder) { frame = .zero; super.init(); setupBacking() }
+    public required override init?(coder: NSCoder) { frame = .zero; super.init(); setupBacking() }
     public convenience override init() { self.init(frame: .zero) }
+
+    public static let noIntrinsicMetric: CGFloat = -1
+    /// The screen's scale changed under the view (moved to a screen of another DPI).
+    open func viewDidChangeBackingProperties() {}
+    /// The size that fits in `size`; views that wrap (text) override it.
+    open func sizeThatFits(_ size: CGSize) -> CGSize { fittingSize }
+    // Accessibility: kept, for nothing reads it yet.
+    public private(set) var accessibilityLabelValue: String?
+    open func setAccessibilityLabel(_ s: String?) { accessibilityLabelValue = s }
+    open func setAccessibilityElement(_ on: Bool) {}
+    open func setAccessibilityRole(_ r: Any?) {}
+    open func setAccessibilityHelp(_ s: String?) {}
+    // Drop destination (NSDraggingDestination).
+    open func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { [] }
+    open func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { draggingEntered(sender) }
+    open func draggingExited(_ sender: NSDraggingInfo?) {}
+    open func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { true }
+    open func performDragOperation(_ sender: NSDraggingInfo) -> Bool { false }
+    open func concludeDragOperation(_ sender: NSDraggingInfo?) {}
 
     private func setupBacking() {
         backing.anchorPoint = .zero
@@ -383,9 +406,9 @@ open class NSView: NSResponder {
     public func lockFocus() {}
     public func unlockFocus() {}
     open func cacheDisplay(in r: CGRect, to rep: NSBitmapImageRep) {
-        guard let ctx = rep.makeContext() else { return }
+        // Over whatever is in the rep already, as AppKit does (a background drawn into it first stays).
+        guard let ctx = rep.contextForDrawing() else { return }
         ctx.saveGState()
-        ctx.scaleBy(x: rep.scale, y: rep.scale)
         ctx.translateBy(x: -r.minX, y: -r.minY)
         let keep = backing.position
         backing.position = .zero
@@ -573,7 +596,7 @@ open class NSViewController: NSResponder {
     open var title: String?
     open var representedObject: Any?
     public override init() { super.init() }
-    public required init?(coder: NSCoder) { super.init() }
+    public required override init?(coder: NSCoder) { super.init() }
     open func loadView() {}
     open func viewDidLoad() {}
     open func viewWillAppear() {}

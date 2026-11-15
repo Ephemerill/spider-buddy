@@ -186,6 +186,13 @@ open class NSTextField: NSControl, NSTextInputClient {
         // AppKit gives wrapping labels no intrinsic width of their own beyond the one they were measured at.
         return CGSize(width: wraps && lastMeasuredWidth > 0 && preferredMaxLayoutWidth == 0 ? NSViewNoIntrinsicMetric : z.width + padX * 2, height: z.height + vPad)
     }
+    /// The text laid out to `size`'s width (wrapping if the field wraps), as tall as it comes out.
+    open override func sizeThatFits(_ size: CGSize) -> CGSize {
+        let w: CGFloat? = wraps && size.width > 0 ? size.width - padX * 2 : nil
+        let z = TextLayout.size(layoutLines(width: w), spacing: 0)
+        let vPad: CGFloat = isBezeled || isBordered ? 6 : 0
+        return CGSize(width: min(z.width + padX * 2, size.width > 0 ? size.width : .greatestFiniteMagnitude), height: z.height + vPad)
+    }
     override func widthChangedIntrinsic() -> Bool {
         guard wraps, preferredMaxLayoutWidth == 0, abs(frame.width - lastMeasuredWidth) > 0.5, frame.width > 0 else { return false }
         lastMeasuredWidth = frame.width
@@ -312,23 +319,30 @@ public final class NSSearchField: NSTextField {
 
 // MARK: Text view
 
-public protocol NSTextDelegate: AnyObject {}
-public protocol NSTextViewDelegate: AnyObject {
+public protocol NSTextDelegate: AnyObject {
     func textDidChange(_ n: Notification)
     func textDidEndEditing(_ n: Notification)
     func textDidBeginEditing(_ n: Notification)
-    func textView(_ t: NSTextView, doCommandBy s: Selector) -> Bool
 }
-extension NSTextViewDelegate {
+extension NSTextDelegate {
     public func textDidChange(_ n: Notification) {}
     public func textDidEndEditing(_ n: Notification) {}
     public func textDidBeginEditing(_ n: Notification) {}
+}
+public protocol NSTextViewDelegate: NSTextDelegate {
+    func textView(_ t: NSTextView, doCommandBy s: Selector) -> Bool
+}
+extension NSTextViewDelegate {
     public func textView(_ t: NSTextView, doCommandBy s: Selector) -> Bool { false }
 }
 open class NSText: NSView, NSTextInputClient {
     public static let didChangeNotification = Notification.Name("NSTextDidChangeNotification")
     public static let didEndEditingNotification = Notification.Name("NSTextDidEndEditingNotification")
+    public weak var delegate: NSTextDelegate?
     open var string = "" { didSet { needsDisplay = true } }
+    /// After each edit the user makes: tells the delegate and anyone listening.
+    open func didChangeText() { changed() }
+    public var isFieldEditor = false
     open var font: NSFont? { didSet { needsDisplay = true } }
     open var textColor: NSColor? { didSet { needsDisplay = true } }
     open var backgroundColor: NSColor = .textBackgroundColor
@@ -343,6 +357,7 @@ open class NSText: NSView, NSTextInputClient {
     open var maxSize = CGSize(width: 1e7, height: 1e7)
     open override var acceptsFirstResponder: Bool { isEditable }
     open func insertText(_ s: String) { string += s; changed() }
+    open func insertText(_ s: Any, replacementRange: NSRange) { insertText(s as? String ?? "\(s)") }
     open func changed() {}
     public func selectAll(_ s: Any?) {}
     public func copy(_ s: Any?) { NSPasteboard.general.setString(string, forType: .string) }
@@ -353,8 +368,9 @@ open class NSText: NSView, NSTextInputClient {
 }
 public final class NSTextContainer: NSObject { public var widthTracksTextView = true; public var containerSize = CGSize(width: 1e7, height: 1e7); public var lineFragmentPadding: CGFloat = 5 }
 open class NSTextView: NSText {
-    public weak var delegate: NSTextViewDelegate?
     public var textContainerInset = CGSize.zero
+    /// Where the text container's origin is in the view: its inset.
+    public var textContainerOrigin: CGPoint { CGPoint(x: textContainerInset.width, y: textContainerInset.height) }
     public var textContainer: NSTextContainer? = NSTextContainer()
     public var isAutomaticQuoteSubstitutionEnabled = false
     public var isAutomaticDashSubstitutionEnabled = false
@@ -364,9 +380,10 @@ open class NSTextView: NSText {
     public var allowsUndo = false
     public var usesFontPanel = false
     public var insertionPointColor = NSColor.textColor
-    public var selectedRange = NSRange(location: 0, length: 0)
+    private var selection = NSRange(location: 0, length: 0)
+    public func selectedRange() -> NSRange { selection }
     public func scrollRangeToVisible(_ r: NSRange) {}
-    public func setSelectedRange(_ r: NSRange) { selectedRange = r }
+    public func setSelectedRange(_ r: NSRange) { selection = r }
     public static func scrollableTextView() -> NSScrollView { let s = NSScrollView(frame: .zero); s.documentView = NSTextView(frame: .zero); return s }
     open override func changed() {
         delegate?.textDidChange(Notification(name: NSText.didChangeNotification, object: self))
@@ -386,10 +403,10 @@ open class NSTextView: NSText {
     open override func keyDown(with e: NSEvent) {
         if e.keyCode == 51, !string.isEmpty { string.removeLast(); changed(); return }
         if e.keyCode == 36 {
-            if delegate?.textView(self, doCommandBy: Selector("insertNewline:")) == true { return }
+            if (delegate as? NSTextViewDelegate)?.textView(self, doCommandBy: Selector("insertNewline:")) == true { return }
             string += "\n"; changed(); return
         }
-        if e.keyCode == 53 { _ = delegate?.textView(self, doCommandBy: Selector("cancelOperation:")); return }
+        if e.keyCode == 53 { _ = (delegate as? NSTextViewDelegate)?.textView(self, doCommandBy: Selector("cancelOperation:")); return }
     }
     open override func mouseDown(with e: NSEvent) { _ = window?.makeFirstResponder(self) }
     open override func becomeFirstResponder() -> Bool { delegate?.textDidBeginEditing(Notification(name: Notification.Name("NSTextDidBeginEditingNotification"), object: self)); return true }
@@ -682,7 +699,8 @@ open class NSSegmentedControl: NSControl {
     open var segmentCount = 0 { didSet { resize() } }
     open var trackingMode = SwitchTracking.selectOne
     open var segmentStyle = Style.automatic
-    open var segmentDistribution = 0
+    public enum Distribution: Int, Sendable { case fit, fill, fillEqually, fillProportionally }
+    open var segmentDistribution = Distribution.fit { didSet { invalidateIntrinsicContentSize(); needsLayout = true } }
     open var selectedSegmentBezelColor: NSColor?
     private func resize() {
         func fit<T>(_ a: inout [T], _ v: T) { while a.count < segmentCount { a.append(v) }; if a.count > segmentCount { a.removeLast(a.count - segmentCount) } }
@@ -805,6 +823,7 @@ open class NSPopUpButton: NSButton {
     private var selectedIndex = 0
     public convenience init(frame r: CGRect, pullsDown: Bool) { self.init(frame: r); self.pullsDown = pullsDown }
     public var itemArray: [NSMenuItem] { menuItems.items }
+    public var lastItem: NSMenuItem? { menuItems.items.last }
     public var numberOfItems: Int { menuItems.items.count }
     public var itemTitles: [String] { menuItems.items.map(\.title) }
     public var selectedItem: NSMenuItem? { menuItems.items.indices.contains(selectedIndex) ? menuItems.items[selectedIndex] : nil }
@@ -1011,6 +1030,11 @@ open class NSClipView: NSView {
 public enum NSScrollElasticity: Int, Sendable { case automatic, none, allowed }
 public enum NSBorderType: UInt, Sendable { case noBorder, lineBorder, bezelBorder, grooveBorder }
 
+open class NSScroller: NSControl {
+    public enum Style: Int, Sendable { case legacy, overlay }
+    public static var preferredScrollerStyle: Style { .overlay }
+}
+
 open class NSScrollView: NSView {
     public typealias Elasticity = NSScrollElasticity
     public let contentView0 = NSClipView(frame: .zero)
@@ -1022,7 +1046,8 @@ open class NSScrollView: NSView {
     public var drawsBackground = true { didSet { needsDisplay = true } }
     public var backgroundColor: NSColor = .controlBackgroundColor
     public var borderType = NSBorderType.noBorder
-    public var scrollerStyle = 0
+    public var scrollerStyle = NSScroller.Style.overlay
+    public func reflectScrolledClipView(_ c: NSClipView) { needsDisplay = true }
     public var horizontalScrollElasticity = NSScrollElasticity.automatic
     public var verticalScrollElasticity = NSScrollElasticity.automatic
     public var automaticallyAdjustsContentInsets = true
@@ -1144,7 +1169,8 @@ open class NSProgressIndicator: NSView {
 open class NSColorWell: NSControl {
     public var color: NSColor = .white { didSet { needsDisplay = true } }
     public var isBordered = true
-    public var colorWellStyle = 0
+    public enum Style: Int, Sendable { case `default`, minimal, expanded }
+    public var colorWellStyle = Style.default { didSet { needsDisplay = true } }
     public var supportsAlpha = false
     public func activate(_ e: Bool) {}
     public func deactivate() {}
@@ -1182,4 +1208,7 @@ open class NSTabView: NSView {
         if let v = i?.view { v.frame = bounds; v.autoresizingMask = [.width, .height]; addSubview(v) }
     }
     public func selectTabViewItem(at i: Int) { selectTabViewItem(tabViewItems[i]) }
+    public func tabViewItem(at i: Int) -> NSTabViewItem { tabViewItems[i] }
+    public var numberOfTabViewItems: Int { tabViewItems.count }
+    public func indexOfTabViewItem(_ i: NSTabViewItem) -> Int { tabViewItems.firstIndex { $0 === i } ?? NSNotFound }
 }

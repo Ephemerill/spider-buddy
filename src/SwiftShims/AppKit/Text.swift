@@ -44,6 +44,9 @@ public final class NSFont: NSObject, @unchecked Sendable {
     }
     public static func systemFont(ofSize s: CGFloat) -> NSFont { NSFont(family: systemFamily, weight: 400, size: s > 0 ? s : 13) }
     public static func systemFont(ofSize s: CGFloat, weight w: Weight) -> NSFont { NSFont(family: systemFamily, weight: w.css, size: s > 0 ? s : 13) }
+    public static func menuBarFont(ofSize s: CGFloat) -> NSFont { systemFont(ofSize: s > 0 ? s : 14) }
+    /// The box any glyph of the font fits in.
+    public var boundingRectForFont: CGRect { CGRect(x: 0, y: descender, width: pointSize, height: ascender - descender) }
     public static func boldSystemFont(ofSize s: CGFloat) -> NSFont { NSFont(family: systemFamily, weight: 700, size: s > 0 ? s : 13) }
     public static func monospacedSystemFont(ofSize s: CGFloat, weight w: Weight) -> NSFont { NSFont(family: monoFamily, weight: w.css, size: s) }
     public static func monospacedDigitSystemFont(ofSize s: CGFloat, weight w: Weight) -> NSFont { NSFont(family: systemFamily, weight: w.css, size: s) }

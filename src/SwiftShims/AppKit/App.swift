@@ -57,9 +57,11 @@ public final class NSApplication: NSResponder, @unchecked Sendable {
         WindowListBridge.install()
         CATransaction.onCommit = nil
     }
-    public required init?(coder: NSCoder) { fatalError() }
+    public override init?(coder: NSCoder) { fatalError() }
     func register(_ w: NSWindow) { if !windows.contains(where: { $0 === w }) { windows.append(w) } }
-    public func setActivationPolicy(_ p: ActivationPolicy) -> Bool { true }
+    private var policy = ActivationPolicy.regular
+    public func activationPolicy() -> ActivationPolicy { policy }
+    @discardableResult public func setActivationPolicy(_ p: ActivationPolicy) -> Bool { policy = p; return true }
     public func activate(ignoringOtherApps: Bool) {}
     public func activate() {}
     public func deactivate() {}
@@ -108,6 +110,8 @@ public final class NSApplication: NSResponder, @unchecked Sendable {
 
     public func run() {
         running = true
+        SessionWatch.install()
+        WindowPictures.install()
         delegate?.applicationDidFinishLaunching(Notification(name: Notification.Name("NSApplicationDidFinishLaunchingNotification")))
         startBeat()
         while running { _ = RunLoop.main.run(mode: .default, before: Date(timeIntervalSinceNow: 0.25)) }
@@ -141,7 +145,8 @@ public final class NSApplication: NSResponder, @unchecked Sendable {
     func frame() {
         guard !inFrame else { return }
         inFrame = true
-        defer { inFrame = false }
+        CFRunLoopObservers.report(.afterWaiting)
+        defer { inFrame = false; CFRunLoopObservers.report(.beforeWaiting) }
         pumpMessages()
         refreshPointer()
         let now = CACurrentMediaTime()
@@ -162,6 +167,7 @@ public final class NSApplication: NSResponder, @unchecked Sendable {
         var n = 0
         while n < 64, PeekMessageW(&msg, nil, 0, 0, UINT(PM_REMOVE)) {
             n += 1
+            if msg.hwnd == nil, let hook = NSThreadMessageHook { hook(msg.message, msg.wParam, msg.lParam) }
             TranslateMessage(&msg)
             DispatchMessageW(&msg)
         }
@@ -276,6 +282,33 @@ enum WindowListBridge {
         let n = GetClassNameW(h, &buf, 256)
         return String(decoding: buf[0..<Int(max(n, 0))], as: UTF16.self)
     }
+    static func visit(_ hwnd: HWND?) -> WindowsBool {
+            guard let hwnd, IsWindowVisible(hwnd), !IsIconic(hwnd) else { return true }
+            let style = GetWindowLongPtrW(hwnd, GWL_STYLE), ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+            if style & Int64(WS_CHILD) != 0 || ex & Int64(WS_EX_TOOLWINDOW) != 0 || ex & Int64(WS_EX_NOACTIVATE) != 0 { return true }
+            var cloaked: DWORD = 0
+            if attr(hwnd, 14, &cloaked, 4) == 0, cloaked != 0 { return true }
+            let cls = className(hwnd)
+            if shell.contains(cls) { return true }
+            var r = RECT()
+            if attr(hwnd, 9, &r, DWORD(MemoryLayout<RECT>.size)) != 0 { _ = GetWindowRect(hwnd, &r) }
+            var pid: DWORD = 0
+            _ = GetWindowThreadProcessId(hwnd, &pid)
+            var alpha: CGFloat = 1
+            if ex & Int64(WS_EX_LAYERED) != 0 {
+                var a: BYTE = 255, flags: DWORD = 0
+                if GetLayeredWindowAttributes(hwnd, nil, &a, &flags), flags & DWORD(LWA_ALPHA) != 0 { alpha = CGFloat(a) / 255 }
+            }
+            let n = Int(bitPattern: UnsafeRawPointer(hwnd)) & 0x7FFF_FFFF
+            let k = NSScreen.primaryScale
+            let t = NSScreen.primaryPixelHeight / k
+            let dy = t - (NSScreen.screens.first?.frame.maxY ?? t)
+            collected.append([kCGWindowLayer: 0, kCGWindowNumber: n, kCGWindowOwnerPID: Int32(pid), kCGWindowOwnerName: cls,
+                              kCGWindowAlpha: alpha,
+                              kCGWindowBounds: ["X": CGFloat(r.left) / k, "Y": CGFloat(r.top) / k - dy,
+                                                "Width": CGFloat(r.right - r.left) / k, "Height": CGFloat(r.bottom - r.top) / k] as [String: CGFloat]])
+            return true
+    }
     static func install() {
         CGWindowListProvider = {
             var list: [[String: Any]] = []
@@ -288,33 +321,7 @@ enum WindowListBridge {
             }
             let top = primary.maxY
             collected = []
-            _ = EnumWindows({ hwnd, _ in
-                guard let hwnd, IsWindowVisible(hwnd), !IsIconic(hwnd) else { return true }
-                let style = GetWindowLongPtrW(hwnd, GWL_STYLE), ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
-                if style & Int64(WS_CHILD) != 0 || ex & Int64(WS_EX_TOOLWINDOW) != 0 || ex & Int64(WS_EX_NOACTIVATE) != 0 { return true }
-                var cloaked: DWORD = 0
-                if attr(hwnd, 14, &cloaked, 4) == 0, cloaked != 0 { return true }
-                let cls = className(hwnd)
-                if shell.contains(cls) { return true }
-                var r = RECT()
-                if attr(hwnd, 9, &r, DWORD(MemoryLayout<RECT>.size)) != 0 { _ = GetWindowRect(hwnd, &r) }
-                var pid: DWORD = 0
-                _ = GetWindowThreadProcessId(hwnd, &pid)
-                var alpha: CGFloat = 1
-                if ex & Int64(WS_EX_LAYERED) != 0 {
-                    var a: BYTE = 255, flags: DWORD = 0
-                    if GetLayeredWindowAttributes(hwnd, nil, &a, &flags), flags & DWORD(LWA_ALPHA) != 0 { alpha = CGFloat(a) / 255 }
-                }
-                let n = Int(bitPattern: UnsafeRawPointer(hwnd)) & 0x7FFF_FFFF
-                let k = NSScreen.primaryScale
-                let t = NSScreen.primaryPixelHeight / k
-                let dy = t - (NSScreen.screens.first?.frame.maxY ?? t)
-                collected.append([kCGWindowLayer: 0, kCGWindowNumber: n, kCGWindowOwnerPID: Int32(pid), kCGWindowOwnerName: cls,
-                                  kCGWindowAlpha: alpha,
-                                  kCGWindowBounds: ["X": CGFloat(r.left) / k, "Y": CGFloat(r.top) / k - dy,
-                                                    "Width": CGFloat(r.right - r.left) / k, "Height": CGFloat(r.bottom - r.top) / k] as [String: CGFloat]])
-                return true
-            }, 0)
+            _ = EnumWindows({ hwnd, _ in WindowListBridge.visit(hwnd) }, 0)
             _ = top
             list += collected
             return list

@@ -2,6 +2,7 @@
 import Foundation
 import QuartzCore
 import WinSDK
+import UniformTypeIdentifiers
 
 // MARK: Menus
 
@@ -38,6 +39,7 @@ open class NSMenuItem: NSObject {
     public weak var menu: NSMenu?
     private var separator = false
     public init(title t: String, action a: Selector?, keyEquivalent k: String) { title = t; action = a; keyEquivalent = k }
+    public convenience override init() { self.init(title: "", action: nil, keyEquivalent: "") }
     public static func separator() -> NSMenuItem { let i = NSMenuItem(title: "", action: nil, keyEquivalent: ""); i.separator = true; return i }
     public static func sectionHeader(title t: String) -> NSMenuItem { let i = NSMenuItem(title: t, action: nil, keyEquivalent: ""); i.isEnabled = false; return i }
 }
@@ -127,6 +129,10 @@ open class NSMenu: NSObject {
 /// A hidden window to own menus, the tray icon and timers.
 final class MessageWindow: NSWindow {
     static let shared = MessageWindow(contentRect: CGRect(x: -100, y: -100, width: 1, height: 1), styleMask: [], backing: .buffered, defer: false)
+    override func handle(_ m: UINT, _ w: WPARAM, _ l: LPARAM) -> LRESULT? {
+        if let r = SessionWatch.handle(m, w, l) { return r }
+        return super.handle(m, w, l)
+    }
 }
 
 // MARK: Tray
@@ -161,6 +167,8 @@ public final class NSStatusBarButton: NSButton {
     public override func convert(_ r: CGRect, to v: NSView?) -> CGRect { r }
 }
 public final class NSStatusItem: NSObject, @unchecked Sendable {
+    public static let variableLength: CGFloat = -1
+    public static let squareLength: CGFloat = -2
     public var button: NSStatusBarButton? = NSStatusBarButton(frame: CGRect(x: 0, y: 0, width: 22, height: 22))
     public var menu: NSMenu?
     public var isVisible = true { didSet { update() } }
@@ -246,7 +254,7 @@ public final class NSPopover: NSResponder {
     private var panel: NSPanel?
     private var outsideMonitor: Any?
     public override init() { super.init() }
-    public required init?(coder: NSCoder) { super.init() }
+    public required override init?(coder: NSCoder) { super.init() }
     public func show(relativeTo r: CGRect, of v: NSView, preferredEdge e: NSRectEdge) {
         let content = contentViewController?.view ?? NSView(frame: .zero)
         let size = content.frame.size != .zero ? content.frame.size : contentSize
@@ -328,7 +336,7 @@ open class NSSavePanel: NSObject {
     public var nameFieldStringValue = ""
     public var nameFieldLabel: String?
     public var directoryURL: URL?
-    public var allowedContentTypes: [AnyHashable] = []
+    public var allowedContentTypes: [UTType] = []
     public var allowsOtherFileTypes = false
     public var canCreateDirectories = true
     public var isExtensionHidden = false
@@ -417,10 +425,19 @@ public final class NSPasteboard: NSObject, @unchecked Sendable {
         defer { GlobalUnlock(h) }
         return String(decodingCString: p.assumingMemoryBound(to: UInt16.self), as: UTF16.self)
     }
-    public func readObjects(forClasses c: [AnyClass], options: [String: Any]?) -> [Any]? { nil }
+    public struct ReadingOptionKey: Hashable, RawRepresentable, @unchecked Sendable {
+        public let rawValue: String
+        public init(rawValue: String) { self.rawValue = rawValue }
+        public static let urlReadingFileURLsOnly = Self(rawValue: "NSPasteboardURLReadingFileURLsOnlyKey")
+        public static let urlReadingContentsConformToTypes = Self(rawValue: "NSPasteboardURLReadingContentsConformToTypesKey")
+    }
+    /// Files on the clipboard (CF_HDROP) as URLs; other classes are not read.
+    public func readObjects(forClasses c: [AnyClass], options: [ReadingOptionKey: Any]? = nil) -> [Any]? { droppedFiles.map { $0 as Any } }
+    /// Set while a drop is being offered: the files in it.
+    public var droppedFiles: [URL] = []
     public func writeObjects(_ o: [Any]) -> Bool { false }
     public var types: [PasteboardType]? { nil }
-    public func canReadObject(forClasses c: [AnyClass], options: [String: Any]?) -> Bool { false }
+    public func canReadObject(forClasses c: [AnyClass], options: [ReadingOptionKey: Any]? = nil) -> Bool { !droppedFiles.isEmpty }
     public func data(forType t: PasteboardType) -> Data? { nil }
 }
 public protocol NSDraggingInfo: AnyObject {

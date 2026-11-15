@@ -113,6 +113,20 @@ func registerWindowClass() {
 
 open class NSWindow: NSResponder, CALayerHost {
     public private(set) var hwnd: HWND?
+    public var tabbingMode = TabbingMode.automatic
+    var responderObservers: [NSKeyValueObservation] = []
+    /// The button Return presses.
+    public var defaultButtonCell: NSButtonCell?
+    /// Where the window may go on `screen`. AppKit keeps titled windows below the menu bar; the Mac's overlay
+    /// overrides this to go anywhere.
+    open func constrainFrameRect(_ frameRect: CGRect, to screen: NSScreen?) -> CGRect { frameRect }
+    /// Moves the window with the mouse, from a mouse-down: as dragging its title bar.
+    public func performDrag(with event: NSEvent) {
+        guard let hwnd else { return }
+        _ = ReleaseCapture()
+        _ = SendMessageW(hwnd, UINT(WM_NCLBUTTONDOWN), WPARAM(HTCAPTION), 0)
+        syncFrameFromNativeNow()
+    }
     public let styleMask0: StyleMask
     open var styleMask: StyleMask { didSet { applyStyle() } }
     public var layered: Bool { !styleMask.contains(.titled) }
@@ -200,8 +214,8 @@ open class NSWindow: NSResponder, CALayerHost {
     // Bitmap
     private var memDC: HDC?
     private var dib: HBITMAP?
-    private var bits: UnsafeMutableRawPointer?
-    private var pxW = 0, pxH = 0
+    private(set) var bits: UnsafeMutableRawPointer?
+    private(set) var pxW = 0, pxH = 0
     private var ctx: CGContext?
     private var lastBox: SkiaBox? = nil
     private var dirty = true
@@ -227,7 +241,7 @@ open class NSWindow: NSResponder, CALayerHost {
         contentViewController = c
     }
     public convenience override init() { self.init(contentRect: .zero, styleMask: [], backing: .buffered, defer: false) }
-    public required init?(coder: NSCoder) { fatalError() }
+    public override init?(coder: NSCoder) { fatalError() }
 
     private func nativeStyle() -> (DWORD, DWORD) {
         var ex: Int32 = WS_EX_NOACTIVATE
@@ -345,7 +359,8 @@ open class NSWindow: NSResponder, CALayerHost {
     public func makeKeyAndOrderFront(_ sender: Any?) { show(activate: true) }
     public func makeKey() { show(activate: true) }
     public func makeMain() {}
-    public func resignKey() {}
+    open func becomeKey() {}
+    open func resignKey() {}
     public func resignMain() {}
     public func order(_ place: OrderingMode, relativeTo other: Int) {
         guard place != .out else { orderOut(nil); return }
@@ -417,6 +432,7 @@ open class NSWindow: NSResponder, CALayerHost {
         if let cur = firstResponderStore, !cur.resignFirstResponder() { return false }
         firstResponderStore = r
         _ = r?.becomeFirstResponder()
+        for o in responderObservers { o.fire() }
         return true
     }
     public func fieldEditor(_ create: Bool, for o: Any?) -> NSText? { nil }
@@ -589,7 +605,7 @@ open class NSWindow: NSResponder, CALayerHost {
             return nil
         case WM_ACTIVATE:
             let active = (w & 0xFFFF) != 0
-            if active { NSApp.keyWindowStore = self }
+            if active { NSApp.keyWindowStore = self; becomeKey() } else { resignKey() }
             post(active ? NSWindow.didBecomeKeyNotification : NSWindow.didResignKeyNotification)
             return nil
         case WM_CLOSE:
@@ -613,6 +629,7 @@ open class NSWindow: NSResponder, CALayerHost {
     }
     private func lParamWindow(_ l: LPARAM) -> HWND? { HWND(bitPattern: Int(l)) }
 
+    func syncFrameFromNativeNow() { syncFrameFromNative() }
     private func syncFrameFromNative() {
         guard let hwnd else { return }
         var r = RECT()
@@ -768,6 +785,10 @@ open class NSWindow: NSResponder, CALayerHost {
 
 public protocol NSTextInputClient: AnyObject { func insertText(_ s: String) }
 
+extension NSWindow {
+    public enum TabbingMode: Int, Sendable { case automatic, preferred, disallowed }
+}
+
 open class NSPanel: NSWindow {
     open var isFloatingPanel = false { didSet { if isFloatingPanel, level < .floating { level = .floating } } }
     open var becomesKeyOnlyIfNeededPanel = false
@@ -812,5 +833,42 @@ enum KeyCodes {
             if v >= 0x30, v <= 0x5A, let s = Unicode.Scalar(UInt32(v)) { return String(Character(s)).lowercased() }
             return ""
         }
+    }
+}
+
+// MARK: Key-value observing, as far as the app uses it: a window's first responder.
+
+public struct NSKeyValueObservingOptions: OptionSet, Sendable {
+    public let rawValue: UInt
+    public init(rawValue: UInt) { self.rawValue = rawValue }
+    public static let new = Self(rawValue: 1), old = Self(rawValue: 2), initial = Self(rawValue: 4), prior = Self(rawValue: 8)
+}
+public struct NSKeyValueObservedChange<Value> {
+    public let newValue: Value?
+    public let oldValue: Value?
+}
+public final class NSKeyValueObservation: NSObject {
+    fileprivate var fire: () -> Void
+    fileprivate weak var window: NSWindow?
+    init(_ fire: @escaping () -> Void) { self.fire = fire }
+    public func invalidate() {
+        window?.responderObservers.removeAll { $0 === self }
+        fire = {}
+    }
+    deinit { }
+}
+extension NSWindow {
+    /// Only changes of the first responder are reported; that is the one key path the app watches on a window.
+    public func observe<Value>(_ keyPath: KeyPath<NSWindow, Value>, options: NSKeyValueObservingOptions = [],
+                               changeHandler: @escaping (NSWindow, NSKeyValueObservedChange<Value>) -> Void) -> NSKeyValueObservation {
+        let o = NSKeyValueObservation({})
+        o.fire = { [weak self] in
+            guard let self else { return }
+            changeHandler(self, NSKeyValueObservedChange(newValue: self[keyPath: keyPath], oldValue: nil))
+        }
+        o.window = self
+        responderObservers.append(o)
+        if options.contains(.initial) { o.fire() }
+        return o
     }
 }

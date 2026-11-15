@@ -4,6 +4,11 @@
 @_exported import CoreGraphics
 @_exported import QuartzCore
 @_exported import Foundation
+#if canImport(FoundationNetworking)
+@_exported import FoundationNetworking
+#endif
+import UniformTypeIdentifiers
+import WinSDK
 
 public typealias pid_t = Int32
 
@@ -102,6 +107,9 @@ public final class NSRunningApplication: NSObject, @unchecked Sendable {
     public var localizedName: String? = nil
     public var activationPolicy = NSApplicationActivationPolicy.regular
     public override init() { super.init() }
+    /// The same program, as AppKit compares them.
+    public override func isEqual(_ o: Any?) -> Bool { (o as? NSRunningApplication)?.processIdentifier == processIdentifier }
+    public override var hash: Int { Int(processIdentifier) }
     /// Set by the host: what is known about a process.
     nonisolated(unsafe) public static var lookup: (Int32) -> NSRunningApplication? = { _ in nil }
     public convenience init?(processIdentifier pid: Int32) {
@@ -118,7 +126,13 @@ public final class NSWorkspace: NSObject, @unchecked Sendable {
     public static let shared = NSWorkspace()
     public var runningApplications: [NSRunningApplication] { [] }
     public let notificationCenter = NotificationCenter()
-    public var frontmostApplication: NSRunningApplication? { nil }
+    /// The program whose window is in front.
+    public var frontmostApplication: NSRunningApplication? {
+        guard let w = GetForegroundWindow() else { return nil }
+        var pid: DWORD = 0
+        _ = GetWindowThreadProcessId(w, &pid)
+        return pid == 0 ? nil : NSRunningApplication(processIdentifier: Int32(pid))
+    }
     public var menuBarOwningApplication: NSRunningApplication? { nil }
     public static let willSleepNotification = Notification.Name("NSWorkspaceWillSleepNotification")
     public static let didWakeNotification = Notification.Name("NSWorkspaceDidWakeNotification")
@@ -128,9 +142,16 @@ public final class NSWorkspace: NSObject, @unchecked Sendable {
     public static let sessionDidBecomeActiveNotification = Notification.Name("NSWorkspaceSessionDidBecomeActiveNotification")
     public static let activeSpaceDidChangeNotification = Notification.Name("NSWorkspaceActiveSpaceDidChangeNotification")
     public static let didActivateApplicationNotification = Notification.Name("NSWorkspaceDidActivateApplicationNotification")
-    public struct DesktopImageOptionKey: Hashable { public let rawValue: String }
-    public func desktopImageURL(for s: NSScreen) -> URL? { nil }
-    public func desktopImageOptions(for s: NSScreen) -> [DesktopImageOptionKey: Any]? { nil }
+    public struct DesktopImageOptionKey: Hashable, RawRepresentable, Sendable {
+        public let rawValue: String
+        public init(rawValue: String) { self.rawValue = rawValue }
+        public static let imageScaling = DesktopImageOptionKey(rawValue: "NSWorkspaceDesktopImageScalingKey")
+        public static let allowClipping = DesktopImageOptionKey(rawValue: "NSWorkspaceDesktopImageAllowClippingKey")
+        public static let fillColor = DesktopImageOptionKey(rawValue: "NSWorkspaceDesktopImageFillColorKey")
+    }
+    /// The one desktop picture Windows shows on every screen (per-monitor pictures need IDesktopWallpaper).
+    public func desktopImageURL(for s: NSScreen) -> URL? { Wallpaper.url() }
+    public func desktopImageOptions(for s: NSScreen) -> [DesktopImageOptionKey: Any]? { Wallpaper.options() }
     @discardableResult public func open(_ url: URL) -> Bool { ShellOpen.open(url.isFileURL ? url.path : url.absoluteString) }
     public func activateFileViewerSelecting(_ urls: [URL]) { if let u = urls.first { ShellOpen.reveal(u.path) } }
     public func selectFile(_ path: String?, inFileViewerRootedAtPath root: String) -> Bool { if let path { ShellOpen.reveal(path) }; return true }
@@ -154,7 +175,8 @@ public let kAXListRole: CFString = "AXList"
 public let kAXPositionAttribute: CFString = "AXPosition"
 public let kAXSizeAttribute: CFString = "AXSize"
 
-public func CFPreferencesAppSynchronize(_ app: CFString) -> Bool { true }
+public let kCFPreferencesCurrentApplication: CFString = "kCFPreferencesCurrentApplication"
+@discardableResult public func CFPreferencesAppSynchronize(_ app: CFString) -> Bool { UserDefaults.standard.synchronize() }
 
 public func autoreleasepool<T>(_ body: () throws -> T) rethrows -> T { try body() }
 
@@ -220,4 +242,38 @@ public func CTLineCreateTruncatedLine(_ line: CTLine, _ width: Double, _ type: C
 }
 public func CTLineDraw(_ line: CTLine, _ ctx: CGContext) {
     ctx.backend.drawText(line.text, font: line.font?.name ?? "", size: line.font?.size ?? 12, color: line.color, at: ctx.textPosition.applying(ctx.state.ctm), state: ctx.state)
+}
+
+extension NSRunningApplication {
+    public static var current: NSRunningApplication {
+        let a = NSRunningApplication()
+        a.processIdentifier = Int32(GetCurrentProcessId())
+        a.bundleIdentifier = Bundle.main.bundleIdentifier
+        return a
+    }
+    public struct ActivationOptions: OptionSet, Sendable {
+        public let rawValue: UInt
+        public init(rawValue: UInt) { self.rawValue = rawValue }
+        public static let activateAllWindows = Self(rawValue: 1), activateIgnoringOtherApps = Self(rawValue: 2)
+    }
+    /// Brings the program's front window forward.
+    @discardableResult public func activate(options: ActivationOptions = []) -> Bool {
+        RunningAppWindows.target = DWORD(processIdentifier)
+        RunningAppWindows.found = nil
+        _ = EnumWindows({ h, _ in RunningAppWindows.visit(h) }, 0)
+        guard let h = RunningAppWindows.found else { return false }
+        if IsIconic(h) { _ = ShowWindow(h, SW_RESTORE) }
+        return SetForegroundWindow(h)
+    }
+}
+enum RunningAppWindows {
+    nonisolated(unsafe) static var target: DWORD = 0
+    nonisolated(unsafe) static var found: HWND?
+    static func visit(_ h: HWND?) -> WindowsBool {
+        guard let h, IsWindowVisible(h), GetWindow(h, UINT(GW_OWNER)) == nil else { return true }
+        var pid: DWORD = 0
+        _ = GetWindowThreadProcessId(h, &pid)
+        if pid == target { found = h; return false }
+        return true
+    }
 }
