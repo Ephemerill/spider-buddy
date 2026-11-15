@@ -1,0 +1,26 @@
+#!/bin/bash
+# welcome-diff <dir>: the welcome's pages from the Windows debug app (build\swift-app) and from the Mac oracle app
+# (tools/oracle-app.sh, built), side by side in <dir>/side1..3.png, Mac on the left.
+set -e
+HERE="$(cd "$(dirname "$0")" && pwd)"; export PATH="$HERE/../dev:$PATH"; ROOT="$HERE/../../.."
+D="$1"; mkdir -p "$D/mac" "$D/win"
+if [ ! -f "$D/mac/welcome1.png" ]; then
+  ( "$ROOT/tools/oracle-app.sh" run SPIDER_WELCOME_SHOT="$D/mac" >/dev/null 2>&1 & p=$!; for i in $(seq 1 40); do kill -0 $p 2>/dev/null || break; perl -e 'select(undef,undef,undef,0.5)'; done; kill $p 2>/dev/null; true )
+fi
+lap stop >/dev/null 2>&1 || true
+lap ps <<'PS' >/dev/null
+Remove-Item -Recurse -Force C:\Users\User\Documents\Projects\spider-buddy\out\welcome -ErrorAction SilentlyContinue
+New-Item -ItemType Directory C:\Users\User\Documents\Projects\spider-buddy\out\welcome | Out-Null
+PS
+lap run --log app --wait 30 --env "SPIDER_WELCOME_SHOT=C:\\Users\\User\\Documents\\Projects\\spider-buddy\\out\\welcome" 'build\swift-app\SpiderBuddy.exe' | tr -d '\r' | grep -a -E "Fatal|exit=" || true
+rm -rf "$D/win"; mkdir -p "$D/win"
+scp -q laptop:C:/Users/User/Documents/Projects/spider-buddy/out/welcome/*.png "$D/win/"
+python3 - "$D" <<'PY'
+import sys
+from PIL import Image
+D=sys.argv[1]
+for i in (1,2,3):
+    m=Image.open(f"{D}/mac/welcome{i}.png").convert("RGB").resize((920,600)); w=Image.open(f"{D}/win/welcome{i}.png").convert("RGB").resize((920,600))
+    c=Image.new("RGB",(1850,600),"white"); c.paste(m,(0,0)); c.paste(w,(930,0)); c.save(f"{D}/side{i}.png")
+PY
+echo "$D/side1.png $D/side2.png $D/side3.png"

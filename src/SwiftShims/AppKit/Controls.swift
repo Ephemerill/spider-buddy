@@ -160,7 +160,7 @@ open class NSTextField: NSControl, NSTextInputClient {
     var wraps: Bool { (lineBreakMode == .byWordWrapping || lineBreakMode == .byCharWrapping) && maximumNumberOfLines != 1 }
     var padX: CGFloat { isBezeled || isBordered ? 4 : 2 }
     private func textRuns() -> ([TextRun], NSParagraphStyle?) {
-        let color = (textColor ?? NSColor.labelColor)
+        let color = (textColor ?? NSColor.labelColor).vibrant(in: self)
         var out: ([TextRun], NSParagraphStyle?) = ([], nil)
         withAppearance {
             if let a = attributedStore { out = TextLayout.runs(a, defaultFont: effectiveFont, defaultColor: color.cgColor) } else {
@@ -171,7 +171,7 @@ open class NSTextField: NSControl, NSTextInputClient {
     }
     private func layoutLines(width: CGFloat?) -> [TextLine] {
         let (r, _) = textRuns()
-        guard !r.isEmpty else { return [TextLine(runs: [], width: 0, ascent: effectiveFont.metrics.ascent, descent: effectiveFont.metrics.descent)] }
+        guard !r.isEmpty else { return [TextLine(runs: [], width: 0, ascent: effectiveFont.metrics.ascent, descent: effectiveFont.metrics.descent, height: effectiveFont.labelLineHeight)] }
         if wraps, let width {
             var l = TextLayout.lines(r, width: width, mode: lineBreakMode)
             if maximumNumberOfLines > 0, l.count > maximumNumberOfLines { l = Array(l.prefix(maximumNumberOfLines)) }
@@ -183,8 +183,16 @@ open class NSTextField: NSControl, NSTextInputClient {
         let wrapW: CGFloat? = wraps ? (preferredMaxLayoutWidth > 0 ? preferredMaxLayoutWidth - padX * 2 : (lastMeasuredWidth > 0 ? lastMeasuredWidth - padX * 2 : nil)) : nil
         let z = TextLayout.size(layoutLines(width: wrapW), spacing: 0)
         let vPad: CGFloat = isBezeled || isBordered ? 6 : 0
-        // AppKit gives wrapping labels no intrinsic width of their own beyond the one they were measured at.
-        return CGSize(width: wraps && lastMeasuredWidth > 0 && preferredMaxLayoutWidth == 0 ? NSViewNoIntrinsicMetric : z.width + padX * 2, height: z.height + vPad)
+        // A wrapping label still wants its whole text on one line, as AppKit's do (a set preferredMaxLayoutWidth caps
+        // that): its lowered compression resistance lets constraints narrow it, and its height follows the width it
+        // was last laid out at. Reporting no width at all let a label in a stack collapse to nothing.
+        var width = z.width + padX * 2
+        if wraps {
+            let natural = TextLayout.size(layoutLines(width: nil), spacing: 0).width + padX * 2
+            width = preferredMaxLayoutWidth > 0 ? min(natural, preferredMaxLayoutWidth) : natural
+        }
+        // (Whole points, rounded up, as AppKit reports them: rounding a frame down by a fraction truncates the text.)
+        return CGSize(width: ceil(width), height: ceil(z.height + vPad))
     }
     /// The text laid out to `size`'s width (wrapping if the field wraps), as tall as it comes out.
     open override func sizeThatFits(_ size: CGSize) -> CGSize {
@@ -463,7 +471,9 @@ open class NSButton: NSControl {
     }
     open override func draw(_ d: CGRect) { withAppearance { drawButton() } }
     var isCheck: Bool { type == .switch || type == .radio }
-    open override var intrinsicContentSize: CGSize {
+    /// Whole points, rounded up, as AppKit reports them.
+    open override var intrinsicContentSize: CGSize { let z = buttonSize; return CGSize(width: ceil(z.width), height: ceil(z.height)) }
+    private var buttonSize: CGSize {
         let f = effectiveFont
         let t = title.isEmpty ? 0 : f.width(title)
         if isCheck { return CGSize(width: t + 20, height: max(16, controlSize.height - 4)) }
@@ -526,7 +536,7 @@ open class NSButton: NSControl {
         } else if isHighlighted {
             c.setAlpha(0.6)
         }
-        let tint = contentTintColor ?? (isDefault && isBordered ? .white : isEnabled ? .labelColor : .disabledControlTextColor)
+        let tint = (contentTintColor ?? (isDefault && isBordered ? .white : isEnabled ? .labelColor : .disabledControlTextColor)).vibrant(in: self)
         let f = effectiveFont
         let t = title
         let showTitle = imagePosition != .imageOnly && !t.isEmpty
@@ -566,7 +576,8 @@ open class NSButton: NSControl {
                 if showTitle { drawString(t, in: CGRect(x: x + iz.width + 4, y: b.minY, width: tw + 2, height: b.height), color: tint, alignment: .left, font: f) }
             }
         } else if showTitle {
-            drawString(t, in: b.insetBy(dx: 4, dy: 0), color: tint, alignment: alignment == .natural ? .center : alignment, font: f)
+            // (A borderless button is only as wide as its title: no inset.)
+            drawString(t, in: isBordered ? b.insetBy(dx: 4, dy: 0) : b, color: tint, alignment: alignment == .natural ? .center : alignment, font: f)
         }
     }
     private var pressedInside = false
@@ -930,7 +941,7 @@ open class NSImageView: NSControl {
             c.saveGState()
             if isFlipped { c.translateBy(x: r.minX, y: r.maxY); c.scaleBy(x: 1, y: -1) } else { c.translateBy(x: r.minX, y: r.minY) }
             c.scaleBy(x: z.width / img.size.width, y: z.height / img.size.height)
-            img.render(in: c, tint: contentTintColor ?? .labelColor)
+            img.render(in: c, tint: (contentTintColor ?? .labelColor).vibrant(in: self))
             c.restoreGState()
         }
     }
@@ -967,10 +978,19 @@ open class NSStackView: NSView {
     public func setViews(_ vs: [NSView], in g: Gravity) { for v in arrangedSubviews { v.removeFromSuperview() }; arrangedSubviews = []; for v in vs { addArrangedSubview(v) } }
     public func setCustomSpacing(_ s: CGFloat, after v: NSView) { custom[ObjectIdentifier(v)] = s; needsLayout = true }
     public func customSpacing(after v: NSView) -> CGFloat { custom[ObjectIdentifier(v)] ?? NSStackView.useDefaultSpacing }
-    public func setHuggingPriority(_ p: NSLayoutPriority, for o: NSLayoutConstraint.Orientation) {}
+    /// How hard the stack pulls in around its views, along each axis. AppKit's default is just under 250, so a label's
+    /// compression resistance of 250 wins over it.
+    private var hugging: [NSLayoutConstraint.Orientation: NSLayoutPriority] = [.horizontal: NSLayoutPriority(249.99998), .vertical: NSLayoutPriority(249.99998)]
+    public func setHuggingPriority(_ p: NSLayoutPriority, for o: NSLayoutConstraint.Orientation) { hugging[o] = p; needsLayout = true }
+    public func huggingPriority(for o: NSLayoutConstraint.Orientation) -> NSLayoutPriority { hugging[o] ?? NSLayoutPriority(249.99998) }
     public func setClippingResistancePriority(_ p: NSLayoutPriority, for o: NSLayoutConstraint.Orientation) {}
+    public func clippingResistancePriority(for o: NSLayoutConstraint.Orientation) -> NSLayoutPriority { .required }
     open override func removeFromSuperview() { super.removeFromSuperview() }
 
+    /// The constraints AppKit's NSStackView makes, with its priorities (read from AppKit's own `constraints` on the Mac):
+    /// along the stack, the first view at the leading edge at 750, each spacing at 749.99, and for gravity areas the
+    /// last view's far edge only as hard as the stack hugs, so leftover room stays empty; across it, each view inside the
+    /// stack, aligned at 260, and the stack's edges hugging each view's.
     override func generatedConstraints() -> [NSLayoutConstraint] {
         arrangedSubviews.removeAll { $0.superview !== self }
         let vs = arrangedSubviews.filter { !(detachesHiddenViews && $0.isHidden) }
@@ -986,36 +1006,47 @@ open class NSStackView: NSView {
         let insLead = h ? edgeInsets.left : edgeInsets.top, insTrail = h ? edgeInsets.right : edgeInsets.bottom
         let cInsLead = h ? edgeInsets.top : edgeInsets.left, cInsTrail = h ? edgeInsets.bottom : edgeInsets.right
         guard let first = vs.first, let last = vs.last else { return out }
-        make(first, lead, .equal, self, lead, insLead)
-        make(last, trail, .equal, self, trail, -insTrail)
+        let mainHug = huggingPriority(for: orientation), crossHug = huggingPriority(for: h ? .vertical : .horizontal)
+        let gravity = distribution == .gravityAreas
+        if gravity {
+            make(first, lead, .greaterThanOrEqual, self, lead, insLead)
+            make(first, lead, .equal, self, lead, insLead, NSLayoutPriority(750))
+            make(last, trail, .lessThanOrEqual, self, trail, -insTrail)
+            make(last, trail, .equal, self, trail, -insTrail, mainHug)
+        } else {
+            make(first, lead, .equal, self, lead, insLead)
+            make(last, trail, .equal, self, trail, -insTrail)
+        }
         for (a, b) in zip(vs, vs.dropFirst()) {
             let s = custom[ObjectIdentifier(a)].flatMap { $0 == NSStackView.useDefaultSpacing ? nil : $0 } ?? spacing
-            if distribution == .equalSpacing || distribution == .equalCentering || distribution == .gravityAreas {
+            if gravity {
                 make(b, lead, .greaterThanOrEqual, a, trail, s)
-                if distribution == .gravityAreas { make(b, lead, .equal, a, trail, s, NSLayoutPriority(490)) }
+                make(b, lead, .equal, a, trail, s, NSLayoutPriority(749.99))
+            } else if distribution == .equalSpacing || distribution == .equalCentering {
+                make(b, lead, .greaterThanOrEqual, a, trail, s)
             } else {
                 make(b, lead, .equal, a, trail, s)
             }
             if distribution == .fillEqually { make(a, h ? .width : .height, .equal, b, h ? .width : .height, 0) }
         }
         for v in vs {
-            // Across the stack: the stack is at least as big as its largest view, and views keep their alignment.
             make(v, cLead, .greaterThanOrEqual, self, cLead, cInsLead)
             make(v, cTrail, .lessThanOrEqual, self, cTrail, -cInsTrail)
             let center: NSLayoutAttribute = h ? .centerY : .centerX
+            let align = NSLayoutPriority(260)
             switch alignment {
-            case .leading, .left, .top: make(v, cLead, .equal, self, cLead, cInsLead, NSLayoutPriority(999))
-            case .trailing, .right, .bottom: make(v, cTrail, .equal, self, cTrail, -cInsTrail, NSLayoutPriority(999))
-            case .centerX, .centerY: make(v, center, .equal, self, center, (cInsLead - cInsTrail) / 2, NSLayoutPriority(999))
+            case .leading, .left, .top: make(v, cLead, .equal, self, cLead, cInsLead, align)
+            case .trailing, .right, .bottom: make(v, cTrail, .equal, self, cTrail, -cInsTrail, align)
+            case .centerX, .centerY: make(v, center, .equal, self, center, (cInsLead - cInsTrail) / 2, align)
             case .width, .height:
-                make(v, cLead, .equal, self, cLead, cInsLead, NSLayoutPriority(999))
-                make(v, cTrail, .equal, self, cTrail, -cInsTrail, NSLayoutPriority(999))
+                make(v, cLead, .equal, self, cLead, cInsLead)
+                make(v, cTrail, .equal, self, cTrail, -cInsTrail)
             case .firstBaseline, .lastBaseline:
-                if let f = vs.first, f !== v { make(v, alignment, .equal, f, alignment, 0, NSLayoutPriority(999)) }
+                if let f = vs.first, f !== v { make(v, alignment, .equal, f, alignment, 0, align) }
             default: break
             }
-            // Shrink-wrap the cross axis at low priority.
-            make(self, h ? .height : .width, .greaterThanOrEqual, v, h ? .height : .width, cInsLead + cInsTrail, .required)
+            make(v, cLead, .equal, self, cLead, cInsLead, crossHug)
+            make(v, cTrail, .equal, self, cTrail, -cInsTrail, crossHug)
         }
         return out
     }

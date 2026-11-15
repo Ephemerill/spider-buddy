@@ -1,0 +1,12 @@
+#!/bin/bash
+# probe-colors: prints every system colour the AppKit stand-in defines, as AppKit on this Mac gives it, light | dark,
+# in the stand-in's own rgb(...) form. Paste the values into src/SwiftShims/AppKit/Graphics.swift.
+cd "$(dirname "$0")/../../.."
+T=$(mktemp -d)
+names=$(grep -oE "public static let [a-zA-Z]+Color = NSColor\(light|public static let system[A-Za-z]+ = NSColor\(light" src/SwiftShims/AppKit/Graphics.swift | awk '{print $4}')
+{ echo "import AppKit"
+  echo 'func v(_ c: NSColor, _ n: NSAppearance.Name) -> String { var s = ""; NSAppearance(named: n)!.performAsCurrentDrawingAppearance { let x = c.usingColorSpace(.sRGB)!; s = String(format: "rgb(%.0f, %.0f, %.0f%@)", x.redComponent*255, x.greenComponent*255, x.blueComponent*255, x.alphaComponent < 0.999 ? String(format: ", %.3g", x.alphaComponent) : "") }; return s }'
+  for n in $names; do echo "print(\"$n\", v(NSColor.$n, .aqua), \"|\", v(NSColor.$n, .darkAqua))"; done
+} > "$T/colors.swift"
+xcrun swiftc "$T/colors.swift" -o "$T/colors" && "$T/colors"
+rm -rf "$T"

@@ -4,6 +4,7 @@ import QuartzCore
 import WinSDK
 
 // MARK: Colors
+// System colours as AppKit gives them on the Mac the oracle runs (macOS 27), measured: tools/windows/swift/probe-colors.
 
 public final class NSColor: NSObject, @unchecked Sendable {
     private let fixed: CGColor?
@@ -39,34 +40,50 @@ public final class NSColor: NSObject, @unchecked Sendable {
     public static let red = NSColor(cgColor: rgb(255, 0, 0)), green = NSColor(cgColor: rgb(0, 255, 0)), blue = NSColor(cgColor: rgb(0, 0, 255)), gray = NSColor(cgColor: rgb(128, 128, 128)), orange = NSColor(cgColor: rgb(255, 128, 0)), yellow = NSColor(cgColor: rgb(255, 255, 0))
     public static let darkGray = NSColor(cgColor: rgb(85, 85, 85)), lightGray = NSColor(cgColor: rgb(170, 170, 170))
     // macOS's semantic colors, in both appearances.
-    public static let labelColor = NSColor(light: rgb(0, 0, 0, 0.85), dark: rgb(255, 255, 255, 0.85))
-    public static let secondaryLabelColor = NSColor(light: rgb(0, 0, 0, 0.5), dark: rgb(255, 255, 255, 0.55))
-    public static let tertiaryLabelColor = NSColor(light: rgb(0, 0, 0, 0.26), dark: rgb(255, 255, 255, 0.25))
-    public static let quaternaryLabelColor = NSColor(light: rgb(0, 0, 0, 0.1), dark: rgb(255, 255, 255, 0.1))
+    public static let labelColor = NSColor(light: rgb(0, 0, 0, 0.847), dark: rgb(255, 255, 255, 0.847))
+    public static let secondaryLabelColor = NSColor(light: rgb(0, 0, 0, 0.498), dark: rgb(255, 255, 255, 0.549))
+    public static let tertiaryLabelColor = NSColor(light: rgb(0, 0, 0, 0.259), dark: rgb(255, 255, 255, 0.247))
+    public static let quaternaryLabelColor = NSColor(light: rgb(0, 0, 0, 0.098), dark: rgb(255, 255, 255, 0.098))
     public static let textColor = NSColor(light: rgb(0, 0, 0), dark: rgb(255, 255, 255))
-    public static let placeholderTextColor = NSColor(light: rgb(0, 0, 0, 0.25), dark: rgb(255, 255, 255, 0.25))
-    public static let disabledControlTextColor = NSColor(light: rgb(0, 0, 0, 0.25), dark: rgb(255, 255, 255, 0.25))
-    public static let controlTextColor = NSColor(light: rgb(0, 0, 0, 0.85), dark: rgb(255, 255, 255, 0.85))
-    public static let controlAccentColor = NSColor(cgColor: rgb(0, 122, 255))
-    public static let selectedContentBackgroundColor = NSColor(cgColor: rgb(0, 100, 225))
-    public static let separatorColor = NSColor(light: rgb(0, 0, 0, 0.1), dark: rgb(255, 255, 255, 0.1))
+    public static let placeholderTextColor = NSColor(light: rgb(0, 0, 0, 0.498), dark: rgb(255, 255, 255, 0.549))
+    public static let disabledControlTextColor = NSColor(light: rgb(0, 0, 0, 0.247), dark: rgb(255, 255, 255, 0.247))
+    public static let controlTextColor = NSColor(light: rgb(0, 0, 0, 0.847), dark: rgb(255, 255, 255, 0.847))
+    public static let controlAccentColor = NSColor(light: rgb(0, 122, 255), dark: rgb(0, 122, 255))
+    public static let selectedContentBackgroundColor = NSColor(light: rgb(0, 100, 225), dark: rgb(0, 89, 209))
+    public static let separatorColor = NSColor(light: rgb(0, 0, 0, 0.098), dark: rgb(255, 255, 255, 0.098))
     public static let gridColor = NSColor(light: rgb(230, 230, 230), dark: rgb(26, 26, 26))
-    public static let windowBackgroundColor = NSColor(light: rgb(236, 236, 236), dark: rgb(50, 50, 50))
+    public static let windowBackgroundColor = NSColor(light: rgb(255, 255, 255), dark: rgb(30, 30, 30))
     public static let controlBackgroundColor = NSColor(light: rgb(255, 255, 255), dark: rgb(30, 30, 30))
     public static let textBackgroundColor = NSColor(light: rgb(255, 255, 255), dark: rgb(30, 30, 30))
-    public static let underPageBackgroundColor = NSColor(light: rgb(150, 150, 150), dark: rgb(40, 40, 40))
-    public static let controlColor = NSColor(light: rgb(255, 255, 255), dark: rgb(255, 255, 255, 0.25))
+    public static let underPageBackgroundColor = NSColor(light: rgb(246, 246, 246), dark: rgb(40, 40, 40))
+    public static let controlColor = NSColor(light: rgb(255, 255, 255), dark: rgb(255, 255, 255, 0.247))
     public static let shadowColor = NSColor(cgColor: rgb(0, 0, 0))
     public static let linkColor = NSColor(light: rgb(0, 104, 218), dark: rgb(65, 156, 255))
-    public static let systemRed = NSColor(light: rgb(255, 59, 48), dark: rgb(255, 69, 58))
-    public static let systemOrange = NSColor(light: rgb(255, 149, 0), dark: rgb(255, 159, 10))
-    public static let systemYellow = NSColor(light: rgb(255, 204, 0), dark: rgb(255, 214, 10))
-    public static let systemGreen = NSColor(light: rgb(40, 205, 65), dark: rgb(50, 215, 75))
-    public static let systemBlue = NSColor(light: rgb(0, 122, 255), dark: rgb(10, 132, 255))
+    public static let systemRed = NSColor(light: rgb(255, 56, 60), dark: rgb(255, 66, 69))
+    public static let systemOrange = NSColor(light: rgb(255, 141, 40), dark: rgb(255, 146, 48))
+    public static let systemYellow = NSColor(light: rgb(255, 204, 0), dark: rgb(255, 214, 0))
+    public static let systemGreen = NSColor(light: rgb(52, 199, 89), dark: rgb(48, 209, 88))
+    public static let systemBlue = NSColor(light: rgb(0, 136, 255), dark: rgb(0, 145, 255))
     public static let systemGray = NSColor(light: rgb(142, 142, 147), dark: rgb(152, 152, 157))
     public static let systemPink = NSColor(light: rgb(255, 45, 85), dark: rgb(255, 55, 95))
-    public static let systemPurple = NSColor(light: rgb(175, 82, 222), dark: rgb(191, 90, 242))
-    public static let systemTeal = NSColor(light: rgb(90, 200, 250), dark: rgb(100, 210, 255))
+    public static let systemPurple = NSColor(light: rgb(203, 48, 224), dark: rgb(219, 52, 242))
+    public static let systemTeal = NSColor(light: rgb(0, 195, 208), dark: rgb(0, 210, 224))
+    // Vibrancy. AppKit draws its controls' label colours inside a visual effect view much stronger than their alpha says.
+    // Measured on the Mac over .windowBackground (cacheDisplay of 40-point text): label, secondary, tertiary and
+    // quaternary come out as if their alpha were 0.99, 0.88, 0.57, 0.28 in dark, and 0.99, 0.76, 0.46, 0.18 in light.
+    private static let vibrantLabel = NSColor(light: rgb(0, 0, 0, 0.99), dark: rgb(255, 255, 255, 0.99))
+    private static let vibrantSecondary = NSColor(light: rgb(0, 0, 0, 0.76), dark: rgb(255, 255, 255, 0.88))
+    private static let vibrantTertiary = NSColor(light: rgb(0, 0, 0, 0.46), dark: rgb(255, 255, 255, 0.57))
+    private static let vibrantQuaternary = NSColor(light: rgb(0, 0, 0, 0.18), dark: rgb(255, 255, 255, 0.28))
+    /// This colour as a control draws it in `view`: a label colour inside a visual effect view becomes vibrant.
+    public func vibrant(in view: NSView?) -> NSColor {
+        guard let view, view.isInVibrantView else { return self }
+        if self === NSColor.labelColor || self === NSColor.controlTextColor { return NSColor.vibrantLabel }
+        if self === NSColor.secondaryLabelColor || self === NSColor.placeholderTextColor { return NSColor.vibrantSecondary }
+        if self === NSColor.tertiaryLabelColor { return NSColor.vibrantTertiary }
+        if self === NSColor.quaternaryLabelColor { return NSColor.vibrantQuaternary }
+        return self
+    }
     public var redComponent: CGFloat { cgColor.r }
     public var greenComponent: CGFloat { cgColor.g }
     public var blueComponent: CGFloat { cgColor.b }

@@ -383,7 +383,9 @@ private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }
 public enum CrashStack {
     nonisolated(unsafe) static var installed = false
     public static func install() {
-        guard !installed, ProcessInfo.processInfo.environment["SPIDER_CRASH_STACK"] == "1" else { return }
+        guard !installed else { return }
+        if ProcessInfo.processInfo.environment["SPIDER_VIEW_DUMP"] == "1" { write("", fresh: true) }
+        guard ProcessInfo.processInfo.environment["SPIDER_CRASH_STACK"] == "1" else { return }
         installed = true
         CrashStack.write("crash stacks on\n", fresh: true)
         _ = AddVectoredExceptionHandler(1) { info in

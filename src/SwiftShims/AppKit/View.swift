@@ -282,6 +282,15 @@ open class NSView: NSResponder {
     public convenience override init() { self.init(frame: .zero) }
 
     public static let noIntrinsicMetric: CGFloat = -1
+    /// Inside an active visual effect view: label colours are drawn vibrant there.
+    var isInVibrantView: Bool {
+        var v = superview
+        while let x = v {
+            if let fx = x as? NSVisualEffectView { return fx.state != .inactive }
+            v = x.superview
+        }
+        return false
+    }
     /// The screen's scale changed under the view (moved to a screen of another DPI).
     open func viewDidChangeBackingProperties() {}
     /// The size that fits in `size`; views that wrap (text) override it.
@@ -405,7 +414,23 @@ open class NSView: NSResponder {
     open func displayIfNeeded() { window?.composite() }
     public func lockFocus() {}
     public func unlockFocus() {}
+    /// SPIDER_VIEW_DUMP=1: the tree under this view, with frames and text, to stderr (on each cacheDisplay).
+    public func dumpTree(_ depth: Int = 0) { var out = ""; dumpTree(depth, into: &out); CrashStack.write(out, fresh: false) }
+    func dumpTree(_ depth: Int, into out: inout String) {
+        var line = String(repeating: "  ", count: depth) + String(describing: type(of: self))
+        let f = frame
+        line += String(format: " [%.1f,%.1f %.1fx%.1f]", f.minX, f.minY, f.width, f.height)
+        if isHidden { line += " hidden" }
+        if !takesPartInConstraints { line += " frames" }
+        if let t = self as? NSTextField { line += " text=\"\(t.stringValue.prefix(40))\" font=\(t.font?.pointSize ?? 0)" }
+        if let b = self as? NSButton { line += " title=\"\(b.title.prefix(30))\"" }
+        let n = intrinsicContentSize
+        line += String(format: " intrinsic %.1fx%.1f", n.width, n.height)
+        out += line + "\n"
+        for s in subviews { s.dumpTree(depth + 1, into: &out) }
+    }
     open func cacheDisplay(in r: CGRect, to rep: NSBitmapImageRep) {
+        if ProcessInfo.processInfo.environment["SPIDER_VIEW_DUMP"] == "1" { CrashStack.write("--- view tree\n", fresh: false); dumpTree() }
         // Over whatever is in the rep already, as AppKit does (a background drawn into it first stays).
         guard let ctx = rep.contextForDrawing() else { return }
         ctx.saveGState()

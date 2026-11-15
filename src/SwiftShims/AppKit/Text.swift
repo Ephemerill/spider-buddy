@@ -75,9 +75,17 @@ public final class NSFont: NSObject, @unchecked Sendable {
     public static func systemFontSize(for c: NSControl.ControlSize) -> CGFloat {
         switch c { case .mini: return 9; case .small: return 11; case .large: return 15; default: return 13 }
     }
+    // The system font draws in Segoe UI, but lays out with SF Pro's metrics, so text takes the same room as on the Mac
+    // and everything around it lands in the same place. Measured on the Mac (tools: see the work log, 2026-11-15):
+    // ascender 0.96680 and descender 0.21094 of the size at every weight, no leading.
+    var isSystem: Bool { family == NSFont.systemFamily }
     private var metricsCache: (CGFloat, CGFloat)?
     var metrics: (ascent: CGFloat, descent: CGFloat) {
         if let m = metricsCache { return m }
+        if isSystem {
+            metricsCache = (pointSize * 0.966797, pointSize * 0.210938)
+            return metricsCache!
+        }
         let m = CTTextMeasure("x", fontKey, pointSize)
         metricsCache = (m.ascent, m.descent)
         return (m.ascent, m.descent)
@@ -85,9 +93,19 @@ public final class NSFont: NSObject, @unchecked Sendable {
     public var ascender: CGFloat { metrics.ascent }
     public var descender: CGFloat { -metrics.descent }
     public var leading: CGFloat { 0 }
-    public var capHeight: CGFloat { pointSize * 0.7 }
-    public var xHeight: CGFloat { pointSize * 0.5 }
-    public var lineHeight: CGFloat { metrics.ascent + metrics.descent }
+    public var capHeight: CGFloat { pointSize * (isSystem ? 0.70459 : 0.7) }
+    public var xHeight: CGFloat { pointSize * (isSystem ? 0.52637 : 0.5) }
+    /// NSLayoutManager's default line height: the ascender and descender each rounded.
+    public var lineHeight: CGFloat { isSystem ? metrics.ascent.rounded() + metrics.descent.rounded() : metrics.ascent + metrics.descent }
+    /// The height of one line in a text field or label, as AppKit's typesetter rounds it (measured from NSTextField
+    /// on the Mac, sizes 6 to 60 by halves).
+    var labelLineHeight: CGFloat {
+        guard isSystem else { return (metrics.ascent + metrics.descent).rounded(.up) }
+        let i = Int((pointSize * 2).rounded()) - 12
+        if i >= 0, i < NSFont.labelLines.count { return NSFont.labelLines[i] }
+        return (pointSize * 1.18).rounded()
+    }
+    private static let labelLines: [CGFloat] = [8, 8, 9, 9, 10, 10, 11, 12, 13, 13, 14, 14, 15, 15, 16, 16, 17, 18, 19, 19, 19, 20, 20, 21, 21, 22, 23, 24, 24, 25, 25, 26, 26, 27, 27, 28, 28, 29, 29, 30, 30, 32, 32, 33, 33, 34, 34, 35, 35, 35, 37, 37, 38, 38, 39, 39, 40, 40, 41, 41, 43, 43, 44, 44, 45, 45, 46, 46, 47, 48, 49, 49, 50, 50, 51, 51, 52, 52, 53, 54, 54, 55, 55, 56, 56, 57, 57, 58, 59, 60, 60, 61, 61, 62, 62, 63, 63, 64, 65, 66, 66, 67, 67, 68, 68, 69, 69, 71, 71]
     func width(_ s: String) -> CGFloat { CTTextMeasure(s, fontKey, pointSize).width }
 }
 
@@ -115,7 +133,13 @@ public struct NSUnderlineStyle: OptionSet, Sendable { public let rawValue: Int; 
 
 /// A run of text with one look.
 struct TextRun { var text: String; var font: NSFont; var color: CGColor; var underline: Bool }
-struct TextLine { var runs: [TextRun]; var width: CGFloat; var ascent: CGFloat; var descent: CGFloat }
+struct TextLine {
+    var runs: [TextRun]; var width: CGFloat; var ascent: CGFloat; var descent: CGFloat
+    /// The line's height as AppKit lays it out; the glyphs sit in the middle of any room beyond ascent and descent.
+    var height: CGFloat = 0
+    var lineHeight: CGFloat { max(height, ascent + descent) }
+    var baseline: CGFloat { ascent + (lineHeight - ascent - descent) / 2 }
+}
 
 enum TextLayout {
     static func runs(_ s: NSAttributedString, defaultFont: NSFont = .systemFont(ofSize: 12), defaultColor: CGColor = .black) -> ([TextRun], NSParagraphStyle?) {
@@ -142,10 +166,10 @@ enum TextLayout {
         var cur: [TextRun] = []
         var curW: CGFloat = 0
         func flush() {
-            var a: CGFloat = 0, d: CGFloat = 0
-            for r in cur { a = max(a, r.font.metrics.ascent); d = max(d, r.font.metrics.descent) }
-            if cur.isEmpty, let f = runs.first?.font { a = f.metrics.ascent; d = f.metrics.descent }
-            lines.append(TextLine(runs: cur, width: curW, ascent: a, descent: d))
+            var a: CGFloat = 0, d: CGFloat = 0, h: CGFloat = 0
+            for r in cur { a = max(a, r.font.metrics.ascent); d = max(d, r.font.metrics.descent); h = max(h, r.font.labelLineHeight) }
+            if cur.isEmpty, let f = runs.first?.font { a = f.metrics.ascent; d = f.metrics.descent; h = f.labelLineHeight }
+            lines.append(TextLine(runs: cur, width: curW, ascent: a, descent: d, height: h))
             cur = []; curW = 0
         }
         func add(_ t: String, _ r: TextRun) {
@@ -219,7 +243,7 @@ enum TextLayout {
     }
     static func size(_ lines: [TextLine], spacing: CGFloat) -> CGSize {
         var w: CGFloat = 0, h: CGFloat = 0
-        for (i, l) in lines.enumerated() { w = max(w, l.width); h += l.ascent + l.descent + (i > 0 ? spacing : 0) }
+        for (i, l) in lines.enumerated() { w = max(w, l.width); h += l.lineHeight + (i > 0 ? spacing : 0) }
         return CGSize(width: w.rounded(.up), height: h.rounded(.up))
     }
     /// Draws lines inside `rect` (in the current context's coordinates), top first, keeping text upright in flipped views.
@@ -232,7 +256,7 @@ enum TextLayout {
             case .center: x = rect.minX + (rect.width - l.width) / 2
             default: break
             }
-            let base = flipped ? y + l.ascent : y - l.ascent
+            let base = flipped ? y + l.baseline : y - l.baseline
             for r in l.runs {
                 let w = r.font.width(r.text)
                 ctx.saveGState()
@@ -247,7 +271,7 @@ enum TextLayout {
                 ctx.restoreGState()
                 x += w
             }
-            let step = l.ascent + l.descent + spacing
+            let step = l.lineHeight + spacing
             y += flipped ? step : -step
         }
     }
