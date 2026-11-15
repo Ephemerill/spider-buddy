@@ -380,9 +380,11 @@ private extension String { var nilIfEmpty: String? { isEmpty ? nil : self } }
 
 /// SPIDER_CRASH_STACK=1: on a fatal exception, prints the stack as offsets into each module
 /// ("SpiderBuddy.exe+0x1234"), for llvm-symbolizer and the .pdb. Swift's own backtracer cannot read our PDBs.
-enum CrashStack {
-    static func install() {
-        guard ProcessInfo.processInfo.environment["SPIDER_CRASH_STACK"] == "1" else { return }
+public enum CrashStack {
+    nonisolated(unsafe) static var installed = false
+    public static func install() {
+        guard !installed, ProcessInfo.processInfo.environment["SPIDER_CRASH_STACK"] == "1" else { return }
+        installed = true
         CrashStack.write("crash stacks on\n", fresh: true)
         _ = AddVectoredExceptionHandler(1) { info in
             guard let rec = info?.pointee.ExceptionRecord?.pointee else { return EXCEPTION_CONTINUE_SEARCH }
@@ -398,7 +400,8 @@ enum CrashStack {
         }
     }
     /// To %TEMP%\\spider-crash.txt, straight through the file system: nothing buffered is lost when the process dies.
-    static func write(_ s: String, fresh: Bool) {
+    public static func mark(_ s: String) { if installed { write("at \(s)\n", fresh: false) } }
+    public static func write(_ s: String, fresh: Bool) {
         let path = (ProcessInfo.processInfo.environment["TEMP"] ?? ".") + "\\spider-crash.txt"
         let h = path.withCString(encodedAs: UTF16.self) {
             CreateFileW($0, DWORD(FILE_APPEND_DATA), DWORD(FILE_SHARE_READ), nil, DWORD(fresh ? CREATE_ALWAYS : OPEN_ALWAYS), DWORD(FILE_ATTRIBUTE_NORMAL), nil)
@@ -420,5 +423,61 @@ enum CrashStack {
         let name = path.split(separator: "\\").last.map(String.init) ?? path
         let off = UInt(bitPattern: p) - UInt(bitPattern: UnsafeRawPointer(module))
         return "\(name)+0x\(String(off, radix: 16))"
+    }
+}
+
+// MARK: Hang samples (developer aid)
+
+/// SPIDER_HANG_STACK=1: when the main thread has not finished a frame for 3 s, its stack is written to
+/// %TEMP%\spider-crash.txt as module offsets, every 3 s while it stays stuck. Unwinds with the x64 unwind tables,
+/// which work where debuggers cannot unwind our frames.
+public enum HangWatch {
+    nonisolated(unsafe) static var beats = 0
+    nonisolated(unsafe) static var mainThread: HANDLE?
+    public static func beat() { beats &+= 1 }
+    public static func install() {
+        guard ProcessInfo.processInfo.environment["SPIDER_HANG_STACK"] == "1", mainThread == nil else { return }
+        var h: HANDLE?
+        _ = DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &h, 0, false, DWORD(DUPLICATE_SAME_ACCESS))
+        mainThread = h
+        CrashStack.write("hang watch on\n", fresh: true)
+        let t = Thread {
+            var last = -1, stuck = 0
+            while true {
+                Thread.sleep(forTimeInterval: 1)
+                if beats == last { stuck += 1 } else { stuck = 0; last = beats }
+                if stuck >= 3, stuck % 3 == 0 { sample() }
+            }
+        }
+        t.start()
+    }
+    static func sample() {
+        guard let th = mainThread else { return }
+        guard SuspendThread(th) != DWORD.max else { return }
+        defer { ResumeThread(th) }
+        let raw = UnsafeMutableRawPointer.allocate(byteCount: MemoryLayout<CONTEXT>.size, alignment: 16)
+        defer { raw.deallocate() }
+        let ctx = raw.bindMemory(to: CONTEXT.self, capacity: 1)
+        memset(raw, 0, MemoryLayout<CONTEXT>.size)
+        ctx.pointee.ContextFlags = 0x10000B   // CONTEXT_FULL (AMD64: control, integer, floating point)
+        guard GetThreadContext(th, ctx) else { return }
+        var out = "*** main thread stuck (\(beats) frames so far)\n"
+        for i in 0..<48 {
+            let pc = ctx.pointee.Rip
+            guard pc != 0 else { break }
+            out += "  #\(i) \(CrashStack.describe(UnsafeMutableRawPointer(bitPattern: UInt(pc))))\n"
+            var base: DWORD64 = 0
+            if let fn = RtlLookupFunctionEntry(pc, &base, nil) {
+                var handler: PVOID?
+                var frame: DWORD64 = 0
+                _ = RtlVirtualUnwind(DWORD(UNW_FLAG_NHANDLER), base, pc, fn, ctx, &handler, &frame, nil)
+            } else {
+                // A leaf: the return address is on top of the stack.
+                guard let sp = UnsafePointer<DWORD64>(bitPattern: UInt(ctx.pointee.Rsp)) else { break }
+                ctx.pointee.Rip = sp.pointee
+                ctx.pointee.Rsp += 8
+            }
+        }
+        CrashStack.write(out, fresh: false)
     }
 }

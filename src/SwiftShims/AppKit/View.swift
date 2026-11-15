@@ -496,6 +496,10 @@ open class NSView: NSResponder {
 
     // MARK: Layout
 
+    /// The last system solved with this view as the root, and its answer.
+
+    var layoutCache: [LayoutCache] = []
+
     let layoutVars = LayoutVars()
     var activeConstraints: [NSLayoutConstraint] = []
     public private(set) var layoutGuides: [NSLayoutGuide] = []

@@ -1,0 +1,15 @@
+#!/bin/bash
+# arun [secs]: sync uncommitted changes, build the debug app into build\swift-app, run it headless (over SSH, no
+# desktop) for a few seconds, and show the first symbolized crash frames, or "still running". For finding crashes fast.
+HERE="$(cd "$(dirname "$0")" && pwd)"; export PATH="$HERE/../dev:$PATH"
+lap sync-wip | tail -1
+BA_TAIL=20 "$HERE/ba" -Opt -Onone -Debug -Out 'build\swift-app' 2>&1 | grep -E "swiftc exit|errors:|error:" | head -12
+lap ps <<PS | tr -d '\000\r' | grep -a -E "Fatal|crashed|^ *[0-9]+ .* in SpiderBuddy|^exit|still running|^out:" | head -${ARUN_LINES:-24}
+Set-Location C:\Users\User\Documents\Projects\spider-buddy
+\$env:PATH = "\$env:LOCALAPPDATA\Programs\Swift\Runtimes\6.4.2\usr\bin;\$env:PATH"
+\$p = Start-Process build\swift-app\SpiderBuddy.exe -PassThru -NoNewWindow -RedirectStandardError \$env:TEMP\sb-err.txt -RedirectStandardOutput \$env:TEMP\sb-out.txt
+if (-not \$p.WaitForExit(${1:-15}000)) { "still running after ${1:-15} s"; Stop-Process \$p -Force }
+"exit \$(\$p.ExitCode)"
+Get-Content \$env:TEMP\sb-out.txt -ErrorAction SilentlyContinue | Select -Last 5 | ForEach-Object { "out: \$_" }
+Get-Content \$env:TEMP\sb-err.txt
+PS

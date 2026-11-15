@@ -700,7 +700,8 @@ open class NSSegmentedControl: NSControl {
     open var trackingMode = SwitchTracking.selectOne
     open var segmentStyle = Style.automatic
     public enum Distribution: Int, Sendable { case fit, fill, fillEqually, fillProportionally }
-    open var segmentDistribution = Distribution.fit { didSet { invalidateIntrinsicContentSize(); needsLayout = true } }
+    /// AppKit's default since 10.13: natural widths, any extra shared out.
+    open var segmentDistribution = Distribution.fill { didSet { invalidateIntrinsicContentSize(); needsLayout = true } }
     open var selectedSegmentBezelColor: NSColor?
     private func resize() {
         func fit<T>(_ a: inout [T], _ v: T) { while a.count < segmentCount { a.append(v) }; if a.count > segmentCount { a.removeLast(a.count - segmentCount) } }
@@ -709,11 +710,12 @@ open class NSSegmentedControl: NSControl {
     }
     public convenience init(labels l: [String], trackingMode m: SwitchTracking, target: AnyObject?, action: Selector?) {
         self.init(frame: .zero)
-        segmentCount = l.count; labels = l; trackingMode = m; self.target = target; self.action = action
+        // (didSet does not run inside the class's own initializers: sized here.)
+        segmentCount = l.count; resize(); labels = l; trackingMode = m; self.target = target; self.action = action
     }
     public convenience init(images i: [NSImage], trackingMode m: SwitchTracking, target: AnyObject?, action: Selector?) {
         self.init(frame: .zero)
-        segmentCount = i.count; images = i; trackingMode = m; self.target = target; self.action = action
+        segmentCount = i.count; resize(); images = i; trackingMode = m; self.target = target; self.action = action
     }
     public func setLabel(_ s: String, forSegment i: Int) { labels[i] = s; invalidateIntrinsicContentSize(); needsDisplay = true }
     public func label(forSegment i: Int) -> String? { labels[i] }
@@ -737,10 +739,15 @@ open class NSSegmentedControl: NSControl {
     }
     open override var intrinsicContentSize: CGSize {
         var w: CGFloat = 0
-        for i in 0..<segmentCount { w += natural(i) }
+        if segmentDistribution == .fillEqually {
+            w = (0..<segmentCount).map(natural).max().map { $0 * CGFloat(segmentCount) } ?? 0
+        } else {
+            for i in 0..<segmentCount { w += natural(i) }
+        }
         return CGSize(width: w + 2, height: controlSize.height)
     }
     private func natural(_ i: Int) -> CGFloat {
+        guard labels.indices.contains(i) else { return 16 }
         if widths[i] > 0 { return widths[i] }
         let tw = labels[i].isEmpty ? 0 : effectiveFont.width(labels[i])
         let iw = images[i]?.size.width ?? 0
@@ -752,7 +759,13 @@ open class NSSegmentedControl: NSControl {
         let extra = segmentCount > 0 ? (b.width - total) / CGFloat(segmentCount) : 0
         var x = b.minX
         return (0..<segmentCount).map { i in
-            let w = natural(i) + extra
+            let w: CGFloat
+            switch segmentDistribution {
+            case .fillEqually: w = b.width / CGFloat(segmentCount)
+            case .fillProportionally: w = total > 0 ? natural(i) * b.width / total : b.width / CGFloat(segmentCount)
+            case .fit: w = natural(i)
+            case .fill: w = natural(i) + extra
+            }
             defer { x += w }
             return CGRect(x: x, y: b.minY, width: w, height: b.height)
         }

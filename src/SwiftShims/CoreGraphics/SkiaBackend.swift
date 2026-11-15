@@ -163,6 +163,8 @@ public final class SkiaBackend: CGBackend {
     private var wholeBox: SkiaBox { SkiaBox(x0: 0, y0: 0, x1: Int(w), y1: Int(h)) }
     public func resetBox() { box = nil }
     private func grow(_ x0: CGFloat, _ y0: CGFloat, _ x1: CGFloat, _ y1: CGFloat) {
+        // (NaN or infinite edges, from a degenerate transform or layout: everything may have changed.)
+        guard x0.isFinite, y0.isFinite, x1.isFinite, y1.isFinite, abs(x0) < 1e7, abs(y0) < 1e7, abs(x1) < 1e7, abs(y1) < 1e7 else { growAll(); return }
         let a = Int(x0.rounded(.down)), b = Int((h - y1).rounded(.down)), c = Int(x1.rounded(.up)), d = Int((h - y0).rounded(.up))
         if var r = box { r.x0 = min(r.x0, a); r.y0 = min(r.y0, b); r.x1 = max(r.x1, c); r.y1 = max(r.y1, d); box = r } else { box = SkiaBox(x0: a, y0: b, x1: c, y1: d) }
     }
@@ -451,6 +453,7 @@ public final class SkiaBackend: CGBackend {
     }
 
     public func drawText(_ text: String, font: String, size: CGFloat, color: CGColor, at position: CGPoint, state s: CGState) {
+        guard position.x.isFinite, position.y.isFinite, size.isFinite, size > 0 else { return }
         do {
             let k = max(abs(s.ctm.a) + abs(s.ctm.b), 0.01)
             let wd = SkiaText.measure(text, font: font, size: size).width * k + 8, ht = size * k * 2

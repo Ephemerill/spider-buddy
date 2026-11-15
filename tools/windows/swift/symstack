@@ -1,0 +1,15 @@
+#!/bin/bash
+# symstack [n]: the n-th stack (default the last) in the laptop's %TEMP%\spider-crash.txt, symbolized against the
+# debug app's PDB (build\swift-app). Pairs with SPIDER_CRASH_STACK=1 / SPIDER_HANG_STACK=1.
+HERE="$(cd "$(dirname "$0")" && pwd)"; export PATH="$HERE/../dev:$PATH"
+T=$(mktemp)
+lap ps <<'PS' | tr -d '\000\r' > "$T"
+Get-Content $env:TEMP\spider-crash.txt
+PS
+n=${1:-$(grep -c '^\*\*\*' "$T")}
+awk -v n="$n" '/^\*\*\*/{k++} k==n' "$T" | head -1
+offs=$(awk -v n="$n" '/^\*\*\*/{k++} k==n' "$T" | grep -o "SpiderBuddy.exe+0x[0-9a-f]*" | sed 's/SpiderBuddy.exe+//' | python3 -c "import sys;print(' '.join(hex(0x140000000+int(l,16)) for l in sys.stdin if l.strip()))")
+[ -z "$offs" ] && { cat "$T" | tail -5; exit; }
+lap ps <<PS | tr -d '\000\r' | grep -v '^$' | paste - - | sed -E 's/\t.*\\([^\\]+:[0-9]+):[0-9]+$/  \1/' | cut -c1-170 | head -${SYM_LINES:-30}
+& "\$env:LOCALAPPDATA\Programs\Swift\Toolchains\6.4.2+Asserts\usr\bin\llvm-symbolizer.exe" --obj=C:\Users\User\Documents\Projects\spider-buddy\build\swift-app\SpiderBuddy.exe --demangle $offs
+PS

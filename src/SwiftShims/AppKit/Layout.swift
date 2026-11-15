@@ -1,6 +1,9 @@
 // Auto Layout for the AppKit stand-in: anchors and constraints with AppKit's meanings, solved by a small Cassowary solver.
 // The system is rebuilt from the views on each layout pass, so no edit variables are needed. Coordinates inside the
-// solver are window-wide and y-down, which is what constraint constants mean regardless of isFlipped.
+// solver are y-down, which is what constraint constants mean regardless of isFlipped, and each view's origin is relative
+// to its superview's: a constraint is written over the items' paths to the root, where their shared ancestors cancel.
+// That keeps the system in small independent blocks; with window-wide origins a long stack's rows fill in with every
+// view before it, and the panel's 3,300 constraints took a second or more to solve.
 import Foundation
 import CoreGraphics
 
@@ -122,56 +125,154 @@ final class LayoutVars {
     var solved = CGRect.zero
 }
 
-private struct Sym: Hashable {
+private struct Sym: Equatable {
     enum Kind: UInt8 { case invalid, external, slack, error, dummy }
     var id: Int32
     var kind: Kind
     static let invalid = Sym(id: 0, kind: .invalid)
 }
+/// A row of the tableau: a constant and coefficients, kept sorted by symbol id. Adding rows is a linear merge, with no
+/// hashing: a solve does millions of these.
 private final class Row {
-    var cells: [Sym: Double] = [:]
+    var syms: [Sym] = []
+    var coefs: [Double] = []
     var constant: Double = 0
     init(_ c: Double = 0) { constant = c }
-    init(copy r: Row) { cells = r.cells; constant = r.constant }
+    init(copy r: Row) { syms = r.syms; coefs = r.coefs; constant = r.constant }
+    var isEmpty: Bool { syms.isEmpty }
+    private func find(_ id: Int32) -> (Int, Bool) {
+        var lo = 0, hi = syms.count
+        while lo < hi { let m = (lo + hi) >> 1; if syms[m].id < id { lo = m + 1 } else { hi = m } }
+        return (lo, lo < syms.count && syms[lo].id == id)
+    }
+    func coefficient(_ s: Sym) -> Double { let (i, f) = find(s.id); return f ? coefs[i] : 0 }
+    func contains(_ s: Sym) -> Bool { find(s.id).1 }
     func add(_ s: Sym, _ c: Double) {
-        let v = (cells[s] ?? 0) + c
-        if abs(v) < 1e-8 { cells[s] = nil } else { cells[s] = v }
+        let (i, f) = find(s.id)
+        if f {
+            let v = coefs[i] + c
+            if abs(v) < 1e-8 { syms.remove(at: i); coefs.remove(at: i) } else { coefs[i] = v }
+        } else if abs(c) >= 1e-8 {
+            syms.insert(s, at: i); coefs.insert(c, at: i)
+        }
     }
-    func add(_ r: Row, _ c: Double) {
+    @discardableResult func remove(_ s: Sym) -> Double? {
+        let (i, f) = find(s.id)
+        guard f else { return nil }
+        let c = coefs[i]
+        syms.remove(at: i); coefs.remove(at: i)
+        return c
+    }
+    /// self += r × c. Symbols that newly appear go in `added`, those that cancel out in `removed`.
+    func add(_ r: Row, _ c: Double, added: inout [Sym], removed: inout [Sym]) {
         constant += r.constant * c
-        for (s, v) in r.cells { add(s, v * c) }
+        var ns: [Sym] = [], nc: [Double] = []
+        ns.reserveCapacity(syms.count + r.syms.count); nc.reserveCapacity(syms.count + r.syms.count)
+        var i = 0, j = 0
+        let n = syms.count, m = r.syms.count
+        while i < n || j < m {
+            if j == m || (i < n && syms[i].id < r.syms[j].id) {
+                ns.append(syms[i]); nc.append(coefs[i]); i += 1
+            } else if i == n || r.syms[j].id < syms[i].id {
+                let v = r.coefs[j] * c
+                if abs(v) >= 1e-8 { ns.append(r.syms[j]); nc.append(v); added.append(r.syms[j]) }
+                j += 1
+            } else {
+                let v = coefs[i] + r.coefs[j] * c
+                if abs(v) >= 1e-8 { ns.append(syms[i]); nc.append(v) } else { removed.append(syms[i]) }
+                i += 1; j += 1
+            }
+        }
+        syms = ns; coefs = nc
     }
-    func reverseSign() { constant = -constant; for k in Array(cells.keys) { cells[k] = -cells[k]! } }
+    func add(_ r: Row, _ c: Double) { var a: [Sym] = [], b: [Sym] = []; add(r, c, added: &a, removed: &b) }
+    func reverseSign() { constant = -constant; for i in coefs.indices { coefs[i] = -coefs[i] } }
     func solve(for s: Sym) {
-        let c = -1.0 / cells[s]!
-        cells[s] = nil
+        guard let k = remove(s) else { return }
+        let c = -1.0 / k
         constant *= c
-        for k in Array(cells.keys) { cells[k]! *= c }
+        for i in coefs.indices { coefs[i] *= c }
     }
     func solve(for lhs: Sym, _ rhs: Sym) { add(lhs, -1); solve(for: rhs) }
-    func substitute(_ s: Sym, _ r: Row) {
-        if let c = cells.removeValue(forKey: s) { add(r, c) }
+    /// Replaces `s` by `r` if this row has it.
+    @discardableResult func substitute(_ s: Sym, _ r: Row, added: inout [Sym], removed: inout [Sym]) -> Bool {
+        guard let c = remove(s) else { return false }
+        add(r, c, added: &added, removed: &removed)
+        return true
     }
+    func substitute(_ s: Sym, _ r: Row) { var a: [Sym] = [], b: [Sym] = []; substitute(s, r, added: &a, removed: &b) }
 }
 final class LayoutSolver {
     enum Op { case eq, le, ge }
-    private var rows: [Sym: Row] = [:]
+    /// The tableau, by basic symbol id.
+    private var rows: [Row?] = []
+    /// For each symbol id, the ids of the rows it appears in: substitutions and the ratio test touch only those.
+    private var cols: [[Int32]] = []
+    private var kinds: [Sym.Kind] = []
+    private var rowTotal = 0
     private var vars: [LayoutVar: Sym] = [:]
     private var next: Int32 = 1
     private let objective = Row()
-    private func make(_ k: Sym.Kind) -> Sym { next += 1; return Sym(id: next, kind: k) }
+    var pivots = 0, adds = 0, substitutions = 0, cellOps = 0
+    var rowCount: Int { rowTotal }
+    var shape: String {
+        let sizes = rows.compactMap { $0?.syms.count }
+        return "rows avg \(sizes.reduce(0, +) / max(sizes.count, 1)) max \(sizes.max() ?? 0), objective \(objective.syms.count), cols max \(cols.map(\.count).max() ?? 0)"
+    }
+    private func make(_ k: Sym.Kind) -> Sym {
+        next += 1
+        while rows.count <= Int(next) { rows.append(nil); cols.append([]); kinds.append(.invalid) }
+        kinds[Int(next)] = k
+        return Sym(id: next, kind: k)
+    }
     private func sym(_ v: LayoutVar) -> Sym {
         if let s = vars[v] { return s }
         let s = make(.external); vars[v] = s; return s
     }
+    private func row(_ s: Sym) -> Row? { rows[Int(s.id)] }
+
+    private func setRow(_ key: Sym, _ row: Row) {
+        rows[Int(key.id)] = row
+        rowTotal += 1
+        for s in row.syms { cols[Int(s.id)].append(key.id) }
+    }
+    private func takeRow(_ key: Sym) -> Row? {
+        guard let row = rows[Int(key.id)] else { return nil }
+        rows[Int(key.id)] = nil
+        rowTotal -= 1
+        for s in row.syms { uncol(s.id, key.id) }
+        return row
+    }
+    private func uncol(_ s: Int32, _ r: Int32) {
+        let i = Int(s)
+        if let k = cols[i].firstIndex(of: r) { cols[i].swapAt(k, cols[i].count - 1); cols[i].removeLast() }
+    }
+    /// Replaces `s` by `row` in every row that has it, and in the objective (and `extra`, an artificial objective).
+    private func substituteEverywhere(_ s: Sym, _ row: Row, extra: Row? = nil) {
+        let keys = cols[Int(s.id)]
+        cols[Int(s.id)] = []
+        var added: [Sym] = [], removed: [Sym] = []
+        for k in keys {
+            guard let r = rows[Int(k)] else { continue }
+            added.removeAll(keepingCapacity: true); removed.removeAll(keepingCapacity: true)
+            substitutions += 1; cellOps += row.syms.count + r.syms.count
+            r.substitute(s, row, added: &added, removed: &removed)
+            for x in added { cols[Int(x.id)].append(k) }
+            for x in removed { uncol(x.id, k) }
+        }
+        objective.substitute(s, row)
+        if let extra, extra !== objective { extra.substitute(s, row) }
+    }
+
     /// terms·vars + constant (op) 0, at this strength. Returns false for a required constraint that cannot hold.
     @discardableResult
     func add(_ terms: [(LayoutVar, Double)], _ constant: Double, _ op: Op, strength: Double, required: Bool) -> Bool {
+        adds += 1
         let row = Row(constant)
         for (v, c) in terms {
             guard abs(c) > 1e-8 else { continue }
             let s = sym(v)
-            if let r = rows[s] { row.add(r, c) } else { row.add(s, c) }
+            if let r = self.row(s) { row.add(r, c) } else { row.add(s, c) }
         }
         var marker = Sym.invalid, other = Sym.invalid
         switch op {
@@ -201,7 +302,7 @@ final class LayoutSolver {
         if row.constant < 0 { row.reverseSign() }
         let subject = choose(row, marker, other)
         if subject == .invalid {
-            if row.cells.keys.allSatisfy({ $0.kind == .dummy }) {
+            if row.syms.allSatisfy({ $0.kind == .dummy }) {
                 if abs(row.constant) > 1e-8 { return false }
                 let m = marker
                 row.solve(for: m)
@@ -217,64 +318,117 @@ final class LayoutSolver {
         return true
     }
     private func insert(_ s: Sym, _ row: Row) {
-        for (_, r) in rows { r.substitute(s, row) }
-        objective.substitute(s, row)
-        rows[s] = row
+        substituteEverywhere(s, row)
+        setRow(s, row)
     }
     private func choose(_ row: Row, _ m: Sym, _ o: Sym) -> Sym {
-        for (s, _) in row.cells where s.kind == .external { return s }
-        if m.kind == .slack || m.kind == .error, (row.cells[m] ?? 0) < 0 { return m }
-        if o.kind == .slack || o.kind == .error, (row.cells[o] ?? 0) < 0 { return o }
+        // (Sorted by id, so the first external is the lowest-numbered.)
+        if let ext = row.syms.first(where: { $0.kind == .external }) { return ext }
+        if m.kind == .slack || m.kind == .error, row.coefficient(m) < 0 { return m }
+        if o.kind == .slack || o.kind == .error, row.coefficient(o) < 0 { return o }
         return .invalid
     }
     private func addWithArtificial(_ row: Row) -> Bool {
         let art = make(.slack)
-        rows[art] = Row(copy: row)
+        setRow(art, Row(copy: row))
         let a = Row(copy: row)
         optimize(a)
         let ok = abs(a.constant) < 1e-6
-        if let r = rows.removeValue(forKey: art) {
-            if r.cells.isEmpty { return ok }
-            guard let e = r.cells.keys.first(where: { $0.kind == .slack || $0.kind == .error || $0.kind == .external }) else { return false }
+        if let r = takeRow(art) {
+            if r.isEmpty { return ok }
+            guard let e = r.syms.first(where: { $0.kind == .slack || $0.kind == .error }) else { return false }
             r.solve(for: art, e)
-            for (_, x) in rows { x.substitute(e, r) }
-            objective.substitute(e, r)
-            rows[e] = r
+            substituteEverywhere(e, r)
+            setRow(e, r)
         }
-        for (_, r) in rows { r.cells[art] = nil }
-        objective.cells[art] = nil
+        for k in cols[Int(art.id)] { rows[Int(k)]?.remove(art) }
+        cols[Int(art.id)] = []
+        objective.remove(art)
         return ok
     }
     private func optimize(_ obj: Row) {
         var guardCount = 0
-        while guardCount < 5000 {
+        var degenerate = 0
+        while true {
             guardCount += 1
-            // Entering: the most negative pivotable cell, ties broken by id so the result does not depend on hashing.
+            if guardCount == 20000 { fputs("layout: simplex did not settle\n", stderr); return }
+            // Entering: the most negative cell (Dantzig), which takes the fewest pivots; but during a run of
+            // degenerate pivots, which make no progress and can cycle on the systems view trees make, the lowest-numbered
+            // one (Bland's rule), which cannot. Ties go by id, so the result does not depend on hashing.
             var enter = Sym.invalid
-            var best = -1e-9
-            for (s, c) in obj.cells where s.kind != .dummy && s.kind != .external && c < 0 {
-                if c < best - 1e-12 || (abs(c - best) <= 1e-12 && (enter == .invalid || s.id < enter.id)) { best = c; enter = s }
-            }
-            guard enter != .invalid else { return }
-            var leave = Sym.invalid
-            var ratio = Double.greatestFiniteMagnitude
-            for (s, r) in rows where s.kind != .external {
-                if let c = r.cells[enter], c < 0 {
-                    let q = -r.constant / c
-                    if q < ratio - 1e-12 || (abs(q - ratio) <= 1e-12 && s.id < leave.id) { ratio = q; leave = s }
+            if degenerate > 20 {
+                for i in obj.syms.indices where obj.coefs[i] < -1e-9 {
+                    let s = obj.syms[i]
+                    if s.kind != .dummy && s.kind != .external { enter = s; break }
+                }
+            } else {
+                var best = -1e-9
+                for i in obj.syms.indices where obj.coefs[i] < best {
+                    let s = obj.syms[i]
+                    if s.kind != .dummy && s.kind != .external { enter = s; best = obj.coefs[i] }
                 }
             }
-            guard leave != .invalid, let row = rows.removeValue(forKey: leave) else { return }
+            guard enter != .invalid else { return }
+            pivots += 1
+            var leave = Sym.invalid
+            var ratio = Double.greatestFiniteMagnitude
+            for k in cols[Int(enter.id)] where kinds[Int(k)] != .external {
+                guard let r = rows[Int(k)] else { continue }
+                let c = r.coefficient(enter)
+                if c < 0 {
+                    let q = -r.constant / c
+                    if q < ratio - 1e-12 || (abs(q - ratio) <= 1e-12 && (leave == .invalid || k < leave.id)) { ratio = q; leave = Sym(id: k, kind: kinds[Int(k)]) }
+                }
+            }
+            guard leave != .invalid, let row = takeRow(leave) else { return }
+            degenerate = ratio < 1e-9 ? degenerate + 1 : 0
             row.solve(for: leave, enter)
-            for (_, r) in rows { r.substitute(enter, row) }
-            objective.substitute(enter, row)
-            if obj !== objective { obj.substitute(enter, row) }
-            rows[enter] = row
+            substituteEverywhere(enter, row, extra: obj)
+            setRow(enter, row)
         }
     }
     func updateVariables() {
-        for (v, s) in vars { v.value = rows[s]?.constant ?? 0 }
+        for (v, s) in vars { v.value = rows[Int(s.id)]?.constant ?? 0 }
     }
+}
+
+/// The constraints of one solve, recorded, so that a system identical to the last one solved for the same root is
+/// answered from the last result: a panel lays out the same unchanged tree many times over when it opens.
+final class LayoutSystem {
+    private var list: [([(LayoutVar, Double)], Double, LayoutSolver.Op, Double, Bool)] = []
+    private var hasher = Hasher()
+    private(set) var solver: LayoutSolver?
+    private(set) var cached = false
+    func add(_ terms: [(LayoutVar, Double)], _ constant: Double, _ op: LayoutSolver.Op, strength: Double, required: Bool) {
+        list.append((terms, constant, op, strength, required))
+        for (v, c) in terms { hasher.combine(ObjectIdentifier(v)); hasher.combine(c.bitPattern) }
+        hasher.combine(constant.bitPattern); hasher.combine(op); hasher.combine(strength.bitPattern); hasher.combine(required)
+        hasher.combine(-1)
+    }
+    /// Solves, or takes the last answer for `root` if nothing changed since. Leaves every variable's value set.
+    func solve(root: NSView) {
+        let key = hasher.finalize()
+        if let c = root.layoutCache.first(where: { $0.key == key && $0.count == list.count }) {
+            for (v, x) in c.values { v.value = x }
+            cached = true
+            return
+        }
+        let s = LayoutSolver()
+        for (t, k, op, st, req) in list { s.add(t, k, op, strength: st, required: req) }
+        s.updateVariables()
+        solver = s
+        var seen = Set<ObjectIdentifier>(), values: [(LayoutVar, Double)] = []
+        for (t, _, _, _, _) in list { for (v, _) in t where seen.insert(ObjectIdentifier(v)).inserted { values.append((v, v.value)) } }
+        // A few kept: fitting and laying out at a size alternate on the same root.
+        root.layoutCache.insert(LayoutCache(key: key, count: list.count, values: values), at: 0)
+        if root.layoutCache.count > 3 { root.layoutCache.removeLast() }
+    }
+    var count: Int { list.count }
+}
+struct LayoutCache {
+    let key: Int
+    let count: Int
+    let values: [(LayoutVar, Double)]
 }
 
 // MARK: Building a system from the view tree
@@ -287,24 +441,46 @@ enum LayoutEngine {
         if let g = o as? NSLayoutGuide { return g.vars }
         return nil
     }
-    private static func terms(_ o: AnyObject?, _ a: NSLayoutAttribute, _ k: Double) -> [(LayoutVar, Double)] {
+    /// The item's own offset variables, then its container's, up to (not including) the root being solved.
+    private static func chain(_ o: AnyObject?, axisX: Bool, root: NSView) -> [LayoutVar] {
+        var out: [LayoutVar] = []
+        var cur: AnyObject? = o
+        while let c = cur, c !== root {
+            guard let v = vars(c) else { break }
+            out.append(axisX ? v.l : v.t)
+            if let view = c as? NSView { cur = view.superview } else if let g = c as? NSLayoutGuide { cur = g.owningView } else { break }
+        }
+        return out
+    }
+    private static func terms(_ o: AnyObject?, _ a: NSLayoutAttribute, _ k: Double, root: NSView) -> [(LayoutVar, Double)] {
         guard let v = vars(o) else { return [] }
+        func pos(_ x: Bool) -> [(LayoutVar, Double)] { chain(o, axisX: x, root: root).map { ($0, k) } }
         switch a {
-        case .left, .leading: return [(v.l, k)]
-        case .right, .trailing: return [(v.l, k), (v.w, k)]
-        case .top: return [(v.t, k)]
-        case .bottom: return [(v.t, k), (v.h, k)]
+        case .left, .leading: return pos(true)
+        case .right, .trailing: return pos(true) + [(v.w, k)]
+        case .top: return pos(false)
+        case .bottom: return pos(false) + [(v.h, k)]
         case .width: return [(v.w, k)]
         case .height: return [(v.h, k)]
-        case .centerX: return [(v.l, k), (v.w, k / 2)]
-        case .centerY: return [(v.t, k), (v.h, k / 2)]
+        case .centerX: return pos(true) + [(v.w, k / 2)]
+        case .centerY: return pos(false) + [(v.h, k / 2)]
         case .firstBaseline:
             let b = (o as? NSView)?.firstBaselineFromTop ?? 0
-            return [(v.t, k)] + (b == 0 ? [(v.h, k)] : [])
+            return pos(false) + (b == 0 ? [(v.h, k)] : [])
         case .lastBaseline:
-            return [(v.t, k), (v.h, k)]
+            return pos(false) + [(v.h, k)]
         case .notAnAttribute: return []
         }
+    }
+    /// Coefficients of the same variable summed; those that cancel dropped.
+    private static func merged(_ t: [(LayoutVar, Double)]) -> [(LayoutVar, Double)] {
+        var order: [LayoutVar] = []
+        var sum: [LayoutVar: Double] = [:]
+        for (v, c) in t {
+            if sum[v] == nil { order.append(v) }
+            sum[v, default: 0] += c
+        }
+        return order.compactMap { v in abs(sum[v]!) > 1e-9 ? (v, sum[v]!) : nil }
     }
     private static func baselineConstant(_ o: AnyObject?, _ a: NSLayoutAttribute) -> Double {
         guard let v = o as? NSView else { return 0 }
@@ -313,13 +489,14 @@ enum LayoutEngine {
         return 0
     }
 
-    private static func add(_ s: LayoutSolver, _ c: NSLayoutConstraint) {
-        var t = terms(c.firstItem, c.firstAttribute, 1)
+    private static func add(_ s: LayoutSystem, _ c: NSLayoutConstraint, root: NSView) {
+        var t = terms(c.firstItem, c.firstAttribute, 1, root: root)
         var k = Double(-c.constant) + baselineConstant(c.firstItem, c.firstAttribute)
         if c.secondItem != nil, c.secondAttribute != .notAnAttribute {
-            t += terms(c.secondItem, c.secondAttribute, -Double(c.multiplier))
+            t += terms(c.secondItem, c.secondAttribute, -Double(c.multiplier), root: root)
             k -= Double(c.multiplier) * baselineConstant(c.secondItem, c.secondAttribute)
         }
+        t = merged(t)
         let op: LayoutSolver.Op = c.relation == .equal ? .eq : c.relation == .lessThanOrEqual ? .le : .ge
         let req = c.priority >= .required
         s.add(t, k, op, strength: strength(c.priority), required: req)
@@ -331,10 +508,12 @@ enum LayoutEngine {
     }
 
     /// Solves the tree under `root`. With a size the root is held at it; without, it shrinks to fit.
+    static let log = ProcessInfo.processInfo.environment["SPIDER_LAYOUT_LOG"] == "1"
     static func solve(root: NSView, size: CGSize?) -> CGSize {
+        let started = CACurrentMediaTime()
         var all: [NSView] = []
         collect(root, &all)
-        let solver = LayoutSolver()
+        let solver = LayoutSystem()
         let inTree = Set(all.map { ObjectIdentifier($0) })
         let rv = root.layoutVars
         solver.add([(rv.l, 1)], 0, .eq, strength: 1, required: true)
@@ -352,16 +531,17 @@ enum LayoutEngine {
             solver.add([(x.h, 1)], 0, .ge, strength: 1, required: true)
             if v !== root, let sup = v.superview, !v.takesPartInConstraints {
                 // Frame-based: held where its frame says, within a superview that may itself be solved.
+                // (Offsets from the superview's top left.)
                 let p = sup.layoutVars
                 let f = v.frame
                 solver.add([(x.w, 1)], -Double(f.width), .eq, strength: 1, required: true)
                 solver.add([(x.h, 1)], -Double(f.height), .eq, strength: 1, required: true)
                 let bx = sup.bounds.minX, by = sup.bounds.minY
-                solver.add([(x.l, 1), (p.l, -1)], -Double(f.minX - bx), .eq, strength: 1, required: true)
+                solver.add([(x.l, 1)], -Double(f.minX - bx), .eq, strength: 1, required: true)
                 if sup.isFlipped {
-                    solver.add([(x.t, 1), (p.t, -1)], -Double(f.minY - by), .eq, strength: 1, required: true)
+                    solver.add([(x.t, 1)], -Double(f.minY - by), .eq, strength: 1, required: true)
                 } else {
-                    solver.add([(x.t, 1), (p.t, -1), (p.h, -1)], Double(f.maxY - by), .eq, strength: 1, required: true)
+                    solver.add([(x.t, 1), (p.h, -1)], Double(f.maxY - by), .eq, strength: 1, required: true)
                 }
             }
             if v.takesPartInConstraints || v === root {
@@ -388,12 +568,26 @@ enum LayoutEngine {
             return ok(c.firstItem) && ok(c.secondItem)
         }
         for v in all {
-            for c in v.activeConstraints where relevant(c) { add(solver, c) }
-            for c in v.generatedConstraints() where relevant(c) { add(solver, c) }
+            for c in v.activeConstraints where relevant(c) { add(solver, c, root: root) }
+            for c in v.generatedConstraints() where relevant(c) { add(solver, c, root: root) }
         }
-        solver.updateVariables()
-        for v in all { v.layoutVars.solved = CGRect(x: v.layoutVars.l.value, y: v.layoutVars.t.value, width: v.layoutVars.w.value, height: v.layoutVars.h.value) }
-        for v in all { for g in v.layoutGuides { g.vars.solved = CGRect(x: g.vars.l.value, y: g.vars.t.value, width: g.vars.w.value, height: g.vars.h.value) } }
+        solver.solve(root: root)
+        if LayoutEngine.log {
+            let ms = (CACurrentMediaTime() - started) * 1000
+            fputs(String(format: "layout %@: %d views (%d constrained), %d constraints, %@, %.1f ms\n",
+                         String(describing: type(of: root)), all.count, all.filter(\.takesPartInConstraints).count, solver.count,
+                         solver.cached ? "same as last time" : "\(solver.solver?.rowCount ?? 0) rows, \(solver.solver?.pivots ?? 0) pivots", ms), stderr)
+        }
+        // Back to root-wide origins: each view's offset added to its superview's (parents come first in `all`).
+        for v in all {
+            let x = v.layoutVars
+            let o = v === root ? CGPoint.zero : (v.superview?.layoutVars.solved.origin ?? .zero)
+            x.solved = CGRect(x: o.x + x.l.value, y: o.y + x.t.value, width: x.w.value, height: x.h.value)
+        }
+        for v in all {
+            let o = v.layoutVars.solved.origin
+            for g in v.layoutGuides { g.vars.solved = CGRect(x: o.x + g.vars.l.value, y: o.y + g.vars.t.value, width: g.vars.w.value, height: g.vars.h.value) }
+        }
         return CGSize(width: rv.w.value, height: rv.h.value)
     }
 

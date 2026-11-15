@@ -53,6 +53,7 @@ public final class NSApplication: NSResponder, @unchecked Sendable {
     override init() {
         super.init()
         CrashStack.install()
+        HangWatch.install()
         _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT(bitPattern: -4))
         ScreenList.refresh()
         WindowListBridge.install()
@@ -147,6 +148,7 @@ public final class NSApplication: NSResponder, @unchecked Sendable {
         guard !inFrame else { return }
         inFrame = true
         CFRunLoopObservers.report(.afterWaiting)
+        HangWatch.beat()
         defer { inFrame = false; CFRunLoopObservers.report(.beforeWaiting) }
         pumpMessages()
         refreshPointer()

@@ -57,7 +57,8 @@ if ($Check) {
     "swiftc exit $LASTEXITCODE"
     return
 }
+# (No incremental linking: it pads Swift's metadata sections, and the runtime then reads garbage.)
 $linkDbg = @()
-if ($Debug) { $linkDbg = @('-Xlinker', '/DEBUG', '-Xlinker', "/MAP:$out\SpiderBuddy.map") }
+if ($Debug) { $linkDbg = @('-Xlinker', '/DEBUG', '-Xlinker', '/INCREMENTAL:NO', '-Xlinker', "/MAP:$out\SpiderBuddy.map")}
 & swiftc $Opt @dbg @linkDbg -swift-version 5 -DSHAPED -I $out -L $out @link -o "$out\SpiderBuddy.exe" @inputs 2>&1 | ForEach-Object { "$_" }
 "swiftc exit $LASTEXITCODE (app)"
