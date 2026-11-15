@@ -1,0 +1,30 @@
+#!/bin/bash
+# shot-diff <ENV> <dir>: one of the app's picture switches (SPIDER_WELCOME_SHOT, SPIDER_PANEL_SHOT, SPIDER_STUDIO_SHOT)
+# run in the Mac oracle app (tools/oracle-app.sh, built) and in the Windows debug app (build\swift-app),
+# each picture side by side in <dir>/side-<name>.png, Mac on the left at the Mac's size.
+set -e
+HERE="$(cd "$(dirname "$0")" && pwd)"; export PATH="$HERE/../dev:$PATH"; ROOT="$HERE/../../.."
+E="$1"; D="$2"; mkdir -p "$D/mac" "$D/win"
+if [ -z "$(ls "$D/mac" 2>/dev/null)" ]; then
+  ( "$ROOT/tools/oracle-app.sh" run "$E=$D/mac" >/dev/null 2>&1 & p=$!; for i in $(seq 1 80); do kill -0 $p 2>/dev/null || break; perl -e 'select(undef,undef,undef,0.5)'; done; kill $p 2>/dev/null; true )
+fi
+W='C:\Users\User\Documents\Projects\spider-buddy\out\shots'
+lap stop >/dev/null 2>&1 || true
+lap ps <<PS >/dev/null
+Remove-Item -Recurse -Force $W -ErrorAction SilentlyContinue
+New-Item -ItemType Directory $W | Out-Null
+PS
+lap run --log app --wait 40 --env "$E=${W//\\/\\\\}" 'build\swift-app\SpiderBuddy.exe' | tr -d '\r' | grep -a -E "Fatal|exit=|symbols:" || true
+lap stop >/dev/null 2>&1 || true
+rm -rf "$D/win"; mkdir -p "$D/win"
+scp -q "laptop:C:/Users/User/Documents/Projects/spider-buddy/out/shots/*.png" "$D/win/"
+python3 - "$D" <<'PY'
+import sys, os
+from PIL import Image
+D=sys.argv[1]
+for n in sorted(os.listdir(f"{D}/mac")):
+    if not n.endswith(".png") or not os.path.exists(f"{D}/win/{n}"): continue
+    m=Image.open(f"{D}/mac/{n}").convert("RGB"); w=Image.open(f"{D}/win/{n}").convert("RGB").resize(m.size)
+    c=Image.new("RGB",(m.width*2+10,m.height),"white"); c.paste(m,(0,0)); c.paste(w,(m.width+10,0)); c.save(f"{D}/side-{n}")
+    print(f"{D}/side-{n}")
+PY

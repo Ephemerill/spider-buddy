@@ -176,3 +176,25 @@ appearance is dark, as Mac title bars follow it.
 
 **Next:** symbols (after the owner decides); the taskbar shows a generic icon, not the app's; then the Panel itself, side by side, and the tray menu; then the spider on
 the desktop with the real app's windows.
+
+## 2026-11-15 (later): SF Symbols replaced by Fluent System Icons
+
+The owner chose Microsoft's Fluent System Icons (MIT) to stand in for SF Symbols, which Apple licenses for Apple
+platforms only. Every string in `Sources/` that AppKit accepts as a symbol name was collected (117 in use) and mapped in
+`tools/symbols/fluent-map.txt`; a contact sheet of SF next to Fluent was used to pick replacements for the weak first
+matches (U-turn arrows, dice, eyes, layers, tray, square.slash and others).
+
+`tools/symbols/run.sh` fetches the pinned `@fluentui/svg-icons` 1.1.346 (checked by SHA-256) and, on the Mac, measures
+each SF Symbol under every configuration the app asks for (the plain image and the 15 point-size/weight pairs in
+`Sources/`): image size, and where its ink sits. Per weight it also finds how far to thicken the Fluent outline so it
+carries as much ink as the SF Symbol (bisection on coverage at 16 pt). Outlines are written as absolute M/L/Q/C/Z
+commands (arcs turned into curves), so `SymbolData.swift` needs no SVG parser on Windows. The stand-in draws the Fluent
+design (16, 20 or 24) closest to one device pixel per unit, fitted into the SF Symbol's ink rectangle.
+`THIRD_PARTY_NOTICES.md` carries Microsoft's licence and the installer ships it.
+
+**Evidence:** the Panel's seven pages side by side (`tools/windows/swift/shot-diff SPIDER_PANEL_SHOT`): icons sit and
+size as on the Mac. Traces 183/183 (worst 1.12e-6), images 768/770: unchanged.
+
+**Seen on the Panel, not icons (next):** the header spider is drawn black (template image not tinted), section titles and
+secondary text are dimmer, the selected tab's highlight is shorter, the Pause switch shows on where the Mac shows off,
+and "Caffeinated" is cut off in its segment.

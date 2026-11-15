@@ -133,6 +133,8 @@ tools/oracle-app.sh                              # the Mac app with its own bund
 tools/windows/swift/welcome-diff <dir>           # the welcome's pages, Mac and Windows side by side
 tools/windows/swift/controls <dir>               # the control gallery, Mac and Windows side by side
 tools/windows/swift/probe-colors                 # AppKit's system colours on this Mac, in the stand-in's form
+tools/windows/swift/shot-diff SPIDER_PANEL_SHOT <dir>   # any picture switch (WELCOME, PANEL, STUDIO), Mac and Windows side by side
+tools/symbols/run.sh [sheet.png]                 # regenerate the Fluent symbol table; the sheet shows SF next to Fluent
 ```
 
 Developer switches in the stand-in: `SPIDER_CRASH_STACK=1` and `SPIDER_HANG_STACK=1` (stacks to `%TEMP%\spider-crash.txt`),
@@ -358,7 +360,7 @@ Only things that cannot be the same, or that the owner has agreed. Anything else
 | Mac | Windows | Why |
 |---|---|---|
 | SF Pro | Segoe UI, laid out with SF Pro's metrics and widths (measured) | SF Pro cannot be shipped on Windows |
-| SF Symbols | To be decided by the owner | Apple licenses them for Apple platforms only |
+| SF Symbols | Fluent System Icons (MIT), in each SF Symbol's measured box, ink rectangle and weight (`tools/symbols`) | Apple licenses SF Symbols for Apple platforms only. Owner chose Fluent, 2026-11-15 |
 | Menu bar and its icon | System tray icon, same menu | No menu bar |
 | Menu bar height, notch, Dock | Work area and taskbar | Platform (spec section 2.8) |
 | Desktop widgets as furniture | None | No equivalent |

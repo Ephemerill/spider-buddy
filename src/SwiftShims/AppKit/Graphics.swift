@@ -177,13 +177,18 @@ public final class NSImage: NSObject, @unchecked Sendable {
         handler = nil; symbol = nil
     }
     public init?(systemSymbolName n: String, accessibilityDescription d: String?) {
-        size = CGSize(width: 16, height: 16); handler = nil; symbol = n; accessibilityDescription = d
-    }
-    private init(symbol n: String, config: SymbolConfiguration) {
-        symbol = n; symbolConfig = config; handler = nil; size = CGSize(width: config.size * 1.2, height: config.size * 1.2)
+        if !Symbols.known(n) { Symbols.warnOnce(n) }
+        size = Symbols.look(n, nil).size; handler = nil; symbol = n; accessibilityDescription = d
         isTemplate = true
     }
-    public func withSymbolConfiguration(_ c: SymbolConfiguration) -> NSImage? { symbol.map { NSImage(symbol: $0, config: c) } ?? self }
+    private init(symbol n: String, config: SymbolConfiguration, description d: String?) {
+        symbol = n; symbolConfig = config; handler = nil; size = Symbols.look(n, config).size; accessibilityDescription = d
+        isTemplate = true
+    }
+    public func withSymbolConfiguration(_ c: SymbolConfiguration) -> NSImage? {
+        guard let symbol else { return self }
+        return NSImage(symbol: symbol, config: symbolConfig.map { $0.applying(c) } ?? c, description: accessibilityDescription)
+    }
     public init?(contentsOf url: URL) {
         guard let im = ImageFile.load(url.path) else { return nil }
         bitmap = im; size = CGSize(width: im.width, height: im.height); handler = nil; symbol = nil
@@ -357,32 +362,154 @@ enum ImageFile {
 }
 
 /// SF Symbols cannot ship on Windows. Each maps to a glyph in Segoe Fluent Icons; see Accepted differences.
+/// SF Symbols can't ship on Windows, so Fluent System Icons stand in (MIT, see THIRD_PARTY_NOTICES.md).
+/// Each is drawn into the box the Mac's SF Symbol takes, its ink where the SF Symbol's ink is,
+/// thickened per weight to carry as much ink. All of that is measured on a Mac: tools/symbols.
 enum Symbols {
-    static let table: [String: UInt32] = [
-        "gearshape": 0xE713, "heart": 0xEB51, "house": 0xE80F, "trash": 0xE74D, "play.fill": 0xE768, "play.circle": 0xE768, "power": 0xE7E8, "info.circle": 0xE946,
-        "checkmark": 0xE73E, "checkmark.circle.fill": 0xE73E, "xmark.circle.fill": 0xEA39, "eye": 0xE890, "eye.slash": 0xED1A, "eyes": 0xE890, "envelope": 0xE715, "map": 0xE826, "map.fill": 0xE826,
-        "location": 0xE81D, "arrow.uturn.backward": 0xE7A7, "arrow.uturn.forward": 0xE7A6, "arrow.counterclockwise": 0xE72C, "arrow.triangle.2.circlepath": 0xE895, "shuffle": 0xE8B1, "ellipsis": 0xE712,
-        "ladybug": 0xEBE8, "ladybug.fill": 0xEBE8, "sun.max": 0xE706, "moon.zzz": 0xE708, "moon.stars": 0xE708, "wind": 0xEBE7, "cloud.rain": 0xE753, "cloud.sun": 0xE753, "cloud.sun.rain.fill": 0xE753, "cloud.bolt.rain": 0xE753,
-        "paintbrush.pointed": 0xE771, "paintbrush.pointed.fill": 0xE771, "hammer": 0xE90F, "wrench.and.screwdriver": 0xE90F, "person.2": 0xE716, "sparkles": 0xE9CE, "plus.square.fill": 0xE710, "plus.square.on.square": 0xE8C8,
-        "photo.badge.plus": 0xEB9F, "photo.fill": 0xEB9F, "questionmark": 0xE9CE + 0, "slider.horizontal.3": 0xE9E9, "square.and.arrow.down": 0xE896, "square.and.arrow.up": 0xE898, "tray.and.arrow.down": 0xE896, "leaf.fill": 0xEC0A,
-        "hand.wave": 0xEDA4, "hand.draw.fill": 0xEDA4, "hand.point.up.left.fill": 0xEDA4, "dice": 0xE8B1, "cup.and.saucer": 0xEC32, "fork.knife": 0xED56, "door.left.hand.open": 0xE8AD, "door.left.hand.closed": 0xE8AD,
-        "laptopcomputer": 0xE7F8, "scope": 0xE7C1, "scribble.variable": 0xE76D, "square.slash": 0xE711, "square.stack.fill": 0xE8FD, "battery.75": 0xEBA7, "exclamationmark.triangle": 0xE7BA, "exclamationmark.circle": 0xE783,
-        "arrow.up.forward": 0xE8A7, "arrow.down.circle": 0xE896, "puzzlepiece.extension": 0xEA86, "circle": 0xEA3A, "smallcircle.filled.circle": 0xECCC, "apple.intelligence": 0xE9CE
-    ]
-    static func draw(_ name: String, config: NSImage.SymbolConfiguration?, in r: CGRect, ctx: CGContext, color: CGColor) {
-        let size = min(r.width, r.height) * 0.86
-        guard let code = table[name], let u = Unicode.Scalar(code) else {
-            ctx.setStrokeColor(color)
-            ctx.setLineWidth(max(1, size / 12))
-            ctx.strokeEllipse(in: r.insetBy(dx: r.width * 0.2, dy: r.height * 0.2))
-            return
+    struct Look { let size: CGSize; let ink: CGRect }
+    /// SF name to Fluent key.
+    static let fluent: [String: String] = {
+        var d: [String: String] = [:]
+        for l in SymbolData.names.split(separator: "\n") {
+            let t = l.split(separator: " ")
+            if t.count == 2 { d[String(t[0])] = String(t[1]) }
         }
-        let s = String(Character(u))
-        let key = "Segoe Fluent Icons|400|0"
-        let m = CTTextMeasure(s, key, size)
+        return d
+    }()
+    /// Fluent key to its designs: box size to outline, in box units, y down.
+    static let outlines: [String: [Int: CGPath]] = {
+        var d: [String: [Int: CGPath]] = [:]
+        for l in SymbolData.outlines.split(separator: "\n") {
+            let t = l.split(separator: " ", maxSplits: 2)
+            guard t.count == 3, let box = Int(t[1]) else { continue }
+            d[String(t[0]), default: [:]][box] = path(t[2])
+        }
+        return d
+    }()
+    /// SF name to config key to its size and ink.
+    static let looks: [String: [String: Look]] = {
+        var d: [String: [String: Look]] = [:]
+        for l in SymbolData.sizes.split(separator: "\n") {
+            let t = l.split(separator: " ")
+            guard t.count == 8 else { continue }
+            let v = t[2...].map { CGFloat(Double($0) ?? 0) }
+            d[String(t[0]), default: [:]][String(t[1])] = Look(size: CGSize(width: v[0], height: v[1]), ink: CGRect(x: v[2], y: v[3], width: v[4], height: v[5]))
+        }
+        return d
+    }()
+    /// SF name to weight letter to outset, in thousandths of the point size.
+    static let outsets: [String: [String: CGFloat]] = {
+        var d: [String: [String: CGFloat]] = [:]
+        for l in SymbolData.weights.split(separator: "\n") {
+            let t = l.split(separator: " ")
+            guard t.count == 3 else { continue }
+            d[String(t[0]), default: [:]][String(t[1])] = CGFloat(Double(t[2]) ?? 0)
+        }
+        return d
+    }()
+    static func known(_ name: String) -> Bool { fluent[name] != nil }
+    nonisolated(unsafe) private static var warned = Set<String>()
+    /// A name tools/symbols/fluent-map.txt doesn't have: drawn as a circle, said once.
+    static func warnOnce(_ name: String) {
+        if warned.insert(name).inserted { print("symbols: no Fluent icon for SF Symbol \"\(name)\" (add it to tools/symbols/fluent-map.txt)") }
+    }
+
+    /// "M x y L x y Q .. C .. Z", absolute.
+    static func path(_ s: Substring) -> CGPath {
+        let p = CGMutablePath()
+        var nums: [CGFloat] = []
+        var op: Character = " "
+        func flush() {
+            switch op {
+            case "M" where nums.count >= 2: p.move(to: CGPoint(x: nums[0], y: nums[1]))
+            case "L" where nums.count >= 2: p.addLine(to: CGPoint(x: nums[0], y: nums[1]))
+            case "Q" where nums.count >= 4: p.addQuadCurve(to: CGPoint(x: nums[2], y: nums[3]), control: CGPoint(x: nums[0], y: nums[1]))
+            case "C" where nums.count >= 6: p.addCurve(to: CGPoint(x: nums[4], y: nums[5]), control1: CGPoint(x: nums[0], y: nums[1]), control2: CGPoint(x: nums[2], y: nums[3]))
+            case "Z": p.closeSubpath()
+            default: break
+            }
+            nums.removeAll(keepingCapacity: true)
+        }
+        var token = ""
+        func endToken() { if !token.isEmpty { nums.append(CGFloat(Double(token) ?? 0)); token = "" } }
+        for ch in s {
+            if ch == "M" || ch == "L" || ch == "Q" || ch == "C" || ch == "Z" { endToken(); flush(); op = ch }
+            else if ch == " " { endToken() }
+            else { token.append(ch) }
+        }
+        endToken(); flush()
+        return p
+    }
+
+    static func weightKey(_ w: NSFont.Weight) -> String { w.rawValue < 0.12 ? "r" : w.rawValue < 0.27 ? "m" : "s" }
+    static func number(_ v: CGFloat) -> String {
+        v == v.rounded() ? String(Int(v)) : String(Double(v))
+    }
+    static let scaleFactor: [NSImage.SymbolScale: CGFloat] = [.small: 0.79, .medium: 1, .large: 1.29]
+
+    /// The size and ink AppKit gives `name` under `config`: as measured, or the nearest measured one of the same weight, scaled.
+    static func look(_ name: String, _ config: NSImage.SymbolConfiguration?) -> Look {
+        let table = looks[name] ?? looks["circle"]!
+        let k = scaleFactor[config?.scale ?? .medium] ?? 1
+        func scaled(_ l: Look, _ f: CGFloat) -> Look {
+            if f == 1 { return l }
+            return Look(size: CGSize(width: (l.size.width * f).rounded(), height: (l.size.height * f).rounded()),
+                        ink: CGRect(x: l.ink.minX * f, y: l.ink.minY * f, width: l.ink.width * f, height: l.ink.height * f))
+        }
+        guard let c = config, c.hasSize else { return scaled(table["d"]!, k) }
+        let w = weightKey(c.weight)
+        if let l = table[number(c.size) + w] { return scaled(l, k) }
+        // The nearest measured size of this weight.
+        var best: (CGFloat, Look)?
+        for (key, l) in table where key.hasSuffix(w) {
+            guard let p = Double(key.dropLast()) else { continue }
+            let d = abs(CGFloat(p) - c.size)
+            if best == nil || d < abs(best!.0 - c.size) { best = (CGFloat(p), l) }
+        }
+        guard let (p, l) = best else { return scaled(table["d"]!, k * c.size / 13) }
+        return scaled(l, k * c.size / p)
+    }
+
+    static func draw(_ name: String, config: NSImage.SymbolConfiguration?, in r: CGRect, ctx: CGContext, color: CGColor) {
+        let key = fluent[name] ?? fluent["circle"]!
+        guard let designs = outlines[key], !designs.isEmpty else { return }
+        let l = look(name, config)
+        guard l.size.width > 0, l.size.height > 0 else { return }
+        let sx = r.width / l.size.width, sy = r.height / l.size.height
+        let ink = CGRect(x: r.minX + l.ink.minX * sx, y: r.minY + l.ink.minY * sy, width: l.ink.width * sx, height: l.ink.height * sy)
+        let points = (config?.hasSize ?? false) ? config!.size : 13
+        let w = config.map { weightKey($0.weight) } ?? "r"
+        let t = (outsets[name]?[w] ?? 0) / 1000 * points * min(sx, sy)
+        let inner = ink.insetBy(dx: t, dy: t)
+        guard inner.width > 0, inner.height > 0 else { return }
+        // The design drawn closest to one device pixel per unit: Fluent hints each size to its own pixels.
+        let device = max(hypot(ctx.ctm.a, ctx.ctm.b), 0.01)
+        var pick: (score: CGFloat, path: CGPath, s: CGFloat)?
+        for (_, p) in designs {
+            let bb = p.boundingBoxOfPath
+            guard bb.width > 0, bb.height > 0 else { continue }
+            let s = min(inner.width / bb.width, inner.height / bb.height)
+            let score = abs(log(s * device))
+            if pick == nil || score < pick!.score { pick = (score, p, s) }
+        }
+        guard let pick else { return }
+        let bb = pick.path.boundingBoxOfPath
+        // Box units are y down; this context is y up.
+        var m = CGAffineTransform(translationX: inner.midX, y: inner.midY).scaledBy(x: pick.s, y: -pick.s).translatedBy(x: -bb.midX, y: -bb.midY)
+        guard let placed = pick.path.copy(using: &m) else { return }
+        // Palette and hierarchical symbols are one colour here: Fluent's outlines have no layers.
+        let ink0 = config?.paletteColors?.first?.cgColor ?? config?.hierarchicalColor?.cgColor ?? color
         ctx.saveGState()
-        ctx.translateBy(x: r.midX - m.width / 2, y: r.midY - (m.ascent - m.descent) / 2)
-        ctx.backend.drawText(s, font: key, size: size, color: color, at: CGPoint.zero.applying(ctx.ctm), state: ctx.state)
+        ctx.setFillColor(ink0)
+        ctx.addPath(placed)
+        ctx.fillPath()
+        if t > 0.01 {
+            ctx.setStrokeColor(ink0)
+            ctx.setLineWidth(2 * t)
+            ctx.setLineJoin(.round)
+            ctx.addPath(placed)
+            ctx.strokePath()
+        }
         ctx.restoreGState()
     }
 }

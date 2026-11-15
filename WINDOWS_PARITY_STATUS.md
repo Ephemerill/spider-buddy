@@ -48,7 +48,7 @@ Evidence: 768 of 770 images pass (work log).
 | Name tag and bubble text | E2 | Shapes match. The font is too light: needs a decision on what to bundle. |
 | Controls (buttons, switches, segments, fields, pop-ups, sliders) | E2 | Control gallery: sizes and styling measured from AppKit on macOS 27. Active colours from the welcome; gallery on the Mac renders inactive. |
 | System font | E2 | Segoe UI with SF Pro's metrics and widths (measured): text takes the same room as on the Mac. Glyph shapes differ (accepted). |
-| SF Symbols | E0 | Cannot ship on Windows (Apple's licence). Substitutes are wrong for many. Owner to choose a replacement set. |
+| SF Symbols | E2 | Fluent System Icons (owner's choice) for all 117 names the app uses, each in its SF Symbol's measured box, ink rectangle and weight (`tools/symbols`). Panel side by side: icons sit and size as on the Mac. Shapes differ (accepted). |
 | Creatures, toys | E1 | Same code, not diffed |
 | Habitat items, scenery, weather | E0 | Art compiles later with the tank; needs a `CALayer` compositor |
 
