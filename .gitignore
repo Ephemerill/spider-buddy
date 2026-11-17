@@ -14,3 +14,6 @@ tools/report-worker/.dev.vars
 tools/report-worker/node_modules/
 
 .build/
+
+# Old local app builds kept for comparison.
+*.old.app/
