@@ -1314,6 +1314,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let used = Set(visitors.map(\.slot))
         let slot = (1...Visitor.most).first { !used.contains($0) } ?? visitors.count + 1
         let v = Visitor(map: map, slot: slot, scale: spider.config.scale, stay: visitLength)
+        // (Its legs move the way yours do: the new leg system, or not.)
+        v.spider.gait.newLegs = spider.gait.newLegs
         v.spider.toys = toyBox
         visitors.append(v)
         syncVisitors()

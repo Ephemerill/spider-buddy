@@ -364,3 +364,49 @@ struct SilkRope {
         else { points[i] += corr * 0.5; points[i + 1] -= corr * 0.5 }
     }
 }
+
+// MARK: - 3D vector
+
+/// A point or direction in the sprite's own space with depth: x along the
+/// way it faces (before the mirror), y up off what it stands on, z toward
+/// you. The legs of the new leg system live here (see "Legs in the round"
+/// in SpiderRenderer.swift).
+struct V3: Equatable {
+    var x: CGFloat
+    var y: CGFloat
+    var z: CGFloat
+
+    static let zero = V3(0, 0, 0)
+
+    init(_ x: CGFloat, _ y: CGFloat, _ z: CGFloat) { self.x = x; self.y = y; self.z = z }
+    init(_ p: V2, _ z: CGFloat) { self.x = p.x; self.y = p.y; self.z = z }
+
+    /// Seen from in front: the sprite-space point it is drawn at.
+    var xy: V2 { V2(x, y) }
+    /// Seen from above: along the way it faces, and toward you.
+    var xz: V2 { V2(x, z) }
+    var length: CGFloat { (x * x + y * y + z * z).squareRoot() }
+    var lengthSquared: CGFloat { x * x + y * y + z * z }
+    var normalized: V3 {
+        let l = length
+        return l > 1e-9 ? V3(x / l, y / l, z / l) : V3(1, 0, 0)
+    }
+    func dot(_ o: V3) -> CGFloat { x * o.x + y * o.y + z * o.z }
+    func cross(_ o: V3) -> V3 { V3(y * o.z - z * o.y, z * o.x - x * o.z, x * o.y - y * o.x) }
+    func distance(to o: V3) -> CGFloat { (self - o).length }
+    /// Turned about the up axis by `a`: its +x swings round toward you (+z).
+    func turned(by a: CGFloat) -> V3 {
+        let c = cos(a), s = sin(a)
+        return V3(x * c - z * s, y, x * s + z * c)
+    }
+
+    static func + (a: V3, b: V3) -> V3 { V3(a.x + b.x, a.y + b.y, a.z + b.z) }
+    static func - (a: V3, b: V3) -> V3 { V3(a.x - b.x, a.y - b.y, a.z - b.z) }
+    static func * (a: V3, s: CGFloat) -> V3 { V3(a.x * s, a.y * s, a.z * s) }
+    static func * (s: CGFloat, a: V3) -> V3 { V3(a.x * s, a.y * s, a.z * s) }
+    static func / (a: V3, s: CGFloat) -> V3 { V3(a.x / s, a.y / s, a.z / s) }
+    static func += (a: inout V3, b: V3) { a = a + b }
+    static func -= (a: inout V3, b: V3) { a = a - b }
+    static prefix func - (a: V3) -> V3 { V3(-a.x, -a.y, -a.z) }
+    static func lerp(_ a: V3, _ b: V3, _ t: CGFloat) -> V3 { a + (b - a) * t }
+}

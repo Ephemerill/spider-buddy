@@ -106,6 +106,12 @@ struct LegPose {
     var knee: V2
     var foot: V2
     var lift: CGFloat
+    /// The new leg system (see "Legs in the round"): how far toward you
+    /// each joint is, in sprite units — what the legs are drawn in order
+    /// of, and cut by where they pass behind the body.
+    var hipZ: CGFloat = 0
+    var kneeZ: CGFloat = 0
+    var footZ: CGFloat = 0
 }
 
 struct SpiderPose {
@@ -211,6 +217,11 @@ struct SpiderPose {
     var chill: CGFloat = 0
     /// Drips, splashes and puffs round it (see `Speck`).
     var specks: [Speck] = []
+    /// The legs stand in the round (the new leg system): drawn by their
+    /// depths, each cut where it passes behind the body.
+    var legsInRound = false
+    /// Which leg is on top where two overlap, as last drawn (in the round).
+    var layerMemory: SpiderRenderer.LayerMemory? = nil
 }
 
 // MARK: - Legs
@@ -559,7 +570,9 @@ final class Spider {
     /// The shift its memories make right now: zero without any.
     private(set) var learned = TraitShift.zero
     private var memoryDue: CGFloat = 0
-    var gait = Gait()
+    var gait = Gait() {
+        didSet { if gait.newLegs != oldValue.newLegs { roundReseat() } }
+    }
     var habits = Habits()
     /// 0…1: how run down it feels, up while the Mac is in Low Power Mode. It
     /// makes up its mind less often, rests and naps more and dashes about
@@ -712,8 +725,10 @@ final class Spider {
     private var strideNow: CGFloat {
         let stride = max(boutStride, speed / max(config.scale, 0.05) / Spider.maxCadence)
         // Walking the refined way, no stance is longer than all eight legs
-        // can take at their own lengths: past that it steps quicker.
+        // can take at their own lengths: past that it steps quicker. (In
+        // the round likewise.)
         if refinedWalk { return min(stride, refSweep / (1 - refSwing)) }
+        if inRound, mode == .attached { return min(stride * Spider.roundStrideShare, roundSweep / (1 - roundSwing), roundStanceRoom) }
         // Walking the natural way, no foot is ever carried further than its
         // leg can reach: past that it steps quicker instead.
         guard naturalWalk else { return stride }
@@ -1288,6 +1303,18 @@ final class Spider {
     /// The most the upper body turns away from where the legs face, as a
     /// yaw: from side on, round to all but face on.
     private static let maxHeadTurn: CGFloat = 0.6
+    /// In the round: the most the head and abdomen turn from the legs, and
+    /// how quickly the whole body comes round after the pointer instead.
+    private static let roundHeadTurnMost: CGFloat = 0.15
+    private static let roundBearingRate: CGFloat = 10
+    /// How fast (radians a second) it comes round where it stands, in the
+    /// round — after the pointer, for a glance, to face you: as fast as
+    /// its feet can step round under it.
+    private static let roundTurnPace: CGFloat = 3.2
+    /// How much of the head and abdomen's own turn on the legs the feet
+    /// stand round for now (see `roundWithHead`): all of it on the move,
+    /// easing to none standing.
+    private var roundHeadShare: CGFloat = 1
     /// Whether the look it is wearing can have its head turned round past
     /// the front view from its legs unseen (see `faceOnSymmetric`).
     private var symmetricLook: (look: SpiderLook, symmetric: Bool)?
@@ -2888,7 +2915,7 @@ final class Spider {
                 // it, below).
                 headYawTarget = facing * max(facing * headYawTarget, 0.3)
             }
-            interestBearing = approach(interestBearing, c, 2.4, dt)
+            interestBearing = approach(interestBearing, c, inRound ? Spider.roundBearingRate : 2.4, dt)
             // (A stare follows it round too: only a gesture with its legs
             // up finishes on the side it began.)
             let gesturing = Spider.gestures.contains(activity)
@@ -2918,10 +2945,22 @@ final class Spider {
             // coming round to it — a last small shuffle of the feet.)
             let stance = interestSide * max(interestSide * interestBearing, 0.12) * 0.88
             let off = abs(stance - interestYawTarget)
+            if inRound {
+                // (In the round the whole spider turns to look, its feet
+                // stepping round under it: so it comes round at one even
+                // pace, one its feet can keep up with — not in the old
+                // legs' shifts of stance, each a lurch of the body over
+                // before a foot could be lifted, three or four of them to
+                // follow the pointer from one side to the other.)
+                // (The pace is the yaw spring's: see `yawSpring`.)
+                interestYawTarget = stance
+                stanceOffFor = 0
+            } else {
             stanceOffFor = off > Spider.stanceShift * 0.4 ? stanceOffFor + dt : 0
             if (stance >= 0) != (interestYawTarget >= 0) || off > Spider.stanceShift || stanceOffFor > Spider.stanceSettle {
                 interestYawTarget = stance
                 stanceOffFor = 0
+            }
             }
         }
         if interest < 0.05 {
@@ -8730,6 +8769,7 @@ final class Spider {
         draglineCatchY = draglineCatchY.map { $0 + d.y }
         pounceMark = pounceMark.map { $0 + d }
         surfacePrev = surfacePrev.map { $0 + d }
+        roundSpotWas = nil
         pendingJump = pendingJump.map { $0 + d }
         toyContactPos = toyContactPos.map { $0 + d }
         shotTarget += d
@@ -10739,13 +10779,18 @@ final class Spider {
     /// where the layout is symmetric, so no foot ever jumps.
     private func updateYaw(dt: CGFloat) {
         let before = yaw
+        // (Led round at a pace only while `yawSpring` goes on doing it:
+        // a snap, a turn, leaving the ledge end it at once.)
+        yawPacedNow = false
+        defer { yawPacing = yawPacedNow }
         if mode == .attached && activity == .turn {
             let u = smoothstep(activityTime / max(activityDur, 0.01))
             // From however far round it already was, through the front
             // view, out to the full opposite profile — so a turn begun
             // face on (after a greeting, say) does not snap to profile first.
             let sign: CGFloat = turnFromYaw >= 0 ? 1 : -1
-            yaw = u < 0.5 ? turnFromYaw * cos(u * .pi) : sign * cos(u * .pi)
+            yaw = inRound ? turnSweepYaw(at: activityTime) : u < 0.5 ? turnFromYaw * cos(u * .pi) : sign * cos(u * .pi)
+            yawGoal = -sign
             if (yaw < 0) != (turnFromYaw < 0) && facing != pendingDir {
                 facing = pendingDir
                 walkDir = pendingDir
@@ -10758,11 +10803,14 @@ final class Spider {
             // spider hanging from its spinnerets is. Turned toward you, the
             // face-on layout would put its head beside its abdomen.
             yaw = approach(yaw, facing, 9, dt)
+            yawGoal = facing
         } else if mode == .nesting {
             yaw = approach(yaw, facing, 6, dt)
+            yawGoal = facing
         } else if mode == .airborne, airShot != nil || draglineCatchY != nil {
             // Side on for the shot and the line, so the twist reads.
             yaw = approach(yaw, facing, 12, dt)
+            yawGoal = facing
         } else if mode == .attached && activity == .groove {
             // Dancing side on — or turned square on to you to throw its arms
             // up, as in a greeting (see `grooveLeg`).
@@ -10798,8 +10846,22 @@ final class Spider {
                 let toward = onTheMove ? facing * max(facing * interestYawTarget, 0.4) : interestYawTarget
                 target = lerp(target, toward, interest)
             }
-            // (A double take's snap round is quicker than any turn.)
-            if yawSnap {
+            // (In the round its legs stand round its body as that is turned,
+            // so turned toward you it goes along crabwise, in short steps:
+            // at a walk it may; the quicker it goes the more it faces the
+            // way it is going, and at a run it does.)
+            if inRound, mode == .attached, speed > 1, activity != .turn {
+                let pace = speed / max(config.scale, 0.05)
+                let least = 0.93 * smoothstep(clamp((pace - 70) / 80, 0, 1))
+                if facing * target < least { target = facing * least }
+            }
+            if let held = Spider.debugYawHold, mode == .attached { target = facing * held }
+            // (A double take's snap round is quicker than any turn; so is
+            // coming round in the air to land, in the round, so the legs
+            // reach for the surface already turned the way they will stand.)
+            let landingFlip = inRound && mode == .airborne && abs(target - yaw) > 0.02
+            if yawSnap || landingFlip {
+                yawGoal = target
                 yawVel += ((target - yaw) * 520 - yawVel * 40) * dt
                 yaw = clamp(yaw + yawVel * dt, -1, 1)
             } else {
@@ -10820,6 +10882,8 @@ final class Spider {
                 walkDir = facing
                 if facing != was { faced() }
             }
+            // (In the round, each leg carries on in its twin's slot.)
+            if inRound { roundMirror(); return }
             for i in legs.indices {
                 legs[i].foot.x = -legs[i].foot.x
                 legs[i].footVel.x = -legs[i].footVel.x
@@ -10919,7 +10983,11 @@ final class Spider {
         // Following the pointer, the upper body stays on it while the legs
         // shift round underneath: it is not carried along with them.
         if free { headTurn -= legsTurned * interest }
-        let most = Spider.maxHeadTurn
+        // (In the round, where the legs come from the body as it is turned,
+        // the head and abdomen turn only a little from the legs: the whole
+        // spider turns to look, its feet stepping round under it — see
+        // `updateInterest`.)
+        let most = inRound ? Spider.roundHeadTurnMost : Spider.maxHeadTurn
         // (Its own looks round at you — walking with its head and abdomen
         // turned to watch you, looking about, a shake of the head — give
         // way to the pointer's.)
@@ -10949,9 +11017,55 @@ final class Spider {
     /// of a plain exponential.
     private var yawVel: CGFloat = 0
     private func yawSpring(to target: CGFloat, dt: CGFloat) {
-        yawVel += ((target - yaw) * 120 - yawVel * 19) * dt
+        var aim = target
+        if inRound, mode == .attached, speed <= 1, !Spider.roundUnpaced.contains(activity) {
+            // (In the round, standing, its feet have to step round under
+            // it, so it comes round at a pace they can keep up with —
+            // however far, and whatever for: a glance, a look round at
+            // you, turning to face you. Turned as fast as the spring alone
+            // would take it, a quarter turn was over before a foot could
+            // be lifted, and all eight came round in one hop. On the move
+            // the walk's own steps take it round.)
+            if !yawPacing { yawPaced = yaw }
+            yawPacing = true
+            yawPacedNow = true
+            yawWish = target
+            yawPaced = roundPaced(yawPaced, toward: target, dt: dt)
+            aim = yawPaced
+        }
+        yawGoal = aim
+        yawVel += ((aim - yaw) * 120 - yawVel * 19) * dt
         yaw = clamp(yaw + yawVel * dt, -1, 1)
     }
+    /// A yaw brought round toward `target` at the pace the feet can step
+    /// round at (in the round), for `dt`: evenly in how far round it is,
+    /// not in the yaw itself.
+    private func roundPaced(_ y: CGFloat, toward target: CGFloat, dt: CGFloat) -> CGFloat {
+        let from = roundAngle(y), to = roundAngle(target)
+        let most = Spider.roundTurnPace * dt
+        return abs(to - from) <= most ? target : roundYaw(angle: from + (to > from ? most : -most))
+    }
+    /// The yaw the spring is being led round by, in the round, when that
+    /// was last moved on, and where it is being led to in the end.
+    private var yawPaced: CGFloat = 1
+    private var yawWish: CGFloat = 1
+    /// Whether the yaw is being led round at that pace (as of the last
+    /// `updateYaw`), and whether it was this time through it.
+    private var yawPacing = false
+    private var yawPacedNow = false
+    /// Not paced: on the move, and dancing (its turn square on to throw
+    /// its arms up is on the beat).
+    private static let roundUnpaced: Set<Activity> = [.walk, .sneak, .scurry, .groove]
+    /// Where the body will have come round to in the end, as far as it
+    /// knows now.
+    private var roundWish: CGFloat { roundPacing ? yawWish : yawGoal }
+    /// Whether the yaw is being led round at the feet's pace now: it was
+    /// last time, and nothing has ended that since (setting off, say).
+    private var roundPacing: Bool {
+        yawPacing && mode == .attached && speed <= 1 && !Spider.roundUnpaced.contains(activity) && activity != .turn
+    }
+    /// Where the yaw spring was last heading (see `roundYawAhead`).
+    private var yawGoal: CGFloat = 1
 
     /// Sprite-local units to world points, and back.
     private func toWorld(_ l: V2) -> V2 {
@@ -11192,7 +11306,7 @@ final class Spider {
     /// under the foot turns away from that line or falls away from it, so
     /// on a straight edge — where `flat` is the very spot — this is nil, and
     /// nothing changes.
-    private func cornerFoothold(_ i: Int, _ local: V2, hip: V2, flat p: V2) -> V2? {
+    private func cornerFoothold(_ i: Int, _ local: V2, hip: V2, flat p: V2, out given: CGFloat? = nil) -> V2? {
         guard mode == .attached, let loop = map.loop(anchor.loopID), !loop.edge.isEmpty,
               abs(angleDelta(heading, headingTarget)) < 0.3 else { return nil }
         let s = max(config.scale, 0.05)
@@ -11209,7 +11323,7 @@ final class Spider {
             * smoothstep(clamp(long / (span * 0.12 + 1), 0, 1))
         let r = SpiderRenderer.rig(i, profile: SpiderRenderer.profileAmount(yaw: yaw), look: look)
         guard w > 0, let q = swingToGround(hip: hip, toward: line, span: span,
-                                           out: r.foot.x >= r.hip.x ? 1 : -1, loop) else { return nil }
+                                           out: given ?? (r.foot.x >= r.hip.x ? 1 : -1), loop) else { return nil }
         return w >= 1 ? q : refGroundNear(V2.lerp(p, q, w)).point
     }
 
@@ -11665,7 +11779,7 @@ final class Spider {
         // with: its ups and downs are already the shape of a hop.
         if activity == .roll {
             lift.value = approach(lift.value, post.lift * config.scale, 40, dt); lift.velocity = 0
-        } else if activity == .hop, mode == .attached {
+        } else if activity == .hop || roundJumpTurn() != nil, mode == .attached {
             lift.value = approach(lift.value, (post.lift - post.crouch * Spider.crouchDrop) * config.scale, 45, dt)
             lift.velocity = 0
         }
@@ -11749,10 +11863,11 @@ final class Spider {
             let up = legs.reduce(0) { $0 + $1.lift } / CGFloat(max(legs.count, 1))
             bob = bobAmp * 1.1 * (Spider.natBobLevel - up)
             sway = sin(gaitPhase * 4 * .pi) * bobAmp * 0.18
-        } else if refinedWalk {
+        } else if refinedWalk || inRound {
             // Walking the refined way, likewise: it settles a little as a
             // set of legs comes up off the ground, rises as they come down
-            // and take its weight, and surges a touch with every push.
+            // and take its weight, and surges a touch with every push. (So
+            // do legs in the round.)
             let up = legs.reduce(0) { $0 + $1.lift } / CGFloat(max(legs.count, 1))
             bob = bobAmp * 2.6 * (Spider.refBobLevel - up)
             sway = sin(gaitPhase * 4 * .pi) * bobAmp * 0.16
@@ -11771,9 +11886,10 @@ final class Spider {
         // Walking the refined way, it tucks into an inside corner, close
         // enough for its legs to reach the walls either side (see `refTuckAt`).
         refRide = bob + lift.value + breathe + grooveUp
-        if refinedWalk || refTuck.value != 0 || refTuck.velocity != 0 {
-            refTuck.step(to: refinedWalk ? refTuckAt(here.pos) : 0, dt: dt)
-            if !refinedWalk, abs(refTuck.value) < 0.01, abs(refTuck.velocity) < 0.01 { refTuck.value = 0; refTuck.velocity = 0 }
+        let tucks = refinedWalk || inRound
+        if tucks || refTuck.value != 0 || refTuck.velocity != 0 {
+            refTuck.step(to: tucks ? refTuckAt(here.pos) : 0, dt: dt)
+            if !tucks, abs(refTuck.value) < 0.01, abs(refTuck.velocity) < 0.01 { refTuck.value = 0; refTuck.velocity = 0 }
             pos -= here.normal * refTuck.value
         }
         // Out in the wind, the body is pushed over its planted feet with
@@ -11796,7 +11912,7 @@ final class Spider {
         if glanceIn <= 0 {
             glanceIn = randRange(3, 9) / lerp(0.4, 1.8, personality.affection)
             let when: Set<Activity> = Spider.debugNoBodyLanguage ? [.walk, .idle, .look, .rest] : [.idle, .look, .rest]
-            if glance == 0, when.contains(activity) {
+            if glance == 0, when.contains(activity), !Spider.debugNoGlances {
                 glance = randRange(0.3, 0.55)
                 glanceUntil = t + randRange(0.7, 1.6)
             }
@@ -11945,11 +12061,33 @@ final class Spider {
             // Turning on the spot: the feet step round in waves while the body
             // swings through the front view. A hop turn lifts slightly at the
             // middle; a shuffle turn stays low.
+            if let (stage, v) = roundJumpTurn() {
+                // (In the round, a turn too quick to step round — each
+                // half of a spin — is a jump: down onto its legs, off them,
+                // round in the air, and down onto them again.)
+                switch stage {
+                case 0:
+                    p.crouch = Spider.roundJumpSink * smoothstep(v)
+                    p.pitch = -0.06 * smoothstep(v)
+                case 1:
+                    p.crouch = Spider.roundJumpSink * (1 - v * v)
+                    p.lift = Spider.hopTakeoff * v * v
+                    p.pitch = -0.06 * (1 - v)
+                case 2:
+                    p.lift = Spider.hopTakeoff + 4 * Spider.roundJumpHeight * v * (1 - v)
+                    p.legsFree = true
+                default:
+                    let give = v < 0.4 ? sin(v / 0.4 * .pi / 2) : 1 - smoothstep((v - 0.4) / 0.6)
+                    p.lift = v < 0.4 ? Spider.hopTakeoff * (1 - give) : 0
+                    p.crouch = 0.5 * give
+                }
+            } else {
             switch turnStyle {
             case .hop:
                 p.lift = sin(u * .pi) * 3
             case .shuffle:
                 p.crouch = 0.18 * sin(u * .pi)
+            }
             }
         case .peek:
             p.pitch = -0.38
@@ -12297,8 +12435,11 @@ final class Spider {
             if activityTime > 0.02 {
                 pendingDir = -walkDir
                 turnStyle = .hop
-                beginActivity(.turn, dur: 0.55)
-                queue(.turn, 0.55)
+                // (In the round each half is a jump round: a little longer,
+                // for the gathering and the landing.)
+                let half: CGFloat = inRound ? Spider.roundJumpTurnDur : 0.55
+                beginActivity(.turn, dur: half)
+                queue(.turn, half)
             }
         case .rest:
             // Nodding off: the longer it rests, the more likely it sleeps.
@@ -12427,9 +12568,14 @@ final class Spider {
         }
         pendingDir = dir
         turnStyle = chance(0.5) ? .hop : .shuffle
-        beginActivity(.turn, dur: randRange(0.8, 1.0))
+        // (In the round its feet step round under it, each a real step:
+        // it takes a little longer about it than the old legs' flick
+        // round.)
+        let pace = randRange(0.8, 1.0)
+        beginActivity(.turn, dur: inRound ? pace * Spider.roundTurnSlower : pace)
         queue(next, dur)
     }
+    private static let roundTurnSlower: CGFloat = 1.2
 
     /// Hanging under something with a surface not far below: let go of it.
     /// Returns false if there is nothing to drop onto.
@@ -14348,7 +14494,10 @@ final class Spider {
         if landingReach > 0.001, let a = aim {
             let w = smoothstep(landingReach)
             let along = (vel.length > 30 ? vel : a.point - pos).dot(a.dir)
-            if w > 0.45 { facing = along >= 0 ? 1 : -1 }
+            // (In the round, a little sooner, and quickly — see
+            // `updateYaw` — so it has come round before its feet touch: the
+            // legs never land and turn about at once.)
+            if w > (inRound ? 0.3 : 0.45) { facing = along >= 0 ? 1 : -1 }
             let fh = flightHeading ?? heading
             headingTarget = fh + angleDelta(fh, a.angle) * w
         } else if let mark = airShot?.target ?? (draglineCatchY != nil ? webAnchor : nil) {
@@ -14581,6 +14730,8 @@ final class Spider {
             }
             walkDir = forward.dot(seg.dir) >= 0 ? 1 : -1
         }
+        // (Its legs plan their steps for the way it is turning to now.)
+        if inRound { yawGoal = walkDir; yawPacing = false }
         // The feet take the ledge now, and the body carries on the way it
         // was going over them — down onto the legs, which take the blow and
         // give under it, and on along the ledge, which it leans into and
@@ -14635,7 +14786,9 @@ final class Spider {
         // One that is already at the ledge — or, coming in at an angle,
         // past it — is planted on it now.
         let normal = map.resolve(a, cornerRadius: Spider.cornerRadius * config.scale)?.normal ?? seg.normal
-        for i in legs.indices {
+        // (With its legs in the round they take the ledge their own way:
+        // see `roundTouchDown`.)
+        for i in legs.indices where !inRound {
             legs[i].footVel = .zero
             legs[i].swinging = false
             legs[i].lift = 0
@@ -17396,6 +17549,13 @@ final class Spider {
     private var glideLabel = ""
 
     private func updateLegs(dt: CGFloat) {
+        // (The new leg system has its own — but on a line and in its
+        // hammock the legs move as they always have.)
+        if roundHasLegs { updateRoundLegs(dt: dt); return }
+        if inRound {
+            if !roundOldWay { roundHandToOldWay() }
+            roundOldWay = true
+        }
         let before = legs.map(\.foot)
         let was = legController
         updateLegControllers(dt: dt)
@@ -17900,6 +18060,3266 @@ final class Spider {
         }
     }
 
+    // MARK: - Legs in the round (the new leg system)
+    //
+    // With the new leg system (`Gait.newLegs`, Studio ▸ Gait) every leg is
+    // always the same leg — front, front middle, back middle and back, on
+    // either side — standing in three dimensions (see "Legs in the round" in
+    // SpiderRenderer.swift for the rig and how it is drawn).
+    //
+    // A foot on the ground is planted: it stays exactly where it is in the
+    // world — along the edge and in depth — while the body goes on over it,
+    // and it only ever moves lifted, in a step. The body is never held back
+    // by its feet: they keep up with it, a quick little step at a time, each
+    // put down where its leg will want it once it is down, and never past a
+    // neighbour on its own side. Walking, the steps are the walk's own rhythm
+    // (as the classic walk's, side on). A leg raised in a gesture follows the
+    // gesture, and steps back down onto the ground when it is done with.
+    //
+    // On a line and in its hammock it is side on throughout, and its legs
+    // move as they always have; they are only drawn in the round.
+
+    /// The new leg system is on.
+    private var inRound: Bool { gait.newLegs }
+    /// The new leg system has the legs this frame: on its feet, in the air,
+    /// held — anywhere but on a line or in its hammock, where they move as
+    /// they always have (and stand in the round only to be drawn).
+    private var roundHasLegs: Bool { inRound && !onLine && mode != .nesting && mantle == nil }
+
+    /// One leg's own state in the round.
+    private struct RoundLeg {
+        /// How far toward you its foot is, in sprite units: its x and y are
+        /// the leg's `foot`.
+        var z: CGFloat = 0
+        /// A step it is taking.
+        var step: RoundStep?
+        /// When it last came down out of a step.
+        var landedAt: CGFloat = -9
+        /// Planted: down on the ground, held where it is in the world.
+        var down = true
+        /// Up in a pose: where its foot is on the body (the body's own
+        /// frame, on the side the sprite has it) — it goes with the body
+        /// however that turns, eased from there to where the pose wants it —
+        /// and how it is moving there, a second. (Nil: not yet taken up.)
+        var held: V3?
+        var vel = V3.zero
+        /// Up in a pose, or on its way there or back.
+        var posed = false
+        /// The way its knee bends, as it is being drawn (sprite space).
+        var pole = V3(0, 1, 0)
+        var poleLive = false
+        /// Which way round its leg the knee was drawn last frame (sprite
+        /// space, square to the leg).
+        var kneeDir = V3(0, 1, 0)
+        var kneeDirLive = false
+    }
+    /// A step: lifted off at `from`, set down at `to` (sprite space, held
+    /// where they are on the ground while the body moves), `u` of the way
+    /// through it, taking `dur` seconds, lifting `height` at its highest.
+    private struct RoundStep {
+        var from: V3
+        var to: V3
+        var u: CGFloat = 0
+        var dur: CGFloat
+        var height: CGFloat
+        /// One of the walk's own, timed by its clock: where in its window it
+        /// began. (Nil: a step of its own, timed by `dur`.)
+        var ph0: CGFloat?
+        /// It goes round the leg's hip, seen from above, not straight across.
+        var round: Bool
+        /// It may still be aimed on a little, as where it is going moves.
+        var steer: Bool
+    }
+    private var roundLegs = [RoundLeg](repeating: RoundLeg(), count: SpiderRenderer.legCount)
+    /// Which of its legs is on top where two overlap, as last drawn.
+    private let legLayers = SpiderRenderer.LayerMemory()
+    /// The walk's clock is half a cycle on for every time the body has come
+    /// round past the front view: each leg's slot has changed sides, and so
+    /// its place in the rhythm — this keeps every leg's own.
+    private var roundGaitShift: CGFloat = 0
+    /// The landing it has taken its feet down for, and whether its feet were
+    /// last had by the old way (a line, the hammock).
+    private var roundLanding: CGFloat = -99
+    private var roundOldWay = true
+    /// The spot on the surface the body stood over last frame, and where
+    /// it was then (see `updateRoundLegs`).
+    private var roundSpotWas: (anchor: Anchor, at: V2, generation: Int)?
+    /// The share of each walking cycle a foot is in the air, eased by pace,
+    /// and how far apart in it neighbours step.
+    private var roundSwing: CGFloat = 0.38
+    private var roundRipple: CGFloat = 0.05
+    /// The longest stance all eight can take, in sprite units.
+    private var roundSweep: CGFloat = 22
+    /// The longest stance (sprite units) the room between neighbouring
+    /// feet along the body allows (see `roundWalk`).
+    private var roundStanceRoom: CGFloat = 80
+    /// How long its feet have all been still under a still body.
+    private var roundSettled: CGFloat = 0
+    /// The yaw last frame, for how fast it is turning.
+    private var roundYawWas: CGFloat = 1
+    private var roundHeadWas: CGFloat = 0
+    private var roundYawRate: CGFloat = 0
+
+    /// Tools only: each leg in the round as drawn, in world points (z in
+    /// sprite units toward you): hip, knee and foot, whether the foot is
+    /// planted, stepping or up in a pose, and its leg's length.
+    struct DebugRoundLeg {
+        var hip: V2, knee: V2, foot: V2
+        var hipZ: CGFloat, kneeZ: CGFloat, footZ: CGFloat
+        var down: Bool, stepping: Bool, posed: Bool
+        var stepFrom: V3?, stepTo: V3?
+        var length: CGFloat
+        var hip3: V3, foot3: V3
+    }
+    var debugRoundLegs: [DebugRoundLeg] {
+        guard inRound, roundHasLegs else { return [] }
+        return legs.indices.map { i in
+            let h = roundHipsNow[i], k = roundKnees[i], f = roundFeetNow[i]
+            let w = { (p: V3) -> V2 in self.kneeWorldPoint(SpiderRenderer.drawn(p)) }
+            return DebugRoundLeg(hip: w(h), knee: w(k), foot: toWorld(f.xy), hipZ: h.z, kneeZ: k.z, footZ: f.z,
+                                 down: roundLegs[i].down && roundLegs[i].step == nil && !roundLegs[i].posed,
+                                 stepping: roundLegs[i].step != nil, posed: roundLegs[i].posed,
+                                 stepFrom: roundLegs[i].step?.from, stepTo: roundLegs[i].step?.to,
+                                 length: roundLength(i), hip3: h, foot3: f)
+        }
+    }
+    /// Tools only: where each leg would stand now (sprite space), and the
+    /// set (0/1) it steps with.
+    var debugRoundHomes: [(home: V3, set: Int)] {
+        guard inRound, roundHasLegs else { return [] }
+        return legs.indices.map { (roundHomeAt($0, yaw: yaw, spread: 1), roundSet($0)) }
+    }
+    /// Tools only: how far round the body is (`roundAngle`), for the
+    /// leg order check: legs on the same side keep their order round it.
+    var debugRoundPsi: CGFloat { roundPsi }
+    /// Tools only: the body frame of a sprite-space point, at the yaw now.
+    func debugRoundBody(_ p: V3) -> V3 { SpiderRenderer.toBody3D(p, turn: roundPsi) }
+    /// Tools only: the world point a sprite-space point is at (the body's
+    /// heading, mirror and scale; depth dropped).
+    func debugRoundWorld(_ p: V2) -> V2 { toWorld(p) }
+    /// Tools only: which of the new legs' gaits moved the feet last frame.
+    private(set) var debugRoundGait = ""
+    /// Tools only: whether the legs are the new system's this frame.
+    var debugRoundLive: Bool { inRound && roundHasLegs }
+
+    /// Tools only: each leg's state in the round, one line.
+    var debugRound: String {
+        legs.indices.map { i in
+            let r = roundLegs[i]
+            let s = r.step.map { String(format: "S%.2f", $0.u) } ?? (r.posed ? "P" : (r.down ? "-" : "a"))
+            return String(format: "%d:%@ %.1f,%.1f,%.1f", i, s, legs[i].foot.x, legs[i].foot.y, r.z)
+        }.joined(separator: " ")
+    }
+
+    // MARK: The body, as the legs see it
+
+    /// How far round toward you the legs stand now (0 side on, pi/2 face on).
+    private var roundPsi: CGFloat { roundLegTurn(yaw) }
+
+    /// How far round the legs stand for the body at yaw `y`: as far round as
+    /// the body is. They are its legs.
+    private func roundLegTurn(_ y: CGFloat) -> CGFloat { SpiderRenderer.legTurn(yaw: y) }
+
+    /// Leg `i`'s hip where it is drawn from, in the sprite's space: on the
+    /// body turned `psi` round, leaned and squashed with it.
+    private func roundHip(_ i: Int, psi: CGFloat) -> V3 {
+        roundOnHead(SpiderRenderer.rig3D(i, look: look).hip)
+    }
+
+    /// A point fixed on the head (the body's own frame) where it is drawn,
+    /// in the sprite's space: a hip, or the middle of the head itself.
+    private func roundOnHead(_ point: V3) -> V3 {
+        // (On the body as it is drawn: turned as far round as the head and
+        // abdomen are — further than the legs stand, looking round at
+        // something, or walking turned toward you — and carried by the head
+        // tipping, cocking and folding as the head is, so a leg always
+        // comes from the very same spot on it. Never round past the front
+        // view from the legs, where each leg would come from the other's.)
+        let y = clamp(yaw, -1, 1)
+        var yb = clamp(y + headTurn, -1, 1)
+        if (yb >= 0) != (y >= 0) { yb = y >= 0 ? 0.0001 : -0.0001 }
+        let h = SpiderRenderer.toSprite3D(point, turn: SpiderRenderer.legTurn(yaw: yb))
+        var hp = SpiderPose()
+        hp.facing = y
+        hp.headTurn = headTurn
+        hp.headTilt = headTilt.value + gf.nod
+        hp.headCock = cock.value
+        hp.ball = ball
+        hp.outfit = look
+        var p = V2(V2(h.x, h.y).point.applying(SpiderRenderer.headCarry(hp)))
+        let bp = bodyPitchNow
+        if abs(bp) > 0.0005 {
+            let pivot = SpiderRenderer.leanPivot
+            p = pivot + (p - pivot).rotated(by: bp) + V2(-bp * 8, bp * 2)
+        }
+        let sq = bodySquash()
+        let g = SpiderRenderer.ground
+        return V3(p.x * sq.stretch, g + (p.y - g) * sq.fatten, h.z)
+    }
+
+    /// Thigh and shin together.
+    private func roundLength(_ i: Int) -> CGFloat { SpiderRenderer.rig3D(i, look: look).length }
+
+    /// Where leg `i` stands, in its own body's frame, with the body turned
+    /// `psi` round (see `SpiderRenderer.standingFoot3D`), moved along the
+    /// body by `shift` (a braced stance, a pose's standing feet).
+    private func roundHomeBody(_ i: Int, spread: CGFloat = 1, turn psi: CGFloat) -> V3 {
+        var f = SpiderRenderer.standingFoot3D(i, look: look, turn: psi)
+        if abs(spread - 1) > 0.001 {
+            let h = SpiderRenderer.rig3D(i, look: look).hip
+            f.x = h.x + (f.x - h.x) * spread
+            f.z = h.z + (f.z - h.z) * spread
+        }
+        return f
+    }
+
+    /// Where leg `i` stands with the body turned to `y` (a yaw), in the
+    /// sprite's space as it is now: past the front view from here the
+    /// sprite will be mirrored, and the leg will be its twin's slot there.
+    private func roundHomeAt(_ i: Int, yaw y: CGFloat, spread: CGFloat = 1) -> V3 {
+        let psi = roundLegTurn(roundWithHead(y))
+        if (y >= 0) == (yaw >= 0) || abs(y) < 1e-4 {
+            return SpiderRenderer.toSprite3D(roundHomeBody(i, spread: spread, turn: psi), turn: psi)
+        }
+        let j = (i + 4) % 8
+        let p = SpiderRenderer.toSprite3D(roundHomeBody(j, spread: spread, turn: psi), turn: psi)
+        return V3(-p.x, p.y, p.z)
+    }
+
+    /// Where leg `i`'s hip will be with the body turned to `y`, in the
+    /// sprite's space as it is now (see `roundHomeAt`): what a foot put
+    /// down for then has to be in reach of.
+    private func roundHipAt(_ i: Int, yaw y: CGFloat) -> V3 {
+        let psi = roundLegTurn(roundWithHead(y))
+        if (y >= 0) == (yaw >= 0) || abs(y) < 1e-4 {
+            return SpiderRenderer.toSprite3D(SpiderRenderer.rig3D(i, look: look).hip, turn: psi)
+        }
+        let p = SpiderRenderer.toSprite3D(SpiderRenderer.rig3D((i + 4) % 8, look: look).hip, turn: psi)
+        return V3(-p.x, p.y, p.z)
+    }
+
+    /// A body-frame point as it will be with the body turned to `y`, in
+    /// the sprite's space as it is now (see `roundHomeAt`), for leg `i`'s
+    /// side of it.
+    /// Yaw `y` with as much of the head and abdomen's own turn on it
+    /// (`headTurn`) as the feet stand round for — never round past the
+    /// front view from `y`, where the sides change over. Walking, all of
+    /// it: its legs step where the body is turned to. Standing, none: a
+    /// look round is the body twisting a little over its feet, which stay
+    /// where they are. (Standing round the body as far as it was turned,
+    /// every look had all eight feet shuffle round after it, and back.)
+    private func roundWithHead(_ y: CGFloat, head given: CGFloat? = nil) -> CGFloat {
+        let headTurn = given ?? self.headTurn
+        guard headTurn != 0, roundHeadShare > 0.001 else { return y }
+        let b = clamp(y + headTurn * roundHeadShare, -1, 1)
+        if (b >= 0) != (y >= 0) { return y >= 0 ? 0.0001 : -0.0001 }
+        return b
+    }
+
+    /// The other way about: where a sprite-space point (as the sprite is
+    /// now) is on the body turned to `y`, on leg `i`'s side of it.
+    private func roundToBody(_ p: V3, leg i: Int, yaw y: CGFloat) -> V3 {
+        let psi = roundLegTurn(roundWithHead(y))
+        if (y >= 0) == (yaw >= 0) || abs(y) < 1e-4 { return SpiderRenderer.toBody3D(p, turn: psi) }
+        let b = SpiderRenderer.toBody3D(V3(-p.x, p.y, p.z), turn: psi)
+        return V3(b.x, b.y, -b.z)
+    }
+
+    private func roundToSprite(_ body: V3, leg i: Int, yaw y: CGFloat) -> V3 {
+        let psi = roundLegTurn(roundWithHead(y))
+        if (y >= 0) == (yaw >= 0) || abs(y) < 1e-4 { return SpiderRenderer.toSprite3D(body, turn: psi) }
+        let p = SpiderRenderer.toSprite3D(V3(body.x, body.y, -body.z), turn: psi)
+        return V3(-p.x, p.y, p.z)
+    }
+
+    /// A spot for leg `i`'s foot on the ground near `p` (sprite space): on
+    /// the edge — round a corner as it wraps — and where the leg, its hip at
+    /// `hip`, can reach it. `p`'s depth is kept.
+    private func roundPlace(_ i: Int, _ p: V3, hip: V3) -> V3 {
+        let len = roundLength(i)
+        // How far out along the ground it can reach at that depth.
+        let dz = p.z - hip.z
+        let most = max((len * len * Spider.roundReachMost * Spider.roundReachMost - dz * dz), 16).squareRoot()
+        let flat = V2(p.x, p.y)
+        var (q, seen) = groundSpot(flat, spread: true)
+        let hip2 = V2(hip.x, hip.y)
+        if let c = cornerFoothold(i, flat, hip: hip2, flat: q, out: (p.x - hip.x) >= 0 ? 1 : -1) { q = c; seen = true }
+        if q.distance(to: hip2) > most || !seen {
+            if let r = nearestReachable(flat, hip: hip2, within: most) { q = r }
+            else {
+                let d = q.distance(to: hip2)
+                if d > most, d > 0.001 { q = hip2 + (q - hip2) * (most / d) }
+            }
+        }
+        // (Ground a long way from where it was meant to go is the wrong bit
+        // of ground — the far side of a corner the body is not yet square
+        // to: the nearest it can reach instead, or it reaches out toward it.)
+        if q.distance(to: flat) > max(12, len * 0.6) {
+            if let r = nearestReachable(flat, hip: hip2, within: most), r.distance(to: flat) < q.distance(to: flat) { q = r }
+            if q.distance(to: flat) > max(12, len * 0.6) {
+                let d = flat.distance(to: hip2)
+                q = d > most && d > 0.001 ? hip2 + (flat - hip2) * (most / d) : flat
+            }
+        }
+        return V3(q, p.z)
+    }
+
+    /// A sprite-space point as it will be once the body has swung square
+    /// onto the surface it stands on (`headingTarget`) — about the body's
+    /// middle, as the heading spring takes it — in the sprite's space as it
+    /// is now. (Squarely on it already, the point itself.)
+    private func roundSquared(_ p: V3) -> V3 {
+        roundSwung(p, by: angleDelta(heading, headingTarget))
+    }
+    /// A sprite-space point as it will be once the body has come to rest
+    /// from the landing it is taking — down on its legs over the spot it
+    /// landed on, its skid along the ledge spent, swung square onto it —
+    /// in the sprite's space as it is now. A foot put down there is where
+    /// its leg will want it once the landing is over: none is left behind
+    /// under the body as it comes on, to be stepped out again after.
+    private func roundLanded(_ p: V3) -> V3 {
+        guard absorbingLanding, let here = map.resolve(anchor, cornerRadius: Spider.cornerRadius * config.scale) else { return roundSquared(p) }
+        let d = angleDelta(heading, headingTarget)
+        return V3(toLocal(here.pos + rideShift + (toWorld(p.xy) - pos).rotated(by: d)), p.z)
+    }
+    /// A sprite-space point as it will be once the body has swung `d`
+    /// further round against what it stands on, about its middle.
+    private func roundSwung(_ p: V3, by d: CGFloat) -> V3 {
+        guard abs(d) > 0.01 else { return p }
+        return V3(toLocal(pos + (toWorld(p.xy) - pos).rotated(by: d)), p.z)
+    }
+    /// The body's heading `ahead` seconds from now, on its spring (see
+    /// `update`): swinging square onto what it has just come onto.
+    private func roundHeadingAhead(_ ahead: CGFloat) -> CGFloat {
+        var h = heading, v = headingVel
+        let soft: CGFloat = mode == .attached && t - landedAt < 0.4 ? 0.55 : 1
+        let n = max(1, Int((ahead / (1.0 / 120)).rounded(.up)))
+        let step = ahead / CGFloat(n)
+        for _ in 0..<n {
+            v += (angleDelta(h, headingTarget) * 190 * soft - v * 21 * soft.squareRoot()) * step
+            h += v * step
+        }
+        return h
+    }
+    /// How far (radians) the body may have still to swing round onto what
+    /// it walks on — crossing onto another thing at a junction in the tank,
+    /// where the way on turns all at once — before its feet come round with
+    /// it all together (see `roundRegroup`), not left behind to step round
+    /// after it one by one.
+    private static let roundSwingBound: CGFloat = 0.6
+
+    /// How square (radians) the body must have come round onto what it
+    /// landed on before the feet still in the air take hold of it.
+    private static let roundSquareEnough: CGFloat = 0.4
+
+    /// The most of its length a leg is let out to, standing or stepping;
+    /// the least it is folded to, as a share of its length.
+    private static let roundReachMost: CGFloat = 0.93
+    private static let roundReachLeast: CGFloat = 0.32
+
+    /// How far out from its hip, seen from above, a foot stands the way its
+    /// own leg stands out from the body (sprite units; less than nothing in
+    /// past its hip, under the body) — and how far its own spot is, which
+    /// that is never asked to beat. (How near the hip a foot is, all told,
+    /// says nothing of this: the hip is a good way up, and a foot carried
+    /// in right under it is still well over a third of the leg away. And
+    /// it is what puts a knee where it goes: a foot out from its hip has its
+    /// knee up over the leg; one in under it can only have its knee out to
+    /// the side and down — the leg folded flat, a '>' on the ground — or
+    /// in over the body.)
+    private func roundOutFromHip(_ i: Int, _ p: V3, hip: V3) -> (out: CGFloat, home: CGFloat) {
+        let home = roundHomeAt(i, yaw: yaw)
+        let u = V2(home.x - hip.x, home.z - hip.z)
+        let r = u.length
+        guard r > 1e-3 else { return (.greatestFiniteMagnitude, 0) }
+        return (V2(p.x - hip.x, p.z - hip.z).dot(u / r), r)
+    }
+    /// Walking, how far out from its hip (a share of its length, as
+    /// `roundOutFromHip` measures it) each foot's stance keeps — turned
+    /// toward you, the legs standing out along the way it goes pull their
+    /// feet in toward their hips and push them out again, and a foot drawn
+    /// in past this folds its leg flat; and the least it is let be carried
+    /// in to before it steps, whatever its turn. (Never past its own spot.)
+    private static let roundWalkOutLeast: CGFloat = 0.2
+    private static let roundOutLeast: CGFloat = 0.2
+    /// (A short-legged style's own spot is not far out from its hip at
+    /// all: these shares of the way out to it, then, at the most — or its
+    /// stride would be cut to nothing.)
+    private static let roundOutHome: (walk: CGFloat, least: CGFloat) = (0.45, 0.35)
+    /// Walking, how far in past where its stance ends (sprite units) a foot
+    /// may be carried before it steps out of its turn.
+    private static let roundOutGive: CGFloat = 2
+    /// How far below its hip (sprite units) a knee may sink, as the knees
+    /// stand, before its foot steps out of its turn for it — no further
+    /// than a knee all but level with its hip, the leg still standing up
+    /// over its foot: a foot only a little in is let be, to step in its
+    /// turn, rather than every one pulled out early.
+    private static let roundTuckKnee: CGFloat = 3.5
+    /// A leg style whose knee stands up no more than this (sprite units)
+    /// over its hip, even with its foot at its own spot — short legs, all
+    /// but level from hip to knee as they stand — walks just as it always
+    /// has: keeping its feet out from its hips would buy it nothing.
+    private static let roundLowKnee: CGFloat = 1.5
+    /// Stepping out of its turn, what each unit (sprite units) it comes
+    /// down short of where the walk's rhythm would have it is worth in
+    /// bars kept clear of its neighbours'.
+    private static let roundClearCost: CGFloat = 0.15
+    /// Walking, how much of a cycle early at the most a leg takes its turn
+    /// rather than have its foot carried in under its hip, its leg folded
+    /// flat (see `roundFoldsSoon`); and how far out past where it would step
+    /// out of its turn (`roundTucked`) a foot is, and how near its hip's
+    /// height (sprite units, above it) its knee, as it does.
+    private static let roundEarlyMost: CGFloat = 0.3
+    private static let roundEarlyGive: CGFloat = 2
+    private static let roundEarlyKnee: CGFloat = 1.2
+    /// (Only a foot this far (sprite units) behind where the walk's rhythm
+    /// would have it: its turn come late, its stance stretched. In step, its
+    /// leg's knee down at its hip's height at the end of every stance —
+    /// a short-legged style — it takes its turn as ever.)
+    private static let roundEarlyLag: CGFloat = 3
+
+    /// The yaw the body will have `ahead` seconds from now: a turn on the
+    /// spot as the turn has it; otherwise on the way it is going.
+    private func roundYawAhead(_ ahead: CGFloat) -> CGFloat {
+        if mode == .attached, activity == .turn {
+            return turnSweepYaw(at: min(activityTime + ahead, activityDur))
+        }
+        // On the yaw spring (see `yawSpring`): run it on ahead, toward
+        // where it is going — a quick swing round to you is seen through to
+        // its end, not taken as one that goes on and on.
+        if mode == .attached, ahead > 0 {
+            var y = yaw, v = yawVel
+            let n = max(1, Int((ahead / (1.0 / 120)).rounded(.up)))
+            let h = ahead / CGFloat(n)
+            let (k, c): (CGFloat, CGFloat) = yawSnap ? (520, 40) : (120, 19)
+            // (Led round at its pace toward where it is going in the end:
+            // see `yawSpring`.)
+            let pacing = !yawSnap && roundPacing
+            var lead = pacing ? yawPaced : roundWish
+            for _ in 0..<n {
+                if pacing, lead != yawWish { lead = roundPaced(lead, toward: yawWish, dt: h) }
+                v += ((lead - y) * k - v * c) * h
+                y = clamp(y + v * h, -1, 1)
+            }
+            return y
+        }
+        return clamp(yaw + roundYawRate * ahead, -1, 1)
+    }
+
+    /// How far round the body is at yaw `y`, from side on this side of the
+    /// front view as the sprite is now: 0 side on, pi/2 face on, pi side on
+    /// the other way — on through the front view, unlike the yaw.
+    private func roundAngle(_ y: CGFloat) -> CGFloat {
+        let psi = SpiderRenderer.legTurn(yaw: y)
+        return (y >= 0) == (mirrorSign > 0) || abs(y) < 1e-6 ? psi : .pi - psi
+    }
+    /// The yaw for `roundAngle` `a`.
+    private func roundYaw(angle a: CGFloat) -> CGFloat {
+        let a = clamp(a, 0, .pi)
+        let psi = a <= .pi / 2 ? a : .pi - a
+        let p = clamp(cos(psi), 0, 1)
+        // (The yaw whose smoothstep is that much side on.)
+        let y = 0.5 - sin(asin(clamp(1 - 2 * p, -1, 1)) / 3)
+        return (a <= .pi / 2 ? mirrorSign : -mirrorSign) * clamp(y, 0, 1)
+    }
+    /// The yaw `ahead` seconds from now, but never more than `most`
+    /// radians further round than it is now: a foot put down for where the
+    /// body is going is put down a little ahead of it, not where it will be
+    /// half a turn later.
+    private func roundYawAhead(_ ahead: CGFloat, most: CGFloat) -> CGFloat {
+        let now = roundAngle(yaw), then = roundAngle(roundYawAhead(ahead))
+        guard abs(then - now) > most else { return roundYawAhead(ahead) }
+        return roundYaw(angle: now + (then > now ? most : -most))
+    }
+
+    // MARK: Each frame
+
+    private func updateRoundLegs(dt: CGFloat) {
+        let scale = max(config.scale, 0.05)
+        for i in legBend.indices { legBend[i] = nil; legBones[i] = nil }
+        // (As `updateLegControllers` works out the body's motion over its
+        // feet: the sprite turned and mirrored with it.)
+        let m = mirrorSign
+        let dTheta = angleDelta(legFrameHeading, heading) * m
+        bodySpin = dt > 0 ? clamp(angleDelta(legFrameHeading, heading) / dt, -15, 15) : 0
+        var deltaLocal = ((pos - legFramePos) / scale).rotated(by: -heading)
+        deltaLocal.x *= m
+        legFramePos = pos
+        legFrameHeading = heading
+        // How far the body has gone over its feet: as far as it has gone,
+        // less however far what they stand on has moved — the spot it stood
+        // over last frame, where that spot is now. (Not `surfaceMotion`,
+        // which has in it its own way along the edge too: a body coasting
+        // to a stop would carry its planted feet along with it.)
+        var overFeet = deltaLocal
+        var moved = V2.zero
+        if mode == .attached, let a = roundSpotWas {
+            if a.generation == map.generation {
+                if let here = map.resolve(a.anchor, cornerRadius: Spider.cornerRadius * config.scale) {
+                    moved = here.pos + rideShift - a.at
+                }
+            } else if let here = map.resolve(anchor, cornerRadius: Spider.cornerRadius * config.scale) {
+                // (The surfaces laid out afresh since — a window resized
+                // under it, say, its edge measured from somewhere new: the
+                // spot it was over is where it is now, less its own way on
+                // along the edge. Not moved at all, if the edge has not.)
+                let own = here.tangent * (walkDir * speed * dt)
+                moved = here.pos + rideShift - a.at - own
+            }
+        }
+        if mode == .attached {
+            var surf = (moved / scale).rotated(by: -heading)
+            surf.x *= m
+            overFeet = deltaLocal - surf
+        }
+        roundSpotWas = mode == .attached
+            ? map.resolve(anchor, cornerRadius: Spider.cornerRadius * config.scale).map { (anchor, $0.pos + rideShift, map.generation) } : nil
+        legSurfaceWorld = mode == .attached ? moved : .zero
+        surfaceMotion = .zero
+        legOverFeet = overFeet
+        legDTheta = dTheta
+        // How fast it is turning toward or away from you (a mirror flip
+        // between frames is no turn at all).
+        // (The body as it is turned — the head and abdomen's own turn and
+        // all — since the legs come from it.)
+        if speed > 1 || Spider.roundUnpaced.contains(activity) || mode != .attached {
+            roundHeadShare = 1
+        } else {
+            roundHeadShare = max(0, roundHeadShare - dt * 3)
+        }
+        // (As the feet stand round for it now, last frame and this: the
+        // share of the head's turn they stand round for changing is no
+        // turn of the body.)
+        let bodyYaw = roundWithHead(yaw)
+        if dt > 0 {
+            let dy = bodyYaw - roundWithHead(roundYawWas, head: roundHeadWas)
+            roundYawRate = abs(dy) < 0.5 ? approach(roundYawRate, dy / dt, 20, dt) : roundYawRate
+        }
+        roundYawWas = yaw
+        roundHeadWas = headTurn
+        let psi = roundPsi
+        handoffT = 1
+        if roundOldWay {
+            // Coming off a line or out of the hammock: every foot as it was,
+            // out at its own side as far as it stands there, and the knees
+            // eased over from where the old way drew them.
+            roundOldWay = false
+            let oldKnees = kneeLocal.count == legs.count
+            for i in legs.indices {
+                if oldKnees {
+                    let kz = SpiderRenderer.toSprite3D(SpiderRenderer.rig3D(i, look: look).knee, turn: psi).z
+                    roundKneeFrom[i] = V3(kneeLocal[i], kz)
+                }
+                roundLegs[i].step = nil
+                roundLegs[i].down = false
+                roundLegs[i].posed = false
+                roundLetGo(i)
+                roundLegs[i].poleLive = false
+                roundLegs[i].z = roundHandOffDepth(i, psi: psi)
+                roundBend[i] = nil
+                roundComingDown[i] = false
+            }
+            roundKneeEase = oldKnees ? 0 : 1
+        }
+        if mode == .attached {
+            legController = .gait
+            if landedAt > roundLanding {
+                roundLanding = landedAt
+                roundTouchDown(psi: psi)
+            }
+            roundOnSurface(dt: dt, psi: psi, dTheta: dTheta, deltaLocal: deltaLocal, overFeet: overFeet)
+        } else {
+            legController = .posed
+            roundOffSurface(dt: dt, psi: psi)
+        }
+        for i in legs.indices {
+            legs[i].swinging = roundLegs[i].step != nil || roundRegroupT != nil && !roundLegs[i].down
+            legs[i].settle = roundLegs[i].step.map { $0.u } ?? -1
+        }
+        // (For the old way, if it has the legs next: see `updateLegs`.)
+        modeBeforeLegs = mode
+    }
+
+    /// How far toward you a foot the old way has (on a line, in its
+    /// hammock) is taken to be: its own side of the body.
+    private func roundSideDepth(_ i: Int, psi: CGFloat) -> CGFloat {
+        let r = SpiderRenderer.rig3D(i, look: look)
+        return SpiderRenderer.toSprite3D(V3(r.foot.x, 0, r.foot.z * 0.5), turn: psi).z
+    }
+
+    /// Handing the legs to the old way (onto a line, into the hammock): what
+    /// it remembers of the feet and knees is from the last time it had them,
+    /// so it starts again from the legs as they are — its knees bent as they
+    /// were drawn, eased on from there.
+    private func roundHandToOldWay() {
+        let profile = SpiderRenderer.profileAmount(yaw: yaw)
+        let knees = legs.indices.map { SpiderRenderer.drawn(roundKnees[$0]) }
+        kneeShape = legs.indices.map { i in
+            let j = modelLeg(i, profile: profile)
+            return Spider.kneeShape(hip: j.hip, foot: j.foot, knee: knees[i])
+        }
+        kneeShapeVel = Array(repeating: .zero, count: legs.count)
+        kneeWorld = knees.map { kneeWorldPoint($0) }
+        kneeWorldVel = Array(repeating: .zero, count: legs.count)
+        footWorld = legs.map { toWorld($0.foot) }
+        footWorldVel = Array(repeating: .zero, count: legs.count)
+        footLimitPos = pos
+        kneeLimitPos = pos
+        for i in legs.indices {
+            legs[i].footVel = .zero
+            natKnee[i] = 0
+            kneeOver[i] = 0
+            kneeOverAim[i] = 0
+        }
+    }
+
+    /// How far toward you a foot handed over from the old way stands: as
+    /// far out to its side as that leg stands, if it reaches — a foot taken
+    /// in close under its hip would fold the knee out sideways.
+    private func roundHandOffDepth(_ i: Int, psi: CGFloat) -> CGFloat {
+        let hip = roundHip(i, psi: psi)
+        let most = roundLength(i) * Spider.roundReachMost
+        let flat = V2(legs[i].foot.x - hip.x, legs[i].foot.y - hip.y).length
+        let room = max(most * most - flat * flat, 0).squareRoot()
+        return hip.z + clamp(roundHomeAt(i, yaw: yaw).z - hip.z, -room, room)
+    }
+
+    /// Handed over from the old way, the knees as it last drew them (and
+    /// how far toward you), and how far eased from them into the new ones.
+    private var roundKneeFrom = [V3](repeating: .zero, count: SpiderRenderer.legCount)
+    private var roundKneeEase: CGFloat = 1
+    private static let roundKneeHandOff: CGFloat = 0.15
+
+    // MARK: On its feet
+
+    /// What a leg is doing this frame, on a surface: standing, its foot
+    /// `spread` times as far out from its hip as it usually stands (drawn in
+    /// under it asleep, braced out wider); or up in a pose, its foot going
+    /// to `target` (the body's frame), knee bending to `bend`.
+    private enum RoundRole {
+        case stand(spread: CGFloat)
+        case air(target: V3, bend: V3?)
+    }
+
+    private func roundOnSurface(dt: CGFloat, psi: CGFloat, dTheta: CGFloat, deltaLocal: V2, overFeet: V2) {
+        // (Turning on the spot it is not walking, whatever is left of its
+        // pace; nor shuffling about in a wiggle or a dance.)
+        // (Coming to a stop — nowhere it means to go now — its feet stop
+        // walking as soon as it is all but still, and tidy themselves to
+        // where they stand, quickly, rather than keep the walk's slowing
+        // time with one left out behind.)
+        let stopping = targetSpeed <= 1 && speed < Spider.roundStopUnder * max(config.scale, 0.05)
+        let walking = speed > 1 && !stopping && activity != .hop && activity != .turn && !Spider.roundHoldsOn.contains(activity)
+        // The roles: a gesture's raised legs, and the rest standing.
+        for i in legs.indices { roundTap[i] = 0 }
+        roundGestureWaits(dt: dt)
+        let roles = legs.indices.map { roundRole($0) }
+        let hips = legs.indices.map { roundHip($0, psi: psi) }
+        // Every planted foot holds its place in the world while the body
+        // goes on over it (and on round any turn of the body against the
+        // surface — `dTheta`).
+        let motion = overFeet
+        for i in legs.indices {
+            // (One up coming round with the body after a landing is held
+            // where it is in the world as the body swings, not swung with
+            // it: it goes straight for its spot.)
+            if roundLegs[i].posed, roundComingRound(i) {
+                legs[i].foot = legs[i].foot.rotated(by: -dTheta) - motion
+                roundLetGo(i)
+            }
+            if var s = roundLegs[i].step {
+                s.from = V3(s.from.xy.rotated(by: -dTheta) - motion, s.from.z)
+                s.to = V3(s.to.xy.rotated(by: -dTheta) - motion, s.to.z)
+                roundLegs[i].step = s
+            }
+            if roundLegs[i].down, roundLegs[i].step == nil, !roundLegs[i].posed {
+                legs[i].foot = legs[i].foot.rotated(by: -dTheta) - motion
+                // (Kept on the edge it is on: a window's corner is rounded,
+                // and a foot on it stays exactly there.)
+                let under = refGroundNear(legs[i].foot)
+                if under.dist > 0.75 {
+                    if under.dist > 4 { roundLegs[i].down = false } else { legs[i].foot = under.point }
+                }
+            }
+        }
+        // Raised legs follow their pose; standing legs walk, or stand.
+        var standing: [Int] = []
+        for i in legs.indices {
+            switch roles[i] {
+            case .air(let target, let bend):
+                roundRaise(i, to: target, bend: bend, hip: hips[i], psi: psi, dt: dt)
+            case .stand:
+                if roundLegs[i].posed {
+                    // Down it comes, a step back onto the ground — its knee
+                    // bent as the pose had it till the foot is down past its
+                    // hip (see `updateRoundKnees`).
+                    roundLegs[i].posed = false
+                    roundLegs[i].down = false
+                    roundLetGo(i)
+                    roundComingDown[i] = roundBend[i] != nil
+                    // (A greeting's arm comes down hand first, its elbow
+                    // coming up over it as it goes — as the leg stands —
+                    // rather than down and out with the hand, where it
+                    // would lie along the leg standing beside it.)
+                    if activity == .greet, i % 4 == 0, roundBend[i] != nil {
+                        roundBend[i] = SpiderRenderer.toSprite3D(V3(0.2, 1, i < 4 ? 0.3 : -0.3), turn: psi)
+                    }
+                } else if roundLegs[i].down, roundLegs[i].step == nil {
+                    roundComingDown[i] = false
+                }
+                if !roundComingDown[i] { roundBend[i] = nil }
+                standing.append(i)
+            }
+        }
+        if !walking {
+            // (A step the walk was timing, stopped mid-stride — to stand, to
+            // turn round, to hop: on it goes in its own time, briskly; a slow
+            // walk's slow step is no way to stop.)
+            for i in legs.indices where roundLegs[i].step?.ph0 != nil {
+                roundLegs[i].step?.ph0 = nil
+                if let s = roundLegs[i].step { roundLegs[i].step?.dur = min(s.dur, Spider.roundStepTime * 1.2) }
+            }
+        }
+        if activity == .hop || activity == .turn { roundRegroupT = nil }
+        if mode == .attached, activity == .hop, case let (stage, v) = hopPhase(), stage == 2 {
+            debugRoundGait = "hop"
+            roundSpinOff()
+            roundHopFeet(standing, hips: hips, v: v)
+        } else if activity == .turn {
+            debugRoundGait = activityDur < Spider.roundHopTurnUnder ? "hopturn" : "turn"
+            roundSpinOff()
+            roundTurnSteps(standing, hips: hips, dt: dt)
+        } else if roundRegroupT != nil || roundWantsRegroup(standing, walking: walking, dt: dt) {
+            debugRoundGait = "regroup"
+            roundSpinOff()
+            roundRegroup(standing, hips: hips, motion: motion, dTheta: dTheta, dt: dt, walking: walking)
+        } else if walking {
+            debugRoundGait = "walk"
+            roundSpinOff()
+            roundWalk(standing, roles: roles, hips: hips, psi: psi, dt: dt)
+        } else if roundSpinning(dt: dt) {
+            debugRoundGait = "spin"
+            roundSpinSteps(standing, hips: hips, dt: dt)
+        } else {
+            debugRoundGait = "stand"
+            roundStand(standing, roles: roles, hips: hips, psi: psi, dt: dt)
+        }
+        roundAngleWas = yaw
+        // Steps in flight go on.
+        for i in legs.indices where roundLegs[i].step != nil {
+            roundAdvanceStep(i, hip: hips[i], dt: dt)
+        }
+        let stillBody = deltaLocal.length < 0.05 && abs(dTheta) < 0.002 && abs(roundYawRate) < 0.05
+        roundSettled = stillBody && !legs.indices.contains(where: { roundLegs[$0].step != nil }) ? roundSettled + dt : 0
+    }
+
+    /// Just landed, leg `i` is still up, coming round with the body (see
+    /// `roundRole`).
+    private func roundComingRound(_ i: Int) -> Bool {
+        mode == .attached && t - landedAt < 0.6 && !roundLegs[i].down && roundLegs[i].step == nil
+            && (abs(angleDelta(heading, headingTarget)) > Spider.roundSquareEnough
+                || abs(roundAngle(yaw) - roundAngle(roundWish)) > Spider.roundSquareEnough + 0.1)
+    }
+
+    /// What leg `i` is doing in whatever it is doing now (see `RoundRole`).
+    private func roundRole(_ i: Int) -> RoundRole {
+        guard mode == .attached else { return .stand(spread: 1) }
+        // (Just landed crooked, the body still swinging round square onto
+        // what it landed on — or turning round to go back the way it came —
+        // a foot not yet down stays up and comes round with the body, just
+        // ahead of where it would stand, rather than taking hold of the
+        // ground now: planted then, the swing would carry the feet round
+        // past each other. A little bounce round, and down they come.)
+        if roundComingRound(i) {
+            let spot = roundLanded(roundHomeAt(i, yaw: roundYawAhead(0.1)))
+            return .air(target: SpiderRenderer.toBody3D(spot, turn: roundPsi), bend: nil)
+        }
+        // (The greeting waits till it has turned to face you: see
+        // `roundGestureWaits`.)
+        if roundGestureHold { return .stand(spread: 1) }
+        if let r = roundGesture(i) { return r }
+        guard legMode == .free else { return .stand(spread: 1) }
+        // (Balled up for a roll, every leg is folded in against the ball,
+        // going round with it — none of them on the ledge.)
+        if activity == .roll {
+            // (Each in its own lane, folded in alike.)
+            let r = SpiderRenderer.rig3D(i, look: look)
+            let stand = SpiderRenderer.standingFoot3D(i, look: look, turn: roundPsi)
+            var dir = V2(stand.x - r.hip.x, stand.z - r.hip.z)
+            dir = dir.length > 0.01 ? dir.normalized : V2(i % 4 < 2 ? 1 : -1, 0)
+            let d = r.length * Spider.roundRollFold.share
+            let droop = Spider.roundRollFold.droop
+            return .air(target: V3(r.hip.x + dir.x * d * cos(droop), r.hip.y - d * sin(droop), r.hip.z + dir.y * d * cos(droop)), bend: nil)
+        }
+        // (A gesture eased out of comes to its end standing: its raised legs
+        // step back down onto the ground over the last of it.)
+        if Spider.easedPoses.contains(activity), activity != .sleep, activityDur > Spider.poseEaseOut * 2,
+           activityDur - activityTime < (activity == .greet ? Spider.roundGreetDown : Spider.poseEaseOut) {
+            return .stand(spread: 1)
+        }
+        // The gesture as the classic legs have it, side on, taken into the
+        // round: a foot it puts up off the ledge is up in the pose, at its
+        // own side of the body; one it leaves on the ledge stands, where it
+        // has it along the body.
+        let (p, raised) = roundClassicPose(i)
+        let rest = legs[i].rest, hip = legs[i].hip
+        if !raised {
+            let out = rest.x - hip.x
+            return .stand(spread: abs(out) > 2 ? clamp((p.x - hip.x) / out, 0.3, 1.6) : 1)
+        }
+        return .air(target: roundLift(i, p), bend: legBend[i].map { V3($0.x, $0.y, 0) })
+    }
+
+    /// The classic legs' pose for leg `i` (as it has it side on), and
+    /// whether it puts that foot up off the ledge.
+    private func roundClassicPose(_ i: Int) -> (V2, Bool) {
+        let keepYaw = yaw, keepOuter = liftsOuterPair
+        yaw = mirrorSign
+        liftsOuterPair = false
+        let p = poseTarget(i)
+        yaw = keepYaw
+        liftsOuterPair = keepOuter
+        return (p, p.y > legs[i].rest.y + 1.5)
+    }
+
+    /// A point leg `i`'s classic pose puts its foot at (side on, sprite
+    /// units) as a point in the body's own frame: out to its own side by as
+    /// much as a foot that far from its hip stands out.
+    private func roundLift(_ i: Int, _ p: V2) -> V3 {
+        let r = SpiderRenderer.rig3D(i, look: look)
+        let rest2 = V2(r.foot.x, r.foot.y), hip2 = V2(r.hip.x, r.hip.y)
+        let share = clamp(p.distance(to: hip2) / max(rest2.distance(to: hip2), 1), 0.25, 1.1)
+        var z = r.hip.z + (r.foot.z - r.hip.z) * share * Spider.roundRaisedOut
+        // (And always well out to its own side: turned toward you, a leg
+        // put up in front of it goes up beside its face, not across it to
+        // meet the one from the other side.)
+        let side: CGFloat = r.hip.z >= 0 ? 1 : -1
+        if (z - r.hip.z) * side < Spider.roundRaisedLeast { z = r.hip.z + side * Spider.roundRaisedLeast }
+        let b = SpiderRenderer.viewTurn
+        return V3((p.x - z * sin(b)) / cos(b), p.y + SpiderRenderer.viewRise * (z * cos(b)), z)
+    }
+    /// How far out to its side a raised foot is, as a share of how far out
+    /// it stands at that reach.
+    private static let roundRaisedOut: CGFloat = 0.75
+    /// How far out from its hip to its own side, at the least, a raised
+    /// foot is.
+    private static let roundRaisedLeast: CGFloat = 12
+
+    /// The gestures that are done differently in the round: nil for the
+    /// rest (see `roundRole`).
+    private func roundGesture(_ i: Int) -> RoundRole? {
+        let k = i % 4
+        // (Eased out of, as any gesture: down again before it ends — the
+        // greeting's arms sooner, to be on the ground before it turns away
+        // again: still coming down as the body turned, they swept back
+        // through the legs beside them.)
+        if Spider.easedPoses.contains(activity), activityDur > Spider.poseEaseOut * 2,
+           activityDur - activityTime < (activity == .greet ? Spider.roundGreetDown : Spider.poseEaseOut) { return nil }
+        switch activity {
+        case .groove:
+            return roundGrooveRole(i)
+        case .greet:
+            // Both front legs straight up beside the head, waving a little
+            // — the same two legs from whichever way it is seen.
+            guard k == 0 else { return .stand(spread: 1) }
+            let side: CGFloat = i < 4 ? 1 : -1
+            let a = t * 4 + (side > 0 ? 0 : 0.8)
+            let up = smoothstep(clamp((t - roundGestureAt) / 0.45, 0, 1))
+            let r = SpiderRenderer.rig3D(i, look: look)
+            // (High, and out in front of the legs standing beside them: a
+            // V either side of the head, each elbow well above the knee of
+            // the leg next to it and nearer you than it. With its elbow
+            // down level with that knee, and no further forward, the two
+            // were drawn on top of one another.)
+            let raised = V3(24 + sin(a) * 2, 30 + cos(a * 1.3) * 2, side * (17 + sin(a) * 1.5))
+            return .air(target: V3.lerp(r.foot, raised, up), bend: V3(0.1, -0.1, side))
+        default:
+            return nil
+        }
+    }
+
+    /// Dancing to music (see "Dancing to music"): what leg `i` does in the
+    /// move under way — up in the air in it, or standing (and stamping on
+    /// the beat, `roundTap`) — handed from one move to the next over a
+    /// pulse. Face on, throwing its arms up, the arms are its two front legs.
+    private func roundGrooveRole(_ i: Int) -> RoundRole {
+        let q = groovePulse
+        let handing = clamp(CGFloat(q - grooveMoveAt), 0, 1)
+        let winding = grooveEnding ? grooveMix : min(1, grooveMix * 1.5)
+        func want(_ m: GrooveMove) -> (raised: V3?, tap: CGFloat) {
+            if m == .arms {
+                // Up beside the head and down to it, in turn, on the beat.
+                guard i % 4 == 0 else { return (nil, 0) }
+                let side: CGFloat = i < 4 ? 1 : -1
+                let (even, f) = Spider.pulseAt(q)
+                let atTop = even == (i < 4)
+                let e = pow(f, 2)
+                let up = atTop ? lerp(38, 19, e) : lerp(19, 38, e)
+                let out = atTop ? lerp(20, 25, e) : lerp(25, 20, e)
+                return (V3(8, up - 10, side * out), 0)
+            }
+            switch grooveLeg(m, i, q) {
+            case .ground(let tap): return (nil, tap * winding)
+            case .air(let p): return (roundLift(i, p), 0)
+            }
+        }
+        var w = want(grooveMove)
+        if handing < 1 {
+            let was = want(groovePrev)
+            switch (was.raised, w.raised) {
+            case (nil, nil): w.tap = lerp(was.tap, w.tap, smoothstep(handing))
+            case let (a?, b?): w.raised = V3.lerp(a, b, smoothstep(handing))
+            default: if handing < 0.5 { w = was }
+            }
+        }
+        // (Winding down, a raised leg comes back to the ledge.)
+        if grooveEnding { w.raised = nil }
+        roundTap[i] = w.raised == nil ? w.tap : 0
+        if let r = w.raised { return .air(target: r, bend: legBend[i].map { V3($0.x, $0.y, 0) }) }
+        return .stand(spread: 1)
+    }
+    /// How far each standing foot is lifted off its spot in a stamp, this
+    /// frame (sprite units).
+    private var roundTap = [CGFloat](repeating: 0, count: SpiderRenderer.legCount)
+
+    /// Leg `i` up in a pose: its foot on a spring to `target` (the body's
+    /// frame), going with the body. A planted foot leaves the ground as it
+    /// goes up.
+    private func roundRaise(_ i: Int, to target: V3, bend given: V3?, hip: V3, psi: CGFloat, dt: CGFloat) {
+        var r = roundLegs[i]
+        // (A raised leg's knee bends as its standing shape does, swung round
+        // the hip with the foot — up and back like an elbow, side on, never
+        // in across the face — unless the pose says otherwise.)
+        var bend = given ?? roundSwungBend(i, to: target)
+        // (Never in toward the body, though: a knee bent in there would
+        // swing round through it on the way back down.)
+        let out: CGFloat = i < 4 ? 1 : -1
+        if bend.z * out < 0.15 { bend = V3(bend.x, bend.y, 0.15 * out).normalized }
+        if r.step != nil { r.step = nil }
+        if !r.posed { r.posed = true; r.vel = .zero; r.held = nil }
+        r.down = false
+        roundLegs[i] = r
+        // (A drumming leg keeps the beat; the rest ease.)
+        let quick = activity == .drum && i % 4 == 0
+        let (k, c): (CGFloat, CGFloat) = quick ? (1800, 60) : (260, 30)
+        var foot = roundEasePosed(i, to: target, stiffness: k, damping: c, psi: psi, dt: dt)
+        r = roundLegs[i]
+        // (Never folded in through its own hip, nor out past its length.)
+        let d = foot - hip, len = roundLength(i)
+        if d.length > len * 0.98 { foot = hip + d * (len * 0.98 / d.length) }
+        legs[i].foot = foot.xy
+        legs[i].lift = approach(legs[i].lift, 1, 8, dt)
+        r.z = foot.z
+        roundLegs[i] = r
+        legBend[i] = bend.xy
+        roundBend[i] = SpiderRenderer.toSprite3D(bend, turn: psi)
+    }
+    /// Leg `i`'s foot up in a pose, eased toward `target` (the body's own
+    /// frame) on a spring, and where that is in the sprite's space. The
+    /// easing is done on the body — where the foot is on it, not where it
+    /// is drawn — so a foot held up goes round with the body as that turns
+    /// toward you or away, in the air or on the ground, instead of trailing
+    /// after it across the picture and drawing its leg out straight.
+    private func roundEasePosed(_ i: Int, to target: V3, stiffness k: CGFloat, damping c: CGFloat, psi: CGFloat, dt: CGFloat) -> V3 {
+        var r = roundLegs[i]
+        var on = r.held ?? SpiderRenderer.toBody3D(V3(legs[i].foot, r.z), turn: psi)
+        if r.held == nil { r.vel = SpiderRenderer.toBody3D(r.vel, turn: psi) }
+        r.vel += ((target - on) * k - r.vel * c) * dt
+        on += r.vel * dt
+        r.held = on
+        roundLegs[i] = r
+        return SpiderRenderer.toSprite3D(on, turn: psi)
+    }
+    /// Leg `i` is no longer held up on the body (see `roundEasePosed`).
+    private func roundLetGo(_ i: Int) {
+        roundLegs[i].held = nil
+        roundLegs[i].vel = .zero
+    }
+
+    /// The way leg `i`'s knee bends with its foot at `target` (the body's
+    /// frame): its standing shape's bend, turned with the leg — the turn
+    /// that takes the way it points standing to the way it points now.
+    private func roundSwungBend(_ i: Int, to target: V3) -> V3 {
+        let r = SpiderRenderer.rig3D(i, look: look)
+        let d0 = (r.foot - r.hip).normalized, d1 = (target - r.hip).normalized
+        let axis = d0.cross(d1)
+        let s = axis.length, c = d0.dot(d1)
+        guard s > 1e-4 else { return c > 0 ? r.bend : r.bend * -1 }
+        let k = axis / s
+        let v = r.bend
+        // (Rodrigues: v turned about k by the angle between the two.)
+        return (v * c + k.cross(v) * s + k * (k.dot(v) * (1 - c))).normalized
+    }
+
+    /// The way a raised leg's knee bends, in the sprite's space (nil: as
+    /// it bends standing); and whether the leg is on its way down from the
+    /// pose that bent it so.
+    private var roundBend = [V3?](repeating: nil, count: SpiderRenderer.legCount)
+    private var roundComingDown = [Bool](repeating: false, count: SpiderRenderer.legCount)
+
+    /// Standing on whatever legs are not up: each foot stays planted where
+    /// it is, and steps — quickly, lifting — to where it stands as soon as
+    /// the body has gone round or along from over it far enough that the
+    /// leg would be twisted, stretched or crowded; or, the body settled,
+    /// tidies up one that is a little off.
+    private func roundStand(_ standing: [Int], roles: [RoundRole], hips: [V3], psi: CGFloat, dt: CGFloat) {
+        // How far ahead to aim: where the body will be once a step now is
+        // down, and then some way into the stance after it.
+        let turning = abs(roundYawRate) > 0.15 || (activity == .turn)
+        // (Short legs, and any legs at a run, as they always have.)
+        let lowKnees = roundLowKnees || activity == .scurry
+        let lead: CGFloat = turning ? 0.22 : 0.12
+        var wants: [(i: Int, need: CGFloat, urgent: Bool)] = []
+        for i in standing {
+            let spread: CGFloat
+            if case .stand(let s) = roles[i] { spread = s } else { spread = 1 }
+            if roundLegs[i].step != nil { continue }
+            // (Taking a landing, its spots are where they will be once the
+            // body has come to rest: see `roundLanded`.)
+            let home = roundLanded(roundHomeAt(i, yaw: yaw, spread: spread))
+            let foot = V3(legs[i].foot, roundLegs[i].z)
+            if !roundLegs[i].down {
+                // In the air from whatever went before: straight down to its spot.
+                wants.append((i, 10, true))
+                continue
+            }
+            // Where its spot will be by the time a step now could be down:
+            // a foot put down ahead of a turn is not off it, only early.
+            let ahead = turning ? roundLanded(roundHomeAt(i, yaw: roundYawAhead(Spider.roundStepTime), spread: spread)) : home
+            let len = roundLength(i)
+            let reach = foot.distance(to: hips[i]) / len
+            let off = V2(foot.x - ahead.x, foot.z - ahead.z).length
+            // Twisted round its hip, seen from above.
+            let h = hips[i].xz
+            let twist = abs(angleDelta((ahead.xz - h).angle, (foot.xz - h).angle))
+            let slack: CGFloat = roundSettled > Spider.settledAfter ? Spider.plantTidy : Spider.roundSlack
+            var need = max(off / slack, twist / Spider.roundTwist)
+            // (Bouncing, wiggling, dancing on the spot, it keeps its grip: a
+            // foot only moves if the leg cannot reach where it is at all —
+            // the bounce pulls a leg out to its length for a moment, and
+            // gives it back. Tidied up after.)
+            let holding = Spider.roundHoldsOn.contains(activity)
+            let urgent = (holding ? reach > 1.0 || reach < Spider.roundReachLeast * 0.8
+                : reach > Spider.roundReachMost + 0.03 || reach < Spider.roundReachLeast)
+            // (A foot carried in under its hip, its leg folding flat, wants to
+            // step as much as an urgent one — but waits its turn like any
+            // other, never up beside a neighbour in the air.)
+            if urgent || (!holding && !lowKnees && roundTucked(i, foot, hip: hips[i])) { need = max(need, 2) }
+            else if holding { need = 0 }
+            if need > 1 { wants.append((i, need, urgent)) }
+            if Spider.debugStandLeg == i { print(String(format: "  STAND f leg%d need %.2f off %.1f twist %.2f urgent %d reach %.2f turning %d", i, need, off, twist, urgent ? 1 : 0, reach, turning ? 1 : 0)) }
+        }
+        guard !wants.isEmpty else {
+            for i in legs.indices { roundBlocked[i] = 0 }
+            return
+        }
+        // Where each would step to. One whose way is barred by a neighbour
+        // still out of place — the body coming round has left the next leg
+        // standing in its lane — waits for that one to step out of it first
+        // (which it is then quick to do), rather than step somewhere odd to
+        // get round it. Coming round, that makes the steps ripple round the
+        // body in the order they clear each other's way.
+        var plans: [(i: Int, need: CGFloat, urgent: Bool, target: V3, dur: CGFloat)] = []
+        var blockers: [Int: CGFloat] = [:]
+        func plan(_ i: Int, need: CGFloat, urgent: Bool) -> (target: V3, dur: CGFloat)? {
+            let spread: CGFloat
+            if case .stand(let s) = roles[i] { spread = s } else { spread = 1 }
+            // (A foot coming down out of the air onto what it has landed on
+            // is down as the body comes down onto its legs.)
+            let dur = absorbingLanding && !roundLegs[i].down ? clamp(landStep * 1.25, 0.06, 0.1)
+                : Spider.roundStepTime * (urgent ? 0.85 : 1)
+            // Down where its spot will be half way through the stance after:
+            // the other set's step from now.
+            let land = roundYawAhead(dur + (turning ? Spider.roundStepTime : lead))
+            let foot = V3(legs[i].foot, roundLegs[i].z)
+            var target = roundHomeAt(i, yaw: land, spread: spread)
+            // (Just landed, the body still coming down onto its legs and
+            // swinging square onto what it landed on: where its spot will
+            // be once it has.)
+            target = roundLanded(target)
+            let free = target
+            target = roundKeepLane(i, target, yaw: land)
+            let blocker = roundLaneBlocker, noRoom = roundLaneNoRoom
+            if !urgent, roundLegs[i].down, noRoom || target.distance(to: free) > Spider.roundLaneWait {
+                // (The one in its way steps out of it first; this one goes
+                // as far as it can now, if that is worth a step, and on from
+                // there after — or, with nowhere to go yet, waits a moment.)
+                if let j = blocker { blockers[j] = max(blockers[j] ?? 0, need) }
+                let progress = foot.distance(to: free) - target.distance(to: free)
+                if noRoom || progress < Spider.roundLaneProgress,
+                   roundBlocked[i] < (noRoom ? Spider.roundLaneWaitBlocked : Spider.roundLaneWaitMost) {
+                    roundBlocked[i] += dt
+                    if Spider.debugStandLeg == i { print(String(format: "  STAND leg%d waits for lane (noRoom %d blocker %d waited %.2f)", i, noRoom ? 1 : 0, blocker ?? -1, roundBlocked[i])) }
+                    return nil
+                }
+            }
+            // (A long way to go is a few short steps, not one long one —
+            // longer ones, coming round, and a front leg goes right across in
+            // front of the face in one swing, never stopping half way stood
+            // in front of it. A foot coming down out of the air goes straight
+            // to its spot, however far.)
+            if roundLegs[i].down {
+                // (Nor does a foot the body has come round past — over its
+                // middle line, in front of the face — stop short there: back
+                // round to its own side it goes, in one swing.)
+                let across = roundLaneSpot(i, foot, yaw: land).y <= 2
+                let most: CGFloat? = turning ? roundLength(i) * (i % 4 == 0 || across ? 1.2 : Spider.roundStepMost) : nil
+                target = roundCapStep(i, from: foot, to: target, most: most)
+            }
+            // (Never past its neighbours' feet along the body, as they are
+            // seen: see `roundKeepOrder`.)
+            if !turning { target = roundKeepOrder(i, target, in: dur, v: 0, fwd: 1) }
+            // (Within reach of its hip as that will be: taking a landing,
+            // down on its legs — the body is still up above them now.)
+            target = roundPlaceInLane(i, target, from: foot, hip: roundLanded(hips[i]), yaw: land, slack: 0)
+            // (Not worth a step: it is all but there.)
+            if roundLegs[i].down, foot.distance(to: target) < 1.2 { return nil }
+            // (Nothing to stand on where it was going — perched on a corner
+            // it is not going round, wedged in a narrow gap: the nearest
+            // ground it can reach instead, if that keeps it in its lane.
+            // Nowhere at all: a foot with a hold keeps it, unless the leg
+            // cannot reach it; one up in the air stays up, reaching, rather
+            // than paw at the air step after step.)
+            if !absorbingLanding, refGroundNear(target.xy).dist > 3 {
+                let dz = target.z - hips[i].z, len = roundLength(i)
+                let most = max(len * len * Spider.roundReachMost * Spider.roundReachMost - dz * dz, 16).squareRoot()
+                // (In its lane — or, the foot as it is well out of it, at
+                // least tidier than where it stands.)
+                if let r = nearestReachable(target.xy, hip: hips[i].xy, within: most) {
+                    let off = roundLaneOff(i, V3(r, target.z), yaw: land)
+                    if off < 2 || (roundLegs[i].down && off < roundLaneOff(i, foot, yaw: land) - 2) {
+                        target = V3(r, target.z)
+                    }
+                }
+            }
+            if refGroundNear(target.xy).dist > 3 {
+                if roundLegs[i].down {
+                    if foot.distance(to: hips[i]) / roundLength(i) <= Spider.roundReachMost + 0.03,
+                       roundLaneOff(i, foot, yaw: land) < 4 { return nil }
+                } else if foot.distance(to: target) < 4 {
+                    return nil
+                }
+            }
+            // (Nor is one that leaves it no nearer its spot and no tidier in
+            // its lane: the ground runs out ahead — the tip of a frond, the
+            // end of a stem — and the nearest it can stand is back behind
+            // its neighbour's foot. It keeps the hold it has — even folded
+            // in a little tight under its hip, which is better than crossed;
+            // only a leg stretched past its reach must go, wherever it can.)
+            if roundLegs[i].down, foot.distance(to: hips[i]) / roundLength(i) <= Spider.roundReachMost + 0.03 {
+                let tidier = roundLaneOff(i, foot, yaw: land) - roundLaneOff(i, target, yaw: land)
+                if urgent {
+                    if tidier < 1, roundLaneOff(i, target, yaw: land) > 2 { return nil }
+                } else if foot.distance(to: free) - target.distance(to: free) < 1.5, tidier < 1 {
+                    return nil
+                }
+            }
+            // (A long swing takes a little longer — and so does a long way
+            // down, from a pose.)
+            let span = max(V2(target.x - foot.x, target.z - foot.z).length, roundLegs[i].down ? 0 : foot.distance(to: target))
+            return (target, max(dur, roundLegs[i].down ? min(span / 240, 0.22) : min(span / 160, 0.32)))
+        }
+        for w in wants {
+            if let p = plan(w.i, need: w.need, urgent: w.urgent) { plans.append((w.i, w.need, w.urgent, p.target, p.dur)) }
+        }
+        // (A leg standing in another's way steps out of it, if it can.)
+        for (j, need) in blockers where roundLegs[j].step == nil && roundLegs[j].down && !plans.contains(where: { $0.i == j }) {
+            if let p = plan(j, need: need, urgent: false) { plans.append((j, need + 0.5, false, p.target, p.dur)) }
+        }
+        let set = roundSetToStep(plans.map { ($0.i, $0.need, $0.urgent) })
+        for p in plans.sorted(by: { $0.need > $1.need }) {
+            // (The set whose turn it is — the two sets of four taking turns —
+            // for the little steps standing about; coming round, whichever
+            // can go, its neighbours down. Another leg only if it must: out
+            // of reach, still in the air, or standing in a neighbour's way.)
+            guard turning || roundSet(p.i) == set || p.urgent || blockers[p.i] != nil else {
+                if Spider.debugStandLeg == p.i { print("  STAND leg\(p.i) not its set's turn") }
+                continue
+            }
+            guard roundMayStep(p.i, urgent: p.urgent, need: turning ? 2 : p.need) else {
+                if Spider.debugStandLeg == p.i { print("  STAND leg\(p.i) may not step (neighbours/sets)") }
+                continue
+            }
+            roundBlocked[p.i] = 0
+            roundBeginStep(p.i, to: p.target, dur: p.dur, hip: hips[p.i])
+        }
+    }
+    /// What it does on the spot holding on with every foot where it is.
+    private static let roundHoldsOn: Set<Activity> = [.bounce, .wiggle, .dance, .shake, .pushup]
+
+    /// How long each leg has waited for a neighbour to get out of its lane.
+    private var roundBlocked = [CGFloat](repeating: 0, count: SpiderRenderer.legCount)
+    /// How far its lane may move a step's end, in sprite units, before the
+    /// leg would rather wait; and how long it waits, at most.
+    private static let roundLaneWait: CGFloat = 6
+    private static let roundLaneWaitMost: CGFloat = 0.1
+    /// How long it waits, at most, with no room at all between its
+    /// neighbours (one of them still standing where it would go).
+    private static let roundLaneWaitBlocked: CGFloat = 0.15
+    /// How much nearer its spot a step its lane cuts short must bring a
+    /// foot to be worth taking now (sprite units).
+    private static let roundLaneProgress: CGFloat = 5
+
+    /// Which of the two sets steps next, of the legs that want to: the one
+    /// already on its way (until its feet are coming down), else the one
+    /// most in need.
+    private func roundSetToStep(_ wants: [(i: Int, need: CGFloat, urgent: Bool)]) -> Int {
+        let flying = legs.indices.filter { roundLegs[$0].step != nil }
+        if let latest = flying.min(by: { (roundLegs[$0].step?.u ?? 1) < (roundLegs[$1].step?.u ?? 1) }),
+           (roundLegs[latest].step?.u ?? 1) < 0.5 {
+            return roundSet(latest)
+        }
+        var total: [CGFloat] = [0, 0]
+        for w in wants { total[roundSet(w.i)] += w.need }
+        // (Not the set that has only just come down, if the other wants to go.)
+        if flying.isEmpty, let last = legs.indices.max(by: { roundLegs[$0].landedAt < roundLegs[$1].landedAt }),
+           t - roundLegs[last].landedAt < 0.08, total[1 - roundSet(last)] > 0 {
+            return 1 - roundSet(last)
+        }
+        return total[0] >= total[1] ? 0 : 1
+    }
+
+    /// `to` brought back toward `from` (seen from above) to no more than a
+    /// short step's length for leg `i`: a foot with a long way to go gets
+    /// there in a few quick steps.
+    private func roundCapStep(_ i: Int, from: V3, to: V3, most given: CGFloat? = nil) -> V3 {
+        let most = given ?? max(14, roundLength(i) * Spider.roundStepMost)
+        let d = V2(to.x - from.x, to.z - from.z)
+        guard d.length > most else { return to }
+        let q = V2(from.x, from.z) + d * (most / d.length)
+        return V3(q.x, to.y, q.y)
+    }
+    /// The longest a step taken out of turn is, as a share of the leg.
+    private static let roundStepMost: CGFloat = 0.6
+
+    /// Off its spot, in sprite units, before a standing foot steps while
+    /// the body moves; twisted round its hip, in radians; how long a step
+    /// takes, in seconds.
+    private static let roundSlack: CGFloat = 6
+    private static let roundTwist: CGFloat = 0.42
+    static let debugStandLeg = Int(ProcessInfo.processInfo.environment["STANDLEG"] ?? "-1") ?? -1
+    /// How much of the design's stride a walk in the round takes: quicker,
+    /// shorter steps, so the feet keep up with the body.
+    private static let roundStrideShare: CGFloat = 0.8
+    /// Below this pace (sprite units a second), with nowhere it means to
+    /// go, its feet stop walking and tidy themselves where it stands.
+    private static let roundStopUnder: CGFloat = 15
+    private static let roundStepTime: CGFloat = 0.14
+    /// The furthest round ahead of the body (radians) a step is aimed.
+    private static let roundLeadMost: CGFloat = 0.45
+
+    /// Whether leg `i` may lift now: never with too many feet up, nor —
+    /// unless it must — with the leg next to it on its side up, or out of
+    /// turn with the set stepping now (the two sets of four take turns).
+    private func roundMayStep(_ i: Int, urgent: Bool, need: CGFloat = 1) -> Bool {
+        // (A foot already off the ground — landing, or let down out of a
+        // pose — comes down whenever it likes: it is not leaving the ground.)
+        if !roundLegs[i].down, !roundLegs[i].posed { return true }
+        // (Nor does one the body has left behind past where its leg reaches:
+        // dragged along it would be drawn out to twice its length.)
+        let reach = V3(legs[i].foot, roundLegs[i].z).distance(to: roundHip(i, psi: roundPsi)) / roundLength(i)
+        if reach > 1.02 { return true }
+        let up = legs.indices.filter { $0 != i && (roundLegs[$0].step != nil || roundLegs[$0].posed) }
+        let stepping = up.filter { roundLegs[$0].step != nil }
+        if up.count >= (urgent ? 5 : 4) { return false }
+        if urgent { return true }
+        let side = i < 4
+        // (Never beside a neighbour still well off the ground on a step. One
+        // held up in a gesture — both front legs up in a greeting — is up
+        // for as long as that lasts: the legs beside it still step.)
+        if stepping.contains(where: { ($0 < 4) == side && abs($0 % 4 - i % 4) == 1 && (roundLegs[$0].step?.u ?? 1) < 0.8 }) { return false }
+        // (Its own set steps together: a leg of the other set just up and it
+        // waits for it to be on its way down — unless it is badly off.)
+        if need < 1.6, stepping.contains(where: { roundSet($0) != roundSet(i) && (roundLegs[$0].step?.u ?? 1) < 0.4 }) { return false }
+        return true
+    }
+    /// Which of the two sets leg `i` steps with: front and back-middle legs
+    /// of one side with the front-middle and back legs of the other. (By
+    /// slot: past the front view the slots' sides change over, and so do
+    /// their sets — see `roundOwnSet` for the leg's own.)
+    private func roundSet(_ i: Int) -> Int { ((i % 4) % 2 == 0) == (i < 4) ? 0 : 1 }
+    /// The set the leg in slot `i` stepped with when it last came round
+    /// side on this way (the same leg's, however many times it has turned).
+    private func roundOwnSet(_ i: Int) -> Int { (roundSet(i) + roundFlips) % 2 }
+    /// How many times the body has come round past the front view.
+    private var roundFlips = 0
+    /// Tools only: no glances round at you of its own accord.
+    static var debugNoGlances = ProcessInfo.processInfo.environment["SPIDER_NO_GLANCES"] != nil
+    /// Tools only: a leg whose walking steps are printed as they begin.
+    static var debugRoundLeg = Int(ProcessInfo.processInfo.environment["ROUNDLEG"] ?? "-1") ?? -1
+
+    /// `target` for leg `i`, kept in its own lane: seen from above, round
+    /// the body, never closer to either neighbour on its side — where they
+    /// stand, or are stepping to — than a leg's width and a little.
+    /// Where `p` (sprite space) is seen from above in leg `i`'s lanes,
+    /// with the body turned to `y`: along the body from the lanes' centre,
+    /// and out to the leg's own side (negative: over the middle line).
+    private func roundLaneSpot(_ i: Int, _ p: V3, yaw y: CGFloat) -> V2 {
+        let psi = roundLegTurn(y)
+        let flip = (y >= 0) != (yaw >= 0) && abs(y) >= 1e-4
+        let s = flip ? V3(-p.x, p.y, p.z) : p
+        let b = SpiderRenderer.toBody3D(s, turn: psi)
+        let side: CGFloat = (flip ? (i + 4) % 8 : i) < 4 ? 1 : -1
+        return V2(b.x - Spider.roundLaneCentre, b.z * side)
+    }
+
+    private func roundKeepLane(_ i: Int, _ target: V3, yaw y: CGFloat, slack: CGFloat = 0) -> V3 {
+        let psi = roundLegTurn(y)
+        let flip = (y >= 0) != (yaw >= 0) && abs(y) >= 1e-4
+        // In the body's frame as it will be: its side out to +z.
+        func body(_ p: V3) -> V2 { roundLaneSpot(i, p, yaw: y) }
+        func sprite(_ q: V2, _ y0: CGFloat) -> V3 {
+            let side: CGFloat = (flip ? (i + 4) % 8 : i) < 4 ? 1 : -1
+            let b = V3(q.x + Spider.roundLaneCentre, y0, q.y * side)
+            var s = SpiderRenderer.toSprite3D(b, turn: psi)
+            if flip { s.x = -s.x }
+            return s
+        }
+        let t = body(target)
+        let r = max(t.length, 1)
+        let k = i % 4
+        let gap = Spider.roundLaneGap / r
+        roundLaneBlocker = nil
+        // (Never across the body's middle line: one aimed over there comes
+        // back to its own side, ahead or behind as it was.)
+        let edge = min(Spider.roundLaneGap / r, 0.5)
+        var a = t.angle >= 0 ? t.angle : (t.angle > -.pi / 2 ? edge : .pi - edge)
+        var lo: CGFloat = edge, hi: CGFloat = .pi - edge
+        for j in legs.indices where j != i && (j < 4) == (i < 4) && abs(j % 4 - k) == 1 {
+            // Where the neighbour stands, or is stepping to, and its own
+            // spot. (A foot left where it was as the body swung round —
+            // across its middle line, even — is still in the way until it
+            // steps: none goes past it. One up in a pose will come down on
+            // its spot.)
+            let home = body(roundHomeAt(j, yaw: y)).angle
+            var refs = [home]
+            var spots: [V3] = []
+            if !roundLegs[j].posed { spots.append(V3(legs[j].foot, roundLegs[j].z)) }
+            if let s = roundLegs[j].step { spots.append(s.to) }
+            for s in spots {
+                let q = body(s)
+                guard q.length > 2 else { continue }
+                var qa = q.angle
+                while qa - home > .pi { qa -= 2 * .pi }
+                while qa - home < -.pi { qa += 2 * .pi }
+                refs.append(qa)
+            }
+            if j % 4 < k {
+                let v = (refs.max() ?? home) + gap - slack
+                if v > lo { lo = v; if v > a { roundLaneBlocker = j } }
+            } else {
+                let v = (refs.min() ?? home) - gap + slack
+                if v < hi { hi = v; if v < a { roundLaneBlocker = j } }
+            }
+        }
+        roundLaneNoRoom = lo > hi
+        if lo <= hi { a = clamp(a, lo, hi) } else { a = (lo + hi) / 2 }
+        a = clamp(a, edge, .pi - edge)
+        guard abs(a - t.angle) > 1e-4 else { return target }
+        // (To the nearest spot in the lane to where it was going: a step
+        // aimed well out ahead of its lane comes back along it, rather than
+        // swinging round out to the side at the same reach.)
+        let dir = V2(cos(a), sin(a))
+        return sprite(dir * min(max(t.dot(dir), r * 0.5), r), target.y)
+    }
+    /// `target` put on the ground within reach of `hip` (see `roundPlace`),
+    /// in leg `i`'s lane. Put on the ground, a foot can end up somewhere
+    /// else along it than it was aimed — up the wall of a corner it is
+    /// walking into, past its neighbour's foot — and then it goes only as
+    /// far toward there from `from` as keeps it in its lane: a shorter step.
+    private func roundPlaceInLane(_ i: Int, _ target: V3, from: V3, hip: V3, yaw y: CGFloat, slack: CGFloat) -> V3 {
+        func inLane(_ p: V3) -> Bool { roundKeepLane(i, p, yaw: y, slack: slack).distance(to: p) <= 1.5 }
+        let p = roundPlace(i, target, hip: hip)
+        if inLane(p) { return p }
+        var lo: CGFloat = 0, hi: CGFloat = 1
+        var best: V3?
+        for _ in 0..<7 {
+            let m = (lo + hi) / 2
+            let q = roundPlace(i, V3.lerp(from, target, m), hip: hip)
+            if inLane(q) { lo = m; best = q } else { hi = m }
+        }
+        return best ?? p
+    }
+
+    /// How far `p` is out of leg `i`'s lane (sprite units), with the body
+    /// turned to `y`: 0 in it.
+    private func roundLaneOff(_ i: Int, _ p: V3, yaw y: CGFloat) -> CGFloat {
+        let blocker = roundLaneBlocker, noRoom = roundLaneNoRoom
+        defer { roundLaneBlocker = blocker; roundLaneNoRoom = noRoom }
+        return roundKeepLane(i, p, yaw: y).distance(to: p)
+    }
+
+    /// The neighbour whose foot last pushed a step out of its lane (see
+    /// `roundKeepLane`), if any; and whether there was no room at all
+    /// between its neighbours.
+    private var roundLaneBlocker: Int?
+    private var roundLaneNoRoom = false
+    /// How far round (radians) a foot may come past its neighbour's line,
+    /// in the stride of an ordinary walk.
+    private static let roundWalkSlack: CGFloat = 0.45
+    /// Where on the body, seen from above, the feet's lanes fan out from;
+    /// and how far apart, in sprite units, neighbouring feet are kept.
+    private static let roundLaneCentre: CGFloat = 2
+    private static let roundLaneGap: CGFloat = 7
+
+    /// Sets leg `i` off on a step to `target` (sprite space).
+    private func roundBeginStep(_ i: Int, to target: V3, dur: CGFloat, hip: V3, ph0: CGFloat? = nil) {
+        let from = V3(legs[i].foot, roundLegs[i].z)
+        if Spider.debugRoundLeg == i || Spider.debugRoundLeg == 99 {
+            print(String(format: "  step leg%d t %.2f %@ yaw %.3f goal %.3f from (%.1f,%.1f,%.1f) to (%.1f,%.1f,%.1f) dur %.2f", i, t, "\(activity)", yaw, yawGoal,
+                         from.x, from.y, from.z, target.x, target.y, target.z, dur))
+        }
+        let span = from.distance(to: target)
+        // (Swung round the hip when it is going a long way round it — not
+        // from or to right in under it, though, where which way round it
+        // is says nothing: swung round from there, it would loop wide.)
+        let h = hip.xz
+        let clear = min((from.xz - h).length, (target.xz - h).length) > roundLength(i) * 0.3
+        let turn = clear ? abs(angleDelta((from.xz - h).angle, (target.xz - h).angle)) : 0
+        var height = Spider.roundStepHeight * clamp(span / 14 + 0.3, 0.5, 1.2)
+        // (A foot already up off the ground comes straight down onto its
+        // spot, rather than lifting further first.)
+        if !roundLegs[i].down { height = min(height, max(0, 2 - (from.y - target.y) * 0.2)) }
+        roundLegs[i].step = RoundStep(from: from, to: target, dur: max(dur, 0.06), height: height,
+                                      ph0: ph0, round: turn > 0.5, steer: true)
+        roundLegs[i].down = false
+        roundLegs[i].posed = false
+        roundLetGo(i)
+    }
+    private static let roundStepHeight: CGFloat = 5
+
+    /// On through leg `i`'s step.
+    private func roundAdvanceStep(_ i: Int, hip: V3, dt: CGFloat) {
+        guard var s = roundLegs[i].step else { return }
+        // (The walk's own steps it moves on itself, by its clock.)
+        if s.ph0 == nil { s.u = min(1, s.u + dt / s.dur) }
+        // (Where it comes down is on the ground, however the ground has
+        // moved under the body since the step was aimed — settling after a
+        // drop, say: kept there all the way down, so a foot never comes
+        // down in the air and is snapped onto the edge after.)
+        if mode == .attached {
+            let under = refGroundNear(s.to.xy)
+            if under.dist > 0.25, under.dist < 4 { s.to = V3(under.point, s.to.z) }
+        }
+        let (p, lift) = roundStepPath(i, s, hip: hip)
+        legs[i].foot = p.xy
+        roundLegs[i].z = p.z
+        legs[i].lift = lift
+        if s.u >= 1 {
+            legs[i].foot = s.to.xy
+            roundLegs[i].z = s.to.z
+            legs[i].lift = 0
+            roundLegs[i].step = nil
+            roundLegs[i].down = true
+            roundLegs[i].landedAt = t
+            legs[i].landedAt = t
+        } else {
+            roundLegs[i].step = s
+        }
+    }
+
+    /// Where a foot is `s.u` of the way through its step: off the ground
+    /// and back onto it at rest, up along the ground's way out, highest a
+    /// little before half way, drawn in a touch toward its hip — and, for a
+    /// step a long way round its hip, round it rather than across under it.
+    private func roundStepPath(_ i: Int, _ s: RoundStep, hip: V3) -> (V3, CGFloat) {
+        let lift = Spider.refLift(s.u)
+        let e = Spider.refEase(s.u)
+        var p: V3
+        if s.round {
+            // Seen from above, round the hip: angle and reach eased.
+            let h = hip.xz
+            let a = s.from.xz - h, b = s.to.xz - h
+            let ang = a.angle + angleDelta(a.angle, b.angle) * e
+            let rr = lerp(a.length, b.length, e)
+            let q = h + V2.angle(ang) * rr
+            p = V3(q.x, lerp(s.from.y, s.to.y, e), q.y)
+        } else {
+            p = V3.lerp(s.from, s.to, e)
+        }
+        // Up off the ground the way the ground faces.
+        let up = V2.lerp(refNormal(s.from.xy), refNormal(s.to.xy), e).normalized
+        p += V3(up.x, up.y, 0) * (lift * s.height)
+        // Drawn in a little toward the hip.
+        p += (hip - p) * (0.06 * sin(.pi * e) * sin(.pi * e))
+        // (Never folded in through the hip, nor out past the leg's length;
+        // and a long way round its hip — down out of a pose held up beside
+        // the head, say — it swings out round it, about as far from it all
+        // the way as it starts and ends, rather than straight across close
+        // by it, the leg crumpling up and out again.)
+        var d = p - hip
+        let len = roundLength(i)
+        var dl = d.length
+        let keep = lerp(s.from.distance(to: hip), s.to.distance(to: hip), e) * 0.85
+        if dl < keep, dl > 0.001 { p = hip + d * (keep / dl); d = p - hip; dl = d.length }
+        if dl > len * 0.97, dl > 0.001 { p = hip + d * (len * 0.97 / dl) }
+        if dl < len * Spider.roundReachLeast * 0.8, dl > 0.001 { p = hip + d * (len * Spider.roundReachLeast * 0.8 / dl) }
+        return (p, lift)
+    }
+
+    // MARK: A hop on the spot
+
+    /// In the air in a hop (see `hopPhase`): the feet peel off the ledge
+    /// after the body has gone — from a standstill — come up under it, and
+    /// are back down on their spots, gently, just before it lands on them.
+    private func roundHopFeet(_ standing: [Int], hips: [V3], v: CGFloat) {
+        let peel = pow(v, 1.25)
+        let up = sin(peel * .pi) * sin(peel * .pi)
+        for i in standing {
+            roundLegs[i].step = nil
+            let g = roundPlace(i, roundHomeAt(i, yaw: yaw), hip: hips[i])
+            let h = hips[i]
+            let p = V3(lerp(g.x, h.x + (g.x - h.x) * 0.7, up * 0.6), g.y + up * Spider.hopFeet,
+                       lerp(g.z, h.z + (g.z - h.z) * 0.85, up * 0.6))
+            legs[i].foot = p.xy
+            roundLegs[i].z = p.z
+            legs[i].lift = up
+            roundLegs[i].down = up < 0.02 && v > 0.5
+        }
+    }
+
+    // MARK: Turning round on the spot
+
+    /// The turn's own clock, in step cycles, and which cycle each leg last
+    /// stepped in; the turn it is for.
+    private var roundTurnClock: CGFloat = 0
+    private var roundTurnCycles: CGFloat = 4
+    private var roundTurnStepped = [Int](repeating: -1, count: SpiderRenderer.legCount)
+    private var roundTurnFor: CGFloat = -1
+
+    /// The yaw `s` seconds into the turn it is making (as `updateYaw` has it).
+    private func roundTurnYaw(at s: CGFloat) -> CGFloat {
+        turnSweepYaw(at: clamp(s, 0, activityDur))
+    }
+    /// The yaw `s` seconds into a turn on the spot, in the round: the body
+    /// comes round at an even pace, eased in and out — not slow side on and
+    /// then whipping through the front view, as the old sweep does — so the
+    /// feet stepping round with it can keep an even pace too, not dart.
+    private func turnSweepYaw(at s: CGFloat) -> CGFloat {
+        let sign: CGFloat = turnFromYaw >= 0 ? 1 : -1
+        let a0 = SpiderRenderer.legTurn(yaw: turnFromYaw)
+        // (A jump round turns in the air: from its feet leaving the
+        // ledge to just before they are down again.)
+        let u = s / max(activityDur, 0.01)
+        let jump = activityDur < Spider.roundHopTurnUnder
+        let a = a0 + (.pi - a0) * smoothstep(jump ? clamp((u - 0.29) / 0.5, 0, 1) : u)
+        let near = a <= .pi / 2
+        let p = clamp(cos(near ? a : .pi - a), 0, 1)
+        // (The yaw whose smoothstep is that much side on.)
+        let y = clamp(0.5 - sin(asin(clamp(1 - 2 * p, -1, 1)) / 3), 0, 1)
+        return (near ? sign : -sign) * y
+    }
+
+    /// How far through the turn it is making (0…1) the body is at yaw `y`:
+    /// by how far round it has come, not how long it has been at it — the
+    /// turn sweeps through its middle much faster than it starts or ends.
+    private func roundTurnProgress(_ y: CGFloat) -> CGFloat {
+        let start = roundLegTurn(turnFromYaw)
+        let psi = roundLegTurn(y)
+        let a = (y >= 0) == (turnFromYaw >= 0) ? psi : .pi - psi
+        return clamp((a - start) / max(.pi - start, 0.01), 0, 1)
+    }
+    /// When, in seconds into the turn, it will be `p` of the way round.
+    private func roundTurnTime(at p: CGFloat) -> CGFloat {
+        var lo = activityTime, hi = activityDur
+        guard roundTurnProgress(roundTurnYaw(at: lo)) < p else { return lo }
+        for _ in 0..<14 {
+            let m = (lo + hi) / 2
+            if roundTurnProgress(roundTurnYaw(at: m)) < p { lo = m } else { hi = m }
+        }
+        return hi
+    }
+
+    /// Turning round on the spot: the feet step round with the body, the
+    /// two sets of four taking turns, each step for as far as the body
+    /// comes round in a cycle — the same short way every time, quicker
+    /// where the body swings round faster — put down where its foot will
+    /// stand half way through the stance after it.
+    private func roundTurnSteps(_ standing: [Int], hips: [V3], dt: CGFloat) {
+        // Too quick a turn to step round in (a spin): a little hop, every
+        // foot up off the ground together, round with the body, and down
+        // again where it will stand.
+        if activityDur < Spider.roundHopTurnUnder {
+            roundHopTurn(standing, dt: dt)
+            return
+        }
+        if roundTurnFor != activityStarted {
+            roundTurnFor = activityStarted
+            // (The set that steps second starts half a cycle on: its place
+            // in the first cycle is over as the turn begins.)
+            roundTurnSecond = roundSetToWait(standing, hips: hips)
+            for i in legs.indices { roundTurnStepped[i] = roundTurnSet(i) == roundTurnSecond ? 0 : -1 }
+            // As many cycles as it takes for no step to be long.
+            let span = .pi - roundLegTurn(turnFromYaw)
+            roundTurnCycles = clamp((span / Spider.roundTurnPerCycle).rounded(.up), 1, 8)
+        }
+        let n = roundTurnCycles
+        roundTurnClock = roundTurnProgress(yaw) * n
+        let swing = Spider.roundTurnSwing
+        for i in standing {
+            guard roundLegs[i].step == nil else { continue }
+            // (Each set's first step comes as the turn begins, the other
+            // set's half a cycle on; the back legs a touch before the front.)
+            let shift = (roundTurnSet(i) == roundTurnSecond ? 0.5 : 0) - CGFloat(3 - i % 4) * Spider.roundTurnRipple
+            let c = roundTurnClock + shift
+            let cycle = Int(c.rounded(.down))
+            let ph = c - CGFloat(cycle)
+            let foot = V3(legs[i].foot, roundLegs[i].z)
+            let reach = foot.distance(to: hips[i]) / roundLength(i)
+            // (Its step in this cycle, if it has not had it — late in the
+            // cycle too, held back by the other set: never a second one to
+            // make up for one missed.)
+            let inTime = cycle >= 0 && CGFloat(cycle) < n + 0.5 && roundTurnStepped[i] < cycle && ph < 0.85
+            let stretched = reach > Spider.roundReachMost + 0.03
+            let urgent = !roundLegs[i].down || stretched || reach < Spider.roundReachLeast
+            // (One left a long way from where its leg should stand — the
+            // body still sliding to a stop off a run as it turns, say —
+            // steps without waiting for its turn.)
+            let behind = roundLegs[i].down && foot.xz.distance(to: roundHomeAt(i, yaw: yaw).xz) > Spider.roundTurnLeftBehind
+            guard inTime || urgent || behind else { continue }
+            // (The two sets take turns: one's feet are down, or all but,
+            // before the other's come up. A foot in the air comes down
+            // whenever; one let out too far, or left behind, need not wait
+            // while fewer than four are up.)
+            if roundLegs[i].down {
+                if !roundMayLift(standing, pressed: stretched || behind) { continue }
+                if roundOtherSetUp(i, standing), !(stretched || behind) { continue }
+            }
+            if inTime { roundTurnStepped[i] = cycle }
+            // Down by the end of its window, aimed half a stance on — the
+            // last of them, where it will stand when the turn is done.
+            let downAt = roundTurnTime(at: min((CGFloat(cycle) + swing - shift) / n, 1))
+            let down = clamp(downAt - activityTime, 0.08, 0.2)
+            let last = CGFloat(cycle) + 1 - shift >= n - 0.01
+            let aimAt = last ? activityDur : roundTurnTime(at: min((CGFloat(cycle) + swing + (1 - swing) * 0.5 - shift) / n, 1))
+            let y = roundTurnYaw(at: max(aimAt, activityTime + down))
+            var target = roundHomeAt(i, yaw: y)
+            // (Every foot goes round with the body, each to its own place
+            // on it — none has another's to keep out of — and in reach of
+            // its hip as that will be then, not as it is now.)
+            target = roundPlace(i, target, hip: roundHipAt(i, yaw: y))
+            let span = foot.distance(to: target)
+            if roundLegs[i].down, span < 1.5 { continue }
+            // (A long step takes its time: a foot is not flicked across
+            // in a couple of frames.)
+            roundBeginStep(i, to: target, dur: clamp(span / Spider.roundTurnFootSpeed, down, 0.24), hip: hips[i])
+        }
+    }
+    /// How far round (radians) the body turns in a cycle of steps, at most,
+    /// and the share of a cycle a foot is in the air.
+    private static let roundTurnPerCycle: CGFloat = 0.9
+    /// The same following something round where it stands (see
+    /// `roundSpinSteps`): shorter steps, for a turn that may go on and on,
+    /// or stop anywhere.
+    private static let roundSpinPerCycle: CGFloat = 0.7
+    private static let roundTurnSwing: CGFloat = 0.5
+    /// How much of a cycle each leg of a set steps before the one in front
+    /// of it.
+    private static let roundTurnRipple: CGFloat = 0.04
+
+    /// Whether a foot of the other set from leg `i`'s is up on a step with
+    /// a way still to go (see `roundTurnSteps`).
+    private func roundOtherSetUp(_ i: Int, _ standing: [Int]) -> Bool {
+        let mine = roundTurnSet(i)
+        return standing.contains { j in
+            guard roundTurnSet(j) != mine, let s = roundLegs[j].step else { return false }
+            return s.u < Spider.roundAllButDown
+        }
+    }
+    /// How far through its step a foot is all but down.
+    private static let roundAllButDown: CGFloat = 0.85
+
+    /// Whether another foot may come up off the ground now, turning where
+    /// it stands: never more than four of the eight off it at once, a leg
+    /// held up in a gesture counted.
+    private func roundMayLift(_ standing: [Int], pressed: Bool) -> Bool {
+        let up = roundFeetUp(standing)
+        // (One let out too far, or left behind, need only wait for the
+        // stepping feet; and legs held up count for no more than two —
+        // or with four held up none could ever step.)
+        return up + min(legs.count - standing.count, 2) < 4 || (pressed && up < 4)
+    }
+
+    /// How many of the standing feet are up on a step.
+    private func roundFeetUp(_ standing: [Int]) -> Int {
+        standing.filter { i in
+            if let s = roundLegs[i].step { return s.u < Spider.roundAllButDown }
+            return !roundLegs[i].down
+        }.count
+    }
+    /// A foot standing further than this from where its leg would stand
+    /// now (sprite units), turning round on the spot, has been left behind.
+    private static let roundTurnLeftBehind: CGFloat = 20
+
+    /// Which set steps second as a turn begins: the one whose feet can
+    /// best wait — the other has the foot let out furthest, or feet still
+    /// in the air off a walk, to bring round first.
+    private func roundSetToWait(_ standing: [Int], hips: [V3]) -> Int {
+        var worst: [CGFloat] = [0, 0]
+        for i in standing {
+            let foot = V3(legs[i].foot, roundLegs[i].z)
+            let reach = roundLegs[i].down ? foot.distance(to: hips[i]) / roundLength(i) : 2
+            worst[roundTurnSet(i)] = max(worst[roundTurnSet(i)], reach)
+        }
+        return worst[0] > worst[1] ? 1 : 0
+    }
+    /// The set that steps second in the turn it is making, and whether a
+    /// spin has just begun (its sets yet to be given their turns).
+    private var roundTurnSecond = 0
+    private var roundSpinFresh = false
+
+    /// Which of the two sets of four leg `i` steps with, turning where it
+    /// stands: the front two of one side with the back two of the other.
+    /// (Not the walk's sets, every other leg: the front two legs of a side
+    /// stand too near one another round the body for one to be put down
+    /// well on round while the other is still well back — they would
+    /// cross. Stepping together they never do, and the two that take
+    /// turns on each side, the middle ones, stand far apart.)
+    private func roundTurnSet(_ i: Int) -> Int {
+        return ((((i % 4) < 2) == (i < 4) ? 0 : 1) + roundFlips) % 2
+    }
+    /// A turn quicker than this is a hop round (see `roundHopTurn`); how
+    /// high the feet come up off the ground in it.
+    private static let roundHopTurnUnder: CGFloat = 0.7
+    /// Further round than this (radians) to turn where it stands, all at
+    /// once, is a hop round too (see `roundWantsRegroup`).
+    private static let roundHopTurnOver: CGFloat = 1.1
+    private static let roundHopTurnFeet: CGFloat = 6
+    /// Where each foot was as a hop round began (sprite space).
+    private var roundHopFrom = [V3](repeating: .zero, count: SpiderRenderer.legCount)
+
+    /// A hop round on the spot: up off the ground together, the feet going
+    /// round with the body as it turns, and down where they stand.
+    private func roundHopTurn(_ standing: [Int], dt: CGFloat) {
+        guard let (stage, v) = roundJumpTurn() else { return }
+        if roundTurnFor != activityStarted {
+            roundTurnFor = activityStarted
+            roundHopAir = false
+            for i in legs.indices { roundHopFrom[i] = V3(legs[i].foot, roundLegs[i].z) }
+        }
+        if stage >= 2, !roundHopAir {
+            // (Off the ledge now: from wherever each foot stands on it.)
+            roundHopAir = true
+            for i in legs.indices { roundHopFrom[i] = V3(legs[i].foot, roundLegs[i].z) }
+        }
+        // In the air: off the ground behind the body, drawn in under it,
+        // round with it as it turns, and out to where it will stand as it
+        // comes down — the last of it to leave the ledge and the first
+        // back onto it.
+        let peel = pow(v, 1.15)
+        let up = stage == 2 ? sin(peel * .pi) * sin(peel * .pi) : 0
+        let off = smoothstep(clamp(v / 0.3, 0, 1)), on = smoothstep(clamp((v - 0.6) / 0.4, 0, 1))
+        let final = roundTurnYaw(at: activityDur)
+        for i in standing {
+            roundLegs[i].step = nil
+            var p: V3
+            switch stage {
+            case 0, 1:
+                // (Still on the ledge, where it stood — on it, as the body
+                // sinks onto its legs and pushes off them: they fold under
+                // it.)
+                p = roundPlace(i, roundHopFrom[i], hip: roundHip(i, psi: roundPsi))
+            case 2:
+                let end = roundPlace(i, roundHomeAt(i, yaw: final), hip: roundHipAt(i, yaw: final))
+                let g = roundHomeAt(i, yaw: yaw), h = roundHipAt(i, yaw: yaw)
+                let tucked = V3(h.x + (g.x - h.x) * 0.72, g.y, h.z + (g.z - h.z) * 0.8)
+                p = V3.lerp(roundHopFrom[i], tucked, off)
+                p = V3.lerp(p, end, on)
+                p.y += up * Spider.roundJumpFeet
+            default:
+                // (Down: on the ledge where it will stand, as the body
+                // comes down onto its legs.)
+                p = roundPlace(i, roundHomeAt(i, yaw: final), hip: roundHip(i, psi: roundPsi))
+            }
+            legs[i].foot = p.xy
+            roundLegs[i].z = p.z
+            legs[i].lift = up
+            roundLegs[i].down = stage != 2
+            if stage > 2 { roundLegs[i].landedAt = t }
+        }
+    }
+    /// Whether the feet have left the ledge in the jump round it is making.
+    private var roundHopAir = false
+    /// The stages of a jump round, in the round — a turn too quick to step
+    /// round, as each half of a spin is: gathering itself (0), pushing off
+    /// (1), in the air (2), down onto its legs (3) — and how far through
+    /// that stage it is. (Nil: not making one.)
+    private func roundJumpTurn() -> (stage: Int, v: CGFloat)? {
+        guard inRound, mode == .attached, activity == .turn, activityDur < Spider.roundHopTurnUnder else { return nil }
+        var s = activityTime / max(activityDur, 0.01)
+        for (i, share) in [CGFloat(0.2), 0.1, 0.5, 0.2].enumerated() {
+            if s < share { return (i, s / share) }
+            s -= share
+        }
+        return (3, 1)
+    }
+    /// How far outside the head's surface a raised leg's knee is kept, in
+    /// sprite units: half the leg's own thickness and a little.
+    private static let roundKneeClear: CGFloat = 3
+    /// The activity (by when it began) whose gesture has gone up, and
+    /// when it did; whether it is being held back this frame, and for how
+    /// long it has been; how far round (radians) the body may still have
+    /// to come for it to go up.
+    private var roundGestureFor: CGFloat = -1
+    private var roundGestureAt: CGFloat = 0
+    private var roundGestureHold = false
+    private var roundGestureWaited: (activity: CGFloat, time: CGFloat) = (-1, 0)
+    private static let roundGestureWait: CGFloat = 0.4
+    /// How long before a greeting ends its arms start down.
+    private static let roundGreetDown: CGFloat = 0.6
+
+    /// The greeting — it turns to face you and throws its arms up — keeps
+    /// its arms down till it has all but come round, its feet stepping
+    /// round under it, and the feet that were stepping are down: raised
+    /// while the body was still coming round, an arm swept up through the
+    /// legs beside it. The time it waits is not taken out of the greeting.
+    private func roundGestureWaits(dt: CGFloat) {
+        roundGestureHold = false
+        guard mode == .attached, activity == .greet, roundGestureFor != activityStarted else { return }
+        if roundGestureWaited.activity != activityStarted { roundGestureWaited = (activityStarted, 0) }
+        let far = abs(roundAngle(facing * 0.1) - roundAngle(yaw)) > Spider.roundGestureWait
+        let stepping = legs.indices.filter { roundLegs[$0].step.map { $0.u < Spider.roundAllButDown } ?? false }.count
+        if far || stepping > 2, roundGestureWaited.time < 1.2 {
+            roundGestureHold = true
+            roundGestureWaited.time += dt
+            activityDur += dt
+        } else {
+            roundGestureFor = activityStarted
+            roundGestureAt = t
+        }
+    }
+    /// How long each half of a spin takes, in the round; how far it sinks
+    /// onto its legs for it; how high the body goes, in sprite units; and
+    /// how high its feet come up off the ledge.
+    private static let roundJumpTurnDur: CGFloat = 0.64
+    private static let roundJumpSink: CGFloat = 0.6
+    private static let roundJumpHeight: CGFloat = 13
+    private static let roundJumpFeet: CGFloat = 11
+
+    // MARK: Coming round quickly where it stands
+
+    /// The yaw last frame (for how fast the body is coming round); how far
+    /// round it has come in the spin it is in, in radians; which cycle of
+    /// its steps each leg last stepped in; and how long it has been all
+    /// but still.
+    private var roundAngleWas: CGFloat = 1
+    private var roundSpinTurned: CGFloat = 0
+    private var roundSpinStepped = [Int](repeating: -1, count: SpiderRenderer.legCount)
+    private var roundSpinIdle: CGFloat = 1
+    private var roundSpinRate: CGFloat = 0
+
+    /// Whether the body is coming round quickly where it stands — after
+    /// the pointer, in a double take, back from a look round — too quickly
+    /// for its feet to follow a careful step at a time: they step round
+    /// with it in the turn's own rhythm instead (see `roundSpinSteps`).
+    private func roundSpinning(dt: CGFloat) -> Bool {
+        let now = roundAngle(yaw), goal = roundAngle(roundWish)
+        let turned = abs(now - roundAngle(roundAngleWas))
+        let rate = dt > 0 && turned < 1 ? turned / dt : 0
+        roundSpinRate = approach(roundSpinRate, rate, 30, dt)
+        // (How fast what it is turning to is itself going round, the way
+        // the body is turning: the pointer circling it, say.)
+        let way: CGFloat = goal >= now ? 1 : -1
+        let goalRate = dt > 0 && abs(goal - roundSpinGoalWas) < 1 ? (goal - roundSpinGoalWas) / dt * way : 0
+        roundSpinGoalRate = approach(roundSpinGoalRate, max(goalRate, 0), 12, dt)
+        roundSpinGoalWas = goal
+        // (Once stepping round in the turn's rhythm it keeps to it till
+        // the body has all but stopped coming round: in and out of it with
+        // every waver of the body's pace, its feet would start the rhythm
+        // afresh each time, on top of the steps they were already taking.)
+        let rest: CGFloat = 0.25
+        // (And it takes to it at once for a turn it knows is going a good
+        // way round — rather than have the careful stepping of standing
+        // send a few feet off first, and the turn's own on top of them.)
+        let far = roundPacing && abs(goal - now) > 0.35 && roundSpinRate > 0.2
+        let fast = far || roundSpinRate > Spider.roundSpinOver || (roundSpinIdle < rest && roundSpinRate > Spider.roundSpinOver * 0.15)
+        if fast {
+            if roundSpinIdle >= rest {
+                // (A fresh spin: one set due its step as it begins, the
+                // other half a cycle on — its place in the first cycle is
+                // all but over at the start, and stepping then it would be
+                // up with the first: every foot off the ground at once.)
+                roundSpinTurned = 0
+                roundSpinFresh = true
+            }
+            roundSpinIdle = 0
+            // (Longer steps the faster it comes round — as long as the
+            // about-face's at its quickest — so that a foot is never in
+            // the air for only a frame or two.)
+            roundSpinPer = clamp(roundSpinRate * 0.2, Spider.roundSpinPerCycle, Spider.roundTurnPerCycle)
+            roundSpinTurned += turned / roundSpinPer
+        } else {
+            roundSpinIdle += dt
+        }
+        return fast
+    }
+    /// How fast (radians a second) the body must be coming round for its
+    /// feet to step round in the turn's rhythm.
+    private static let roundSpinOver: CGFloat = 1.6
+    /// How far round the body comes in a cycle of the spin's steps now
+    /// (`roundSpinTurned` counts those cycles); where what it is turning
+    /// to was last frame, and how fast that is going round.
+    private var roundSpinPer: CGFloat = 0.7
+    private var roundSpinGoalWas: CGFloat = 0
+    private var roundSpinGoalRate: CGFloat = 0
+    /// A foot standing further than this from where its leg would stand
+    /// now (sprite units) has been left behind: it steps, its turn or not.
+    private static let roundSpinLeftBehind: CGFloat = 16
+    /// The fastest a foot goes on a step round, in sprite units a second:
+    /// a long step takes as long as that makes it (a little under a
+    /// scurry's steps).
+    private static let roundTurnFootSpeed: CGFloat = 280
+
+    /// Another gait has the feet: the next spin starts afresh.
+    private func roundSpinOff() {
+        roundSpinIdle = 1
+        roundSpinRate = 0
+        roundSpinGoalRate = 0
+        roundSpinGoalWas = roundAngle(roundWish)
+    }
+
+    /// Coming round quickly where it stands: the feet step round with the
+    /// body, the two sets of four taking turns — as turning round on the
+    /// spot (see `roundTurnSteps`) — a step for every so far the body comes
+    /// round, each put down where its foot will stand half way through the
+    /// stance after it: half as far on round as the body will come while
+    /// it stands there — or, with the body about to stop, where it will
+    /// stand when it has. One left well behind where it should stand
+    /// steps without waiting for its turn.
+    private func roundSpinSteps(_ standing: [Int], hips: [V3], dt: CGFloat) {
+        let per = roundSpinPer, swing = Spider.roundTurnSwing
+        if roundSpinFresh {
+            roundSpinFresh = false
+            roundTurnSecond = roundSetToWait(standing, hips: hips)
+            for i in legs.indices { roundSpinStepped[i] = roundTurnSet(i) == roundTurnSecond ? 0 : -1 }
+        }
+        let rate = max(roundSpinRate, Spider.roundSpinOver)
+        let now = roundAngle(yaw), goal = roundAngle(roundWish)
+        for i in standing {
+            guard roundLegs[i].step == nil else { continue }
+            let shift = (roundTurnSet(i) == roundTurnSecond ? 0.5 : 0) - CGFloat(3 - i % 4) * Spider.roundTurnRipple
+            let c = roundSpinTurned + shift
+            let cycle = Int(c.rounded(.down))
+            let ph = c - CGFloat(cycle)
+            let foot = V3(legs[i].foot, roundLegs[i].z)
+            let reach = foot.distance(to: hips[i]) / roundLength(i)
+            let inTime = cycle >= 0 && roundSpinStepped[i] < cycle && ph < 0.85
+            let stretched = reach > Spider.roundReachMost + 0.03
+            let urgent = !roundLegs[i].down || stretched || reach < Spider.roundReachLeast
+            let behind = roundLegs[i].down && foot.xz.distance(to: roundHomeAt(i, yaw: yaw).xz) > Spider.roundSpinLeftBehind
+            guard inTime || urgent || behind else { continue }
+            if roundLegs[i].down {
+                if !roundMayLift(standing, pressed: stretched || behind) { continue }
+                if roundOtherSetUp(i, standing), !(stretched || behind) { continue }
+            }
+            if inTime || (behind && cycle >= 0 && ph < 0.85) { roundSpinStepped[i] = max(roundSpinStepped[i], cycle) }
+            // Down by the end of its share of the cycle.
+            var down = clamp(max(swing - ph, 0.15) * per / rate, 0.1, 0.16)
+            // Where the body will be as it comes down, and how much further
+            // it will come while the foot stands there: to where it is
+            // turning to — and on, if that is going round too.
+            let landed = roundAngle(roundYawAhead(down))
+            let left = abs(goal - landed)
+            let further = left + roundSpinGoalRate * 0.3
+            let stance = max(per - roundSpinRate * down, per * (1 - swing))
+            let lead = further > stance ? stance * 0.5 : max(left, further * 0.5)
+            let y = roundYaw(angle: landed + (goal >= now ? lead : -lead))
+            var target = roundHomeAt(i, yaw: y)
+            target = roundPlace(i, target, hip: roundHipAt(i, yaw: y))
+            let span = foot.distance(to: target)
+            // (All but where it should be already: it stays put, rather
+            // than tap the ground beside where it stands.)
+            if roundLegs[i].down, span < 3 { continue }
+            down = clamp(span / Spider.roundTurnFootSpeed, down, 0.2)
+            roundBeginStep(i, to: target, dur: down, hip: hips[i])
+        }
+    }
+
+    // MARK: Coming round all at once
+
+    /// A quick bound round: the body come round so far from the way its
+    /// feet stand that they would have to step through under it, one after
+    /// another, to get back to their own sides — off a greeting face on,
+    /// say, or setting off at a run from there — so every standing foot
+    /// comes up together, round with the body, and down where it will
+    /// stand. How far into it it is (nil: not), and where each foot left
+    /// the ground (sprite space, kept where it was in the world).
+    private var roundRegroupT: CGFloat?
+    private var roundRegroupFrom = [V3](repeating: .zero, count: SpiderRenderer.legCount)
+    /// Where each foot was on the body as it left the ground (the body's
+    /// own frame, on the side the sprite has it).
+    private var roundRegroupBody = [V3](repeating: .zero, count: SpiderRenderer.legCount)
+    /// How long this one takes: as long as the body takes to come round,
+    /// within reason.
+    private var roundRegroupDur: CGFloat = 0.2
+    /// How high the feet come up in it, in sprite units: by how far each
+    /// has to go, between these.
+    private static let roundRegroupFeet: (least: CGFloat, most: CGFloat) = (4, 9)
+
+    /// Whether the standing feet should come round all at once now: three
+    /// or more of them over the body's middle line from where they stand,
+    /// as it will be once it has come round the way it is turning. (Turning
+    /// toward you, standing, they step round one after another instead,
+    /// each clearing the next one's way.)
+    private func roundWantsRegroup(_ standing: [Int], walking: Bool, dt: CGFloat) -> Bool {
+        guard mode == .attached, activity != .turn, activity != .hop, t - landedAt > 0.6 else { return false }
+        // (Come onto something its way on turns from all at once — across a
+        // junction in the tank — the body yet to swing round square onto
+        // it: every foot it stands on would be left behind at once.)
+        if abs(angleDelta(heading, headingTarget)) > Spider.roundSwingBound,
+           standing.filter({ roundLegs[$0].down }).count >= 5 { return true }
+        // (Standing, it is for coming back round side on from face on: off
+        // a greeting, a stare, a double take. Turned toward you, the feet
+        // step round one after another, each clearing the next one's way —
+        // unless the body came round so quickly that they are left standing
+        // across its middle line, in each other's way: then, after a
+        // moment to sort themselves out, they too come round together.)
+        // (A long way round to turn where it stands, all at once — a
+        // double take's snap, a dance's turn on the beat, which are not
+        // paced for its feet (see `yawSpring`): round it goes in one hop,
+        // its feet with it. Stepping round after its body, a foot at a
+        // time, they would be left crossed under it till they caught up.)
+        // (A snap comes round so whatever its feet are doing — in the
+        // middle of stepping round from a glance, say: left to finish
+        // their steps they would be stretched out behind it.)
+        if !walking, abs(roundAngle(yawGoal) - roundAngle(yaw)) > Spider.roundHopTurnOver,
+           yawSnap || standing.filter({ roundLegs[$0].down }).count >= 6 { return true }
+        if !walking {
+            // (Standing, it comes round at a pace its feet step round at —
+            // toward you or back side on — see `yawSpring`: no hop for
+            // that. Only if they are left standing across its middle line
+            // all the same, the body come to rest, do they come round
+            // together.)
+            var across = 0
+            for i in standing where roundLegs[i].down && roundLaneSpot(i, V3(legs[i].foot, roundLegs[i].z), yaw: yaw).y < -2 { across += 1 }
+            roundAcrossFor = across >= 3 ? roundAcrossFor + dt : 0
+            return roundAcrossFor > 0.25 && abs(roundYawRate) < 0.3
+        }
+        roundAcrossFor = 0
+        let y = roundWish
+        // (Counting feet just up on a step: setting off, the walk may have
+        // sent a couple on their way before the body knew where it was
+        // going to face.)
+        // (Or, setting off with the body still coming round a long way —
+        // off a stare, a greeting — feet well out of their own lanes, past
+        // a neighbour's.)
+        let comingRound = walking && abs(roundAngle(yaw) - roundAngle(y)) > 0.35
+        var across = 0, down = 0, tangled = 0
+        for i in standing where roundLegs[i].down || roundLegs[i].step != nil {
+            down += 1
+            let foot = V3(legs[i].foot, roundLegs[i].z)
+            if roundLaneSpot(i, foot, yaw: y).y < -2 { across += 1 }
+            if comingRound, roundLegs[i].down, roundLaneOff(i, foot, yaw: y) > 9 { tangled += 1 }
+        }
+        return down >= 6 && (across >= 3 || tangled >= 2)
+    }
+
+    private func roundRegroup(_ standing: [Int], hips: [V3], motion: V2, dTheta: CGFloat, dt: CGFloat, walking: Bool = false) {
+        if roundRegroupT == nil {
+            roundRegroupT = 0
+            // (A hop: the body comes up with its feet — a little.)
+            if speed <= 1 { lift.velocity += 170 * config.scale }
+            for i in legs.indices {
+                roundRegroupFrom[i] = V3(legs[i].foot, roundLegs[i].z)
+                roundRegroupBody[i] = roundToBody(roundRegroupFrom[i], leg: i, yaw: yaw)
+            }
+            // (Until the body is all but round — toward you or away, and
+            // onto what it stands on.)
+            let goal = roundAngle(roundWish)
+            var d: CGFloat = 0.16
+            while d < 0.36, abs(roundAngle(roundYawAhead(d)) - goal) > 0.15
+                    || abs(angleDelta(roundHeadingAhead(d), headingTarget)) > 0.15 { d += 1.0 / 60 }
+            roundRegroupDur = d
+            roundRegroupSwings = abs(angleDelta(heading, headingTarget)) > 0.1
+            if Spider.debugRoundLeg == 99 {
+                let y = roundYawAhead(0.15)
+                let spots = standing.map { String(format: "%d:%.0f", $0, roundLaneSpot($0, V3(legs[$0].foot, roundLegs[$0].z), yaw: y).y) }
+                print(String(format: "  regroup t %.2f %@ yaw %.2f goal %.2f ahead %.2f swing %.2f ", t, "\(activity)", yaw, yawGoal, y,
+                             angleDelta(heading, headingTarget)) + spots.joined(separator: " "))
+            }
+        } else {
+            // (Where each took off from stays where it was in the world —
+            // while it is still coming up off the ground, if the body is
+            // swinging round onto something new: after that it is carried
+            // round with the body, rather than sweep in under it from where
+            // it was.)
+            let hold = roundRegroupSwings ? 1 - smoothstep(clamp((roundRegroupT ?? 0) / max(roundRegroupDur, 0.01) / 0.15, 0, 1)) : 1
+            for i in legs.indices {
+                let f = roundRegroupFrom[i]
+                roundRegroupFrom[i] = V3(f.xy.rotated(by: -dTheta * hold) - motion * hold, f.z)
+            }
+        }
+        let dur = roundRegroupDur
+        let elapsed = (roundRegroupT ?? 0) + dt
+        roundRegroupT = elapsed
+        let u = clamp(elapsed / dur, 0, 1)
+        // Down where it will stand once the body has come round, and gone
+        // on as far as it will by then.
+        let left = max(dur - elapsed, 0)
+        let y = roundYawAhead(left)
+        let fwd: CGFloat = walkDir * mirrorSign < 0 ? -1 : 1
+        let ahead = speed / max(config.scale, 0.05) * left
+        let now = refPath(ahead: 0)
+        let e = Spider.refEase(u)
+        let lift = Spider.refLift(u)
+        let swing = roundRegroupSwings ? angleDelta(heading, roundHeadingAhead(left)) : 0
+        // (Walking on, turned toward you, a foot that would be carried on
+        // back from its spot in under its hip before its turn comes round
+        // again — its turn just gone by, its leg one that stands out along
+        // the way it goes — comes down on from its spot instead, toward the
+        // front of its stance, as far as keeps it out: put down at its spot,
+        // its leg would fold flat, a '>' on the ground, and lie there till
+        // its turn. The rest at their spots, as ever; so side on, short
+        // legs, and at a run.)
+        let scale = max(config.scale, 0.05), stride = strideNow
+        let inStep = walking && (activity == .walk || activity == .sneak) && speed > 1 && stride > 1
+            && roundTurnedToYou > 0 && !roundLowKnees
+        let turned = inStep && (y >= 0) == (yaw >= 0) ? min(roundTurnedToYou, smoothstep(clamp((0.9 - abs(y)) / 0.2, 0, 1))) : 0
+        let fresh = elapsed <= dt + 1e-6
+        let half = min(stride * (1 - roundSwing), roundSweep) / 2
+        for i in standing {
+            roundLegs[i].step = nil
+            var along: CGFloat = 0
+            if turned > 0 {
+                var ph = (gaitPhase + roundGaitShift - roundStart(i) + speed / (stride * scale) * left).truncatingRemainder(dividingBy: 1)
+                if ph < 0 { ph += 1 }
+                let home = roundHomeAt(i, yaw: yaw)
+                let then = roundOutFromHip(i, V3(home.x - fwd * (1 - ph) * stride, home.y, home.z), hip: hips[i])
+                let u = V2(home.x - hips[i].x, home.z - hips[i].z)
+                let least = roundTuckLeast(i, home: then.home) + Spider.roundEarlyGive + 1
+                if then.out < least, u.length > 1e-3, fwd * u.x / u.length > 0.2 {
+                    along = clamp((least - then.out) / (fwd * u.x / u.length), 0, half) * turned
+                }
+            }
+            if !fresh { along = roundRegroupAlong[i] + clamp(along - roundRegroupAlong[i], -60 * dt, 60 * dt) }
+            roundRegroupAlong[i] = along
+            var end = roundWalkTarget(i, ahead: ahead + along, yaw: y, centre: roundHomeAt(i, yaw: yaw).x, fwd: fwd, now: now, swing: swing)
+            end = roundPlace(i, end, hip: roundHipCarried(hips[i], ahead: ahead, fwd: fwd, now: now, swing: swing))
+            if roundRegroupSwings {
+                // (Swinging round onto something new, it goes there in the
+                // body's own frame — where that spot will be to the body
+                // then — the body carrying it round.)
+                end = V3(roundToThen(end.xy, ahead: ahead, now: now, fwd: fwd, swing: swing), end.z)
+            }
+            var p = V3.lerp(roundRegroupFrom[i], end, e)
+            if !roundRegroupSwings {
+                // Round with the body: from where it was on it to where it
+                // will stand on it, the body carrying it as it turns — so
+                // every foot keeps to its own place round the body the whole
+                // way, none cutting across under it. (Leaving the ground it
+                // is still where it stood; then the body has it.)
+                let endOn = roundToBody(V3(end.x - fwd * ahead, end.y, end.z), leg: i, yaw: y)
+                let carried = roundToSprite(V3.lerp(roundRegroupBody[i], endOn, e), leg: i, yaw: yaw)
+                p = V3.lerp(p, V3(carried.x + fwd * ahead * e, carried.y, carried.z), smoothstep(clamp(u / 0.25, 0, 1)))
+            }
+            let up = roundRegroupSwings ? V2(0, 1) : refNormal(p.xy)
+            let high = clamp(roundRegroupFrom[i].distance(to: end) * 0.22, Spider.roundRegroupFeet.least, Spider.roundRegroupFeet.most)
+            p += V3(up.x, up.y, 0) * (lift * high)
+            // (Never folded in through its hip, nor out past its length.)
+            let d = p - hips[i], len = roundLength(i), dl = d.length
+            if dl > len * 0.97, dl > 0.001 { p = hips[i] + d * (len * 0.97 / dl) }
+            if dl < len * Spider.roundReachLeast, dl > 0.001 { p = hips[i] + d * (len * Spider.roundReachLeast / dl) }
+            legs[i].foot = p.xy
+            roundLegs[i].z = p.z
+            legs[i].lift = lift
+            roundLegs[i].down = false
+            if u >= 1 {
+                legs[i].foot = end.xy
+                roundLegs[i].z = end.z
+                legs[i].lift = 0
+                roundLegs[i].down = true
+                roundLegs[i].landedAt = t
+            }
+        }
+        if u >= 1 { roundRegroupT = nil }
+    }
+    /// Whether the body is swinging round onto something new in this one
+    /// (see `roundRegroup`).
+    private var roundRegroupSwings = false
+    private var roundRegroupAlong = [CGFloat](repeating: 0, count: 8)
+    /// How long three or more standing feet have been left across the
+    /// body's middle line.
+    private var roundAcrossFor: CGFloat = 0
+
+    // MARK: Walking
+
+    /// Walking: the feet step in the walk's own rhythm — two sets of four
+    /// taking turns, rippling from back to front within each — every one
+    /// put down where it will stand half way through its next stance, in
+    /// the frame the body will be in then (round a corner, turned with it);
+    /// planted in between while the body goes on over it. One left out of
+    /// reach, or behind its stance, steps on out of turn.
+    private func roundWalk(_ standing: [Int], roles: [RoundRole], hips: [V3], psi: CGFloat, dt: CGFloat) {
+        let scale = max(config.scale, 0.05)
+        // The rhythm, by the pace it means to go.
+        let pace = (targetSpeed > 1 ? targetSpeed : speed) / scale
+        let slow = clamp((44 - pace) / 20, 0, 1), quick = clamp((pace - 75) / 110, 0, 1)
+        // (Running flat out on short legs, each foot is in the air for more
+        // of its cycle — no step quicker than a leg can take — rather than
+        // being left behind, stretched.)
+        let room0 = max(min(roundSweep, roundStanceRoom * (1 - roundSwing)), 6)
+        let q = 0.085 * pace / room0
+        roundSwing = approach(roundSwing, max(lerp(lerp(0.38, 0.27, slow), 0.46, quick), min(q / (1 + q), 0.58)), 1.5, dt)
+        roundRipple = approach(roundRipple, lerp(lerp(0.05, 0.11, slow), 0.03, quick), 1.0, dt)
+        let swing = roundSwing
+        let stride = strideNow
+        let phStep = speed / (stride * scale) * dt
+        let stepTime = phStep > 0.0001 ? clamp(swing * dt / phStep, 0.08, Spider.refLongestStep) : Spider.refLongestStep
+        let cycle = phStep > 0.0001 ? dt / phStep : 1
+        let v = speed / scale
+        let fwd: CGFloat = walkDir * mirrorSign < 0 ? -1 : 1
+        let now = refPath(ahead: 0)
+        // What each leg can reach along the line it stands over, at the
+        // depth it stands at, between its knee bent no tighter than
+        // `refFold` and opened no wider than `refOpen` (as the refined walk
+        // has it); the longest stance all eight can take; and the middle of
+        // each one's stance — where it stands, or as near that as leaves
+        // room for the whole stance within reach.
+        var ranges: [(from: CGFloat, to: CGFloat)] = []
+        var floors: [(x: CGFloat?, hip: CGFloat, ux: CGFloat, deep: CGFloat)?] = []
+        var sweep: CGFloat = 80
+        // (Short legs, their knees barely up over their hips at the best of
+        // times, walk as they always have: see `roundLowKnee`. So does any
+        // leg at a run, where its turn is never far off, and a stance held
+        // out from its hip, or a step out of its turn, only jars the rhythm.)
+        let lowKnees = roundLowKnees || activity == .scurry
+        for i in legs.indices {
+            let home = roundHomeAt(i, yaw: yaw)
+            let h = hips[i]
+            let r = SpiderRenderer.rig3D(i, look: look)
+            let dz = home.z - h.z, dy = h.y - home.y
+            let off = dy * dy + dz * dz
+            // (No further out than leaves a little in hand: at a run the
+            // body goes a good way in a frame, and a foot lifted a frame
+            // late must not have been drawn out straight by then.)
+            let lo = Spider.refSpan(r.thigh, r.shin, Spider.refFold), hi = r.length * Spider.roundWalkReach
+            let far = max(hi * hi - off, 1).squareRoot()
+            let near = lo * lo > off ? (lo * lo - off).squareRoot() : -r.length * Spider.refCross
+            let out: CGFloat = home.x >= h.x ? 1 : -1
+            let a = h.x + out * near
+            let b = h.x + out * far
+            // (Nor carried in so near its hip, seen from above, the way its
+            // own leg stands out, that the leg folds flat: turned toward you,
+            // a leg that stands out along the way it goes has its foot
+            // carried right in toward its hip and under it — with nothing
+            // here to stop it but how near the hip the foot is all told,
+            // which the height of the hip keeps from ever being near enough
+            // to. Its stance is kept out where its knee stands up over it,
+            // as far as that leaves room for the stride — the stride is left
+            // as it was, a short-legged style's too. Side on, where the legs
+            // stand out square to the way it goes, this asks nothing.)
+            let u = V2(home.x - h.x, home.z - h.z)
+            var floor: (x: CGFloat?, hip: CGFloat, ux: CGFloat, deep: CGFloat)?
+            if u.length > 1e-3, abs(u.x) > 1e-3 {
+                let un = u.normalized
+                let least = lerp(-r.length, min(r.length * Spider.roundWalkOutLeast, u.length * Spider.roundOutHome.walk),
+                                 lowKnees ? 0 : roundTurnedToYou)
+                // (Its foot stands as deep as its spot: along the body, then,
+                // out from the hip by `least` at this x.)
+                let bound = h.x + (least - dz * un.y) / un.x
+                floor = ((out > 0 ? bound > a : bound < a) ? bound : nil, h.x, un.x, dz * un.y)
+            }
+            floors.append(floor)
+            ranges.append((min(a, b), max(a, b)))
+
+            sweep = min(sweep, max((max(a, b) - min(a, b)) * 0.92, 6))
+        }
+        roundSweep = approach(roundSweep, sweep, 4, dt)
+        // (No stride — the way the body goes in one cycle of its steps —
+        // longer than neighbouring feet have room for: a leg steps half a
+        // cycle, less the ripple, after the one in front of it, and puts its
+        // foot down just behind where that one's has been carried back to
+        // by then; so in that share of a cycle the body goes no further
+        // than the gap between their spots. Quicker, shorter steps, then —
+        // never one foot past another, nor one left behind waiting for
+        // room.)
+        var room: CGFloat = 200
+        let lag = max(0.5 - roundRipple, 0.3)
+        for i in legs.indices where i % 4 < 3 {
+            // (Only two that stand one in front of the other along the way
+            // it is going: turned toward you, a side's feet stand each
+            // further from you than the next, in lines of their own, and
+            // step past one another freely — one leg in front of the other.)
+            let a = roundHomeAt(i, yaw: yaw), b = roundHomeAt(i + 1, yaw: yaw)
+            let gap = a.x - b.x
+            if gap > Spider.roundOrderGap * 2, abs(a.z - b.z) < Spider.roundLaneWidth { room = min(room, (gap - Spider.roundOrderGap) / lag) }
+        }
+        // (Though never so short that the steps it leaves would have to be
+        // quicker than a leg can take: short legs at a run would be left
+        // behind, stretched — there they pass a little, the order kept by
+        // `roundKeepOrder` as best it can.)
+        let quickest = v * 0.06 / max(swing, 0.2)
+        roundStanceRoom = approach(roundStanceRoom, max(room, quickest, 10), 4, dt)
+        let half = min(stride * (1 - swing), roundSweep) / 2
+        // (Each stance kept out from its hip, as far as there is room for it
+        // — see above; and, kept out, how far in a foot may yet be carried
+        // before it steps out of its turn — a little past where the stance
+        // ends.)
+        var tuckAt = [CGFloat](repeating: -.greatestFiniteMagnitude, count: legs.count)
+        for i in legs.indices {
+            let home = roundHomeAt(i, yaw: yaw)
+            let o = roundOutFromHip(i, home, hip: hips[i])
+            var least = lowKnees ? -roundLength(i) : roundTuckLeast(i, home: o.home)
+            if let f = floors[i] {
+                var g = ranges[i]
+                if let x = f.x {
+                    if f.ux > 0 { g.from = min(max(g.from, x), max(g.from, g.to - 2 * half - 1)) }
+                    else { g.to = max(min(g.to, x), min(g.to, g.from + 2 * half + 1)) }
+                    ranges[i] = g
+                }
+                let kept = ((f.ux > 0 ? g.from : g.to) - f.hip) * f.ux + f.deep
+                least = min(least, kept - Spider.roundOutGive)
+            }
+            tuckAt[i] = least
+        }
+        let centres = legs.indices.map { i -> CGFloat in
+            let g = ranges[i], x = roundHomeAt(i, yaw: yaw).x
+            return g.from + half <= g.to - half ? clamp(x, g.from + half, g.to - half) : (g.from + g.to) / 2
+        }
+        let yawLand = roundYawAhead(stepTime, most: Spider.roundLeadMost)
+        // (Coming round toward or away from you as it goes, its steps are
+        // quick ones, whatever its pace.)
+        let swinging = abs(roundYawRate) > 0.8
+        let quickStep = min(stepTime, Spider.roundStepTime * 1.15)
+
+        for i in standing {
+            var ph = (gaitPhase + roundGaitShift - roundStart(i)).truncatingRemainder(dividingBy: 1)
+            if ph < 0 { ph += 1 }
+            if var s = roundLegs[i].step, let ph0 = s.ph0 {
+                // On through a step in its turn, timed to be down on the last
+                // frame of its window. (Taken a little early, it began before
+                // the cycle came round.)
+                let ph = ph0 < 0 && ph > 0.5 ? ph - 1 : ph
+                let last = max(swing - phStep, ph0 + 0.01)
+                let byClock = clamp((ph - ph0) / (last - ph0), 0, 1)
+                if ph > ph0 - 0.01, ph < swing + 0.02 {
+                    s.u = min(1, max(s.u + dt / Spider.refLongestStep, byClock))
+                } else {
+                    // (The clock has gone past it — a pause, a change of pace:
+                    // it finishes the step on its own time.)
+                    s.u = min(1, s.u + dt / max(stepTime, 0.08))
+                }
+                // Still a way to go: aimed on as where it is going moves —
+                // the spot on the ground it will come down on.
+                if s.steer, s.u < 0.6 {
+                    let travel = max(last - ph, 0) * stride
+                    var target = roundWalkTarget(i, ahead: travel + half, yaw: yawLand, centre: centres[i], fwd: fwd, now: now)
+                    let slack = swinging ? 0 : Spider.roundWalkSlack
+                    target = roundKeepLane(i, target, yaw: yawLand, slack: slack)
+                    target = roundKeepOrder(i, target, in: max(last - ph, 0) * cycle, v: v, fwd: fwd)
+                    target = roundPlaceInLane(i, target, from: s.from, hip: roundHipCarried(hips[i], ahead: travel, fwd: fwd, now: now),
+                                              yaw: yawLand, slack: slack)
+                    let shift = V3.lerp(s.to, target, 1 - exp(-dt * 16)) - s.to
+                    let most = 60 * dt
+                    s.to += shift.length > most ? shift * (most / shift.length) : shift
+                }
+                roundLegs[i].step = s
+                continue
+            }
+            if roundLegs[i].step != nil { continue }
+            // (Its turn: the start of its share of the cycle in the air — or
+            // any of it while there is still time for a step, kept from
+            // going at the start by a neighbour still up.)
+            let inWindow = ph < swing && (ph < swing * 0.3 + 0.001 || (swing - ph) * cycle >= 0.1)
+            // (Not straight up again after coming down — though at a run, a
+            // stride's whole cycle short, that is only the briefest moment:
+            // held for longer, it would miss its turn, and be left behind.)
+            let justDown = t - roundLegs[i].landedAt < min(0.2, cycle * 0.35)
+            let foot = V3(legs[i].foot, roundLegs[i].z)
+            // (Turned toward you, a foot whose turn comes late — put down
+            // out of step as the body came round toward you, say — is
+            // carried on back in under its hip before its turn comes round,
+            // and its leg folds flat there, a '>' on the ground. It takes
+            // its turn a little early instead, as its knee comes down to its
+            // hip, and comes down where its turn would have put it: in step
+            // with the rest again, its next stance where it should be. Not
+            // with the leg beside it up, nor if that one's turn comes first:
+            // it would be held back; nor as a fifth foot off the ground.)
+            var p = ph
+            let late = fwd * (foot.x - centres[i]) < half - 2 * half * clamp((ph - swing) / max(1 - swing, 0.05), 0, 1) - Spider.roundEarlyLag
+            if !lowKnees, roundTurnedToYou > 0, !inWindow, !justDown, !swinging, 1 - ph < Spider.roundEarlyMost,
+               late, legs.indices.filter({ roundLegs[$0].step != nil }).count < 4,
+               roundFoldsSoon(i, foot, hip: hips[i], least: tuckAt[i]),
+               !roundNeighbourTurnSoon(i, within: (1 - ph) * cycle + 0.03, swing: swing, cycle: cycle) {
+                p = ph - 1
+            }
+            if inWindow || p < 0, !justDown, roundMayStepWalking(i) {
+                let travel = max(swing - p, 0) * stride
+                let ahead = travel + half
+                var target = roundWalkTarget(i, ahead: ahead, yaw: yawLand, centre: centres[i], fwd: fwd, now: now)
+                // (Never a great long reach out of somewhere odd — face on,
+                // say — whatever the walk wants: a few quick steps instead.)
+                if roundLegs[i].down {
+                    target = roundCapStep(i, from: foot, to: target, most: max(stride * 1.2, roundLength(i) * Spider.roundStepMost))
+                }
+                let t0 = target
+                // (Walking along, a foot may pass its neighbour's by a little
+                // in the stride, as the walk always has.)
+                target = roundKeepLane(i, target, yaw: yawLand, slack: swinging ? 0 : Spider.roundWalkSlack)
+                // (A neighbour's foot still over the middle line in its way —
+                // the body swinging round as it sets off — and it lets that
+                // one go first: see the steps out of turn, below.)
+                if roundLaneNoRoom, roundLegs[i].down, reachOK(i, foot) { continue }
+                // (Down behind the foot in front of it, and ahead of the one
+                // behind it, as they will be by then: a step a little short
+                // if it must. The foot in front left so far behind that this
+                // one would have hardly any step to take — it waits, and that
+                // one goes on first.)
+                target = roundKeepOrder(i, target, in: max(swing - p, 0) * cycle, v: v, fwd: fwd)
+                if roundOrderPulled > max(Spider.roundOrderWait, abs(t0.x - foot.x) * 0.5), roundLegs[i].down, reachOK(i, foot) {
+                    roundOrderPush[i - 1] = t
+                    continue
+                }
+                let t1 = target
+                // (Within reach of where its hip will be as it comes down.)
+                target = roundPlaceInLane(i, target, from: foot, hip: roundHipCarried(hips[i], ahead: travel, fwd: fwd, now: now),
+                                          yaw: yawLand, slack: swinging ? 0 : Spider.roundWalkSlack)
+                if Spider.debugRoundLeg == i || Spider.debugRoundLeg == 99 {
+                    print(String(format: "  leg%d step ph %.2f foot %.1f centre %.1f range %.1f..%.1f half %.1f stride %.1f ahead %.1f -> %.1f lane %.1f placed %.1f,%.1f,%.1f",
+                                 i, ph, foot.x, centres[i], ranges[i].from, ranges[i].to, half, stride, ahead, t0.x, t1.x, target.x, target.y, target.z))
+                }
+                // (Swinging round, quick; the walk's rhythm picks it up again.)
+                roundBeginStep(i, to: target, dur: swinging ? quickStep : stepTime, hip: hips[i], ph0: swinging ? nil : p)
+                continue
+            }
+            // Stance: planted, somewhere along the line the walk takes it —
+            // as deep as it stands, and from a little ahead of its spot to a
+            // little behind. Off that line (the body come round toward you or
+            // away over it), out of reach, or still in the air from before:
+            // it steps on now, out of turn, and quickly.
+            let len = roundLength(i)
+            let reach = foot.distance(to: hips[i]) / len
+            let home = roundHomeAt(i, yaw: yaw)
+            let astray = abs(foot.z - home.z) > Spider.roundSlack + 1 || abs(foot.x - centres[i]) > half + 10
+            // (Carried in under its hip, its knee sunk below it — the leg
+            // folded flat — it steps out of it, out of its turn. Never at a
+            // run, though, where its turn is never far off and a step out of
+            // it only jars the rhythm; nor with the leg beside it about to
+            // take its own turn, which it would hold back — it waits for
+            // that one to go.)
+            let tucked = !lowKnees && roundTucked(i, foot, hip: hips[i], least: tuckAt[i])
+                && roundKneeSunk(i, foot) && roundMayStepWalking(i)
+                && !roundNeighbourTurnSoon(i, within: quickStep + 0.03, swing: swing, cycle: cycle)
+            let urgent = !roundLegs[i].down || reach > Spider.roundReachMost + 0.02 || reach < Spider.roundReachLeast
+                || tucked
+            let behind = fwd * (foot.x - centres[i]) < -(half + 3) || (fwd > 0 ? foot.x < ranges[i].from - 2 : foot.x > ranges[i].to + 2)
+                || t - roundOrderPush[i] < 0.1
+            // (Its turn just about to come round, it waits for it — unless
+            // it must go now.)
+            let turnNear = 1 - ph < 0.18 && !astray
+            if urgent || ((behind || astray) && !turnNear), roundMayStep(i, urgent: urgent, need: astray ? 1.7 : 1) {
+                // (Out of its turn, it comes down where the walk's rhythm
+                // would have its foot by then — in step again with the rest,
+                // rather than at the front of its stance, out of step.)
+                let into = (ph + quickStep / max(cycle, 0.01)).truncatingRemainder(dividingBy: 1)
+                let gone = into >= swing ? (into - swing) / max(1 - swing, 0.05) : 0
+                var along = half - 2 * half * gone
+                // (Out of a fold, it comes down where its bars stand clear of
+                // its neighbours' — not a Λ inside the next one's, nor its
+                // knee on that one's bar — as near where the rhythm would
+                // have it as that leaves; and never behind the middle of its
+                // stance, back in under its hip and the body.)
+                if tucked { along = roundClearLanding(i, along: max(along, 0), half: half, ahead: quickStep * v, stand: max(1 - swing, 0.3) * cycle,
+                                                      toTurn: v * max(1 - into, 0) * cycle, hip: hips[i], yaw: yawLand, centre: centres[i], fwd: fwd, now: now, least: tuckAt[i]) }
+                var target = roundWalkTarget(i, ahead: quickStep * v + along, yaw: yawLand, centre: centres[i], fwd: fwd, now: now)
+                // (A long way to go — left behind, or out of line with the body
+                // come round — is a few quick steps, not one long one.)
+                if roundLegs[i].down { target = roundCapStep(i, from: foot, to: target, most: max(stride * 1.2, len * Spider.roundStepMost)) }
+                let slack = swinging || astray ? 0 : Spider.roundWalkSlack
+                target = roundKeepLane(i, target, yaw: yawLand, slack: slack)
+                if roundLaneNoRoom, !urgent, roundBlocked[i] < Spider.roundLaneWaitBlocked {
+                    roundBlocked[i] += dt
+                    continue
+                }
+                roundBlocked[i] = 0
+                let before = target
+                target = roundKeepOrder(i, target, in: quickStep, v: v, fwd: fwd)
+                if roundOrderPulled > max(Spider.roundOrderWait, abs(before.x - foot.x) * 0.5), !urgent {
+                    roundOrderPush[i - 1] = t
+                    continue
+                }
+                target = roundPlaceInLane(i, target, from: foot, hip: roundHipCarried(hips[i], ahead: quickStep * v, fwd: fwd, now: now),
+                                          yaw: yawLand, slack: slack)
+                roundBeginStep(i, to: target, dur: quickStep, hip: hips[i])
+            }
+        }
+    }
+
+    /// Where on the ground leg `j`'s foot will be (along the body, sprite
+    /// x, as the body is now) `ahead` seconds from now: planted, where it
+    /// is; stepping, where the step puts it down. (The ground goes back
+    /// under the body as it walks on, but a foot set down on it goes back
+    /// with it: two feet down are as far apart then as their spots are
+    /// now.) Nil up in a pose.
+    private func roundFootAlong(_ j: Int, in ahead: CGFloat, v: CGFloat, fwd: CGFloat) -> CGFloat? {
+        guard !roundLegs[j].posed else { return nil }
+        if let s = roundLegs[j].step { return s.to.x }
+        return legs[j].foot.x
+    }
+
+    /// `target` for leg `i`, coming down `ahead` seconds from now, kept
+    /// between its neighbours' feet along the body as they will be then:
+    /// never forward past the foot of the leg in front of it on its side,
+    /// nor back past the one behind. Seen from the side, a foot that
+    /// passes its neighbour's is one leg drawn across the other. (Only
+    /// where the two stand one in front of the other as they are seen —
+    /// turned square on to you, a side's feet stand out to the side of
+    /// each other instead.)
+    private func roundKeepOrder(_ i: Int, _ target: V3, in ahead: CGFloat, v: CGFloat, fwd: CGFloat) -> V3 {
+        let k = i % 4, base = i - k
+        let gap = Spider.roundOrderGap
+        var lo = -CGFloat.greatestFiniteMagnitude, hi = CGFloat.greatestFiniteMagnitude
+        func apart(_ a: Int, _ b: Int) -> Bool {
+            let ha = roundHomeAt(a, yaw: yaw), hb = roundHomeAt(b, yaw: yaw)
+            return ha.x - hb.x > gap * 2 && abs(ha.z - hb.z) < Spider.roundLaneWidth
+        }
+        if k > 0, apart(base + k - 1, i), let x = roundFootAlong(base + k - 1, in: ahead, v: v, fwd: fwd) { hi = x - gap }
+        if k < 3, apart(i, base + k + 1), let x = roundFootAlong(base + k + 1, in: ahead, v: v, fwd: fwd) { lo = x + gap }
+        guard lo > -.greatestFiniteMagnitude || hi < .greatestFiniteMagnitude else { roundOrderPulled = 0; return target }
+        let x = lo <= hi ? clamp(target.x, lo, hi) : (lo + hi) / 2
+        roundOrderPulled = max(0, target.x - x)
+        return V3(x, target.y, target.z)
+    }
+    /// How far back (sprite units) `roundKeepOrder` last had to bring a
+    /// step for the foot of the leg in front of it.
+    private var roundOrderPulled: CGFloat = 0
+    /// When each leg was last waited on by the leg behind it — its foot
+    /// so far back that the one behind had nowhere to go: it steps on
+    /// then, out of turn.
+    private var roundOrderPush = [CGFloat](repeating: -1, count: SpiderRenderer.legCount)
+    /// A step that has to be brought back this far for the foot in front
+    /// waits for that foot to go on first.
+    private static let roundOrderWait: CGFloat = 4
+    /// The most of its length a leg is let out to in the stride of a walk.
+    private static let roundWalkReach: CGFloat = 0.84
+    /// How far apart along the body (sprite units) neighbouring feet are
+    /// kept, at the least.
+    private static let roundOrderGap: CGFloat = 3
+    /// How much nearer you or further (sprite units) one foot must stand
+    /// than another for the two to be in lines of their own along the way
+    /// it is going, free to step past one another.
+    private static let roundLaneWidth: CGFloat = 8
+
+    /// Whether leg `i`'s foot at `foot` is within what the leg reaches
+    /// standing (neither stretched out past it nor folded in too far).
+    private func reachOK(_ i: Int, _ foot: V3) -> Bool {
+        let reach = foot.distance(to: roundHip(i, psi: roundPsi)) / roundLength(i)
+        return reach <= Spider.roundReachMost + 0.02 && reach >= Spider.roundReachLeast
+    }
+
+    /// Whether leg `i`'s foot at `foot` has been carried in so near its hip,
+    /// the way its leg stands out from the body (see `roundOutFromHip`),
+    /// that the leg is folded flat: it steps out of it now.
+    private func roundTucked(_ i: Int, _ foot: V3, hip: V3, least: CGFloat? = nil) -> Bool {
+        // (Just down — round a corner, where the body swinging over it
+        // carries a foot put down on the top in toward its hip — it is let
+        // be a moment, rather than straight up again.)
+        guard roundLegs[i].down, !roundLegs[i].posed, t - roundLegs[i].landedAt > 0.1 else { return false }
+        let o = roundOutFromHip(i, foot, hip: hip)
+        return o.out < (least ?? roundTuckLeast(i, home: o.home))
+    }
+
+    /// Whether leg `i`'s foot at `foot`, carried in toward its hip, all but
+    /// has its leg folded flat: its knee, as the knees stand, come down
+    /// to its hip's height, or all but.
+    private func roundFoldsSoon(_ i: Int, _ foot: V3, hip: V3, least: CGFloat) -> Bool {
+        guard roundTucked(i, foot, hip: hip, least: least + Spider.roundEarlyGive) else { return false }
+        let g = roundKneeGuess(i, foot: foot)
+        return g.hip.y - g.knee.y > -Spider.roundEarlyKnee
+    }
+
+    /// The least leg `i`'s foot may be out from its hip (see
+    /// `roundOutFromHip`) before it steps out of it, its own spot `home`
+    /// out: nothing asked of it side on, where the legs stand out square
+    /// to the way it walks (and how it walks there is left just as it is);
+    /// all of it turned toward you, a little at a time on the way round.
+    private func roundTuckLeast(_ i: Int, home: CGFloat) -> CGFloat {
+        let len = roundLength(i)
+        return lerp(-len, min(len * Spider.roundOutLeast, home * Spider.roundOutHome.least), roundTurnedToYou)
+    }
+    /// How far round toward you the body is, for keeping feet out from
+    /// their hips: none side on and nearly so, all of it from a little
+    /// way round.
+    private var roundTurnedToYou: CGFloat { smoothstep(clamp((0.9 - abs(yaw)) / 0.2, 0, 1)) }
+
+    /// Where in the walking cycle leg `i` begins its step: two sets of four
+    /// taking turns, each stepping from its back legs to its front ones.
+    private func roundStart(_ i: Int) -> CGFloat {
+        CGFloat(roundSet(i)) * 0.5 + CGFloat(3 - i % 4) * roundRipple
+    }
+
+    /// Whether, turned toward you, this leg style's knees barely stand up
+    /// over their hips even with the feet at their own spots (see
+    /// `roundLowKnee`). (Judged as the legs stand at rest, in the body's
+    /// own frame: a thing of the spider's design, the same however it is
+    /// turned — never on for a frame and off the next.)
+    private var roundLowKnees: Bool {
+        roundTurnedToYou > 0 && legs.indices.contains { i in
+            let r = SpiderRenderer.rig3D(i, look: look); return r.knee.y - r.hip.y < Spider.roundLowKnee }
+    }
+    /// Whether leg `i`'s knee, its foot standing at `foot`, has sunk below
+    /// its hip by more than `roundTuckKnee`.
+    private func roundKneeSunk(_ i: Int, _ foot: V3) -> Bool {
+        let g = roundKneeGuess(i, foot: foot)
+        return g.hip.y - g.knee.y > Spider.roundTuckKnee
+    }
+    /// Stepping out of a fold (see `roundTucked`): how far on from the
+    /// middle of its stance (`along`, as the walk's rhythm has it, at the
+    /// most) leg `i` comes down, so that its bars stand clear of its
+    /// neighbours' as it stands there and as the body goes on over it —
+    /// never so far back that it is folded again.
+    private func roundClearLanding(_ i: Int, along: CGFloat, half: CGFloat, ahead: CGFloat, stand: CGFloat, toTurn: CGFloat, hip: V3,
+                                   yaw y: CGFloat, centre: CGFloat, fwd: CGFloat, now: RefPathPoint?, least: CGFloat) -> CGFloat {
+        let v = speed / max(config.scale, 0.05)
+        var best = along, bestScore = CGFloat.greatestFiniteMagnitude
+        for k in [1, 0.75, 0.5, 0.25, 0] as [CGFloat] {
+            let a = max(min(along, half * k), 0)
+            if k < 1, a >= along - 0.5 { continue }
+            let at = roundWalkTarget(i, ahead: ahead + a, yaw: y, centre: centre, fwd: fwd, now: now)
+            if roundOutFromHip(i, at, hip: hip).out < least + 3 { continue }
+            // (Nor so short that the body has carried it back in under its
+            // hip, or behind its stance, before its turn comes round again.)
+            if k < 1 {
+                let then = V3(at.x - fwd * (ahead + toTurn), at.y, at.z)
+                if roundOutFromHip(i, then, hip: hip).out < least + 1 || fwd * (then.x - centre) < -(half + 3) { continue }
+            }
+            var score = Spider.roundClearCost * (along - a)
+            for share in [0, 0.33, 0.67] as [CGFloat] {
+                score += roundBarsAlong(i, at, back: fwd * (ahead + v * stand * share))
+            }
+            if score < bestScore - 0.01 { bestScore = score; best = a }
+        }
+        return best
+    }
+    /// Where leg `i`'s knee will be with its foot standing at `foot`
+    /// (sprite space), as the knees stand: up over the foot.
+    private func roundKneeGuess(_ i: Int, foot: V3) -> (hip: V3, knee: V3) {
+        let psi = roundPsi
+        let r = SpiderRenderer.rig3D(i, look: look)
+        let hip = roundHip(i, psi: psi)
+        let stance = SpiderRenderer.standingFoot3D(i, look: look, turn: psi)
+        let out = SpiderRenderer.toSprite3D(V3(stance.x - r.hip.x, 0, stance.z - r.hip.z), turn: psi)
+        let o = V2(out.x, out.z).normalized
+        var want = SpiderRenderer.standingPole(out: o)
+        let under = V2(foot.x - hip.x, foot.z - hip.z).length / max(r.length * 0.22, 1)
+        if under < 1 { want = (want + V3(o.x, 0, o.y) * (0.85 * smoothstep(1 - under))).normalized }
+        return (hip, SpiderRenderer.knee3D(hip: hip, foot: foot, thigh: r.thigh, shin: r.shin, pole: want))
+    }
+    /// How much of leg `i`'s bars, its foot standing at `foot` and the
+    /// ground gone `back` on under the body, lie along its neighbours'
+    /// bars as they are drawn, or have a knee on them (sprite units).
+    private func roundBarsAlong(_ i: Int, _ foot: V3, back: CGFloat) -> CGFloat {
+        func segDist(_ p: V2, _ a: V2, _ b: V2) -> CGFloat {
+            let ab = b - a, l2 = ab.dot(ab)
+            let u = l2 > 1e-6 ? clamp((p - a).dot(ab) / l2, 0, 1) : 0
+            return p.distance(to: a + ab * u)
+        }
+        func alongLen(_ a0: V2, _ a1: V2, _ b0: V2, _ b1: V2) -> CGFloat {
+            var n: CGFloat = 0
+            for s in 1...5 { let p = V2.lerp(a0, a1, CGFloat(s) / 6); if segDist(p, b0, b1) < 3 { n += 1 } }
+            return n / 5 * a0.distance(to: a1)
+        }
+        let f = V3(foot.x - back, foot.y, foot.z)
+        let me = roundKneeGuess(i, foot: f)
+        let mine = [(me.hip.xy, me.knee.xy), (me.knee.xy, f.xy)]
+        var total: CGFloat = 0
+        for j in legs.indices where j != i && (j < 4) == (i < 4) && abs(j % 4 - i % 4) <= 2 {
+            guard !roundLegs[j].posed else { continue }
+            let f0 = roundLegs[j].step.map { $0.to } ?? V3(legs[j].foot, roundLegs[j].z)
+            let fj = V3(f0.x - back, f0.y, f0.z)
+            let them = roundKneeGuess(j, foot: fj)
+            let theirs = [(them.hip.xy, them.knee.xy), (them.knee.xy, fj.xy)]
+            for (a0, a1) in mine {
+                for (b0, b1) in theirs { total += max(alongLen(a0, a1, b0, b1), alongLen(b0, b1, a0, a1)) }
+                total += 6 * max(0, 3 - segDist(them.knee.xy, a0, a1)) / 3
+            }
+            for (b0, b1) in theirs { total += 6 * max(0, 3 - segDist(me.knee.xy, b0, b1)) / 3 }
+        }
+        return total
+    }
+    /// Whether a leg beside leg `i` on its side has its turn in the walk
+    /// coming round within `within` seconds (or is in its turn now, not yet
+    /// up), or has let its turn go by without a step and is yet to take it:
+    /// a step out of turn now would hold that one's step back.
+    private func roundNeighbourTurnSoon(_ i: Int, within: CGFloat, swing: CGFloat, cycle: CGFloat) -> Bool {
+        let side = i < 4
+        for j in legs.indices where j != i && (j < 4) == side && abs(j % 4 - i % 4) == 1 {
+            guard roundLegs[j].step == nil, !roundLegs[j].posed else { continue }
+            var ph = (gaitPhase + roundGaitShift - roundStart(j)).truncatingRemainder(dividingBy: 1)
+            if ph < 0 { ph += 1 }
+            if ph < swing || (1 - ph) * cycle < within { return true }
+            if roundLegs[j].down, t - roundLegs[j].landedAt > ph * cycle + 0.02 { return true }
+        }
+        return false
+    }
+
+    /// Whether leg `i` may take its step in the walk's rhythm now: not with
+    /// the leg next to it on its side still up.
+    private func roundMayStepWalking(_ i: Int) -> Bool {
+        let side = i < 4
+        return !legs.indices.contains { $0 != i && ($0 < 4) == side && abs($0 % 4 - i % 4) == 1
+            && (roundLegs[$0].step.map { $0.u < 0.85 } ?? roundLegs[$0].posed) }
+    }
+
+    /// A hip (sprite space) as the body will carry it once it has gone
+    /// `ahead` sprite units on, in the sprite's space as it is now.
+    private func roundHipCarried(_ hip: V3, ahead: CGFloat, fwd: CGFloat, now: RefPathPoint?, swing: CGFloat = 0) -> V3 {
+        V3(roundCarried(hip.xy, ahead: ahead, now: now, fwd: fwd, swing: swing), hip.z)
+    }
+
+    /// Where leg `i` puts its foot down walking: the middle of its stance
+    /// (`centre`, along the body, as deep as it stands turned to `y`), in
+    /// the frame the body will have once it has gone `ahead` sprite units
+    /// on — turned with the path round a corner, and `swing` further round
+    /// besides (the body yet to come square onto what it has come onto).
+    private func roundWalkTarget(_ i: Int, ahead: CGFloat, yaw y: CGFloat, centre: CGFloat, fwd: CGFloat, now: RefPathPoint?, swing: CGFloat = 0) -> V3 {
+        let home = roundHomeAt(i, yaw: y)
+        let carried = roundCarried(V2(centre + (home.x - roundHomeAt(i, yaw: yaw).x), home.y), ahead: ahead, now: now, fwd: fwd, swing: swing)
+        return V3(carried, home.z)
+    }
+
+    /// Where the body will be, and its heading, once it has gone `ahead`
+    /// sprite units on along its path and swung `swing` further round.
+    private func roundBodyThen(ahead: CGFloat, now: RefPathPoint?, fwd: CGFloat, swing: CGFloat) -> (pos: V2, heading: CGFloat) {
+        let s = max(config.scale, 0.05)
+        if let f = refFrame(ahead: ahead * s, from: now) { return (f.pos, heading + f.turn + swing) }
+        return (toWorld(V2(fwd * ahead, 0)), heading + swing)
+    }
+    /// `local` (sprite units) as the body will carry it once it has gone
+    /// `ahead` sprite units on and swung `swing` further round (see
+    /// `roundBodyThen`), in sprite units as the body is now. (No swing:
+    /// as `refCarried` has it.)
+    private func roundCarried(_ local: V2, ahead: CGFloat, now: RefPathPoint?, fwd: CGFloat, swing: CGFloat) -> V2 {
+        let s = max(config.scale, 0.05)
+        guard abs(swing) > 1e-6 else { return refCarried(local, ahead: ahead * s, from: now, fwd: fwd) }
+        let b = roundBodyThen(ahead: ahead, now: now, fwd: fwd, swing: swing)
+        return toLocal(b.pos + V2(local.x * mirrorSign, local.y).rotated(by: b.heading) * s)
+    }
+    /// A sprite-space point as it is now, where it will be to the body
+    /// carried on as `roundCarried` has it: the other way about.
+    private func roundToThen(_ p: V2, ahead: CGFloat, now: RefPathPoint?, fwd: CGFloat, swing: CGFloat) -> V2 {
+        let s = max(config.scale, 0.05)
+        let b = roundBodyThen(ahead: ahead, now: now, fwd: fwd, swing: swing)
+        var v = ((toWorld(p) - b.pos) / s).rotated(by: -b.heading)
+        v.x *= mirrorSign
+        return v
+    }
+
+    // MARK: Touching down, and off the ground
+
+    /// Just landed: a foot that is at the ground — or through it — is
+    /// planted where it touches; the rest step quickly down to their spots,
+    /// and are down by the time the body has taken the landing.
+    private func roundTouchDown(psi: CGFloat) {
+        // (Coming down tumbling, crooked to what it lands on, nothing is
+        // held where it first touches: the body is about to swing square
+        // onto its feet, and every foot steps to where it will stand then.)
+        let square = abs(angleDelta(heading, headingTarget)) < 0.6
+        // (Nor where the body, landing turned toward you or away, is about
+        // to come round from: a foot is held only near where it will stand
+        // once it has.)
+        let ahead = roundYawAhead(0.25)
+        for i in legs.indices {
+            roundLegs[i].posed = false
+            roundLetGo(i)
+            roundLegs[i].step = nil
+            let foot = legs[i].foot
+            let under = refGroundNear(foot)
+            // (Where it will stand once the body has come to rest: the body
+            // has yet to come down onto its legs, and on along the ledge.)
+            let spot = roundLanded(roundHomeAt(i, yaw: ahead))
+            let near = V2(foot.x - spot.x, roundLegs[i].z - spot.z).length < Spider.roundSlack
+            // (Touching the ground, or just through it; one a long way in
+            // — round a corner of what it landed on — steps out instead of
+            // being snapped across to the edge.)
+            if square, near, under.dist < 1.5 || under.dist < 5 && refOut(foot).map({ $0.out < 0 }) == true {
+                legs[i].foot = under.point
+                roundLegs[i].down = true
+            } else {
+                roundLegs[i].down = false
+            }
+        }
+    }
+
+    /// Off the ground — leaping, falling, thrown, held, hanging off the
+    /// pointer — every leg goes with the body, posed as the classic legs
+    /// pose it side on, out to its own side.
+    private func roundOffSurface(dt: CGFloat, psi: CGFloat) {
+        roundRegroupT = nil
+        for i in legs.indices {
+            // (Up off the ground each foot keeps to its own lane, as it does
+            // on it — see `roundAirPose` — its knee bent as standing; but for
+            // the front legs hooked round the pointer it hangs off, which go
+            // where the classic legs put them.)
+            var bend: V3?
+            let target: V3
+            if let lane = roundAirPose(i, psi: psi) {
+                target = lane
+            } else {
+                let (p, _) = roundClassicPose(i)
+                target = roundLift(i, p)
+                bend = legBend[i].map { SpiderRenderer.toSprite3D(V3($0.x, $0.y, 0), turn: psi) }
+            }
+            var r = roundLegs[i]
+            r.step = nil
+            r.down = false
+            if !r.posed { r.posed = true; r.vel = .zero; r.held = nil }
+            roundLegs[i] = r
+            let (k, c): (CGFloat, CGFloat) = mode == .held || mode == .clinging ? (200, 26) : (320, 32)
+            let foot = roundEasePosed(i, to: target, stiffness: k, damping: c, psi: psi, dt: dt)
+            r = roundLegs[i]
+            legs[i].foot = foot.xy
+            legs[i].lift = approach(legs[i].lift, 0, 6, dt)
+            r.z = foot.z
+            roundLegs[i] = r
+            roundBend[i] = bend
+        }
+    }
+
+    /// Where leg `i`'s foot goes up off the ground (the body's own frame):
+    /// in its own lane — the way out from its hip it stands, turned as the
+    /// body is — drawn in or reached out, and up, so that up in the air, as
+    /// on the ground, no leg is drawn across another. Dangling from the
+    /// pointer: drawn in, hanging, kicking a little. Leaping, thrown or
+    /// falling: out wide and a little up, fluttering — shoved back behind
+    /// it as it springs, gathered in for a shot of silk, and out to where
+    /// each will stand as it reaches for the ground. Nil for a foot the old
+    /// pose has somewhere in particular (hooked round the pointer it
+    /// clings to).
+    private func roundAirPose(_ i: Int, psi: CGFloat) -> V3? {
+        let r = SpiderRenderer.rig3D(i, look: look)
+        let k = i % 4
+        let stand = SpiderRenderer.standingFoot3D(i, look: look, turn: psi)
+        var dir = V2(stand.x - r.hip.x, stand.z - r.hip.z)
+        dir = dir.length > 0.01 ? dir.normalized : V2(k < 2 ? 1 : -1, 0)
+        let len = r.length
+        let g = SpiderRenderer.ground
+        let wob = legs[i].wobble
+        // (Every leg as far out from its hip, for its length, and as far
+        // below it: bent alike, the long front and back legs reaching out
+        // past the short middle ones, never in under them.)
+        func at(_ share: CGFloat, droop: CGFloat) -> V3 {
+            let d = len * share
+            return V3(r.hip.x + dir.x * d * cos(droop), r.hip.y - d * sin(droop), r.hip.z + dir.y * d * cos(droop))
+        }
+        switch mode {
+        case .held:
+            let kick = sin(t * 9 + CGFloat(i) * 1.1), lift = cos(t * 7.5 + CGFloat(i) * 0.9)
+            return at(0.56 + kick * 0.03, droop: 0.95 + lift * 0.1)
+        case .clinging:
+            guard k >= 2 else { return nil }
+            let struggle = 1 + clamp(clingShake, 0, 2) * 1.5
+            let kick = sin(t * 8 * struggle + CGFloat(i) * 1.1), lift = cos(t * 6.5 * struggle + CGFloat(i) * 0.9)
+            return at((k == 2 ? 0.55 : 0.6) + kick * 0.03 * struggle, droop: 0.8 + lift * 0.08 * struggle)
+        case .airborne:
+            if air == .jump && airTime < 0.16 {
+                // (The push-off: shoved back and down behind it.)
+                let p = at(0.8, droop: 0.5)
+                return V3(p.x - 10, g, p.z)
+            }
+            if airShot != nil {
+                if k == 3 { return V3(r.hip.x - 8, -4, r.hip.z + dir.y * len * 0.25) }
+                return at(0.55, droop: 0.7)
+            }
+            // (Out to its own side and a little down, knees bent — the long
+            // front and back legs reaching out level, the short middle ones
+            // hanging lower between them: gathered, ready for the ground,
+            // not held out stiff.)
+            let spread: CGFloat = air == .jump ? 0.74 : 0.7
+            let droop: CGFloat = k == 1 || k == 2 ? 0.62 : 0.34
+            let p = at(spread + wob.value(t * 3.2) * 0.03, droop: droop + wob.value(t * 2.6 + 2) * 0.08)
+            return landingReach > 0.001 ? V3.lerp(p, stand, smoothstep(landingReach)) : p
+        default:
+            return nil
+        }
+    }
+
+    // MARK: Knees, and the legs as drawn
+
+    /// Each leg's knee in the round (sprite space), worked out where the leg
+    /// is drawn, and its hip and foot.
+    private var roundKnees = [V3](repeating: .zero, count: SpiderRenderer.legCount)
+    private var roundHipsNow = [V3](repeating: .zero, count: SpiderRenderer.legCount)
+    private var roundFeetNow = [V3](repeating: .zero, count: SpiderRenderer.legCount)
+
+    private func updateRoundKnees(dt: CGFloat) {
+        let psi = roundPsi
+        let sq = bodySquash()
+        let g = SpiderRenderer.ground
+        let feetPlaced = mode == .attached
+        let bp = bodyPitchNow
+        let pivot = SpiderRenderer.leanPivot
+        var hips = [V3](repeating: .zero, count: legs.count)
+        var feet = [V3](repeating: .zero, count: legs.count)
+        var wants = [V3](repeating: .zero, count: legs.count)
+        for i in legs.indices {
+            let r = SpiderRenderer.rig3D(i, look: look)
+            let hip = roundHip(i, psi: psi)
+            var foot = V3(legs[i].foot, roundLegs[i].z)
+            // (A stamp, dancing: up off its spot and down on the beat.)
+            if roundTap[i] > 0.01, roundLegs[i].down, roundLegs[i].step == nil {
+                foot.y += roundTap[i]
+                legs[i].lift = clamp(roundTap[i] / 4, 0, 1)
+            }
+            // (A foot up in the air goes with the body's lean, and its squash.)
+            if abs(bp) > 0.0005, roundLegs[i].posed || !feetPlaced {
+                let inAir = clamp((foot.y - (g + 3)) / 10, 0, 1)
+                if inAir > 0 {
+                    let leaned = pivot + (foot.xy - pivot).rotated(by: bp) + V2(-bp * 8, bp * 2)
+                    foot = V3(V2.lerp(foot.xy, leaned, inAir), foot.z)
+                }
+            }
+            if !feetPlaced { foot = V3(foot.x * sq.stretch, g + (foot.y - g) * sq.fatten, foot.z) }
+            // Which way the knee bends: as it does standing — up, over its
+            // foot — or as a pose bends it; eased from one to the other.
+            let stance = SpiderRenderer.standingFoot3D(i, look: look, turn: psi)
+            let out = SpiderRenderer.toSprite3D(V3(stance.x - r.hip.x, 0, stance.z - r.hip.z), turn: psi)
+            var want = SpiderRenderer.standingPole(out: V2(out.x, out.z).normalized)
+            // (A foot right in under its hip leaves "up" no way to bend the
+            // knee in particular — a touch of the foot one way or the other
+            // swings it right round: it goes up and out to its side then.)
+            let under = V2(foot.x - hip.x, foot.z - hip.z).length / max(r.length * 0.22, 1)
+            if under < 1 {
+                let k = 0.85 * smoothstep(1 - under)
+                let o = V2(out.x, out.z).normalized
+                want = (want + V3(o.x, 0, o.y) * k).normalized
+            }
+            if let b = roundBend[i] {
+                // A pose bends a leg held up — an arm in the air, its elbow
+                // out to the side or back. Let down toward the ground, a
+                // leg's knee is up over its foot, as it stands: the one
+                // turns into the other as the leg comes down past level (or
+                // goes up past it), by how far up it points — never left to
+                // a bend that lies along the leg, which says nothing of
+                // where the knee goes and lets it drop under it.
+                let d = foot - hip
+                let up = d.length > 0.5 ? d.y / d.length : -1
+                let w = smoothstep(clamp((0.6 - up) / 0.6, 0, 1))
+                let side = SpiderRenderer.toSprite3D(V3(0, 0.6, i < 4 ? 1 : -1), turn: psi).normalized
+                want = Spider.turned(b.normalized, toward: want.normalized, by: w, via: side)
+            }
+            hips[i] = hip
+            feet[i] = foot
+            wants[i] = want
+        }
+        // The ball of the head, where it is drawn (as the hips on it are).
+        let cb = cos(SpiderRenderer.viewTurn), sb = sin(SpiderRenderer.viewTurn)
+        let headBall = (c: roundOnHead(V3(SpiderRenderer.head.c.x / cb, SpiderRenderer.head.c.y - SpiderRenderer.viewRise * SpiderRenderer.head.c.x * sb / cb, 0)),
+                        r: SpiderRenderer.head.r * look.bodyMetrics.head)
+        // (A standing leg's knee is up over its foot, in the upright plane
+        // through its hip and its foot — where the leg's own bones put it,
+        // and nowhere else: it never turns aside for how it is seen.)
+        for i in legs.indices {
+            let r = SpiderRenderer.rig3D(i, look: look)
+            let hip = hips[i], foot = feet[i], want = wants[i]
+            // (Bent the other way about altogether — a knee bent back like
+            // an elbow in a pose, coming down to stand — it comes round by
+            // way of its own side, out and up, never in through the body.)
+            let side = SpiderRenderer.toSprite3D(V3(0, 0.6, i < 4 ? 1 : -1), turn: psi).normalized
+            if !roundLegs[i].poleLive { roundLegs[i].pole = want; roundLegs[i].poleLive = true }
+            roundLegs[i].pole = Spider.turned(roundLegs[i].pole, toward: want, by: 1 - exp(-dt * Spider.roundPoleEase), via: side)
+            // (A leg reaching out far gives a touch, rather than snapping
+            // straight.)
+            let reach = foot.distance(to: hip) / max(r.length, 1)
+            let give = 1 + 0.1 * smoothstep(clamp((reach - 0.9) / 0.25, 0, 1))
+            // (A pole lying along the leg — the foot swept round to where
+            // the knee bends, or right away from it: a raised leg coming
+            // down past its hip, a foot reaching up a wall — says little of
+            // which way the knee goes: then it leans out to the leg's own
+            // side, rather than flicking over.)
+            var pole = roundLegs[i].pole
+            let d = foot - hip
+            if d.length > 0.5 {
+                let dn = d.normalized
+                let pp = pole - dn * pole.dot(dn)
+                let lean = clamp((0.45 - pp.length) / 0.45, 0, 1)
+                let sp = side - dn * side.dot(dn)
+                if lean > 0, sp.length > 1e-3 { pole = pp + sp.normalized * (0.6 * lean) }
+            }
+            // (A leg held up in a pose — scratching, grooming, waving — has
+            // its knee outside the head, not in it: bent as the pose has it
+            // the knee may be where the head is, and then it is drawn in
+            // front of the head seen from one side and behind it from
+            // another. Round the leg's own line it goes, out to its side,
+            // till it is clear.)
+            // (Not a front leg held up above the head's middle — an arm in
+            // the air: it joins the head itself, and is on your side of
+            // the head or the far side by where it joins; kept clear of
+            // the head as well, its elbow was pushed down and back across
+            // the legs beside it. The lower its foot, the more it is.)
+            let armUp = i % 4 == 0 ? smoothstep(clamp((foot.y - headBall.c.y) / 8, 0, 1)) : 0
+            if roundBend[i] != nil || roundLegs[i].posed, d.length > 0.5, armUp < 0.99 {
+                let dn = d.normalized
+                var base = pole - dn * pole.dot(dn)
+                if base.length > 1e-4 {
+                    base = base.normalized
+                    let most = (headBall.r + Spider.roundKneeClear) * (1 - armUp)
+                    let across = dn.cross(base)
+                    // How far clear of the head the knee is, turned `a`
+                    // round the leg.
+                    func clear(_ a: CGFloat) -> CGFloat {
+                        SpiderRenderer.knee3D(hip: hip, foot: foot, thigh: r.thigh * give, shin: r.shin * give,
+                                              pole: base * cos(a) + across * sin(a)).distance(to: headBall.c) - most
+                    }
+                    if clear(0) < 0 {
+                        // (No further round than it takes — so it comes on
+                        // little by little as the knee nears the head, and
+                        // goes as it leaves — and always the same way: out
+                        // to the leg's own side, unless there is no way
+                        // clear round there.)
+                        let first: CGFloat = across.dot(side) >= 0 ? 1 : -1
+                        search: for way in [first, -first] {
+                            var lo: CGFloat = 0
+                            for k in 1...10 {
+                                let hi = CGFloat(k) * 0.2 * way
+                                if clear(hi) >= 0 {
+                                    var a = lo, b = hi
+                                    for _ in 0..<8 {
+                                        let m = (a + b) / 2
+                                        if clear(m) >= 0 { b = m } else { a = m }
+                                    }
+                                    pole = base * cos(b) + across * sin(b)
+                                    break search
+                                }
+                                lo = hi
+                            }
+                        }
+                    }
+                }
+            }
+            // (However the pole swings — a leg swept past the way its knee
+            // bends, down out of a pose, round with the body in a turn —
+            // the knee only goes round its leg so fast: never flicked over
+            // from one side of the leg to the other between frames.)
+            if d.length > 0.5 {
+                let dn = d.normalized
+                var aim = pole - dn * pole.dot(dn)
+                if aim.length > 1e-4 {
+                    aim = aim.normalized
+                    var was = roundLegs[i].kneeDir - dn * roundLegs[i].kneeDir.dot(dn)
+                    if !roundLegs[i].kneeDirLive || was.length < 1e-3 { was = aim } else { was = was.normalized }
+                    let ang = acos(clamp(was.dot(aim), -1, 1))
+                    let most = Spider.roundKneeTurnRate * dt
+                    if ang > most {
+                        // (Round the leg's own line toward where it is going.)
+                        let ax = was.cross(aim).length > 1e-4 ? was.cross(aim).normalized : dn
+                        let c = cos(most), sn = sin(most)
+                        aim = (was * c + ax.cross(was) * sn + ax * (ax.dot(was) * (1 - c))).normalized
+                    }
+                    roundLegs[i].kneeDir = aim
+                    roundLegs[i].kneeDirLive = true
+                    pole = aim
+                }
+            }
+            let knee = SpiderRenderer.knee3D(hip: hip, foot: foot, thigh: r.thigh * give, shin: r.shin * give, pole: pole)
+            if Spider.debugKnee == i { print(String(format: "KNEE%d want %.2f,%.2f,%.2f pole %.2f,%.2f,%.2f eased %.2f,%.2f,%.2f knee %.1f,%.1f,%.1f hip %.1f,%.1f,%.1f foot %.1f,%.1f,%.1f bend %@ psi %.2f", i, want.x, want.y, want.z, pole.x, pole.y, pole.z, roundLegs[i].pole.x, roundLegs[i].pole.y, roundLegs[i].pole.z, knee.x, knee.y, knee.z, hip.x, hip.y, hip.z, foot.x, foot.y, foot.z, roundBend[i] == nil ? "-" : "y", psi)) }
+            // Back into the frame the sprite is squashed in.
+            func unsquash(_ p: V3) -> V3 { V3(p.x / sq.stretch, g + (p.y - g) / sq.fatten, p.z) }
+            roundKnees[i] = unsquash(knee)
+            roundHipsNow[i] = unsquash(hip)
+            // (A foot on the ground is where it stands: the sprite's squash
+            // is taken out of it, as out of the knee, so it is drawn there.)
+            roundFeetNow[i] = unsquash(foot)
+        }
+        roundKneeEase = min(1, roundKneeEase + dt / Spider.roundKneeHandOff)
+    }
+
+    /// How fast (radians a second) a knee may go round its own leg.
+    private static let roundKneeTurnRate: CGFloat = 9
+    /// How quickly (a second) a knee's bend comes round to the one wanted.
+    private static let roundPoleEase: CGFloat = 14
+    /// Balled up for a roll: how far out from its hip a foot is drawn in to
+    /// (a share of the leg's length), and how far down (radians).
+    private static let roundRollFold: (share: CGFloat, droop: CGFloat) = (0.42, 0.45)
+    /// Tools only: a leg (slot) whose knee is printed as it is put.
+    static var debugKnee = Int(ProcessInfo.processInfo.environment["KNEEDBG"] ?? "-1") ?? -1
+    /// Tools only: standing turned this far round toward you (a yaw).
+    static var debugYawHold: CGFloat?
+
+    /// `a` turned toward `b` (both of unit length) by `k` of the way, the
+    /// shorter way round — or, the two pointing nearly opposite ways, toward
+    /// `via` first, so it goes round by way of that.
+    static func turned(_ a: V3, toward b: V3, by k: CGFloat, via: V3) -> V3 {
+        let goal = a.dot(b) < -0.3 ? via : b
+        let c = clamp(a.dot(goal), -1, 1)
+        let ax = a.cross(goal)
+        guard ax.length > 1e-5 else { return c > 0 ? goal : a }
+        let n = ax.normalized
+        let ang = acos(c) * clamp(k, 0, 1)
+        return (a * cos(ang) + n.cross(a) * sin(ang) + n * (n.dot(a) * (1 - cos(ang)))).normalized
+    }
+
+    /// The legs as the renderer draws them, standing in the round.
+    private func roundPoseLegs(profile: CGFloat) -> [LegPose] {
+        legs.indices.map { i in
+            if !roundHasLegs {
+                // The old way's legs, drawn in the round: their own side of
+                // the body.
+                let j = modelLeg(i, profile: profile)
+                let knee = kneeLocal.count == legs.count ? kneeLocal[i] : j.knee
+                let psi = roundPsi
+                let r = SpiderRenderer.rig3D(i, look: look)
+                let hz = SpiderRenderer.toSprite3D(r.hip, turn: psi).z
+                let kz = SpiderRenderer.toSprite3D(r.knee, turn: psi).z
+                let fz = roundSideDepth(i, psi: psi)
+                return LegPose(hip: j.hip, knee: knee, foot: j.foot, lift: legs[i].lift, hipZ: hz, kneeZ: kz, footZ: fz)
+            }
+            let h = roundHipsNow[i], k = roundKnees[i], f = roundFeetNow[i]
+            var knee = SpiderRenderer.drawn(k), kz = k.z
+            if roundKneeEase < 1 {
+                // (Just handed over from the old way: from its knee.)
+                let s = smoothstep(roundKneeEase), from = roundKneeFrom[i]
+                knee = V2.lerp(from.xy, knee, s)
+                kz = from.z + (kz - from.z) * s
+            }
+            return LegPose(hip: SpiderRenderer.drawn(h), knee: knee, foot: f.xy, lift: legs[i].lift,
+                           hipZ: h.z, kneeZ: kz, footZ: f.z)
+        }
+    }
+
+    // MARK: Round past the front view
+
+    /// Mirrored past the front view: each leg's slot is now on the other
+    /// side of the body, so every leg carries on in its twin's — the same
+    /// leg, from the same end of the body, its foot where it was.
+    private func roundMirror() {
+        for i in legs.indices {
+            legs[i].foot.x = -legs[i].foot.x
+            legs[i].footVel.x = -legs[i].footVel.x
+            legs[i].swingFrom.x = -legs[i].swingFrom.x
+            legs[i].settleTo.x = -legs[i].settleTo.x
+            legs[i].swingTo.x = -legs[i].swingTo.x
+            legs[i].poseFrom.x = -legs[i].poseFrom.x
+            if var s = roundLegs[i].step {
+                s.from.x = -s.from.x
+                s.to.x = -s.to.x
+                roundLegs[i].step = s
+            }
+            if var on = roundLegs[i].held {
+                // (Held on the body: on its other side now, as the sprite
+                // has it.)
+                on.z = -on.z
+                roundLegs[i].held = on
+                roundLegs[i].vel.z = -roundLegs[i].vel.z
+            } else {
+                roundLegs[i].vel.x = -roundLegs[i].vel.x
+            }
+            roundLegs[i].pole.x = -roundLegs[i].pole.x
+            roundLegs[i].kneeDir.x = -roundLegs[i].kneeDir.x
+            roundKnees[i].x = -roundKnees[i].x
+            roundHipsNow[i].x = -roundHipsNow[i].x
+            roundFeetNow[i].x = -roundFeetNow[i].x
+            if let b = roundBend[i] { roundBend[i] = V3(-b.x, b.y, b.z) }
+        }
+        for i in 0..<4 {
+            let j = i + 4
+            var a = legs[i], b = legs[j]
+            (a.foot, b.foot) = (b.foot, a.foot)
+            (a.footVel, b.footVel) = (b.footVel, a.footVel)
+            (a.swingFrom, b.swingFrom) = (b.swingFrom, a.swingFrom)
+            (a.swinging, b.swinging) = (b.swinging, a.swinging)
+            (a.lift, b.lift) = (b.lift, a.lift)
+            (a.settle, b.settle) = (b.settle, a.settle)
+            (a.settleTo, b.settleTo) = (b.settleTo, a.settleTo)
+            (a.skipSwing, b.skipSwing) = (b.skipSwing, a.skipSwing)
+            (a.swingPh0, b.swingPh0) = (b.swingPh0, a.swingPh0)
+            (a.swingDir, b.swingDir) = (-b.swingDir, -a.swingDir)
+            (a.swingU, b.swingU) = (b.swingU, a.swingU)
+            (a.swingTo, b.swingTo) = (b.swingTo, a.swingTo)
+            (a.stepDur, b.stepDur) = (b.stepDur, a.stepDur)
+            (a.landedAt, b.landedAt) = (b.landedAt, a.landedAt)
+            (a.poseFrom, b.poseFrom) = (b.poseFrom, a.poseFrom)
+            a.swingShift = 0; b.swingShift = 0
+            legs[i] = a
+            legs[j] = b
+            roundLegs.swapAt(i, j)
+            roundKnees.swapAt(i, j)
+            roundHipsNow.swapAt(i, j)
+            roundFeetNow.swapAt(i, j)
+            roundBend.swapAt(i, j)
+            roundComingDown.swapAt(i, j)
+            roundBlocked.swapAt(i, j)
+            roundOrderPush.swapAt(i, j)
+            if refGiveNow.count == legs.count { refGiveNow.swapAt(i, j) }
+            if footWorld.count == legs.count, footWorldVel.count == legs.count {
+                footWorld.swapAt(i, j)
+                footWorldVel.swapAt(i, j)
+            }
+            if kneeWorld.count == legs.count, kneeWorldVel.count == legs.count {
+                kneeWorld.swapAt(i, j)
+                kneeWorldVel.swapAt(i, j)
+            }
+            // (The old way's knees, for a line: a mirrored knee bends the
+            // other way round its line.)
+            if kneeShape.count == legs.count {
+                let (ki, kj) = (kneeShape[i], kneeShape[j])
+                kneeShape[i] = V2(kj.x, -kj.y)
+                kneeShape[j] = V2(ki.x, -ki.y)
+            }
+            if kneeShapeVel.count == legs.count {
+                let (vi, vj) = (kneeShapeVel[i], kneeShapeVel[j])
+                kneeShapeVel[i] = V2(vj.x, -vj.y)
+                kneeShapeVel[j] = V2(vi.x, -vi.y)
+            }
+            kneeOver.swapAt(i, j)
+            kneeOverAim.swapAt(i, j)
+            grooveAir.swapAt(i, j)
+            groovePlanted.swapAt(i, j)
+            (grooveBase[i], grooveBase[j]) = (V2(-grooveBase[j].x, grooveBase[j].y), V2(-grooveBase[i].x, grooveBase[i].y))
+            (grooveAirAt[i], grooveAirAt[j]) = (V2(-grooveAirAt[j].x, grooveAirAt[j].y), V2(-grooveAirAt[i].x, grooveAirAt[i].y))
+            if lineSide.count == legs.count {
+                (lineSide[i], lineSide[j]) = (-lineSide[j], -lineSide[i])
+                (lineSideAim[i], lineSideAim[j]) = (-lineSideAim[j], -lineSideAim[i])
+                (lineSideVel[i], lineSideVel[j]) = (-lineSideVel[j], -lineSideVel[i])
+                lineBoneLen.swapAt(i, j)
+            }
+        }
+        roundKneeEase = 1
+        roundGaitShift = (roundGaitShift + 0.5).truncatingRemainder(dividingBy: 1)
+        roundFlips = (roundFlips + 1) % 2
+        for i in 0..<4 { roundTurnStepped.swapAt(i, i + 4); roundSpinStepped.swapAt(i, i + 4) }
+        for i in legs.indices { roundHopFrom[i].x = -roundHopFrom[i].x; roundRegroupFrom[i].x = -roundRegroupFrom[i].x }
+        for i in 0..<4 { roundHopFrom.swapAt(i, i + 4); roundRegroupFrom.swapAt(i, i + 4); roundBlocked.swapAt(i, i + 4); roundRegroupAlong.swapAt(i, i + 4) }
+        for i in legs.indices { roundRegroupBody[i].z = -roundRegroupBody[i].z }
+        for i in 0..<4 { roundRegroupBody.swapAt(i, i + 4) }
+    }
+
+    /// The leg system changed: the legs start again from where they are,
+    /// each foot taken down onto the ground with a step.
+    private func roundReseat() {
+        roundOldWay = true
+        roundGaitShift = 0
+        roundRegroupT = nil
+        kneeShape = []
+        footWorld = []
+        kneeWorld = []
+        handoffT = 1
+        for i in legs.indices {
+            roundBend[i] = nil
+            roundComingDown[i] = false
+            legs[i].swinging = false
+            legs[i].settle = -1
+            legs[i].swingShift = 0
+            legs[i].lift = 0
+        }
+    }
+
+    /// Tools only (and `debugAttach`): every foot standing on its spot.
+    private func roundSeat() {
+        let psi = roundPsi
+        roundOldWay = false
+        roundSpotWas = nil
+        roundRegroupT = nil
+        for i in legs.indices {
+            let home = SpiderRenderer.toSprite3D(SpiderRenderer.standingFoot3D(i, look: look, turn: psi), turn: psi)
+            legs[i].foot = home.xy
+            roundLegs[i] = RoundLeg()
+            roundLegs[i].z = home.z
+            roundBend[i] = nil
+            roundComingDown[i] = false
+        }
+    }
+
     // MARK: - The natural walk
 
     /// Walking the natural way (`Gait.natural`, picked in the studio): each
@@ -17915,7 +21335,7 @@ final class Spider {
     /// and comes down gently where the foot will be when it lands; the
     /// front pair step higher, feeling their way. Stopped, the feet tidy
     /// up with a small step each, instead of sliding into place.
-    private var naturalWalk: Bool { gait.natural && mode == .attached }
+    private var naturalWalk: Bool { gait.natural && mode == .attached && !gait.newLegs }
     /// 0 a leg at a time (slow), 1 the alternating sets of four.
     private var natPattern: CGFloat = 1
     /// How much of each step cycle a foot spends in the air.
@@ -18217,7 +21637,7 @@ final class Spider {
     /// little as a set of them comes up and rising as they take its weight
     /// again; and in an inside corner it tucks in close, so its legs reach
     /// both walls.
-    private var refinedWalk: Bool { gait.motion == .refined && mode == .attached }
+    private var refinedWalk: Bool { gait.motion == .refined && mode == .attached && !gait.newLegs }
     /// How much of each step cycle a foot spends in the air, and how far
     /// apart in the cycle a leg steps from the one behind it: both eased.
     private var refSwing: CGFloat = 0.38
@@ -19645,6 +23065,8 @@ final class Spider {
     /// Tools only: which way along its edge it is going and which way it
     /// faces (±1 each), and the sprite's yaw.
     var debugDirs: (walk: CGFloat, facing: CGFloat, yaw: CGFloat) { (walkDir, facing, yaw) }
+    /// Tools only: which way the body is turned in the screen, and which way it is coming round to.
+    var debugHeading: (now: CGFloat, target: CGFloat) { (heading, headingTarget) }
 
     /// Tools only: the mood it is in and for how much longer, whether it
     /// may turn back yet, and the decision clock.
@@ -19775,6 +23197,7 @@ final class Spider {
         webAlpha.reset(0)
         kneeShape = []
         footWorld = []
+        if inRound { roundSeat() }
     }
 
     func debugJump(to point: V2) {
@@ -19981,6 +23404,7 @@ final class Spider {
     /// a change of shape is eased, and a bend going over to the other side
     /// passes through a straightened leg, as a real one does.
     private func updateKnees(dt: CGFloat) {
+        if roundHasLegs { updateRoundKnees(dt: dt); return }
         let profile = SpiderRenderer.profileAmount(yaw: yaw)
         let fresh = kneeShape.count != legs.count
         if fresh { kneeShape = Array(repeating: .zero, count: legs.count) }
@@ -20366,12 +23790,18 @@ final class Spider {
         let bp = bodyPitchNow
         p.bodyPitch = bp
         p.bodyShift = V2(-bp * 8, bp * 2)
-        p.legs = legs.indices.map { i in
-            let j = modelLeg(i, profile: profile)
-            // The knee keeps the shape it has been easing toward, laid on
-            // this frame's hip and foot.
-            let knee = kneeLocal.count == legs.count ? kneeLocal[i] : j.knee
-            return LegPose(hip: j.hip, knee: knee, foot: j.foot, lift: legs[i].lift)
+        if inRound {
+            p.legsInRound = true
+            p.layerMemory = legLayers
+            p.legs = roundPoseLegs(profile: profile)
+        } else {
+            p.legs = legs.indices.map { i in
+                let j = modelLeg(i, profile: profile)
+                // The knee keeps the shape it has been easing toward, laid on
+                // this frame's hip and foot.
+                let knee = kneeLocal.count == legs.count ? kneeLocal[i] : j.knee
+                return LegPose(hip: j.hip, knee: knee, foot: j.foot, lift: legs[i].lift)
+            }
         }
         if weatherOnIt || wet > 0 || snowOn > 0 || dust > 0 || !drops.isEmpty { weatherPose(&p) }
         if let from = buildThreadFrom, !webActive {

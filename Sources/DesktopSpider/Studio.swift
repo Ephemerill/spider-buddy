@@ -4,12 +4,27 @@ import QuartzCore
 // MARK: - Thumbnails
 
 extension SpiderRenderer {
-    /// A standing pose with every leg at rest, for thumbnails and previews.
-    static func restPose(look: SpiderLook, yaw: CGFloat, scale: CGFloat) -> SpiderPose {
+    /// A standing pose with every leg at rest, for thumbnails and previews
+    /// — standing in the round (the new leg system) if `inRound`.
+    static func restPose(look: SpiderLook, yaw: CGFloat, scale: CGFloat, inRound: Bool = false) -> SpiderPose {
         var p = SpiderPose()
         p.outfit = look
         p.facing = yaw
         p.scale = scale
+        if inRound {
+            let psi = legTurn(yaw: yaw)
+            p.legsInRound = true
+            p.legs = (0..<legCount).map { i in
+                let r = rig3D(i, look: look)
+                let hip = toSprite3D(r.hip, turn: psi)
+                let foot = toSprite3D(standingFoot3D(i, look: look, turn: psi), turn: psi)
+                let knee = knee3D(hip: hip, foot: foot, thigh: r.thigh, shin: r.shin,
+                                  pole: standingPole(out: V2(foot.x - hip.x, foot.z - hip.z).normalized))
+                return LegPose(hip: drawn(hip), knee: drawn(knee), foot: foot.xy, lift: 0,
+                               hipZ: hip.z, kneeZ: knee.z, footZ: foot.z)
+            }
+            return p
+        }
         let profile = profileAmount(yaw: yaw)
         p.legs = (0..<legCount).map { i in
             let r = rig(i, profile: profile, look: look)
@@ -20,12 +35,13 @@ extension SpiderRenderer {
     }
 
     /// Renders the spider standing still into a square image. `closeUp`
-    /// frames the face instead of the whole animal.
-    static func thumbnail(look: SpiderLook, side: CGFloat, front: Bool, closeUp: Bool = false) -> NSImage {
+    /// frames the face instead of the whole animal; `inRound` stands its
+    /// legs as the new leg system does.
+    static func thumbnail(look: SpiderLook, side: CGFloat, front: Bool, closeUp: Bool = false, inRound: Bool = false) -> NSImage {
         let img = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return true }
             let scale = closeUp ? side / 62 : side / 118
-            let pose = restPose(look: look, yaw: front ? 0 : 1, scale: scale)
+            let pose = restPose(look: look, yaw: front ? 0 : 1, scale: scale, inRound: inRound)
             // Body origin sits a little below centre so hats have headroom;
             // a close-up centres the head instead.
             let hc = front ? frontHead.c : head.c
@@ -756,12 +772,13 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
                 self?.changed()
             }
         }
-        grids.append((grid, buildingTab, {
+        grids.append((grid, buildingTab, { [weak self] in
             let cur = get()
+            let inRound = self?.design.gait.newLegs ?? false
             for (i, opt) in all.enumerated() {
                 let cell = grid.cells[i]
                 cell.isSelected = selected?(opt) ?? (opt == cur)
-                cell.image = SpiderRenderer.thumbnail(look: preview(opt), side: 72, front: front, closeUp: closeUp)
+                cell.image = SpiderRenderer.thumbnail(look: preview(opt), side: 72, front: front, closeUp: closeUp, inRound: inRound)
             }
         }))
         return grid
@@ -774,9 +791,9 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         let cell = grid.cells[0]
         cell.label = title
         cell.onPick = { [weak self] in pick(); self?.changed() }
-        grids.append((grid, buildingTab, {
+        grids.append((grid, buildingTab, { [weak self] in
             cell.isSelected = isOn()
-            cell.image = SpiderRenderer.thumbnail(look: preview(), side: 72, front: false)
+            cell.image = SpiderRenderer.thumbnail(look: preview(), side: 72, front: false, inRound: self?.design.gait.newLegs ?? false)
         }))
         return grid
     }
@@ -941,7 +958,7 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
             for i in 0..<3 {
                 var l = self.design.look; l.fuzz = i
                 fuzzGrid.cells[i].isSelected = self.design.look.fuzz == i
-                fuzzGrid.cells[i].image = SpiderRenderer.thumbnail(look: l, side: 72, front: false)
+                fuzzGrid.cells[i].image = SpiderRenderer.thumbnail(look: l, side: 72, front: false, inRound: self.design.gait.newLegs)
             }
         }))
         col.addArrangedSubview(fuzzGrid)
@@ -1607,6 +1624,9 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         legMotionPopup.action = #selector(legMotionPicked(_:))
         legRow.addArrangedSubview(legMotionPopup)
         col.addArrangedSubview(legRow)
+        let newLegs = checkbox("New leg system", get: { self.design.gait.newLegs }, set: { self.design.gait.newLegs = $0 })
+        newLegs.toolTip = "A spider in three dimensions: every leg is always the same leg — front, front middle, back middle and back on each side — standing where it really would, whichever way the body turns, and drawn from there. Feet stay planted until they lift to step, quick little steps that keep up with the body. (Leg motion, above, is the old system's.)"
+        col.addArrangedSubview(newLegs)
         col.addArrangedSubview(slider("Pace", low: "Ambling", high: "Brisk",
                                       get: { self.design.gait.pace }, set: { self.design.gait.pace = $0 }))
         col.addArrangedSubview(slider("Stride", low: "Short steps", high: "Long steps",
@@ -1738,9 +1758,10 @@ final class StudioController: NSObject, NSWindowDelegate, NSTextFieldDelegate, N
         // first if it needs to be.
         keepingCurrent(before: "trying a new one") { [self] in
             // (How its legs move is a choice of animation, not of spider: kept.)
-            let motion = design.gait.motion
+            let motion = design.gait.motion, newLegs = design.gait.newLegs
             design = SpiderDesign.random()
             design.gait.motion = motion
+            design.gait.newLegs = newLegs
             SpiderLibrary.currentID = nil
             changed()
             throwaway = true
@@ -1824,7 +1845,7 @@ extension StudioController {
             cell.label = s.name
             cell.isSelected = s.id == currentID
             cell.toolTip = s.id == currentID ? "\(s.name) is out on your desktop" : "Bring \(s.name) out"
-            cell.image = SpiderRenderer.thumbnail(look: s.design.look, side: 96, front: false)
+            cell.image = SpiderRenderer.thumbnail(look: s.design.look, side: 96, front: false, inRound: s.design.gait.newLegs)
             cell.onPick = { [weak self] in self?.bringOut(s.id) }
             let menu = NSMenu()
             for (title, action) in [("Bring Out", #selector(bringOutItem(_:))), ("Make a Copy", #selector(copySpiderItem(_:))),
@@ -1920,9 +1941,10 @@ extension StudioController {
     /// Back as it was last saved.
     @objc fileprivate func revertSpider() {
         guard let cur = SpiderLibrary.current else { return }
-        let motion = design.gait.motion
+        let motion = design.gait.motion, newLegs = design.gait.newLegs
         design = cur.design
         design.gait.motion = motion
+        design.gait.newLegs = newLegs
         changed()
     }
 
@@ -1933,9 +1955,10 @@ extension StudioController {
         guard id != SpiderLibrary.currentID, let s = SpiderLibrary.saved(id: id) else { return }
         keepingCurrent(before: "bringing out \(s.name)") { [self] in
             guard let s = SpiderLibrary.saved(id: id) else { return }
-            let motion = design.gait.motion
+            let motion = design.gait.motion, newLegs = design.gait.newLegs
             design = s.design
             design.gait.motion = motion
+            design.gait.newLegs = newLegs
             SpiderLibrary.currentID = id
             changed()
             preview.spider.celebrate()

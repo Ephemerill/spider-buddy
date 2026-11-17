@@ -22,11 +22,14 @@ struct SavedSpider: Codable, Equatable {
     var name: String { design.name.isEmpty ? "Spider" : design.name }
 
     /// Whether `d` is this spider as it was saved. (How its legs move is a
-    /// choice of animation, not of spider, so it doesn't count.)
+    /// choice of animation, not of spider, so it doesn't count — nor which
+    /// leg system moves them.)
     func matches(_ d: SpiderDesign) -> Bool {
         var a = design, b = d
         a.gait.motion = .classic
         b.gait.motion = .classic
+        a.gait.newLegs = false
+        b.gait.newLegs = false
         return a == b
     }
 }

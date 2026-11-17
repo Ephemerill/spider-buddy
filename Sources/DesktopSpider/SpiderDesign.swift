@@ -873,6 +873,14 @@ struct Gait: Codable, Equatable {
     var bounciness: CGFloat = 0.5
     /// How its legs move (see `LegMotion`).
     var motion: LegMotion = .classic
+    /// The new leg system: every leg stands in the round, always the same
+    /// leg — front, front middle, back middle and back on either side —
+    /// planted where it stands until it lifts to step (see "Legs in the
+    /// round" in Spider.swift). Off, the legs move as they always have.
+    var newLegs: Bool = Gait.newLegsByDefault
+    /// Tools and tests only: the new leg system unless a design says
+    /// otherwise (`SPIDER_NEW_LEGS=1`).
+    static let newLegsByDefault = ProcessInfo.processInfo.environment["SPIDER_NEW_LEGS"] == "1"
     /// The natural walk: every leg keeps its true length, steps ripple from
     /// back to front, and the pattern changes with its pace. Off, it walks
     /// the classic way.
@@ -890,7 +898,7 @@ struct Gait: Codable, Equatable {
     // Written out so a design saved before a dial existed still loads,
     // taking that dial at its middle. (The leg motion is saved under both
     // keys: a build from before the refined walk reads `natural`.)
-    private enum CodingKeys: String, CodingKey { case pace, stride, bounce, stance, style, bounciness, natural, motion }
+    private enum CodingKeys: String, CodingKey { case pace, stride, bounce, stance, style, bounciness, natural, motion, newLegs }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         pace = (try? c.decodeIfPresent(CGFloat.self, forKey: .pace)) ?? 0.5
@@ -901,6 +909,7 @@ struct Gait: Codable, Equatable {
         bounciness = (try? c.decodeIfPresent(CGFloat.self, forKey: .bounciness)) ?? 0.5
         let natural = (try? c.decodeIfPresent(Bool.self, forKey: .natural)) ?? false
         motion = (try? c.decodeIfPresent(LegMotion.self, forKey: .motion)) ?? (natural ? .natural : .classic)
+        newLegs = (try? c.decodeIfPresent(Bool.self, forKey: .newLegs)) ?? Gait.newLegsByDefault
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -912,6 +921,7 @@ struct Gait: Codable, Equatable {
         try c.encode(bounciness, forKey: .bounciness)
         try c.encode(natural, forKey: .natural)
         try c.encode(motion, forKey: .motion)
+        try c.encode(newLegs, forKey: .newLegs)
     }
 
     var speedMul: CGFloat { lerp(0.55, 1.7, pace) }
