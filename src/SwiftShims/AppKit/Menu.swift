@@ -84,12 +84,15 @@ open class NSMenu: NSObject {
     private func build() -> HMENU? {
         let h = CreatePopupMenu()
         delegate?.menuNeedsUpdate(self)
-        for i in items where !i.isHidden {
+        // (Alternates show only while Option is held on the Mac: never here.)
+        for i in items where !i.isHidden && !i.isAlternate {
             if i.isSeparatorItem { _ = AppendMenuW(h, UINT(MF_SEPARATOR), 0, nil); continue }
             var flags = UINT(MF_STRING)
             if !i.isEnabled || (autoenablesItems && i.action == nil && i.submenu == nil && onPick == nil) { flags |= UINT(MF_GRAYED) }
             if i.state == .on { flags |= UINT(MF_CHECKED) }
-            let text = (i.attributedTitle?.string ?? i.title).replacingOccurrences(of: "&", with: "&&")
+            var text = (i.attributedTitle?.string ?? i.title).replacingOccurrences(of: "&", with: "&&")
+            // The key equivalent, shown as Windows writes shortcuts, right-aligned after a tab (the Mac shows it there too).
+            if let hint = NSMenu.shortcutText(i), i.submenu == nil { text += "\t" + hint }
             if let sub = i.submenu {
                 flags |= UINT(MF_POPUP)
                 let hs = sub.build()
@@ -103,18 +106,54 @@ open class NSMenu: NSObject {
         }
         return h
     }
+    /// "Ctrl+Shift+S" for ⇧⌘S, "H" for a bare h: Command is Ctrl here, Option is Alt.
+    static func shortcutText(_ i: NSMenuItem) -> String? {
+        let k = i.keyEquivalent
+        guard !k.isEmpty, k != "\u{1b}" else { return nil }
+        let m = i.keyEquivalentModifierMask
+        var parts: [String] = []
+        if m.contains(.control) || m.contains(.command) { parts.append("Ctrl") }
+        if m.contains(.option) { parts.append("Alt") }
+        // An upper-case key equivalent means Shift on the Mac.
+        if m.contains(.shift) || (k != k.lowercased()) { parts.append("Shift") }
+        let names: [String: String] = ["\r": "Enter", "\u{8}": "Backspace", "\u{7f}": "Delete", " ": "Space", "\t": "Tab"]
+        parts.append(names[k] ?? k.uppercased())
+        return parts.joined(separator: "+")
+    }
+    /// Menus follow the app's light or dark theme, as the Mac's follow its appearance. Windows draws a popup menu dark
+    /// only for an app that asks (uxtheme's SetPreferredAppMode, ordinal 135, "allow dark"; then FlushMenuThemes, 136),
+    /// as Explorer and Notepad do. Both are looked up by ordinal and skipped if absent.
+    static let followSystemTheme: Void = {
+        guard let ux = "uxtheme.dll".withCString(encodedAs: UTF16.self, { LoadLibraryW($0) }) else { return }
+        if let p = GetProcAddress(ux, UnsafePointer<CChar>(bitPattern: 135)) {
+            _ = unsafeBitCast(p, to: (@convention(c) (Int32) -> Int32).self)(1)
+        }
+        if let p = GetProcAddress(ux, UnsafePointer<CChar>(bitPattern: 136)) {
+            unsafeBitCast(p, to: (@convention(c) () -> Void).self)()
+        }
+    }()
     @discardableResult public func popUp(positioning i: NSMenuItem?, at p: CGPoint, in v: NSView?) -> Bool {
+        _ = NSMenu.followSystemTheme
         NSMenu.live.removeAll(keepingCapacity: true)
         delegate?.menuWillOpen(self)
         let h = build()
         let owner = MessageWindow.shared.hwnd
         let at: CGPoint = v.flatMap { $0.window?.convertPoint(toScreen: $0.convert(p, to: nil)) } ?? p
         let px = worldToPixel(at)
-        _ = SetForegroundWindow(owner)
+        // A popup menu is dismissed by Escape or a click elsewhere only while its owner is the foreground window. The
+        // owner is a hidden non-activating window, which can't be: it may be activated for as long as the menu is up.
+        let ex = GetWindowLongPtrW(owner, GWL_EXSTYLE)
+        _ = SetWindowLongPtrW(owner, GWL_EXSTYLE, ex & ~LONG_PTR(WS_EX_NOACTIVATE))
+        let fg = SetForegroundWindow(owner)
+        if ProcessInfo.processInfo.environment["SPIDER_MENU_LOG"] == "1" { print("menu: owner foreground \(fg), foreground is owner \(GetForegroundWindow() == owner)"); fflush(stdout) }
+        defer { _ = SetWindowLongPtrW(owner, GWL_EXSTYLE, ex) }
         NSApp.modalDepth += 1
         // The app keeps its beat while a menu is open: only a timer gets through this modal loop.
         _ = SetTimer(owner, 1, 16, nil)
+        let log = ProcessInfo.processInfo.environment["SPIDER_MENU_LOG"] == "1"
+        if log { print("menu: open at \(px.x),\(px.y), \(items.count) items"); fflush(stdout) }
         _ = TrackPopupMenu(h, UINT(TPM_LEFTALIGN | TPM_TOPALIGN), px.x, px.y, 0, owner, nil)
+        if log { print("menu: closed"); fflush(stdout) }
         _ = KillTimer(owner, 1)
         NSApp.modalDepth -= 1
         PostMessageW(owner, UINT(WM_NULL), 0, 0)
@@ -131,6 +170,8 @@ final class MessageWindow: NSWindow {
     static let shared = MessageWindow(contentRect: CGRect(x: -100, y: -100, width: 1, height: 1), styleMask: [], backing: .buffered, defer: false)
     override func handle(_ m: UINT, _ w: WPARAM, _ l: LPARAM) -> LRESULT? {
         if let r = SessionWatch.handle(m, w, l) { return r }
+        // The taskbar's light or dark theme changed: the tray icon is redrawn to suit it.
+        if Int32(m) == WM_SETTINGCHANGE { for i in NSStatusBar.items { i.update() } }
         return super.handle(m, w, l)
     }
 }
@@ -206,17 +247,29 @@ public final class NSStatusItem: NSObject, @unchecked Sendable {
         _ = Shell_NotifyIconW(DWORD(NIM_DELETE), &d)
         added = false
     }
+    /// Whether the taskbar is light (Windows' system theme, apart from apps' theme): the Mac's menu bar icon is drawn
+    /// in the menu bar's own appearance, so the tray icon is black on a light taskbar and white on a dark one.
+    static var taskbarIsLight: Bool {
+        var value: DWORD = 0
+        var size = DWORD(4)
+        let ok = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize".withCString(encodedAs: UTF16.self) { k in
+            "SystemUsesLightTheme".withCString(encodedAs: UTF16.self) { v in RegGetValueW(HKEY_CURRENT_USER, k, v, DWORD(RRF_RT_REG_DWORD), nil, &value, &size) }
+        }
+        return ok == 0 && value != 0
+    }
     private func makeIcon(_ image: NSImage, dim: Bool) {
-        let side = Int((16 * NSScreen.primaryScale).rounded())
+        // The notification area's icon size (16 at 100%, 24 at 150%...).
+        let side = Int(GetSystemMetrics(SM_CXSMICON))
         guard let c = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue) else { return }
         c.scaleBy(x: CGFloat(side) / max(image.size.width, 1), y: CGFloat(side) / max(image.size.height, 1))
         if dim { c.setAlpha(0.45) }
-        // A template image is a shape: on Windows' taskbar it reads as white.
-        image.render(in: c, tint: .white)
+        // A template image is a shape, drawn in the taskbar's foreground.
+        let light = NSStatusItem.taskbarIsLight
+        image.render(in: c, tint: light ? .black : .white)
         guard let bytes = c.data else { return }
         if image.isTemplate {
             let px = bytes.assumingMemoryBound(to: UInt8.self)
-            for i in 0..<(side * side) { let a = px[i * 4 + 3]; px[i * 4] = a; px[i * 4 + 1] = a; px[i * 4 + 2] = a }
+            for i in 0..<(side * side) { let a = px[i * 4 + 3], v = light ? 0 : a; px[i * 4] = v; px[i * 4 + 1] = v; px[i * 4 + 2] = v }
         }
         let mask = [UInt8](repeating: 0, count: side * side)
         let color = CreateBitmap(Int32(side), Int32(side), 1, 32, bytes)
@@ -246,7 +299,11 @@ public final class NSPopover: NSResponder {
     public enum Behavior: Int, Sendable { case applicationDefined, transient, semitransient }
     public var behavior = Behavior.applicationDefined
     public var animates = true
-    public var contentSize = CGSize(width: 300, height: 300)
+    /// Set explicitly, it is the popover's size, and changing it while shown resizes the popover in place (AppKit).
+    public var contentSize = CGSize(width: 300, height: 300) { didSet { sizeSet = true; if isShown { place() } } }
+    private var sizeSet = false
+    /// Where it hangs from: the pointer when it was shown (by the tray icon).
+    private var anchor = CGPoint.zero
     public var contentViewController: NSViewController?
     public weak var delegate: NSPopoverDelegate?
     public var appearance: NSAppearance?
@@ -257,12 +314,9 @@ public final class NSPopover: NSResponder {
     public required override init?(coder: NSCoder) { super.init() }
     public func show(relativeTo r: CGRect, of v: NSView, preferredEdge e: NSRectEdge) {
         let content = contentViewController?.view ?? NSView(frame: .zero)
-        let size = content.frame.size != .zero ? content.frame.size : contentSize
-        let vf = NSScreen.main?.visibleFrame ?? .zero
-        // Above the notification area, where the tray icon is.
-        let anchor = NSEvent.mouseLocation
-        let x = max(vf.minX + 8, min(anchor.x - size.width / 2, vf.maxX - size.width - 8))
-        let f = CGRect(x: x, y: vf.minY + 10, width: size.width, height: size.height)
+        anchor = NSEvent.mouseLocation
+        NSPopover.log("show at \(anchor)")
+        let f = frame(for: content)
         let p = panel ?? NSPanel(contentRect: f, styleMask: [.nonactivatingPanel], backing: .buffered, defer: false)
         panel = p
         p.setFrame(f, display: false)
@@ -287,14 +341,41 @@ public final class NSPopover: NSResponder {
         p.makeKeyAndOrderFront(nil)
         delegate?.popoverDidShow(Notification(name: Notification.Name("NSPopoverDidShowNotification"), object: self))
         if behavior != .applicationDefined {
-            outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            outsideMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] e in
                 guard let self, let f = self.panel?.frame, !f.contains(NSEvent.mouseLocation) else { return }
+                NSPopover.log("closed by a \(e.type == .leftMouseDown ? "left" : "right") click at \(NSEvent.mouseLocation) outside \(f)")
                 self.close()
             }
         }
     }
+    /// The size it shows at: an explicit contentSize, else the content's own frame, else the default.
+    private func frame(for content: NSView) -> CGRect {
+        let size = sizeSet || content.frame.size == .zero ? contentSize : content.frame.size
+        let vf = NSScreen.main?.visibleFrame ?? .zero
+        // Above the notification area, where the tray icon is, growing upward.
+        let x = max(vf.minX + 8, min(anchor.x - size.width / 2, vf.maxX - size.width - 8))
+        return CGRect(x: x, y: vf.minY + 10, width: size.width, height: min(size.height, vf.height - 20))
+    }
+    static let logging = ProcessInfo.processInfo.environment["SPIDER_MENU_LOG"] == "1"
+    static func log(_ s: String) {
+        if logging { print("popover: \(s)"); fflush(stdout) }
+    }
+    private func place() {
+        guard let p = panel, let content = contentViewController?.view else { return }
+        NSPopover.log("resized to \(contentSize)")
+        p.setFrame(frame(for: content), display: true)
+        content.frame = p.contentView?.bounds ?? content.frame
+        NSPopover.log("panel frame \(p.frame), content \(content.frame)")
+        // (What the system shows a moment later, against what was asked for.)
+        guard NSPopover.logging else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak p, weak content] in
+            var r = RECT(); if let h = p?.hwnd { _ = GetWindowRect(h, &r) }
+            NSPopover.log("later: panel \(p?.frame ?? .zero), content \(content?.frame ?? .zero), native \(r.left),\(r.top) \(r.right - r.left)x\(r.bottom - r.top)")
+        }
+    }
     public func close() {
         guard isShown else { return }
+        NSPopover.log("close")
         panel?.orderOut(nil)
         if let m = outsideMonitor { NSEvent.removeMonitor(m); outsideMonitor = nil }
         delegate?.popoverDidClose(Notification(name: Notification.Name("NSPopoverDidCloseNotification"), object: self))

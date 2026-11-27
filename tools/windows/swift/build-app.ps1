@@ -51,12 +51,19 @@ foreach ($f in Get-ChildItem 'Sources\DesktopSpider\*.swift') {
     [IO.File]::WriteAllText("$tmp\$($f.Name)", $t, $utf8)
 }
 $inputs = @(Get-ChildItem "$tmp\*.swift" | ForEach-Object { $_.FullName }) + @(Get-ChildItem 'src\SwiftWin\*.swift' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
-$link = @($sdkModules | ForEach-Object { "-l$_" })
+# (ole32 and uuid: the taskbar's ITaskbarList, a COM object.)
+$link = @($sdkModules | ForEach-Object { "-l$_" }) + @('-lole32', '-luuid')
 if ($Check) {
     & swiftc -typecheck -continue-building-after-errors -swift-version 5 -DSHAPED -I $out @inputs 2>&1 | ForEach-Object { "$_" }
     "swiftc exit $LASTEXITCODE"
     return
 }
+# The app's icon as resource 1: Explorer, Alt-Tab, the title bars and the tray read it (tools/windows/make-ico.sh).
+$ico = (Resolve-Path 'Resources\AppIcon.ico').Path.Replace('\', '\\')
+[IO.File]::WriteAllText("$out\SpiderBuddy.rc", "1 ICON `"$ico`"`r`n", $utf8)
+& llvm-rc /nologo /fo "$out\SpiderBuddy.res" "$out\SpiderBuddy.rc" 2>&1 | ForEach-Object { "$_" }
+if ($LASTEXITCODE -ne 0) { "resource compile failed"; exit 1 }
+$link += @('-Xlinker', "$out\SpiderBuddy.res")
 # (No incremental linking: it pads Swift's metadata sections, and the runtime then reads garbage.)
 $linkDbg = @()
 if ($Debug) { $linkDbg = @('-Xlinker', '/DEBUG', '-Xlinker', '/INCREMENTAL:NO', '-Xlinker', "/MAP:$out\SpiderBuddy.map")}

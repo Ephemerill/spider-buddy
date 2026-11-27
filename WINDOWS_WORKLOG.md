@@ -247,3 +247,36 @@ phase). Live popover colours are modelled from AppKit's values but not compared 
 - **No-orphan line breaks apply to two-line paragraphs only** (measured, 2 to 6 lines): longer ones keep the orphan.
 - **Switch:** the off track in dark is white at 9.5% over its background, and the knob casts a faint shadow.
 - Fluent's people and laptop icons are narrower than SF's in the same box (shape, accepted).
+
+## 2026-11-26: The tray, the taskbar and the context menu as on the Mac
+
+**What the Mac does:** the status item has no menu; left and right clicks both toggle the Panel. The context menu is the
+spider's own right-click (`buildMenu()`). As a menu-bar agent the app has no Dock tile except for a minimized window.
+
+**What the stand-in now does:**
+- **Icon.** `tools/windows/make-ico.sh` builds `Resources/AppIcon.ico` from the Mac's `.icns` (16-256 px, each from the
+  drawing at that size when there is one). The build compiles it as resource 1 (`llvm-rc`), so the exe, every window's
+  title bar and its taskbar button carry the spider.
+- **Taskbar.** Titled windows leave the taskbar (`ITaskbarList.DeleteTab`) and keep Alt-Tab; minimizing adds the button
+  back, restoring takes it away (spec 16.1, with the Dock's minimized tiles as the one exception).
+- **Tray icon.** Drawn at `SM_CXSMICON`, white on a dark taskbar and black on a light one, redrawn on a theme change.
+- **Context menu.** Follows the system's dark or light mode (uxtheme 135/136), shows Windows key hints (⌘ as Ctrl,
+  ⌥ as Alt, a capital as Shift), drops alternates, and closes on Escape or a click away (its owner now takes the
+  foreground while it is up).
+- **Panel popover.** Uses the explicit `contentSize` and resizes in place, anchored above the notification area.
+
+**Seen on the laptop's desktop** (`tools/windows/dev/desk.ps1`, with the owner's leave): the spider icon on the exe;
+no taskbar button with a window open and one while minimized; the dark menu with the Mac's items; Escape and click-away
+both close it; the white tray icon in the overflow; a tray click opens the Panel.
+
+**Open:**
+- The live Panel shows 300×300 at the top of its frame though the log says it was resized to 340×744. The layer bounds
+  and bitmap code read correctly; `SPIDER_MENU_LOG=1` now also logs the native rectangle half a second after each resize,
+  to tell a stale layered bitmap from a layout that stayed small. The run that would show it was cut off: the laptop
+  went offline.
+- Restoring a minimized window (button removed) not yet looked at.
+- Windows 11 puts the icon in the overflow; promoting it is the owner's call (it is a user setting).
+- Traces and images not re-run after this change (laptop offline). The trace build only gained `-lole32 -luuid`.
+- **The laptop was left mid-test:** the WIP copy is on it and the app may still be running. Next time: `lap stop`,
+  `lap revert-wip`, `lap sync`.
+

@@ -135,10 +135,12 @@ tools/windows/swift/controls <dir>               # the control gallery, Mac and 
 tools/windows/swift/probe-colors                 # AppKit's system colours on this Mac, in the stand-in's form
 tools/windows/swift/shot-diff SPIDER_PANEL_SHOT <dir>   # any picture switch (WELCOME, PANEL, STUDIO), Mac and Windows side by side
 tools/symbols/run.sh [sheet.png]                 # regenerate the Fluent symbol table; the sheet shows SF next to Fluent
+tools/windows/make-ico.sh                        # Resources/AppIcon.ico from AppIcon.icns, 16-256 px (on the Mac)
+lap run --log desk --wait 30 'C:\Windows\System32\conhost.exe' --headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Users\User\Documents\Projects\spider-buddy\tools\windows\dev\desk.ps1 shot|click|key|menu|trayclick|menutest|minitest ...   # desktop input and shots (only with the owner's leave)
 ```
 
 Developer switches in the stand-in: `SPIDER_CRASH_STACK=1` and `SPIDER_HANG_STACK=1` (stacks to `%TEMP%\spider-crash.txt`),
-`SPIDER_LAYOUT_LOG=1` (each Auto Layout solve), `SPIDER_VIEW_DUMP=1` (the view tree at each `cacheDisplay`, to the same
+`SPIDER_LAYOUT_LOG=1` (each Auto Layout solve), `SPIDER_MENU_LOG=1` (menus and the popover: shown, resized, closed, and its native rectangle), `SPIDER_VIEW_DUMP=1` (the view tree at each `cacheDisplay`, to the same
 file), `SPIDER_FONT_RAW=1` (system font without its width matching).
 
 The stand-in modules in `src/SwiftShims` carry Apple's names, so `Sources/` compiles unchanged. Anything needed from AppKit
@@ -356,6 +358,10 @@ in `tests/golden/mac/MANIFEST.json`.
 | A snapshot of a view that was in a popover | AppKit keeps the plus-lighter vibrancy filter on it, so secondary text comes out brighter than in a never-shown view |
 | `rm -rf "$VAR/..."` in a scratch script | Refused by the safety check: write into a fresh folder instead |
 | Reading colours off the Mac's captures | They are Display P3 (cacheDisplay on this Mac): convert to sRGB first (`shot-diff` does), or saturated colours come out wrong. Greys are the same in both |
+| `lap run` with a bare program name such as `powershell.exe` | Resolved against the repo, so it hangs: give the full path (`C:\Windows\System32\conhost.exe --headless powershell.exe ...`) |
+| `ITaskbarList.HrInit` over SSH | E_NOTIMPL: session 0 has no taskbar. Test it through `lap run` |
+| A tray icon on Windows 11 | New icons go to the overflow (^): click the chevron first, wait, then the icon (`desk.ps1 trayclick`) |
+| `TrackPopupMenu` from a no-activate window | The menu never closes on a click away: the owner must be in the foreground while it is up |
 
 ---
 

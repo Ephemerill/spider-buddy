@@ -99,15 +99,22 @@ private func windowProc(_ h: HWND?, _ m: UINT, _ w: WPARAM, _ l: LPARAM) -> LRES
 func registerWindowClass() {
     guard !classRegistered else { return }
     classRegistered = true
-    var wc = WNDCLASSW()
+    var wc = WNDCLASSEXW()
+    wc.cbSize = UINT(MemoryLayout<WNDCLASSEXW>.size)
     wc.style = UINT(CS_DBLCLKS)
     wc.lpfnWndProc = { h, m, w, l in windowProc(h, m, w, l) }
     wc.hInstance = GetModuleHandleW(nil)
     wc.hCursor = LoadCursorW(nil, UnsafePointer<WCHAR>(bitPattern: 32512))
-    wc.hIcon = LoadIconW(GetModuleHandleW(nil), UnsafePointer<WCHAR>(bitPattern: 1))
+    // The app's icon (resource 1, from Resources/AppIcon.ico), large for Alt-Tab and small for title bars and the
+    // taskbar, each at the size the system asks for.
+    func icon(_ cx: Int32, _ cy: Int32) -> HICON? {
+        LoadImageW(GetModuleHandleW(nil), UnsafePointer<WCHAR>(bitPattern: 1), UINT(IMAGE_ICON), GetSystemMetrics(cx), GetSystemMetrics(cy), UINT(LR_DEFAULTCOLOR)).map { $0.assumingMemoryBound(to: HICON__.self) }
+    }
+    wc.hIcon = icon(SM_CXICON, SM_CYICON)
+    wc.hIconSm = icon(SM_CXSMICON, SM_CYSMICON)
     windowClassName.withUnsafeBufferPointer { b in
         wc.lpszClassName = b.baseAddress
-        _ = RegisterClassW(&wc)
+        _ = RegisterClassExW(&wc)
     }
 }
 
@@ -393,6 +400,7 @@ open class NSWindow: NSResponder, CALayerHost {
             dirty = true
             if !layered || activate { composite() }
             _ = ShowWindow(hwnd, activate && canBecomeKey ? SW_SHOW : SW_SHOWNA)
+            if !layered { Taskbar.hide(hwnd) }
             applyLevel()
             composite()
         } else {
@@ -414,7 +422,9 @@ open class NSWindow: NSResponder, CALayerHost {
     public func performClose(_ sender: Any?) {
         if delegate?.windowShouldClose(self) ?? true { close() }
     }
-    public func miniaturize(_ sender: Any?) { if let hwnd { _ = ShowWindow(hwnd, SW_MINIMIZE) } }
+    public func miniaturize(_ sender: Any?) { if let hwnd { Taskbar.show(hwnd); minimizedToTaskbar = true; _ = ShowWindow(hwnd, SW_MINIMIZE) } }
+    /// Whether the window has a taskbar button because it is minimized (see `Taskbar`).
+    private var minimizedToTaskbar = false
     public func deminiaturize(_ sender: Any?) { if let hwnd { _ = ShowWindow(hwnd, SW_RESTORE) } }
     public func zoom(_ sender: Any?) { if let hwnd { _ = ShowWindow(hwnd, isZoomed ? SW_RESTORE : SW_MAXIMIZE) } }
     public func toggleFullScreen(_ sender: Any?) { zoom(sender) }
@@ -613,7 +623,13 @@ open class NSWindow: NSResponder, CALayerHost {
             return 0
         case WM_ERASEBKGND:
             return layered ? nil : 1
+        case WM_SYSCOMMAND:
+            // Minimizing: the window gets its taskbar button first, so it shrinks into it.
+            if (w & 0xFFF0) == SC_MINIMIZE, !layered, let hwnd { Taskbar.show(hwnd); minimizedToTaskbar = true }
+            return nil
         case WM_SIZE, WM_MOVE:
+            if Int32(m) == WM_SIZE, Int32(w) == SIZE_MINIMIZED { return nil }   // (its frame stays as it was)
+            if Int32(m) == WM_SIZE, minimizedToTaskbar, let hwnd { Taskbar.hide(hwnd); minimizedToTaskbar = false }
             if !ignoreNativeMove, !layered { syncFrameFromNative() }
             return nil
         case WM_ACTIVATE:
@@ -810,6 +826,23 @@ open class NSPanel: NSWindow {
 }
 
 let WM_APP_TRAY: Int32 = WM_APP + 7
+
+/// The Mac app is an agent: its windows have no Dock icon, and a minimized one waits in the Dock until restored. So a
+/// titled window here has no taskbar button while it is open and one while it is minimized (ITaskbarList). The tray
+/// icon is the app's only standing presence, as the menu bar icon is on the Mac.
+enum Taskbar {
+    nonisolated(unsafe) private static var list: UnsafeMutablePointer<ITaskbarList>? = {
+        _ = CoInitializeEx(nil, DWORD(COINIT_APARTMENTTHREADED.rawValue))
+        var clsid = CLSID_TaskbarList, iid = IID_ITaskbarList
+        var p: UnsafeMutableRawPointer?
+        guard CoCreateInstance(&clsid, nil, DWORD(CLSCTX_INPROC_SERVER.rawValue), &iid, &p) == S_OK, let p else { return nil }
+        let t = p.assumingMemoryBound(to: ITaskbarList.self)
+        guard t.pointee.lpVtbl.pointee.HrInit(t) == S_OK else { return nil }
+        return t
+    }()
+    static func hide(_ h: HWND) { if let t = list { _ = t.pointee.lpVtbl.pointee.DeleteTab(t, h) } }
+    static func show(_ h: HWND) { if let t = list { _ = t.pointee.lpVtbl.pointee.AddTab(t, h) } }
+}
 
 enum KeyCodes {
     /// Windows virtual keys to the Mac key codes the sources compare with (kVK_*).

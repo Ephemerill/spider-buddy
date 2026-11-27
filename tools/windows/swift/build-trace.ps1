@@ -18,7 +18,7 @@ $env:PATH = "$swiftBin;$rtBin;$env:PATH"
 $out = Join-Path $repo 'build\swift'
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 $env:SWIFT_DETERMINISTIC_HASHING = '1'
-$link = @('-lCoreGraphics', '-lQuartzCore', '-lAccelerate', '-lUniformTypeIdentifiers', '-lAppKit')
+$link = @('-lCoreGraphics', '-lQuartzCore', '-lAccelerate', '-lUniformTypeIdentifiers', '-lAppKit', '-lole32', '-luuid')
 $common = @('-swift-version', '5', '-DSHAPED', '-I', $out, '-L', $out)
 
 function Build-Shim([string]$name) {
