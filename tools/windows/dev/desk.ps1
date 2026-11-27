@@ -14,8 +14,8 @@
 #   trayclick <file> <x> <y>       open the overflow, click the icon at x,y in it, screenshot what opens
 #   roam <dir> <exe>               the spider wherever it is: found against a screenshot taken before the app starts,
 #                                  right-clicked, then Escape (DESK_DISMISS=escape) or a click away; output in <dir>
-#   minitest <dir> <exe>           SPIDER_MINIMIZE_TEST (welcomed): screenshots while the test window is open and while
-#                                  minimized, and the app's output, in <dir>
+#   minitest <dir> <exe>           SPIDER_MINIMIZE_TEST (welcomed): screenshots while the test window is open, while
+#                                  minimized and once restored, and the app's output, in <dir>
 param([string]$cmd, [string]$a1, [string]$a2, [string]$a3, [string]$a4)
 Add-Type -AssemblyName System.Drawing
 Add-Type -ReferencedAssemblies System.Drawing @"
@@ -32,6 +32,8 @@ public class D {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern IntPtr FindWindow(string c, string t);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
   public static string Fore() { IntPtr h = GetForegroundWindow(); uint p; GetWindowThreadProcessId(h, out p); var sb = new System.Text.StringBuilder(256); GetClassName(h, sb, 256); return sb + " pid " + p; }
@@ -154,7 +156,15 @@ switch ($cmd) {
         $env:SPIDER_MINIMIZE_TEST = '1'
         $p = Start-Process $a2 -ArgumentList '-welcomed', 'YES' -PassThru -RedirectStandardOutput "$a1\minimize.log"
         Start-Sleep -Milliseconds 2600; Shot "$a1\open.png"
-        Start-Sleep -Milliseconds 1500; Shot "$a1\minimized.png"
+        # Once it is minimized (and its taskbar button in), a shot; then restored as a taskbar click restores it
+        # (WM_SYSCOMMAND SC_RESTORE) and another, before the test quits about 1.2 s after minimizing.
+        $w = [D]::FindWindow([NullString]::Value, 'Minimize test')
+        for ($i = 0; $i -lt 60 -and -not [D]::IsIconic($w); $i++) { Start-Sleep -Milliseconds 50 }
+        "iconic: $([D]::IsIconic($w))" | Out-File -Encoding ascii "$a1\desk.txt"
+        Start-Sleep -Milliseconds 400; Shot "$a1\minimized.png"
+        [void][D]::PostMessage($w, 0x0112, [IntPtr]0xF120, [IntPtr]::Zero)
+        Start-Sleep -Milliseconds 400; Shot "$a1\restored.png"
+        "iconic after restore: $([D]::IsIconic($w))" | Out-File -Encoding ascii -Append "$a1\desk.txt"
         [void]$p.WaitForExit(15000)
     }
 }

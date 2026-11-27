@@ -269,14 +269,36 @@ spider's own right-click (`buildMenu()`). As a menu-bar agent the app has no Doc
 no taskbar button with a window open and one while minimized; the dark menu with the Mac's items; Escape and click-away
 both close it; the white tray icon in the overflow; a tray click opens the Panel.
 
-**Open:**
-- The live Panel shows 300×300 at the top of its frame though the log says it was resized to 340×744. The layer bounds
-  and bitmap code read correctly; `SPIDER_MENU_LOG=1` now also logs the native rectangle half a second after each resize,
-  to tell a stale layered bitmap from a layout that stayed small. The run that would show it was cut off: the laptop
-  went offline.
-- Restoring a minimized window (button removed) not yet looked at.
-- Windows 11 puts the icon in the overflow; promoting it is the owner's call (it is a user setting).
-- Traces and images not re-run after this change (laptop offline). The trace build only gained `-lole32 -luuid`.
-- **The laptop was left mid-test:** the WIP copy is on it and the app may still be running. Next time: `lap stop`,
-  `lap revert-wip`, `lap sync`.
+**Open at the end of the first pass:** the live Panel looked clipped to 300×300; restoring not looked at; the laptop
+went offline mid-test. All three settled in the second pass below.
+
+### Second pass: the Panel at its size, at once
+
+- **The 300×300 Panel was a picture caught in the middle.** Logging each composite (`SPIDER_MENU_LOG=1`) and a later
+  screenshot showed the whole 340×744 Panel: the shots, 1.2 s after the click, were taken while the first layout of the
+  full Panel was still running (about 1 s). Before it, the old 300×300 picture sat at the new top-left, because
+  `SetWindowPos` had already resized the window.
+- **A shown layered window resized by `SetWindowPos` keeps its old surface;** an `UpdateLayeredWindowIndirect` at the
+  same size then reports success and changes nothing (seen in the log: "ulw ok" at the new size, the old picture on
+  the screen). Layered windows now take their size and place only from `UpdateLayeredWindowIndirect`, with the picture,
+  in one call; `SetWindowPos` only moves them (`SWP_NOSIZE`). A resize while shown composites at once.
+- **Layered windows appear with their first picture at the next frame,** as Core Animation commits at the end of the
+  run loop's turn, so a window shown and put away (or made see-through) within one turn never appears. Activation
+  waits for the window to appear too.
+- **The Panel's warm-up runs.** The Mac shows the Panel once, unseen, at launch, so the first click finds it made and
+  laid out. It gave up here: the status item's button had no window. It now has AppKit's status bar window, never
+  shown, framed on the tray icon (`Shell_NotifyIconGetRect`; the notification area while the icon is in the overflow).
+  The same frame is what the Mac's entrance brings the spider out under (`finishWelcome`): it now comes out at the
+  tray icon's x instead of the screen's middle. Entrance not compared yet.
+- `ensureBitmap` deleted the old bitmap while it was still selected (a GDI leak on every resize); fixed.
+- The Panel fits a short screen: 10 points clear of the taskbar and the top, less (down to 4) when that lets it fit.
+
+**Evidence** (laptop, 1920×1200 at 150%, `SPIDER_TIMING=1`): warm-up 0.9 s at launch, never on the screen; a tray click
+to the whole Panel on the screen 0.37 s (it was 1.3 s, the first second showing a 300×300 corner). The screenshot 1.2 s
+after the click shows the whole Panel, as the Mac's.
+Minimize and restore (`desk.ps1 minitest`, restored with `WM_SYSCOMMAND SC_RESTORE` as a taskbar click does): no
+taskbar button with the window open, the spider's while minimized, none once restored. Traces 183/183 (worst 1.12e-6),
+images 768/770: unchanged.
+
+**Next:** each Auto Layout pass of the Panel takes about 0.3 s here (two per opening); the Mac's are a few ms.
 

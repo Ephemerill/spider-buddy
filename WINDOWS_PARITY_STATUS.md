@@ -75,8 +75,8 @@ The whole Mac app runs on Windows on the Swift path (`Sources/` unchanged). Comp
 
 | Screen | Level | Notes |
 |---|---|---|
-| Tray icon and menus | E2 | As on the Mac: the icon has no menu, and a left or right click opens the Panel; the spider's right-click menu has the Mac's items, drawn as a dark or light Windows menu with Windows hints (H, Ctrl+S, Ctrl+,, Ctrl+Q), and closes on Escape or a click away. The icon is the system's small-icon size, white on a dark taskbar and black on a light one. **Open:** the live Panel opens clipped to 300×300 at the top of its 340×744 frame; Windows 11 puts the icon in the overflow (^) where the Mac's is always in the menu bar. |
-| Taskbar and Alt-Tab | E2 | No taskbar button while a titled window is open, a button while one is minimized (as the Dock's minimized tiles), Alt-Tab kept. The exe and windows carry the spider icon. Restoring after minimize not yet looked at. |
+| Tray icon and menus | E2 | As on the Mac: the icon has no menu, and a left or right click opens the Panel; the spider's right-click menu has the Mac's items, drawn as a dark or light Windows menu with Windows hints (H, Ctrl+S, Ctrl+,, Ctrl+Q), and closes on Escape or a click away. The icon is the system's small-icon size, white on a dark taskbar and black on a light one. The Panel opens whole above the tray, warmed up at launch as on the Mac (0.37 s from click to screen; Auto Layout passes of 0.3 s each are the rest). **Open:** Windows 11 puts the icon in the overflow (^) where the Mac's is always in the menu bar. |
+| Taskbar and Alt-Tab | E2 | No taskbar button while a titled window is open, a button while one is minimized (as the Dock's minimized tiles), Alt-Tab kept. The exe and windows carry the spider icon. Minimize, then restore as a taskbar click does: the button comes and goes (`desk.ps1 minitest`). |
 | Panel, 7 pages | E2 | All seven pages side by side with the Mac (`shot-diff SPIDER_PANEL_SHOT`): layout, wrap points, text ink, icons, controls. Dance to Music waits for the audio service. Not compared as a live popover on screen. |
 | Studio, 12 tabs | E0 | |
 | My Spiders | E0 | |

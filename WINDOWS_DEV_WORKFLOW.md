@@ -362,6 +362,9 @@ in `tests/golden/mac/MANIFEST.json`.
 | `ITaskbarList.HrInit` over SSH | E_NOTIMPL: session 0 has no taskbar. Test it through `lap run` |
 | A tray icon on Windows 11 | New icons go to the overflow (^): click the chevron first, wait, then the icon (`desk.ps1 trayclick`) |
 | `TrackPopupMenu` from a no-activate window | The menu never closes on a click away: the owner must be in the foreground while it is up |
+| Resizing a shown layered window with `SetWindowPos` | It keeps its old surface, and a same-size `UpdateLayeredWindowIndirect` succeeds without changing it: size layered windows only through `UpdateLayeredWindowIndirect` |
+| A screenshot a second after a click | The app may still be laying out: log what the window really is (`SPIDER_MENU_LOG`, `SPIDER_TIMING`) and take a later shot before calling it a bug |
+| `$null` for a `string` parameter in PowerShell P/Invoke | It arrives as `""`: `FindWindow("", title)` finds nothing. Pass `[NullString]::Value` |
 
 ---
 

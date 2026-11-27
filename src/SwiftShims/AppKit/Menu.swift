@@ -206,6 +206,8 @@ public final class NSStatusBarButton: NSButton {
     public var sendActionOnMask: NSEvent.EventTypeMask = []
     public func sendAction(on m: NSEvent.EventTypeMask) { sendActionOnMask = m }
     public override func convert(_ r: CGRect, to v: NSView?) -> CGRect { r }
+    /// The status bar window it is in (see NSStatusItem.barWindow).
+    public override var window: NSWindow? { item?.barWindow }
 }
 public final class NSStatusItem: NSObject, @unchecked Sendable {
     public static let variableLength: CGFloat = -1
@@ -240,6 +242,33 @@ public final class NSStatusItem: NSObject, @unchecked Sendable {
         }
         _ = Shell_NotifyIconW(added ? DWORD(NIM_MODIFY) : DWORD(NIM_ADD), &d)
         added = true
+    }
+    /// AppKit's status bar window, which the button is in. Never shown here: its frame is where the icon is in the
+    /// notification area (or the notification area itself, while the icon is in the overflow). Nil until the icon
+    /// is in, as on the Mac before the menu bar has it. The app warms its Panel up from it, and brings the spider
+    /// out under it.
+    private var bar: NSWindow?
+    var barWindow: NSWindow? {
+        guard added else { return nil }
+        let w = bar ?? NSWindow(contentRect: CGRect(x: 0, y: 0, width: 22, height: 22), styleMask: [], backing: .buffered, defer: true)
+        bar = w
+        if let r = iconRect(), r != w.frame { w.setFrame(r, display: false); NSPopover.log("status bar window \(r)") }
+        return w
+    }
+    private func iconRect() -> CGRect? {
+        var id = NOTIFYICONIDENTIFIER()
+        id.cbSize = DWORD(MemoryLayout<NOTIFYICONIDENTIFIER>.size)
+        id.hWnd = MessageWindow.shared.hwnd
+        id.uID = 1
+        var r = RECT()
+        if Shell_NotifyIconGetRect(&id, &r) < 0 || r.right <= r.left {
+            // In the overflow: the notification area's own rectangle.
+            let tray = "Shell_TrayWnd".withCString(encodedAs: UTF16.self) { FindWindowW($0, nil) }
+            let area = "TrayNotifyWnd".withCString(encodedAs: UTF16.self) { FindWindowExW(tray, nil, $0, nil) }
+            guard let area, GetWindowRect(area, &r), r.right > r.left else { return nil }
+        }
+        let tl = pixelToWorld(x: r.left, y: r.top), br = pixelToWorld(x: r.right, y: r.bottom)
+        return CGRect(x: tl.x, y: br.y, width: br.x - tl.x, height: tl.y - br.y)
     }
     func remove() {
         guard added else { return }
@@ -352,13 +381,15 @@ public final class NSPopover: NSResponder {
     private func frame(for content: NSView) -> CGRect {
         let size = sizeSet || content.frame.size == .zero ? contentSize : content.frame.size
         let vf = NSScreen.main?.visibleFrame ?? .zero
-        // Above the notification area, where the tray icon is, growing upward.
+        // Above the notification area, where the tray icon is, growing upward: 10 points clear of
+        // the taskbar and the screen's top, less when that is what lets the whole Panel fit.
         let x = max(vf.minX + 8, min(anchor.x - size.width / 2, vf.maxX - size.width - 8))
-        return CGRect(x: x, y: vf.minY + 10, width: size.width, height: min(size.height, vf.height - 20))
+        let gap = min(10, max(4, (vf.height - size.height) / 2))
+        return CGRect(x: x, y: vf.minY + gap, width: size.width, height: min(size.height, vf.height - gap * 2))
     }
     static let logging = ProcessInfo.processInfo.environment["SPIDER_MENU_LOG"] == "1"
     static func log(_ s: String) {
-        if logging { print("popover: \(s)"); fflush(stdout) }
+        if logging { print(String(format: "popover: %9.3f ", CACurrentMediaTime()) + s); fflush(stdout) }
     }
     private func place() {
         guard let p = panel, let content = contentViewController?.view else { return }

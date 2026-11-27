@@ -344,16 +344,32 @@ open class NSWindow: NSResponder, CALayerHost {
             markLayout()
             dirty = true
         }
-        placeNative()
+        if sizeChanged, layered {
+            // A layered window's size is its picture's: UpdateLayeredWindowIndirect sets picture, place and
+            // size in one call. (Resized by SetWindowPos after it has had a picture, it keeps its old surface,
+            // and a later update at the same size reports success and changes nothing.) On the screen, it is
+            // done now; hidden, when it is next shown.
+            if nativeShown, !compositing { ignoreNativeMove = true; composite(); ignoreNativeMove = false }
+        } else {
+            placeNative()
+        }
         if sizeChanged { post(NSWindow.didResizeNotification); delegate?.windowDidResize(Notification(name: NSWindow.didResizeNotification, object: self)) }
     }
     private var ignoreNativeMove = false
+    /// On the screen: a layered window is, from its first picture after it is ordered in (see show).
+    private var nativeShown = false
+    /// Inside composite: a resize from its layout waits for the next frame (it is queued already).
+    private var compositing = false
+    /// Made key while not yet on the screen: brought to the foreground as it appears.
+    private var pendingForeground = false
     private func placeNative() {
         guard let hwnd else { return }
         let k = NSScreen.primaryScale
         let tl = worldToPixel(CGPoint(x: frame.minX, y: frame.maxY))
         ignoreNativeMove = true
-        _ = SetWindowPos(hwnd, nil, tl.x, tl.y, Int32((frame.width * k).rounded()), Int32((frame.height * k).rounded()), UINT(SWP_NOZORDER | SWP_NOACTIVATE))
+        // (A layered window is only moved here: its size comes with its picture, in composite.)
+        _ = SetWindowPos(hwnd, nil, tl.x, tl.y, Int32((frame.width * k).rounded()), Int32((frame.height * k).rounded()),
+                         UINT(SWP_NOZORDER | SWP_NOACTIVATE | (layered ? SWP_NOSIZE : 0)))
         ignoreNativeMove = false
     }
     public func convertPoint(toScreen p: CGPoint) -> CGPoint { let o = contentOrigin; return CGPoint(x: o.x + p.x, y: o.y + p.y) }
@@ -370,6 +386,8 @@ open class NSWindow: NSResponder, CALayerHost {
     public func orderOut(_ sender: Any?) {
         guard visible, let hwnd else { return }
         visible = false
+        nativeShown = false
+        pendingForeground = false
         _ = ShowWindow(hwnd, SW_HIDE)
         lastBox = nil
     }
@@ -398,16 +416,26 @@ open class NSWindow: NSResponder, CALayerHost {
         if !visible {
             visible = true
             dirty = true
-            if !layered || activate { composite() }
-            _ = ShowWindow(hwnd, activate && canBecomeKey ? SW_SHOW : SW_SHOWNA)
-            if !layered { Taskbar.hide(hwnd) }
-            applyLevel()
-            composite()
+            if layered {
+                // On the screen at the next frame, with its first picture, as Core Animation commits at the end of
+                // the run loop's turn: shown and put away again, or made see-through, within the turn (the Panel's
+                // warm-up), it never appears. See composite.
+                pendingForeground = activate && canBecomeKey
+                applyLevel()
+                NSApp.windowChanged(self)
+            } else {
+                composite()
+                _ = ShowWindow(hwnd, activate && canBecomeKey ? SW_SHOW : SW_SHOWNA)
+                nativeShown = true
+                Taskbar.hide(hwnd)
+                applyLevel()
+                composite()
+            }
         } else {
             _ = SetWindowPos(hwnd, level.rawValue > 0 ? HWND(bitPattern: -1) : HWND(bitPattern: 0), 0, 0, 0, 0, UINT(SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE))
         }
         if activate, canBecomeKey {
-            _ = SetForegroundWindow(hwnd)
+            if nativeShown { _ = SetForegroundWindow(hwnd) } else { pendingForeground = true }
             NSApp.keyWindowStore = self
             post(NSWindow.didBecomeKeyNotification)
         }
@@ -417,6 +445,8 @@ open class NSWindow: NSResponder, CALayerHost {
         delegate?.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: self))
         post(NSWindow.willCloseNotification)
         visible = false
+        nativeShown = false
+        pendingForeground = false
         _ = ShowWindow(hwnd, SW_HIDE)
     }
     public func performClose(_ sender: Any?) {
@@ -481,7 +511,6 @@ open class NSWindow: NSResponder, CALayerHost {
         let cr = contentRect(forFrameRect: frame)
         let w = max(Int((cr.width * k).rounded(.up)), 1), h = max(Int((cr.height * k).rounded(.up)), 1)
         guard w != pxW || h != pxH || ctx == nil else { return }
-        if let d = dib { DeleteObject(d) }
         if memDC == nil { memDC = CreateCompatibleDC(nil) }
         var bmi = BITMAPINFO()
         bmi.bmiHeader.biSize = DWORD(MemoryLayout<BITMAPINFOHEADER>.size)
@@ -491,8 +520,11 @@ open class NSWindow: NSResponder, CALayerHost {
         bmi.bmiHeader.biBitCount = 32
         bmi.bmiHeader.biCompression = DWORD(BI_RGB)
         var b: UnsafeMutableRawPointer? = nil
-        dib = CreateDIBSection(memDC, &bmi, UINT(DIB_RGB_COLORS), &b, nil, 0)
-        _ = SelectObject(memDC, dib)
+        guard let fresh = CreateDIBSection(memDC, &bmi, UINT(DIB_RGB_COLORS), &b, nil, 0), b != nil else { return }
+        // (The old bitmap is freed once it is no longer selected: deleted while selected, it leaks.)
+        _ = SelectObject(memDC, fresh)
+        if let d = dib { DeleteObject(d) }
+        dib = fresh
         bits = b
         pxW = w; pxH = h
         ctx = CGContext(data: b, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
@@ -505,8 +537,12 @@ open class NSWindow: NSResponder, CALayerHost {
 
     /// Draws what changed, and puts it on the screen.
     open func composite() {
-        guard visible, let hwnd, let content = contentView else { return }
+        guard visible, !compositing, let hwnd, let content = contentView else { return }
+        compositing = true
+        defer { compositing = false }
+        let started = CACurrentMediaTime()
         layoutIfNeeded(force: false)
+        let laidOut = CACurrentMediaTime()
         guard dirty || animating else { return }
         dirty = false
         ensureBitmap()
@@ -559,9 +595,21 @@ open class NSWindow: NSResponder, CALayerHost {
                 info.pblend = UnsafePointer(pb)
                 info.dwFlags = DWORD(ULW_ALPHA)
                 info.prcDirty = UnsafePointer(pr)
-                if !UpdateLayeredWindowIndirect(hwnd, &info) {
+                var ok = UpdateLayeredWindowIndirect(hwnd, &info)
+                let err1 = ok ? 0 : GetLastError()
+                if !ok {
                     info.prcDirty = nil
-                    _ = UpdateLayeredWindowIndirect(hwnd, &info)
+                    ok = UpdateLayeredWindowIndirect(hwnd, &info)
+                }
+                if !nativeShown {
+                    nativeShown = true
+                    _ = ShowWindow(hwnd, pendingForeground ? SW_SHOW : SW_SHOWNA)
+                    applyLevel()
+                    if pendingForeground { _ = SetForegroundWindow(hwnd) }
+                    pendingForeground = false
+                }
+                if isPopoverPanel, NSPopover.logging {
+                    NSPopover.log("composite (layout \(Int((laidOut - started) * 1000)) ms, all \(Int((CACurrentMediaTime() - started) * 1000)) ms) \(pxW)x\(pxH) content \(content.frame.size) box \(box.map { "\($0.x0),\($0.y0)-\($0.x1),\($0.y1)" } ?? "nil") dirty \(pr.pointee.left),\(pr.pointee.top)-\(pr.pointee.right),\(pr.pointee.bottom) ulw \(ok ? "ok" : "failed \(GetLastError())") first \(err1)")
                 }
             } } } } }
         } else {
